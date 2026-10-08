@@ -3,6 +3,7 @@ package mcp
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -150,7 +151,8 @@ func TestOAuthExchangeDoesNotReflectProviderErrors(t *testing.T) {
 			defer cancel()
 			flow := &authFlow{cancel: cancel, done: make(chan struct{})}
 			redirect := "http://" + ln.Addr().String() + "/callback"
-			secret, code, verifier := "opaque-client-material-42", "opaque-auth-code-43", "opaque-verifier-44"
+			// Generate test-only credentials; no reusable credential belongs in source.
+			secret, code, verifier := rand.Text(), rand.Text(), rand.Text()
 			disc := &Discovery{Resource: token.URL, AS: &ASMetadata{TokenEndpoint: token.URL}}
 			go h.m.runFlow(ctx, flow, ln, cfg, disc, clientReg{clientID: "registered", secret: secret, style: "params"}, redirect, "expected-state", verifier, nil)
 			hit(t, redirect+"?state=expected-state&code="+url.QueryEscape(code))
