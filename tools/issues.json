@@ -1,0 +1,274 @@
+[
+ [
+  1,
+  "Shipyard source analysis, reuse inventory and attribution"
+ ],
+ [
+  2,
+  "MyGo compatibility research on Windows"
+ ],
+ [
+  3,
+  "ascii.rest library research"
+ ],
+ [
+  4,
+  "MCP connectivity research (Orole Mail and Drive)"
+ ],
+ [
+  5,
+  "Architecture specification, ADRs and Windows runtime plan"
+ ],
+ [
+  6,
+  "Threat model and permission policy design"
+ ],
+ [
+  7,
+  "Design-system specification and dependency/integration matrix"
+ ],
+ [
+  8,
+  "MyGo bootstrap: Windows app shows the React frontend"
+ ],
+ [
+  9,
+  "SQLite store with embedded migrations"
+ ],
+ [
+  10,
+  "Authenticated versioned IPC over user-restricted named pipe"
+ ],
+ [
+  11,
+  "Daemon lifecycle: detached start, stop, status, single instance"
+ ],
+ [
+  12,
+  "Per-user autostart via Task Scheduler (install/uninstall)"
+ ],
+ [
+  13,
+  "Credential Manager secret store"
+ ],
+ [
+  14,
+  "Structured logging and diagnostics bundle"
+ ],
+ [
+  15,
+  "Desktop-to-daemon bridge as typed MyGo services and events"
+ ],
+ [
+  16,
+  "Windows packaging prototype (NSIS installer) containing desktop and daemon"
+ ],
+ [
+  17,
+  "CI: Go vet/test/race, frontend typecheck/lint/test/build, Windows build"
+ ],
+ [
+  18,
+  "Design tokens, three themes and compact density"
+ ],
+ [
+  19,
+  "AsciiBackground with pause, fps, opacity, intensity, static, adaptive throttling"
+ ],
+ [
+  20,
+  "AppShell: custom title bar, sidebar, status bar"
+ ],
+ [
+  21,
+  "Command palette and command registry"
+ ],
+ [
+  22,
+  "Dashboard widget grid: drag, resize, add, remove, persist"
+ ],
+ [
+  23,
+  "Multi-workspace switcher"
+ ],
+ [
+  24,
+  "Settings app: appearance, ASCII, accessibility, terminal, diagnostics"
+ ],
+ [
+  25,
+  "First-run onboarding flow"
+ ],
+ [
+  26,
+  "Core component library and design-system docs"
+ ],
+ [
+  27,
+  "Playwright E2E, accessibility (axe) and visual regression baseline"
+ ],
+ [
+  28,
+  "Generic MCP client manager (Streamable HTTP)"
+ ],
+ [
+  29,
+  "MCP OAuth 2.1 (PKCE, DCR, resource indicators) with loopback redirect"
+ ],
+ [
+  30,
+  "Permission policy engine and audit log"
+ ],
+ [
+  31,
+  "Orole Mail adapter and typed models"
+ ],
+ [
+  32,
+  "Mail application UI"
+ ],
+ [
+  33,
+  "Mail dashboard widget"
+ ],
+ [
+  34,
+  "Orole Drive adapter and typed models"
+ ],
+ [
+  35,
+  "Drive application UI"
+ ],
+ [
+  36,
+  "Drive recent-files widget and scoped hand-off to agents"
+ ],
+ [
+  37,
+  "GitHub auth via gh CLI token and API adapter"
+ ],
+ [
+  38,
+  "GitHub app: repos, issues, PRs, notifications"
+ ],
+ [
+  39,
+  "GitHub Actions runs, failed checks and logs"
+ ],
+ [
+  40,
+  "MCP servers settings and tool inspector"
+ ],
+ [
+  41,
+  "ConPTY terminal backend and manager"
+ ],
+ [
+  42,
+  "Terminals UI: tabs, splits, search, copy/paste, reconnect"
+ ],
+ [
+  43,
+  "Linux PTY backend and tmux persistence"
+ ],
+ [
+  44,
+  "Local file service and file manager (provider adapters)"
+ ],
+ [
+  45,
+  "CodeMirror 6 editor with tabs, dirty state, conflict detection"
+ ],
+ [
+  46,
+  "Git service: repos, branches, status, diffs, worktrees"
+ ],
+ [
+  47,
+  "Machine abstraction: transport vs execution backend, identity pinning"
+ ],
+ [
+  48,
+  "Remote machine pairing and SSH transport"
+ ],
+ [
+  49,
+  "Browser preview panes"
+ ],
+ [
+  50,
+  "Agent runtime: session model, lifecycle, persistence"
+ ],
+ [
+  51,
+  "Claude Code adapter end-to-end"
+ ],
+ [
+  52,
+  "Codex, OpenCode, Gemini CLI and custom CLI adapters"
+ ],
+ [
+  53,
+  "Agents dashboard and conversation view"
+ ],
+ [
+  54,
+  "Issue-to-agent flow with worktree, traceability and PR confirmation"
+ ],
+ [
+  55,
+  "Orchestration: handoff, review, parallel attempts, test-and-fix loops"
+ ],
+ [
+  56,
+  "Untrusted-content handling and agent sandbox options"
+ ],
+ [
+  57,
+  "Automation runtime: triggers, steps, journals, retries, idempotency"
+ ],
+ [
+  58,
+  "Automation approvals, HTTP outbound restrictions, secret redaction"
+ ],
+ [
+  59,
+  "Automation UI/editor"
+ ],
+ [
+  60,
+  "Notification center and native notifications"
+ ],
+ [
+  61,
+  "Unified search providers"
+ ],
+ [
+  62,
+  "Plugin API with capability manifests and trust UI"
+ ],
+ [
+  63,
+  "System tray, deep links (orole://), single instance, global shortcut"
+ ],
+ [
+  64,
+  "Security review and hardening pass"
+ ],
+ [
+  65,
+  "Packaged-app E2E over WebView2 CDP"
+ ],
+ [
+  66,
+  "Performance benchmarks committed"
+ ],
+ [
+  67,
+  "Signed NSIS installer and update process"
+ ],
+ [
+  68,
+  "Documentation set and troubleshooting"
+ ]
+]

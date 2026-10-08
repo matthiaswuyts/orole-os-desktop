@@ -10,3 +10,5 @@ build/
 frontend/test-results/
 frontend/playwright-report/
 .orole-dev/
+
+.shots/

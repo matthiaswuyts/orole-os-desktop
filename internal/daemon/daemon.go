@@ -1,0 +1,132 @@
+// Package daemon wires orole-daemon: database, IPC server, and services.
+package daemon
+
+import (
+	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"log/slog"
+	"os"
+	"path/filepath"
+	"runtime"
+	"sync"
+	"time"
+
+	"github.com/rayorole/orole-os-desktop/internal/database"
+	"github.com/rayorole/orole-os-desktop/internal/ipc"
+	"github.com/rayorole/orole-os-desktop/internal/terminals"
+	"github.com/rayorole/orole-os-desktop/migrations"
+)
+
+// Version is set at build time via -ldflags.
+var Version = "0.1.0-dev"
+
+// Daemon is the long-lived background controller.
+type Daemon struct {
+	DataDir   string
+	Log       *slog.Logger
+	DB        *database.DB
+	IPC       *ipc.Server
+	Terminals *terminals.Manager
+	Token     string
+	Endpoint  string
+	started   time.Time
+	stop      chan struct{}
+	stopOnce  sync.Once
+}
+
+// TokenPath returns where the IPC auth token lives.
+func TokenPath(dataDir string) string { return filepath.Join(dataDir, "ipc.token") }
+
+// ReadToken loads the token written by a running daemon.
+func ReadToken(dataDir string) (string, error) {
+	b, err := os.ReadFile(TokenPath(dataDir))
+	return string(b), err
+}
+
+// New opens state and registers services. Call Run to serve.
+func New(dataDir string, log *slog.Logger) (*Daemon, error) {
+	db, err := database.Open(filepath.Join(dataDir, "orole.db"), migrations.FS)
+	if err != nil {
+		return nil, fmt.Errorf("database: %w", err)
+	}
+	buf := make([]byte, 32)
+	if _, err := rand.Read(buf); err != nil {
+		return nil, err
+	}
+	d := &Daemon{DataDir: dataDir, Log: log, DB: db, Token: hex.EncodeToString(buf), started: time.Now(), stop: make(chan struct{})}
+	d.Endpoint = ipc.Endpoint(dataDir)
+	d.IPC = ipc.NewServer(d.Token, Version, os.Getpid(), log)
+	d.Terminals = terminals.NewManager(terminals.NewBackend(), termSink{d})
+	d.registerServices()
+	return d, nil
+}
+
+// Run serves IPC until ctx is done or shutdown is requested.
+func (d *Daemon) Run(ctx context.Context) error {
+	ln, err := ipc.Listen(d.Endpoint)
+	if err != nil {
+		d.Terminals.Shutdown()
+		d.DB.Close()
+		return fmt.Errorf("listen %s (is another daemon running?): %w", d.Endpoint, err)
+	}
+	// Token is written only after we own the endpoint, readable by this user only.
+	if err := os.WriteFile(TokenPath(d.DataDir), []byte(d.Token), 0o600); err != nil {
+		ln.Close()
+		return err
+	}
+	d.Log.Info("daemon listening", "endpoint", d.Endpoint, "version", Version, "pid", os.Getpid(), "go", runtime.Version())
+	errc := make(chan error, 1)
+	go func() { errc <- d.IPC.Serve(ln) }()
+	select {
+	case <-ctx.Done():
+	case <-d.stop:
+	case err := <-errc:
+		d.cleanup(ln)
+		return err
+	}
+	d.cleanup(ln)
+	return nil
+}
+
+func (d *Daemon) cleanup(ln interface{ Close() error }) {
+	ln.Close()
+	d.IPC.CloseAll()
+	d.Terminals.Shutdown()
+	os.Remove(TokenPath(d.DataDir))
+	d.DB.Close()
+	d.Log.Info("daemon stopped")
+}
+
+// Shutdown asks Run to return.
+func (d *Daemon) Shutdown() { d.stopOnce.Do(func() { close(d.stop) }) }
+
+type termSink struct{ d *Daemon }
+
+type outputEvent struct {
+	ID   string `json:"id"`
+	Seq  uint64 `json:"seq"`
+	Data []byte `json:"data"` // base64 in JSON
+}
+
+func (t termSink) Output(id string, seq uint64, data []byte) {
+	t.d.IPC.Publish("terminal.output", outputEvent{id, seq, data})
+}
+func (t termSink) Changed(info terminals.Info) { t.d.IPC.Publish("terminal.changed", info) }
+
+// handle registers a typed method.
+func handle[P any, R any](d *Daemon, name string, f func(ctx context.Context, p P) (R, error)) {
+	d.IPC.Handle(name, func(ctx context.Context, raw json.RawMessage) (any, error) {
+		var p P
+		if len(raw) > 0 {
+			if err := json.Unmarshal(raw, &p); err != nil {
+				return nil, &ipc.Error{Code: ipc.CodeBadRequest, Message: err.Error()}
+			}
+		}
+		return f(ctx, p)
+	})
+}
+
+type none struct{}
