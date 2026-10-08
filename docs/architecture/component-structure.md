@@ -170,8 +170,12 @@ Opus 5.5 · X-High), with searchable provider and model pages in one popover.
 `model-options.ts` formats labels without rewriting the actual model selectors.
 The beui-derived `RangeSlider` exposes only daemon-reported reasoning levels;
 Auto leaves the harness override unset. Keyboard control, reduced motion and
-accessible effort labels are supported. Model changes preserve compatible effort
-and clear incompatible selections. Missing catalogs are explicit, not fabricated.
+accessible effort labels are supported. Home saves model and effort independently
+per provider in local UI preferences, immediately on selection, and restores them
+when switching providers/systems or reopening the composer. An explicit Auto choice
+is saved too. Missing models fall back to the discovered default; unsupported effort
+is omitted from launch without erasing the saved preference, so returning to a
+compatible model restores it. Missing catalogs are explicit, not fabricated.
 Start or Enter calls `Agents.start`; Shift+Enter still inserts a newline.
 Duplicate submissions are blocked and uncertain retries reuse their request key.
 

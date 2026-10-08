@@ -9,6 +9,7 @@ import { newKey } from "@/features/agents/format";
 import { toastError } from "@/features/projects/dialogs";
 import { openTask } from "@/features/projects/tasks";
 import { useTaskAttachments } from "./useTaskAttachments";
+import { loadProviderPreferences, saveProviderPreferences } from "./provider-preferences";
 
 export function useHomeTaskLaunch() {
   const projects = useProjects((s) => s.projects);
@@ -34,8 +35,8 @@ export function useHomeTaskLaunch() {
   const [kind, setKind] = useState(() => localStorage.getItem("orole.task.harness") ?? "");
   const harnesses = (source.options?.harnesses ?? []).filter((h) => machine === "local" ? h.structured && h.modes.includes("structured") : h.modes.includes("process"));
   const harness = harnesses.find((h) => h.id === kind && h.available) ?? harnesses.find((h) => h.available);
-  const [selection, setSelection] = useState<{ kind: string; model: string; reasoning: string }>({ kind: "", model: "", reasoning: "" });
-  const selected = selection.kind === harness?.id ? selection : { model: "", reasoning: "" };
+  const [preferences, setPreferences] = useState(loadProviderPreferences);
+  const selected = (harness && preferences[harness.id]) || { model: "", reasoning: "" };
   const models = harness?.models ?? [];
   const model = models.some((m) => m.id === selected.model) ? selected.model : models.find((m) => m.default)?.id || models[0]?.id || "";
   const modelOption = models.find((m) => m.id === model);
@@ -61,10 +62,18 @@ export function useHomeTaskLaunch() {
     setWorktreeChoice(null);
   }
   function chooseMachine(id: string) {
-    setMachine(id); setRemoteProject(""); setWorktreeChoice(null); setSelection({ kind: "", model: "", reasoning: "" });
+    setMachine(id); setRemoteProject(""); setWorktreeChoice(null);
   }
-  function chooseAgent(id: string, nextModel = "", nextReasoning = "") {
-    setKind(id); setSelection({ kind: id, model: nextModel, reasoning: nextReasoning });
+  function chooseAgent(id: string, nextModel?: string, nextReasoning?: string) {
+    setKind(id);
+    try {
+      localStorage.setItem("orole.task.harness", id);
+      if (nextModel === undefined && nextReasoning === undefined) return;
+      const previous = preferences[id] ?? { model: "", reasoning: "" };
+      const next = { ...preferences, [id]: { model: nextModel ?? previous.model, reasoning: nextReasoning ?? previous.reasoning } };
+      setPreferences(next);
+      saveProviderPreferences(next);
+    } catch (error) { toastError("Could not save agent preferences", error); }
   }
   async function start() {
     if (!canStart || !project || !harness || inFlight.current) return;

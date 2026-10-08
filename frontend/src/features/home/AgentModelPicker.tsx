@@ -49,10 +49,7 @@ export function AgentModelPicker({ task }: { task: HomeTaskLaunch }) {
             onSelect={(id) => {
               const provider = task.harnesses.find((option) => option.id === id);
               if (!provider?.available || task.busy) return;
-              if (id !== harness?.id) {
-                const next = provider.models?.find((option) => option.default) ?? provider.models?.[0];
-                task.chooseAgent(id, next?.id ?? "", supportedEffort(next ? next.reasoning : provider.reasoning, reasoning));
-              }
+              if (id !== harness?.id) task.chooseAgent(id);
               setPage("settings");
               requestAnimationFrame(() => providerButton.current?.focus());
             }}
@@ -67,7 +64,7 @@ export function AgentModelPicker({ task }: { task: HomeTaskLaunch }) {
             onSelect={(id) => {
               const next = models.find((option) => option.id === id);
               if (!harness || !next || task.busy) return;
-              task.chooseAgent(harness.id, next.id, supportedEffort(next.reasoning, reasoning));
+              task.chooseAgent(harness.id, next.id);
               setPage("settings");
               requestAnimationFrame(() => modelButton.current?.focus());
             }}

@@ -104,3 +104,44 @@ it("rejects oversized files without sending their bytes and lets the user recove
  fireEvent.click(screen.getByRole("button", { name: "Remove large.png" }));
  expect(start).toBeEnabled();
 });
+
+async function pickProvider(name: string) {
+ fireEvent.click(screen.getByRole("button", { name: "Change provider" }));
+ fireEvent.click(await screen.findByRole("option", { name }));
+}
+async function pickModel(name: string) {
+ fireEvent.click(screen.getByRole("button", { name: "Change model" }));
+ fireEvent.click(await screen.findByRole("option", { name }));
+}
+it("restores each provider's model and effort after switching and reopening Home", async () => {
+ const codex = { ...harness, models: [...harness.models!, { id: "model-c", name: "Model C", reasoning: ["low", "high"], default: false }] };
+ const claude = { ...harness, id: "claude", name: "Claude Code", models: [{ id: "opus", name: "Opus 5.5", reasoning: ["low", "high"], default: true }] };
+ api.options.mockResolvedValue({ ...options, harnesses: [codex, claude] });
+ const view = render(<HomeAgentComposer />); await fill(); menu("Agent, model and reasoning");
+ await pickModel("Model C");
+ fireEvent.change(screen.getByRole("slider", { name: "Reasoning effort" }), { target: { value: "2" } });
+ await pickProvider("Claude Code");
+ fireEvent.change(screen.getByRole("slider", { name: "Reasoning effort" }), { target: { value: "1" } });
+ await pickProvider("Codex");
+ expect(screen.getByRole("slider", { name: "Reasoning effort" })).toHaveAttribute("aria-valuetext", "High");
+ expect(screen.getByRole("button", { name: "Change model" })).toHaveTextContent("Model C");
+ await pickProvider("Claude Code");
+ expect(screen.getByRole("slider", { name: "Reasoning effort" })).toHaveAttribute("aria-valuetext", "Low");
+ await pickProvider("Codex"); view.unmount();
+ render(<HomeAgentComposer />); const start = await fill();
+ expect(screen.getByRole("button", { name: "Agent, model and reasoning" })).toHaveTextContent("Model C");
+ fireEvent.click(start);
+ await waitFor(() => expect(api.start).toHaveBeenCalledWith(expect.objectContaining({ kind: "codex", model: "model-c", reasoning: "high" })));
+});
+
+it("retains preferred effort through unsupported models but remembers an explicit Auto choice", async () => {
+ const view = render(<HomeAgentComposer />); await fill(); menu("Agent, model and reasoning");
+ fireEvent.change(await screen.findByRole("slider", { name: "Reasoning effort" }), { target: { value: "2" } });
+ await pickModel("Model B");
+ expect(screen.queryByRole("slider")).not.toBeInTheDocument();
+ await pickModel("Model A");
+ expect(screen.getByRole("slider", { name: "Reasoning effort" })).toHaveAttribute("aria-valuetext", "High");
+ fireEvent.change(screen.getByRole("slider", { name: "Reasoning effort" }), { target: { value: "0" } });
+ view.unmount(); render(<HomeAgentComposer />); const start = await fill(); fireEvent.click(start);
+ await waitFor(() => expect(api.start).toHaveBeenCalledWith(expect.objectContaining({ reasoning: "" })));
+});
