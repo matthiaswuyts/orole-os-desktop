@@ -52,9 +52,23 @@ official-SDK Streamable HTTP fixture bound only to `127.0.0.1`.
 - The owned daemon, loopback endpoint, and temporary data were cleaned up.
 
 The helper did not open SQLite directly or install permissive policy rules.
-These checks establish persistence and real authorized execution, not native
-command/widget rendering or workspace-layout persistence. The throwaway helper
-was removed after recording the evidence.
+These helper checks establish persistence and real authorized execution.
+The throwaway helper was removed after recording the evidence.
+
+Additional NSIS-installed WebView2 acceptance used a separately owned loopback
+MCP fixture and isolated home. The UI imported a disabled manifest, displayed its
+canonical digest, requested exact-manifest trust, and registered its command and
+Home customization entry. Running the command and then its dashboard widget each
+required independent MCP approval and wrote observable proof-file effects 1 and 2;
+both displayed the returned plaintext. Revocation replaced the saved dashboard
+entry with **Unavailable widget**, without deleting its layout. The revoked record
+survived GUI quit/relaunch; confirmed plugin removal and widget removal were exercised.
+
+This run found an unnamed native trust checkbox. Its visible label now explicitly
+targets the input. The rebuilt installed app exposed the full accessible name;
+Space enabled the trust action and a second Space disabled it. No trust or MCP
+permission is inferred from the checkbox alone. Widget drag/resize persistence
+was not exercised in this native run.
 
 ## Native and browser smoke actions
 

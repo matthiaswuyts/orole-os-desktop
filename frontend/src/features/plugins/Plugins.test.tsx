@@ -14,6 +14,7 @@ vi.mock("@/mygo", () => ({
 import { usePlugins } from "@/stores/plugins";
 import { useDaemon } from "@/stores/daemon";
 import { PluginActionView } from "./PluginActionView";
+import { PluginSettings } from "./PluginSettings";
 import { parseManifest } from "./manifest";
 
 const record: PluginRecord = {
@@ -86,6 +87,23 @@ describe("plugin synchronization", () => {
     await act(async () => finish([record]));
     expect(usePlugins.getState().ready).toBe(false);
     expect(usePlugins.getState().error).toContain("offline");
+  });
+});
+
+describe("plugin trust review", () => {
+  it("associates the review label with the checkbox that gates trust", () => {
+    usePlugins.setState({ records: [{ ...record, enabled: false, approvedDigest: "" }] });
+    render(<PluginSettings />);
+    fireEvent.click(screen.getByRole("button", { name: "Inspect capabilities & manifest" }));
+    const review = screen.getByRole("checkbox", { name: /reviewed.*manifest/i });
+    const trust = screen.getByRole("button", { name: "Trust and enable" });
+    expect(trust).toBeDisabled();
+    fireEvent.click(screen.getByText(/I reviewed the complete manifest/));
+    expect(review).toBeChecked();
+    expect(trust).toBeEnabled();
+    fireEvent.click(screen.getByText(/I reviewed the complete manifest/));
+    expect(review).not.toBeChecked();
+    expect(trust).toBeDisabled();
   });
 });
 

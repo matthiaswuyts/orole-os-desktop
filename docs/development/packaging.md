@@ -23,9 +23,9 @@ not enough on a clean checkout.
 |---|---|
 | `Orole OS.exe` | 21,641,216 bytes (~20.6 MiB), no console window |
 | `orole-daemon.exe` | 18,138,624 bytes (~17.3 MiB), copied next to the app |
-| `Orole OS Setup 0.1.0.exe` | 12,383,406 bytes (~11.8 MiB), unsigned NSIS installer |
+| `Orole OS Setup 0.1.0.exe` | 12,382,159 bytes (~11.8 MiB), unsigned NSIS installer |
 
-## Installer behaviour (from the MyGo docs; the smoke test confirmed only `/S`, `/D=` and the uninstaller)
+## Installer behaviour (verified: `/S`, `/D=`, uninstaller, and cold/warm OS URL association)
 
 Per-user install to `%LOCALAPPDATA%\Programs\Orole OS`, no admin; Start menu shortcut; uninstaller listed in
 Settings; registers the `orole://` URL scheme. `/S` installs silently (no shortcuts); `/D=<dir>` (last argument,

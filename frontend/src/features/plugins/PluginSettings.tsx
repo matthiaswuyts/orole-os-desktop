@@ -141,7 +141,7 @@ function PluginCard({ record, onEdit }: { record: PluginRecord; onEdit: () => vo
       <div><h4 className="text-xs font-medium">Canonical manifest SHA-256</h4><p className="selectable break-all font-mono text-xs">{record.digest}</p></div>
       <p className="text-xs text-muted-foreground">Saved {new Date(record.updatedAt).toLocaleString()}. Trust applies to this exact digest. Changing the manifest requires a new review.</p>
       {!active && <>
-        <Field><FieldLabel><input type="checkbox" checked={reviewed} disabled={!!busy || !available} onChange={(event) => setReviewed(event.target.checked)} className="size-4 shrink-0 accent-primary" />I reviewed the complete manifest, fixed arguments and requested capabilities.</FieldLabel></Field>
+        <Field><FieldLabel htmlFor={`plugin-review-${record.manifest.id}`}><input id={`plugin-review-${record.manifest.id}`} type="checkbox" checked={reviewed} disabled={!!busy || !available} onChange={(event) => setReviewed(event.target.checked)} className="size-4 shrink-0 accent-primary" />I reviewed the complete manifest, fixed arguments and requested capabilities.</FieldLabel></Field>
         <Button disabled={!reviewed || !!busy || !available} onClick={() => void mutate("trust")}>{busy === "trust" ? "Awaiting daemon approval…" : "Trust and enable"}</Button>
       </>}
       {active && <p className="text-xs text-muted-foreground">Commands are available in search. Add widgets in Home → Customize; they run only when you choose Run action.</p>}

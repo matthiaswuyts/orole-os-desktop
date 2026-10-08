@@ -34,11 +34,11 @@ State of this tree; the code is the source of truth (`docs/architecture/daemon.m
 | Agent runtime and review | Daemon methods and UI integrated | Real Codex turn exercised from installed Home composer with selected model/reasoning and a daemon-owned worktree; Claude structured smoke blocked by expired CLI authorization |
 | Automations | Daemon runtime and editor integrated | Real command + persisted notification workflow exercised; journaled steps, approvals, schedules, cancellation |
 | Machines and remote files | Native and SSH implementations integrated | Local health/files/execution exercised; external Windows/Linux SSH hosts not yet verified |
-| Application launcher and native shell | Integrated | Policy-gated native launch, menu shortcuts, hide/restore and second-instance activation exercised; remaining interactive acceptance is documented |
+| Application launcher and native shell | Integrated; installed-app smoke passed | Shortcut editing and policy-gated execution, hide/restore, cold/warm deep links, and GUI quit/relaunch with the same daemon and PowerShell process exercised |
 | Guided first-run setup | Integrated | Optional steps, daemon-persisted progress; native reload persistence exercised |
 | Packaging: NSIS installer, signed auto-update | Installer built and installed; **no signing keys configured** | Installed WebView2 app connected to its daemon; `docs/development/packaging.md`, `docs/development/updates.md` |
 | Linux / macOS | Not supported as complete desktop targets | Platform-independent packages have tests; no cross-platform desktop-release claim |
-| Declarative MCP plugins | Integrated; daemon trust/execution smoke passed | Exact-manifest trust, independent MCP approval, persisted command/widget declarations, revocation; no arbitrary JavaScript plugin host |
+| Declarative MCP plugins | Integrated; daemon and installed-UI smoke passed | Exact-manifest trust, independent MCP approval, real command/widget execution, persisted revocation; no arbitrary JavaScript plugin host |
 
 ## Quickstart
 

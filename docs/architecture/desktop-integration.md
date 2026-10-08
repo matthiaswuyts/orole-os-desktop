@@ -79,7 +79,19 @@ restoration. The second instance exited with code 0; the original desktop PID an
 daemon PID remained unchanged. Window visibility/minimized state was observed
 through Win32 APIs, and native navigation was observed in the actual WebView.
 
-Remaining interactive acceptance: shortcut editor/reopen/removal, tray menu
-Show/Hide/close/Quit, cold/warm OS deep-link routing, and daemon continuity after
-desktop Quit. Use isolated data and the intended installed build for OS-handler
-acceptance. Do not drive the native window while it is receiving other user input.
+The final isolated installed-desktop smoke also exercised the launcher editor:
+save, deny launch without a file effect, approve launch with an actual PowerShell
+file write, rename, reload persistence, and confirmed removal.
+
+Native Ctrl+Q exited only the GUI. The daemon retained PID 34640 and its terminal;
+launching the rebuilt installer through the OS `orole://open/terminals` association
+restored scrollback and the same PowerShell PID 2340. A variable set before quit
+was still present, and another command ran afterward. A warm
+`orole://open/applications` link navigated the existing window. A link containing
+`?command=whoami` left that view unchanged; deep links do not execute commands.
+These observations do not claim process survival after daemon exit or reboot.
+
+Tray-menu mouse selection of Show/Hide/Quit remains unverified: Windows UI
+Automation exposed the app window but neither an Orole tray button nor a hidden-icon
+control. Native menu shortcuts, hide/restore behavior and GUI-only quit were exercised.
+Use isolated data for OS-handler acceptance; do not drive a window receiving other user input.
