@@ -31,5 +31,12 @@ func DataDir() (string, error) {
 			dir = filepath.Join(base, "orole")
 		}
 	}
+	// Children may start in another working directory; pass an absolute home
+	// so the database, token file and pipe always identify the same instance.
+	absolute, err := filepath.Abs(dir)
+	if err != nil {
+		return "", err
+	}
+	dir = absolute
 	return dir, os.MkdirAll(dir, 0o700)
 }

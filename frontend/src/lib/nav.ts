@@ -1,4 +1,4 @@
-import { AppWindow, Bot, FolderGit2, GitBranch, GitPullRequest, HardDrive, Home, Inbox, LayoutDashboard, Mail, Server, Settings, SquareTerminal, Workflow } from "lucide-react";
+import { AppWindow, Bot, FolderGit2, FolderOpen, GitBranch, GitPullRequest, Globe, HardDrive, Home, Inbox, LayoutDashboard, Mail, Server, Settings, SquareTerminal, Workflow } from "lucide-react";
 import type { ViewId } from "@/stores/ui";
 
 export interface NavItem { id: ViewId; label: string; icon: typeof Home; title?: string; blurb?: string }
@@ -17,7 +17,9 @@ export const MORE: NavItem[] = [
   { id: "drive", label: "Drive", icon: HardDrive, blurb: "Orole Drive." },
   { id: "github", label: "GitHub", icon: GitPullRequest, blurb: "Repositories, issues and pull requests." },
   { id: "projects", label: "Projects", icon: FolderGit2, blurb: "Projects on your machines." },
+  { id: "files", label: "Files", icon: FolderOpen, blurb: "Local and project files, with a conflict-aware editor." },
   { id: "terminals", label: "Terminals", icon: SquareTerminal, blurb: "Persistent terminals." },
+  { id: "browser", label: "Browser preview", icon: Globe, blurb: "Sandboxed web previews at mobile, tablet and desktop widths." },
   { id: "machines", label: "Machines", icon: Server, blurb: "Local and remote machines." },
   { id: "applications", label: "Applications", icon: AppWindow, blurb: "Launcher for apps and shortcuts." },
 ];

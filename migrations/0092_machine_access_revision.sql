@@ -1,0 +1,1 @@
+ALTER TABLE machines ADD COLUMN access_revision INTEGER NOT NULL DEFAULT 1;

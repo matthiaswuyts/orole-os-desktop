@@ -14,8 +14,17 @@ import (
 	"sync"
 	"time"
 
+	"github.com/rayorole/orole-os-desktop/internal/agents"
+	"github.com/rayorole/orole-os-desktop/internal/automations"
 	"github.com/rayorole/orole-os-desktop/internal/database"
+	"github.com/rayorole/orole-os-desktop/internal/events"
 	"github.com/rayorole/orole-os-desktop/internal/ipc"
+	"github.com/rayorole/orole-os-desktop/internal/machines"
+	"github.com/rayorole/orole-os-desktop/internal/mcp"
+	"github.com/rayorole/orole-os-desktop/internal/plugins"
+	"github.com/rayorole/orole-os-desktop/internal/policy"
+	"github.com/rayorole/orole-os-desktop/internal/projects"
+	"github.com/rayorole/orole-os-desktop/internal/systemmetrics"
 	"github.com/rayorole/orole-os-desktop/internal/terminals"
 	"github.com/rayorole/orole-os-desktop/migrations"
 )
@@ -25,16 +34,28 @@ var Version = "0.1.0-dev"
 
 // Daemon is the long-lived background controller.
 type Daemon struct {
-	DataDir   string
-	Log       *slog.Logger
-	DB        *database.DB
-	IPC       *ipc.Server
-	Terminals *terminals.Manager
-	Token     string
-	Endpoint  string
-	started   time.Time
-	stop      chan struct{}
-	stopOnce  sync.Once
+	DataDir     string
+	Log         *slog.Logger
+	DB          *database.DB
+	IPC         *ipc.Server
+	Terminals   *terminals.Manager
+	Projects    *projects.Service
+	Events      *events.Bus
+	Automations *automations.Engine
+	MCP         *mcp.Manager
+	Policy      *policy.Engine
+	Machines    *machines.Manager
+	Plugins     *plugins.Manager
+	Metrics     *systemmetrics.Sampler
+	// Agents runs coding-agent sessions; agentsStart runs once this daemon owns the IPC
+	// endpoint (crash recovery must not run in a refused second daemon), agentsShutdown on exit.
+	Agents                      *agents.Manager
+	agentsStart, agentsShutdown func()
+	Token                       string
+	Endpoint                    string
+	started                     time.Time
+	stop                        chan struct{}
+	stopOnce                    sync.Once
 }
 
 // TokenPath returns where the IPC auth token lives.
@@ -60,6 +81,7 @@ func New(dataDir string, log *slog.Logger) (*Daemon, error) {
 	d.Endpoint = ipc.Endpoint(dataDir)
 	d.IPC = ipc.NewServer(d.Token, Version, os.Getpid(), log)
 	d.Terminals = terminals.NewManager(terminals.NewBackend(), termSink{d})
+	d.Events = events.NewBus()
 	d.registerServices()
 	return d, nil
 }
@@ -76,6 +98,21 @@ func (d *Daemon) Run(ctx context.Context) error {
 	if err := os.WriteFile(TokenPath(d.DataDir), []byte(d.Token), 0o600); err != nil {
 		ln.Close()
 		return err
+	}
+	if d.MCP != nil {
+		if err := d.MCP.Start(ctx); err != nil {
+			d.cleanup(ln)
+			return fmt.Errorf("mcp: %w", err)
+		}
+	}
+	if d.agentsStart != nil {
+		d.agentsStart()
+	}
+	if d.Automations != nil {
+		if err := d.Automations.Start(ctx); err != nil {
+			d.cleanup(ln)
+			return fmt.Errorf("automations: %w", err)
+		}
 	}
 	d.Log.Info("daemon listening", "endpoint", d.Endpoint, "version", Version, "pid", os.Getpid(), "go", runtime.Version())
 	errc := make(chan error, 1)
@@ -94,6 +131,21 @@ func (d *Daemon) Run(ctx context.Context) error {
 func (d *Daemon) cleanup(ln interface{ Close() error }) {
 	ln.Close()
 	d.IPC.CloseAll()
+	if d.Automations != nil {
+		d.Automations.Close()
+	}
+	if d.agentsShutdown != nil {
+		d.agentsShutdown()
+	}
+	if d.Plugins != nil {
+		d.Plugins.Close()
+	}
+	if d.MCP != nil {
+		d.MCP.Close()
+	}
+	if d.Machines != nil {
+		d.Machines.Close()
+	}
 	d.Terminals.Shutdown()
 	os.Remove(TokenPath(d.DataDir))
 	d.DB.Close()

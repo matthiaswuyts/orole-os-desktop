@@ -1,13 +1,15 @@
 import { useCallback } from "react";
 import GridLayout, { WidthProvider, type Layout } from "react-grid-layout/legacy";
 import { useWorkspaces } from "@/stores/workspaces";
-import { widgetByType } from "./registry";
+import { useWidgetRegistry } from "./registry";
+import { Widget } from "./Widget";
 
 const Grid = WidthProvider(GridLayout);
 
 /** Draggable, resizable, persisted widget grid for the active workspace. */
 export function WidgetGrid() {
   const { list, activeId, setWidgets, removeWidget, configureWidget } = useWorkspaces();
+  const widgets = useWidgetRegistry();
   const ws = list.find((w) => w.id === activeId);
   const onLayoutChange = useCallback(
     (l: Layout) => {
@@ -23,13 +25,13 @@ export function WidgetGrid() {
   if (!ws) return null;
   return (
     <Grid className="layout" layout={ws.layout.widgets.map((w) => ({ i: w.id, x: w.x, y: w.y, w: w.w, h: w.h, minW: 2, minH: 3 }))}
-      cols={12} rowHeight={36} margin={[10, 10]} containerPadding={[0, 0]} draggableHandle=".widget-handle" draggableCancel="button,textarea,input,a"
+      cols={12} rowHeight={36} margin={[10, 10]} containerPadding={[0, 0]} draggableHandle=".widget-handle" draggableCancel="button,textarea,input,a,summary,pre"
       onLayoutChange={onLayoutChange} isResizable isDraggable>
       {ws.layout.widgets.map((w) => {
-        const def = widgetByType(w.type);
-        if (!def) return <div key={w.id} className="rounded-lg border bg-card p-3 text-muted-foreground">Unknown widget “{w.type}”<button className="ml-2 underline" onClick={() => removeWidget(w.id)}>remove</button></div>;
+        const def = widgets.find((widget) => widget.type === w.type);
+        if (!def) return <div key={w.id}><Widget title="Unavailable widget" status="unconfigured" message={`“${w.type}” is unavailable. Its plugin may be disabled, removed, or still loading. Your layout is unchanged.`} onRemove={() => removeWidget(w.id)} action={{ label: "Remove widget", onClick: () => removeWidget(w.id) }} /></div>;
         const C = def.component;
-        return <div key={w.id}><C config={w.config} onConfig={(p) => configureWidget(w.id, p)} onRemove={() => removeWidget(w.id)} /></div>;
+        return <div key={w.id}><C widgetType={w.type} config={w.config} onConfig={(p) => configureWidget(w.id, p)} onRemove={() => removeWidget(w.id)} /></div>;
       })}
     </Grid>
   );

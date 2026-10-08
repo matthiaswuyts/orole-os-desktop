@@ -1,0 +1,59 @@
+name: ci
+
+# Pull requests only, read-only token, no secrets. Nothing here publishes or signs anything.
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: oven-sh/setup-bun@v2
+      - name: Go vet
+        run: go vet ./...
+      - name: Go test (race)
+        run: go test -race ./...
+      - name: Frontend install
+        run: bun install --cwd frontend --frozen-lockfile
+      - name: Frontend check (tsc, lint, vitest)
+        run: bun run --cwd frontend check
+      - name: Bindings are up to date
+        shell: pwsh
+        run: |
+          go tool mygo generate
+          git diff --exit-code -- frontend/src/mygo.ts
+      - name: Build daemon, CLI and packaged app (mygo build)
+        shell: pwsh
+        run: ./scripts/build.ps1
+      - name: Installer exists
+        shell: pwsh
+        run: |
+          $i = Get-ChildItem "build/windows-amd64/*Setup*.exe"
+          if (-not $i) { throw "no installer produced" }
+          $i | Format-Table Name, Length
+
+  portable:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      # Only packages with no Windows-only dependency (terminals/ConPTY make the daemon Windows-only today).
+      - name: Go test (race), platform-independent packages
+        run: go test -race ./internal/ipc/... ./internal/database/... ./internal/platform/... ./internal/paths/... ./internal/credentials/...

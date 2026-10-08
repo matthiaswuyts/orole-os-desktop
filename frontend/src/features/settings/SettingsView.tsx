@@ -8,26 +8,42 @@ import { Slider } from "@/components/ui/slider";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
+import { AutostartPanel } from "@/features/settings/Autostart";
 import { CUSTOM_TOKEN_KEYS, validateCustomTokens } from "@/themes/custom";
 import { NotImplemented } from "@/features/shared/States";
 import { fmtUptime } from "@/components/widgets/builtin";
 import { GitPullRequest } from "lucide-react";
+import { GitHubSettings } from "@/features/github/GitHubSettings";
+import { NotificationSettings } from "@/features/notifications/NotificationSettings";
+import { AutomationSettings } from "@/features/automations/AutomationSettings";
+import { MCPSettings } from "@/features/mcp/MCPSettings";
+import { Puzzle } from "lucide-react";
+import { PluginSettings } from "@/features/plugins";
+import { SoundSettings } from "@/features/settings/SoundSettings";
+import { Volume2 } from "lucide-react";
+import { UpdateSettings } from "@/features/settings/UpdateSettings";
+import { useUI } from "@/stores/ui";
+import { WorkspaceSettings } from "@/features/settings/WorkspaceSettings";
+import { PanelsTopLeft } from "lucide-react";
 
 type Section = { id: string; label: string; icon: typeof Palette; built: boolean };
 const SECTIONS: Section[] = [
   { id: "appearance", label: "Appearance", icon: Palette, built: true },
+  { id: "workspaces", label: "Workspaces", icon: PanelsTopLeft, built: true },
   { id: "ascii", label: "ASCII scenes", icon: Image, built: true },
   { id: "accessibility", label: "Accessibility", icon: Accessibility, built: true },
   { id: "terminal", label: "Terminal", icon: SquareTerminal, built: true },
   { id: "machines", label: "Machines", icon: Server, built: false },
   { id: "agents", label: "Agents", icon: Bot, built: false },
-  { id: "github", label: "GitHub", icon: GitPullRequest, built: false },
-  { id: "mcp", label: "MCP servers", icon: PlugZap, built: false },
-  { id: "notifications", label: "Notifications", icon: Bell, built: false },
-  { id: "automations", label: "Automations", icon: Workflow, built: false },
+  { id: "github", label: "GitHub", icon: GitPullRequest, built: true },
+  { id: "mcp", label: "MCP servers", icon: PlugZap, built: true },
+  { id: "plugins", label: "Plugins", icon: Puzzle, built: true },
+  { id: "notifications", label: "Notifications", icon: Bell, built: true },
+  { id: "sound", label: "Sounds", icon: Volume2, built: true },
+  { id: "automations", label: "Automations", icon: Workflow, built: true },
   { id: "security", label: "Security", icon: ShieldCheck, built: false },
   { id: "storage", label: "Storage", icon: HardDrive, built: false },
-  { id: "updates", label: "Updates", icon: Download, built: false },
+  { id: "updates", label: "Updates", icon: Download, built: true },
   { id: "diagnostics", label: "Diagnostics", icon: Stethoscope, built: true },
 ];
 
@@ -184,8 +200,10 @@ function Diagnostics() {
 }
 
 export function SettingsView() {
-  const [id, setId] = useState("appearance");
-  const sec = SECTIONS.find((s) => s.id === id)!;
+  const requested = useUI((state) => state.settingsSection);
+  const sec = SECTIONS.find((section) => section.id === requested) ?? SECTIONS[0]!;
+  const id = sec.id;
+  const setId = useUI((state) => state.openSettings);
   return (
     <div className="flex h-full min-h-0 gap-4 p-4">
       <nav aria-label="Settings sections" className="w-44 shrink-0 border-r pr-2">
@@ -199,10 +217,18 @@ export function SettingsView() {
       <div className="min-h-0 flex-1 overflow-auto pr-1">
         <h1 className="mb-3 text-base font-medium">{sec.label}</h1>
         {id === "appearance" && <Appearance />}
+        {id === "workspaces" && <WorkspaceSettings />}
         {id === "ascii" && <Ascii />}
         {id === "accessibility" && <A11y />}
         {id === "terminal" && <TerminalSettingsSection />}
-        {id === "diagnostics" && <Diagnostics />}
+        {id === "github" && <GitHubSettings />}
+        {id === "mcp" && <MCPSettings />}
+        {id === "plugins" && <PluginSettings />}
+        {id === "notifications" && <NotificationSettings />}
+        {id === "sound" && <SoundSettings />}
+        {id === "automations" && <AutomationSettings />}
+        {id === "updates" && <UpdateSettings />}
+        {id === "diagnostics" && <><Diagnostics /><AutostartPanel /></>}
         {!sec.built && <NotImplemented app={`${sec.label} settings`} />}
       </div>
     </div>

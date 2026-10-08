@@ -6,9 +6,15 @@ import { startDaemonPolling } from "@/stores/daemon";
 import { useSettings } from "@/stores/settings";
 import { useUI } from "@/stores/ui";
 import { useWorkspaces } from "@/stores/workspaces";
+import { useAgents } from "@/stores/agents";
 import { NotImplemented } from "@/features/shared/States";
 import { views } from "@/features/registry";
 import { navItem } from "@/lib/nav";
+import { PolicyApprovals } from "@/features/mcp/PolicyApprovals";
+import { NativeNavigation } from "@/features/applications/NativeNavigation";
+import { PluginContributions } from "@/features/plugins";
+import { AudioFeedback } from "@/components/shell/AudioFeedback";
+import { useUpdates } from "@/stores/updates";
 
 function ViewHost() {
   const view = useUI((s) => s.view);
@@ -23,13 +29,19 @@ export default function App() {
     void useWorkspaces.getState().load();
     const off1 = startDaemonPolling();
     const off2 = registerCoreCommands();
-    return () => { off1(); off2(); };
+    const offAgents = useAgents.getState().init();
+    const offUpdates = useUpdates.getState().startSync();
+    return () => { off1(); off2(); offAgents(); offUpdates(); };
   }, []);
   return (
     <AppShell>
       <Suspense fallback={<div role="status" className="p-6 text-muted-foreground">Loading…</div>}>
         <ViewHost />
       </Suspense>
+      <PolicyApprovals />
+      <NativeNavigation />
+      <PluginContributions />
+      <AudioFeedback />
     </AppShell>
   );
 }

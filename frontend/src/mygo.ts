@@ -4,10 +4,719 @@ import { call, event } from "mygo-runtime";
 
 // ---- Types ----
 
+/** ASMetadata is the subset of RFC 8414 / OIDC discovery metadata we act on. */
+export interface ASMetadata {
+  issuer: string;
+  authorizationEndpoint: string;
+  tokenEndpoint: string;
+  registrationEndpoint?: string;
+  revocationEndpoint?: string;
+  scopesSupported?: string[];
+  codeChallengeMethods?: string[];
+  tokenEndpointAuthMethods?: string[];
+  grantTypes?: string[];
+  issParameterSupported: boolean;
+  clientIdMetadataDocumentSupported: boolean;
+  dpopSigningAlgValuesSupported?: string[];
+}
+
+export interface Access {
+  id: string;
+  roots: string[];
+  allowCommands: boolean;
+  allowWrite: boolean;
+}
+
+/**
+ * AddParams creates a server. BearerToken and ClientSecret go to the credential
+ * store and are never persisted anywhere else.
+ */
+export interface AddParams {
+  name: string;
+  url: string;
+  adapter: string;
+  authKind: AuthKind;
+  oauthClientId: string;
+  scopes: string;
+  bearerToken?: string;
+  clientSecret?: string;
+}
+
+/** AgentRef identifies a session. */
+export interface AgentRef {
+  id: string;
+}
+
+/** Status is where a session sits in the dashboard. */
+export type AgentsStatus = "idle" | "working" | "needs-you" | "done" | "failed" | "stopped" | "lost";
+
+export interface ApplicationRef {
+  id: string;
+}
+
+export interface Approval {
+  runId: string;
+  stepId: string;
+  name: string;
+  message: string;
+  expiresAt: number;
+}
+
+export interface ApprovalQueue {
+  items: Pending[];
+}
+
+/** AuthDiag is the non-secret OAuth picture of a server. */
+export interface AuthDiag {
+  kind: AuthKind;
+  hasCredentials: boolean;
+  hasRefreshToken: boolean;
+  /** unix */
+  accessExpiresAt?: number;
+  issuer?: string;
+  authorizationEndpoint?: string;
+  tokenEndpoint?: string;
+  registrationKind?: string;
+  clientId?: string;
+  scopes?: string;
+  authorizedAt?: number;
+  flowActive: boolean;
+}
+
+/** AuthDone is published as "mcp.auth.done" when a flow finishes. */
+export interface AuthDone {
+  serverId: string;
+  ok: boolean;
+  error?: string;
+}
+
+/** AuthKind says how a server authenticates. */
+export type AuthKind = "none" | "bearer" | "oauth";
+
+/**
+ * AuthStart is returned when an authorization flow has begun. The daemon never
+ * opens a browser itself: it publishes "mcp.auth.url" and the desktop shell opens URL.
+ */
+export interface AuthStart {
+  serverId: string;
+  serverName: string;
+  url: string;
+  redirectUri: string;
+  registrationKind: string;
+  /** unix ms */
+  expiresAt: number;
+}
+
+export interface AutomationsIssue {
+  path: string;
+  message: string;
+}
+
+export interface AutomationsRun {
+  id: string;
+  automationId: string;
+  name: string;
+  status: string;
+  triggerType: string;
+  triggerData: unknown;
+  chain: string[];
+  error: string;
+  createdAt: number;
+  startedAt: number;
+  finishedAt: number;
+  definition: Definition;
+}
+
+/** AutostartStatus describes whether the daemon starts at user logon. */
+export interface AutostartStatus {
+  enabled: boolean;
+  supported: boolean;
+  /** "Task Scheduler (per-user logon task)", "systemd user unit", ... */
+  mechanism: string;
+  /** task/unit name or why it is unsupported */
+  detail: string;
+}
+
+/** Branch is a local or remote-tracking branch. */
+export interface Branch {
+  name: string;
+  remote: boolean;
+  current: boolean;
+  hash: string;
+  upstream?: string;
+  ahead: number;
+  behind: number;
+  gone: boolean;
+  date: number;
+  subject: string;
+}
+
+/** BranchState is the head state reported by status. */
+export interface BranchState {
+  oid: string;
+  /** branch name, or "(detached)" */
+  head: string;
+  upstream?: string;
+  ahead: number;
+  behind: number;
+}
+
+/** CallResult is a tool result. It is untrusted data. */
+export interface CallResult {
+  isError: boolean;
+  content: ContentBlock[];
+  structured?: unknown;
+  latencyMs: number;
+  /** always true: render as data */
+  untrusted: boolean;
+}
+
+export interface Capabilities {
+  canFolders: boolean;
+  canList: boolean;
+  canSearch: boolean;
+  canThread: boolean;
+  canSend: boolean;
+  canReply: boolean;
+  canTrash: boolean;
+}
+
+/** Catalog is the discovery cache for one server. */
+export interface Catalog {
+  serverId: string;
+  fetchedAt: number;
+  protocolVersion: string;
+  serverName: string;
+  serverVersion: string;
+  capabilities: unknown;
+  tools: ToolInfo[];
+  resources: ResourceInfo[];
+  prompts: PromptInfo[];
+  /** Skipped counts tools dropped because their name was unsafe. */
+  skipped?: number;
+}
+
+/** Check is a pass/fail probe with detail. */
+export interface Check {
+  ok: boolean;
+  detail: string;
+}
+
+/** CheckRun is a check run on a commit. */
+export interface CheckRun {
+  id: number;
+  name: Untrusted;
+  status: string;
+  conclusion: string;
+  html_url: string;
+  started_at: string | null;
+  completed_at: string | null;
+  output: { title: Untrusted; summary: Untrusted };
+}
+
+/** ChecksSummary rolls check runs up into counts. */
+export interface ChecksSummary {
+  total: number;
+  passed: number;
+  failed: number;
+  pending: number;
+}
+
+export interface Command {
+  id: string;
+  operationId: string;
+  program: string;
+  args: string[];
+  timeoutSeconds: number;
+}
+
+export interface CommandResult {
+  stdout: string;
+  stderr: string;
+  exitCode: number;
+  truncated: boolean;
+}
+
+/** Comment is an issue or PR conversation comment. */
+export interface Comment {
+  id: number;
+  user: User;
+  body: Untrusted;
+  created_at: string;
+  updated_at: string;
+  html_url: string;
+  author_association: string;
+}
+
+/** Commit is one log entry. */
+export interface Commit {
+  hash: string;
+  short: string;
+  author: string;
+  email: string;
+  date: number;
+  refs: string[];
+  subject: string;
+}
+
+export interface Compose {
+  to: string[];
+  subject: string;
+  body: string;
+}
+
+export interface Config {
+  globalConcurrency: number;
+  perAutomation: number;
+  webhookEnabled: boolean;
+  webhookPort: number;
+  hasSecret: boolean;
+}
+
+/** ContentBlock is one part of a tool result. Text is sanitised and size-limited. */
+export interface ContentBlock {
+  /** text | image | audio | resource | resource_link */
+  type: string;
+  text?: string;
+  mimeType?: string;
+  uri?: string;
+  /** size of binary payload (not forwarded) */
+  bytes?: number;
+  /** text was cut at the size limit */
+  truncated?: boolean;
+}
+
 /** DaemonLink is the link status shown in the status bar. */
 export interface DaemonLink {
   connected: boolean;
   error?: string;
+}
+
+/** Decision is the outcome of a policy evaluation. */
+export type Decision = "allow" | "ask" | "deny";
+
+/** Definition is a versioned automation document. */
+export interface Definition {
+  schemaVersion: number;
+  id: string;
+  name: string;
+  description: string;
+  enabled: boolean;
+  trigger: Trigger;
+  steps: Step[];
+  allowedExecutables: string[];
+  allowedHosts: string[];
+  allowHttp: boolean;
+  concurrency: number;
+  timeoutSec: number;
+}
+
+/** DeleteResult reports how an item was removed. */
+export interface DeleteResult {
+  recycled: boolean;
+}
+
+/**
+ * DesktopNavigation is an ephemeral shell navigation request, never an external URL.
+ * Sequence lets React subscribe before fetching the last request without replay races.
+ */
+export interface DesktopNavigation {
+  view: string;
+  sequence: number;
+}
+
+export interface Detail {
+  run: AutomationsRun;
+  steps: Journal[];
+}
+
+/** Detection reports whether an agent CLI is installed. */
+export interface Detection {
+  kind: string;
+  name: string;
+  installed: boolean;
+  path: string;
+  version: string;
+  error: string;
+  /**
+   * Modes this adapter can run in; Structured/Resume/Permissions describe what the UI
+   * can honestly rely on.
+   */
+  modes: Mode[];
+  /** can continue a session by the CLI's session id */
+  resume: boolean;
+  /** permission requests can be approved from the dashboard */
+  permissions: boolean;
+  /** "stream-json" | "hooks" | "process" (exit only) */
+  statusFeed: string;
+}
+
+/** Diagnostics explains the current state of a server connection. */
+export interface Diagnostics {
+  server: ServerState;
+  lastError?: string;
+  lastErrorAt?: number;
+  attempts: number;
+  /** unix ms */
+  nextRetryAt?: number;
+  /** unix */
+  connectedAt?: number;
+  /** last ping/call round trip */
+  latencyMs: number;
+  protocolVersion?: string;
+  serverName?: string;
+  serverVersion?: string;
+  capabilities?: unknown;
+  tools: number;
+  resources: number;
+  prompts: number;
+  catalogAt?: number;
+  auth: AuthDiag;
+  /** latest auth discovery result */
+  discovery?: Discovery;
+}
+
+/** DiffFile is one changed file. Status: added | deleted | modified | renamed | copied. */
+export interface DiffFile {
+  path: string;
+  oldPath?: string;
+  status: string;
+  binary: boolean;
+  additions: number;
+  deletions: number;
+  hunks: DiffHunk[];
+}
+
+/** DiffHunk is one @@ section. */
+export interface DiffHunk {
+  header: string;
+  oldStart: number;
+  oldLines: number;
+  newStart: number;
+  newLines: number;
+  lines: DiffLine[];
+}
+
+/**
+ * DiffLine is one line of a hunk. Kind is " " (context), "+" or "-".
+ * Old/New are 1-based line numbers, 0 when not applicable.
+ */
+export interface DiffLine {
+  kind: string;
+  text: string;
+  old: number;
+  new: number;
+}
+
+/** DiffRequest selects a diff: unstaged by default, staged, work tree vs From, or From..To. */
+export interface DiffRequest {
+  projectId: string;
+  worktreeId: string;
+  staged: boolean;
+  from: string;
+  to: string;
+  path: string;
+  context: number;
+}
+
+/** DiffResult is a parsed diff. Truncated is set when output exceeded the size cap. */
+export interface DiffResult {
+  files: DiffFile[];
+  additions: number;
+  deletions: number;
+  truncated: boolean;
+}
+
+export interface DirectoryOption {
+  path: string;
+  name: string;
+  git: boolean;
+}
+
+/** Discovery is the outcome of OAuth discovery for an MCP endpoint (no login involved). */
+export interface Discovery {
+  resourceUrl: string;
+  requiresAuth: boolean;
+  probeStatus: number;
+  challengeScope?: string;
+  challengeError?: string;
+  protectedResourceMetadataUrl?: string;
+  resource?: string;
+  /** BearerMethods/PRMScopes come from the protected-resource metadata. */
+  bearerMethods?: string[];
+  prmScopes?: string[];
+  authorizationServers?: string[];
+  authorizationServerMetadataUrl?: string;
+  authorizationServer?: ASMetadata;
+  /** dcr, cimd */
+  registrationMethods?: string[];
+  requestedScopes?: string[];
+  attempts?: DiscoveryAttempt[];
+}
+
+/** DiscoveryAttempt records one metadata URL we tried. */
+export interface DiscoveryAttempt {
+  /** challenge | prm | as */
+  kind: string;
+  url: string;
+  /** ok | <reason> */
+  result: string;
+}
+
+export interface DriveCapabilities {
+  canList: boolean;
+  canSearch: boolean;
+  canStat: boolean;
+  canPreview: boolean;
+  canTrash: boolean;
+}
+
+export interface DriveMutation {
+  id: string;
+  confirmed: boolean;
+}
+
+export interface DrivePage {
+  files: File[];
+  nextPageToken: string;
+}
+
+export interface DriveQuery {
+  parentId: string;
+  query: string;
+  pageToken: string;
+  limit: number;
+}
+
+export interface DriveStatus {
+  configured: boolean;
+  connected: boolean;
+  serverId: string;
+  serverName: string;
+  state: string;
+  error: string;
+  capabilities: DriveCapabilities;
+}
+
+/** Effect classifies what an action does to the world. */
+export type Effect = "" | "read" | "write" | "destructive";
+
+/** Entry is one directory listing row. */
+export interface Entry {
+  name: string;
+  path: string;
+  isDir: boolean;
+  size: number;
+  modTime: string;
+  /**
+   * Link is set for symlinks and junctions. They are listed but never
+   * followed by Search, and Delete removes only the link.
+   */
+  link?: boolean;
+  /** ReadOnly reflects the read-only attribute. */
+  readOnly?: boolean;
+  /** Hidden reflects the hidden attribute or a leading dot. */
+  hidden?: boolean;
+  /** Git is the porcelain XY status for the git provider ("" = clean/unknown). */
+  git?: string;
+}
+
+/** Event is one entry in a session's history. */
+export interface Event {
+  id: number;
+  sessionId: string;
+  at: string;
+  kind: string;
+  text: string;
+  data: unknown;
+}
+
+/** Field describes a typed step parameter for the structured editor. */
+export interface Field {
+  key: string;
+  label: string;
+  kind: string;
+  required: boolean;
+  options: string[];
+  hint: string;
+}
+
+export interface File {
+  id: string;
+  name: string;
+  mimeType: string;
+  parentId: string;
+  size: number;
+  modifiedTime: string;
+  isFolder: boolean;
+}
+
+/** FileProvider describes a provider tab for the UI. */
+export interface FileProvider {
+  id: string;
+  label: string;
+  connected: boolean;
+  /**
+   * ManagedRoots is true when the user approves roots here (local); git roots
+   * come from the project registry, remote and drive from their own setup.
+   */
+  managedRoots: boolean;
+  note?: string;
+}
+
+/** FileRead carries binary-safe base64 content; the editor checks UTF-8 before editing. */
+export interface FileRead {
+  data: string;
+  offset: number;
+  size: number;
+  truncated: boolean;
+  info: FilesInfo;
+}
+
+export interface FileReadRequest {
+  machineId: string;
+  path: string;
+  options: ReadOptions;
+}
+
+export interface FileRequest {
+  machineId: string;
+  path: string;
+}
+
+export interface FileRootsChange {
+  provider: string;
+}
+
+/**
+ * FileStatus is one changed path. Index and Worktree are the porcelain X/Y letters
+ * ("." = unchanged); Kind is a coarse category for the UI.
+ */
+export interface FileStatus {
+  path: string;
+  origPath?: string;
+  index: string;
+  worktree: string;
+  /** modified | added | deleted | renamed | untracked | conflicted | ignored */
+  kind: string;
+}
+
+export interface FileWriteRequest {
+  machineId: string;
+  path: string;
+  data: string;
+  options: WriteOptions;
+}
+
+/**
+ * FileWriteResult is files.write's answer: a conflict is data, not an error, so
+ * the editor can show the current version without parsing messages.
+ */
+export interface FileWriteResult {
+  info?: FilesInfo;
+  conflict: boolean;
+  /** Deleted: the file was removed since it was read. */
+  deleted?: boolean;
+  /** Current describes the on-disk version when Conflict. */
+  current?: FilesInfo;
+}
+
+/** FilesChanged is published after any mutation so views can refresh. */
+export interface FilesChanged {
+  provider: string;
+  dir: string;
+}
+
+/** Info is Stat output: an Entry plus the etag used for optimistic writes. */
+export interface FilesInfo {
+  name: string;
+  path: string;
+  isDir: boolean;
+  size: number;
+  modTime: string;
+  /**
+   * Link is set for symlinks and junctions. They are listed but never
+   * followed by Search, and Delete removes only the link.
+   */
+  link?: boolean;
+  /** ReadOnly reflects the read-only attribute. */
+  readOnly?: boolean;
+  /** Hidden reflects the hidden attribute or a leading dot. */
+  hidden?: boolean;
+  /** Git is the porcelain XY status for the git provider ("" = clean/unknown). */
+  git?: string;
+  /**
+   * Etag is "v1:<mtime unix nanos>:<size>:<sha256 hex>"; the hash part is empty
+   * for files above MaxHashBytes (then mtime+size alone are compared).
+   */
+  etag?: string;
+  /** Root is the id of the root that contains the path. */
+  root?: string;
+}
+
+export interface Folder {
+  id: string;
+  name: string;
+  unreadCount: number;
+}
+
+/** GitHubChange says why GitHub data changed (login, logout, issue.create, ...). */
+export interface GitHubChange {
+  reason: string;
+}
+
+/** GitHubCloneEvent is published as github.clone while a clone runs. */
+export interface GitHubCloneEvent {
+  id: string;
+  repo: string;
+  /** running, done, error */
+  state: string;
+  line?: string;
+  percent: number;
+  target?: string;
+  error?: string;
+}
+
+/** GitHubStatus is the connection state shown in setup screens, settings and widgets. */
+export interface GitHubStatus {
+  connected: boolean;
+  /** "gh", "pat" or "" */
+  source: string;
+  user?: User;
+  error?: string;
+  ghDetected: boolean;
+  ghLogin?: string;
+  patStored: boolean;
+  scopes?: string;
+  rate: RateLimit[];
+}
+
+/** HandOffParams configures HandOff. */
+export interface HandOffParams {
+  /** session whose work is handed over */
+  from: string;
+  /** agent kind to start */
+  kind: string;
+  /** extra instructions from the user */
+  note: string;
+  /** optional */
+  model: string;
+  mode: Mode;
+  permissionMode: string;
+}
+
+export interface HarnessOption {
+  id: string;
+  name: string;
+  available: boolean;
+  executable: string;
+  version: string;
+  reasoning: string[];
+  customModel: boolean;
+  modes: Mode[];
+  structured: boolean;
+  interactive: boolean;
+  unavailableReason: string;
 }
 
 /** Health is the daemon's status snapshot. */
@@ -23,6 +732,30 @@ export interface Health {
   memAllocMB: number;
   terminals: number;
   protocolVersion: number;
+}
+
+/**
+ * HostMetrics is one real host observation. CPUPercent is meaningful only when
+ * CPUReady is true: CPU utilization requires two distinct counter observations.
+ * DiskPath is the daemon-configured data directory, never a client-supplied path.
+ */
+export interface HostMetrics {
+  sampledAt: string;
+  cpuPercent: number;
+  cpuReady: boolean;
+  logicalCPUs: number;
+  memoryTotalBytes: number;
+  memoryAvailableBytes: number;
+  uptimeSeconds: number;
+  diskTotalBytes: number;
+  diskAvailableBytes: number;
+  diskPath: string;
+}
+
+export interface Identity {
+  address: string;
+  fingerprint: string;
+  keyType: string;
 }
 
 /** Info is a session snapshot. */
@@ -42,6 +775,889 @@ export interface Info {
   owner?: string;
 }
 
+/** Issue is an issue (pull requests also appear in issue lists with PullRequest set). */
+export interface Issue {
+  id: number;
+  number: number;
+  title: Untrusted;
+  body: Untrusted;
+  state: string;
+  state_reason: string;
+  user: User;
+  labels: Label[];
+  assignees: User[];
+  milestone: Milestone | null;
+  comments: number;
+  html_url: string;
+  repository_url: string;
+  created_at: string;
+  updated_at: string;
+  closed_at: string | null;
+  pull_request?: { url: string };
+  /** Repo is "owner/name", derived from RepositoryURL (not part of the API object). */
+  repo: string;
+}
+
+/** IssueAgentRun is durable provenance, including the exact issue snapshot reviewed at launch. */
+export interface IssueAgentRun {
+  id: string;
+  key: string;
+  repo: string;
+  number: number;
+  issueUrl: string;
+  issueTitle: string;
+  issueBody: string;
+  issueUpdatedAt: string;
+  projectId: string;
+  kind: string;
+  task: string;
+  sessionId: string;
+  worktree: string;
+  branch: string;
+  baseRef: string;
+  state: string;
+  error: string;
+  prUrl: string;
+}
+
+/**
+ * IssueAgentStart deliberately separates the user's task from the reviewed GitHub source.
+ * Key identifies one intent across retries, never an agent-provided authority token.
+ */
+export interface IssueAgentStart {
+  repo: string;
+  number: number;
+  projectId: string;
+  kind: string;
+  task: string;
+  issueUpdatedAt: string;
+  key: string;
+  confirmed: boolean;
+}
+
+/** IssueDetail is an issue with its conversation. */
+export interface IssueDetail {
+  issue: Issue;
+  comments: Comment[];
+}
+
+/** IssuePRPreparation freezes the exact committed diff and user-authored PR text to confirm. */
+export interface IssuePRPreparation {
+  run: IssueAgentRun;
+  token: string;
+  head: string;
+  base: string;
+  baseHead: string;
+  title: string;
+  body: string;
+  diff: string;
+}
+
+/** IssueQuery filters an issue list. Repo "" lists issues assigned to the user. */
+export interface IssueQuery {
+  repo: string;
+  state: string;
+  labels: string[];
+  assignee: string;
+  creator: string;
+  milestone: string;
+  sort: string;
+  limit: number;
+}
+
+/**
+ * IssueWrite is the payload for creating or editing an issue. Confirmed must be
+ * true, set only after the UI's confirmation dialog; the daemon refuses and
+ * audits writes without it.
+ */
+export interface IssueWrite {
+  repo: string;
+  number: number;
+  title: string | null;
+  body: string | null;
+  state: string | null;
+  labels: string[];
+  setLabels: boolean;
+  assignees: string[];
+  setAssignees: boolean;
+  milestone: number | null;
+  confirmed: boolean;
+}
+
+/** Job is a job of a workflow run. */
+export interface Job {
+  id: number;
+  run_id: number;
+  name: Untrusted;
+  status: string;
+  conclusion: string;
+  html_url: string;
+  started_at: string | null;
+  completed_at: string | null;
+  steps: JobStep[];
+}
+
+/** JobStep is a step of a job. */
+export interface JobStep {
+  name: Untrusted;
+  status: string;
+  conclusion: string;
+  number: number;
+}
+
+export interface Journal {
+  runId: string;
+  stepId: string;
+  seq: number;
+  type: string;
+  status: string;
+  attempt: number;
+  key: string;
+  input: unknown;
+  output: unknown;
+  error: string;
+  startedAt: number;
+  finishedAt: number;
+}
+
+/** Label is an issue label. */
+export interface Label {
+  id: number;
+  name: Untrusted;
+  color: string;
+  description: Untrusted;
+}
+
+/** LaunchOptions contains discovered machine-scoped choices, not an account model inventory. */
+export interface LaunchOptions {
+  machine: string;
+  harnesses: HarnessOption[];
+  projects: ProjectOption[];
+  directories: DirectoryOption[];
+  worktree: boolean;
+  unavailableReason: string;
+}
+
+export interface LaunchResult {
+  shortcutId: string;
+  pid: number;
+}
+
+/** Level is a notification's severity. */
+export type Level = "info" | "success" | "warning" | "error";
+
+/** LogFile is one file of a run's log archive. */
+export interface LogFile {
+  name: Untrusted;
+  text: Untrusted;
+  truncated: boolean;
+}
+
+/** LoopParams configures LoopUntil. */
+export interface LoopParams {
+  session: string;
+  /** success = exit code 0 */
+  command: string;
+  /** 1..20; each failed round asks the agent to fix and runs the command again */
+  maxRounds: number;
+  /** optional extra guidance added to each fix request */
+  prompt: string;
+}
+
+export interface Machine {
+  id: string;
+  name: string;
+  kind: string;
+  os: string;
+  transport: string;
+  backend: string;
+  address: string;
+  username: string;
+  fingerprint: string;
+  roots: string[];
+  allowCommands: boolean;
+  allowWrite: boolean;
+  createdAt: number;
+}
+
+export interface MachineHealth {
+  id: string;
+  reachable: boolean;
+  checkedAt: number;
+  latencyMs: number;
+  hostname: string;
+  os: string;
+  architecture: string;
+  logicalCpus: number;
+  daemonUptimeSeconds: number;
+  daemonHeapBytes: number;
+  detail: string;
+  memoryTotalBytes: number;
+  memoryAvailableBytes: number;
+  memoryReady: boolean;
+  metricError: string;
+}
+
+export interface MailStatus {
+  configured: boolean;
+  connected: boolean;
+  serverId: string;
+  serverName: string;
+  state: string;
+  error: string;
+  capabilities: Capabilities;
+}
+
+/** Status is a connection's state. */
+export type McpStatus = "disabled" | "connecting" | "connected" | "auth_required" | "backoff";
+
+export interface Message {
+  id: string;
+  threadId: string;
+  subject: string;
+  from: string;
+  to: string[];
+  date: string;
+  snippet: string;
+  body: string;
+  unread: boolean;
+}
+
+/** Milestone groups issues. */
+export interface Milestone {
+  number: number;
+  title: Untrusted;
+  description: Untrusted;
+  state: string;
+  open_issues: number;
+  closed_issues: number;
+  due_on: string | null;
+}
+
+/** Mode is how an agent is run. */
+export type Mode = "structured" | "terminal" | "process";
+
+export interface Mutation {
+  id: string;
+  confirmed: boolean;
+}
+
+/** Notification is an inbox thread. */
+export interface Notification {
+  id: string;
+  unread: boolean;
+  reason: string;
+  updated_at: string;
+  subject: { title: Untrusted; url: string; type: string };
+  repository: { full_name: string; html_url: string };
+}
+
+/** NotificationEvent is published on "notifications.changed". */
+export interface NotificationEvent {
+  /** Kind: created | updated. */
+  kind: string;
+  notification?: NotificationsNotification;
+  unread: number;
+  /** Native asks the desktop to show an OS notification (per-source preference). */
+  native?: boolean;
+  /** Sound permits audio only for newly created notifications. */
+  sound: boolean;
+}
+
+/** NotificationList is notifications.list's answer. */
+export interface NotificationList {
+  items: NotificationsNotification[];
+  unread: number;
+  sources: SourceCount[];
+}
+
+/** NotificationNativeState reports submission, not whether a user saw or heard a toast. */
+export interface NotificationNativeState {
+  id: string;
+  accepted: boolean;
+  denied: boolean;
+  error?: string;
+}
+
+/** Notification is one stored entry. */
+export interface NotificationsNotification {
+  id: string;
+  /** unix seconds */
+  at: number;
+  source: string;
+  title: string;
+  body: string;
+  level: Level;
+  read: boolean;
+  dismissed: boolean;
+}
+
+export interface Page {
+  messages: Message[];
+  nextPageToken: string;
+}
+
+export interface PairRequest {
+  name: string;
+  address: string;
+  username: string;
+  os: string;
+  fingerprint: string;
+  privateKeyPath: string;
+}
+
+/** Pending is an approval waiting for the user. */
+export interface Pending {
+  id: string;
+  actor: string;
+  action: string;
+  resource: string;
+  detail: string;
+  effect: Effect;
+  fromHint: boolean;
+  reason: string;
+  /** unix ms */
+  createdAt: number;
+  /** unix ms */
+  expiresAt: number;
+  /** CanRemember is false for destructive actions: those always ask. */
+  canRemember: boolean;
+}
+
+/** PermissionRequest is a tool-use approval the agent is blocked on. */
+export interface PermissionRequest {
+  id: string;
+  tool: string;
+  summary: string;
+  input: unknown;
+  at: string;
+}
+
+export interface PluginAction {
+  id: string;
+  title: string;
+  description: string;
+  serverId: string;
+  tool: string;
+  arguments: unknown;
+}
+
+export interface PluginCapability {
+  serverId: string;
+  tool: string;
+}
+
+export interface PluginChange {
+  id: string;
+}
+
+export interface PluginCommand {
+  id: string;
+  title: string;
+  description: string;
+  actionId: string;
+}
+
+export interface PluginManifest {
+  schemaVersion: number;
+  id: string;
+  name: string;
+  version: string;
+  description: string;
+  capabilities: PluginCapability[];
+  actions: PluginAction[];
+  commands: PluginCommand[];
+  widgets: PluginWidget[];
+}
+
+export interface PluginRecord {
+  manifest: PluginManifest;
+  digest: string;
+  enabled: boolean;
+  approvedDigest: string;
+  updatedAt: number;
+}
+
+export interface PluginRef {
+  id: string;
+  digest: string;
+}
+
+export interface PluginRunRequest {
+  id: string;
+  digest: string;
+  actionId: string;
+}
+
+export interface PluginRunResult {
+  text: string;
+  isError: boolean;
+  truncated: boolean;
+}
+
+export interface PluginSaveRequest {
+  manifest: PluginManifest;
+  expectedDigest: string;
+}
+
+export interface PluginTrustRequest {
+  id: string;
+  digest: string;
+  enabled: boolean;
+}
+
+export interface PluginWidget {
+  id: string;
+  title: string;
+  description: string;
+  actionId: string;
+}
+
+/** Prefs are per-source preferences with defaults for unlisted sources. */
+export interface Prefs {
+  default: SourcePref;
+  sources: Record<string, SourcePref>;
+}
+
+export interface Preview {
+  fileId: string;
+  mimeType: string;
+  kind: string;
+  text: string;
+  dataUrl: string;
+  truncated: boolean;
+}
+
+/** Project is a registered git repository. */
+export interface Project {
+  id: string;
+  name: string;
+  machineId: string;
+  path: string;
+  remoteUrl: string;
+  lastOpened: number;
+  createdAt: number;
+  /** effective root (configured or default) */
+  worktreeRoot: string;
+  /** WorktreeRootCustom is true when the root was configured rather than the default. */
+  worktreeRootCustom: boolean;
+  /** Missing is true when the project directory no longer exists. */
+  missing: boolean;
+}
+
+export interface ProjectOption {
+  id: string;
+  name: string;
+  path: string;
+  machine: string;
+  git: boolean;
+}
+
+/** ProjectRef identifies the project an event concerns. */
+export interface ProjectRef {
+  projectId: string;
+}
+
+/** PromptArg is a prompt argument. */
+export interface PromptArg {
+  name: string;
+  description?: string;
+  required?: boolean;
+}
+
+/** PromptInfo is a discovered prompt. */
+export interface PromptInfo {
+  name: string;
+  description?: string;
+  arguments?: PromptArg[];
+}
+
+/** PullFile is one file of a pull request diff. */
+export interface PullFile {
+  filename: Untrusted;
+  previous_filename: Untrusted;
+  status: string;
+  additions: number;
+  deletions: number;
+  changes: number;
+  patch: Untrusted;
+}
+
+/** PullRef is a branch reference of a pull request. */
+export interface PullRef {
+  ref: Untrusted;
+  sha: string;
+  repo: { full_name: string } | null;
+}
+
+/** PullRequest is a pull request. */
+export interface PullRequest {
+  id: number;
+  number: number;
+  title: Untrusted;
+  body: Untrusted;
+  state: string;
+  draft: boolean;
+  merged: boolean;
+  mergeable: boolean | null;
+  mergeable_state: string;
+  user: User;
+  head: PullRef;
+  base: PullRef;
+  labels: Label[];
+  assignees: User[];
+  requested_reviewers: User[];
+  html_url: string;
+  created_at: string;
+  updated_at: string;
+  closed_at: string | null;
+  merged_at: string | null;
+  additions: number;
+  deletions: number;
+  changed_files: number;
+  comments: number;
+  review_comments: number;
+  commits: number;
+}
+
+/** PullStatus is the lightweight review + CI state shown in PR lists. */
+export interface PullStatus {
+  /** ReviewState is approved, changes_requested, commented or none (latest review per reviewer). */
+  reviewState: string;
+  reviews: Review[];
+  checks: ChecksSummary;
+  checkRuns: CheckRun[];
+}
+
+export interface Query {
+  folderId: string;
+  query: string;
+  pageToken: string;
+  limit: number;
+}
+
+/** RateLimit is the last observed limit for a resource bucket. */
+export interface RateLimit {
+  resource: string;
+  limit: number;
+  remaining: number;
+  resetAt: string;
+}
+
+/**
+ * ReadOptions selects a byte range. Length 0 reads the whole file, which must
+ * then fit in MaxBytes (default MaxReadBytes), otherwise ErrTooLarge.
+ */
+export interface ReadOptions {
+  offset?: number;
+  length?: number;
+  maxBytes?: number;
+}
+
+/** ReadResult is file content. Etag describes the whole file as of the read. */
+export interface ReadResult {
+  data: string;
+  offset: number;
+  size: number;
+  truncated: boolean;
+  info: FilesInfo;
+}
+
+export interface Reply {
+  threadId: string;
+  body: string;
+}
+
+/** Repo is a repository. */
+export interface Repo {
+  id: number;
+  name: string;
+  full_name: string;
+  private: boolean;
+  fork: boolean;
+  archived: boolean;
+  description: Untrusted;
+  html_url: string;
+  clone_url: string;
+  default_branch: string;
+  language: string;
+  stargazers_count: number;
+  forks_count: number;
+  open_issues_count: number;
+  pushed_at: string;
+  updated_at: string;
+  owner: User;
+}
+
+/** Report is the diagnostics snapshot. */
+export interface Report {
+  appVersion: string;
+  goVersion: string;
+  platform: string;
+  dataDir: string;
+  endpoint: string;
+  logPath: string;
+  daemonExe: string;
+  daemon?: Health;
+  daemonError?: string;
+  /** -1 = unknown */
+  dbSchemaVersion: number;
+  dbSource: string;
+  credentialStore: Check;
+  webview2: string;
+  autostart: AutostartStatus;
+  logTail: string[];
+}
+
+/** ResourceInfo is a discovered resource or resource template. */
+export interface ResourceInfo {
+  uri: string;
+  name: string;
+  description?: string;
+  mimeType?: string;
+  template?: boolean;
+}
+
+/**
+ * Response is the merged answer. Errors maps provider id to a message for the
+ * providers that failed or timed out; their absence from Results is then not
+ * "no matches".
+ */
+export interface Response {
+  results: SearchResult2[];
+  errors?: Record<string, string>;
+}
+
+/** Result of Notify. */
+export interface Result {
+  notification: NotificationsNotification;
+  /** Stored is false when the source is disabled by preference. */
+  stored: boolean;
+  /** Native tells the desktop to also show an OS notification. */
+  native: boolean;
+  /** Sound applies only to this newly created notification, never history. */
+  sound: boolean;
+}
+
+/** Review is a pull request review. */
+export interface Review {
+  id: number;
+  user: User;
+  /** APPROVED, CHANGES_REQUESTED, COMMENTED, DISMISSED, PENDING */
+  state: string;
+  body: Untrusted;
+  submitted_at: string;
+  html_url: string;
+}
+
+/** ReviewComment is an inline diff comment. */
+export interface ReviewComment {
+  id: number;
+  user: User;
+  body: Untrusted;
+  path: Untrusted;
+  line: number;
+  diff_hunk: Untrusted;
+  created_at: string;
+  html_url: string;
+}
+
+/** ReviewDiff is the work a session produced, for the Review view. */
+export interface ReviewDiff {
+  sessionId: string;
+  baseRef: string;
+  dir: string;
+  files: number;
+  additions: number;
+  deletions: number;
+  truncated: boolean;
+  diff: DiffResult;
+  error: string;
+}
+
+/** ReviewParams configures ReviewWith. */
+export interface ReviewParams {
+  /** session whose diff is reviewed */
+  target: string;
+  /** reviewer agent kind */
+  kind: string;
+  model: string;
+  mode: Mode;
+  focus: string;
+}
+
+/** Root is an approved top-level directory of a provider. */
+export interface Root {
+  id: string;
+  provider: string;
+  path: string;
+  label: string;
+  /** Missing is set when the root no longer resolves to the approved location. */
+  missing?: boolean;
+  problem?: string;
+}
+
+/** Rule is a stored policy rule. */
+export interface Rule {
+  id: number;
+  actor: string;
+  action: string;
+  resource: string;
+  maxEffect: Effect;
+  decision: Decision;
+  note: string;
+  createdAt: number;
+}
+
+/** Run is a long-running orchestration. */
+export interface Run {
+  id: string;
+  kind: string;
+  key: string;
+  status: string;
+  params: unknown;
+  state: unknown;
+  error: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** RunQuery filters workflow runs. */
+export interface RunQuery {
+  repo: string;
+  status: string;
+  branch: string;
+  limit: number;
+}
+
+export interface SaveRequest {
+  id: string;
+  name: string;
+  executable: string;
+  arguments: string[];
+  workingDirectory: string;
+  revision: number;
+}
+
+export interface SaveResult {
+  definition: Definition;
+  issues: AutomationsIssue[];
+  saved: boolean;
+}
+
+/** SearchResult is a page of issue/PR search hits. */
+export interface SearchResult {
+  total: number;
+  items: Issue[];
+}
+
+/**
+ * Result is one hit. Action tells the UI how to open it; the UI never builds
+ * paths or ids on its own.
+ */
+export interface SearchResult2 {
+  provider: string;
+  id: string;
+  title: string;
+  subtitle?: string;
+  /** Kind is a UI hint: file, folder, notification, setting. */
+  kind: string;
+  score: number;
+  /** Action: {view:"files", provider:"local", path:"..."} etc. */
+  action: Record<string, string>;
+}
+
+/** ServerState is a server plus live status for list views. */
+export interface ServerState {
+  id: string;
+  name: string;
+  url: string;
+  transport: string;
+  adapter: string;
+  enabled: boolean;
+  authKind: AuthKind;
+  /** public id or https client-metadata URL; "" = dynamic registration */
+  oauthClientId: string;
+  /** space separated override; "" = what the server asks for */
+  scopes: string;
+  createdAt: number;
+  status: McpStatus;
+  lastError?: string;
+  /** credentials are stored */
+  authorized: boolean;
+  toolCount: number;
+}
+
+/** Session is one agent run, persisted in agent_sessions. */
+export interface Session {
+  id: string;
+  /** claude | codex | opencode | gemini | custom */
+  kind: string;
+  /** "local" or a paired machine id */
+  machine: string;
+  /** repository the working directory belongs to ("" if none) */
+  project: string;
+  /** working directory (a worktree when one was created) */
+  dir: string;
+  branch: string;
+  /** commit the work is reviewed against */
+  baseRef: string;
+  /** WorktreeOwned is set when the daemon created Dir as a worktree for this session. */
+  worktreeOwned: boolean;
+  model: string;
+  reasoning?: string;
+  title: string;
+  task: string;
+  mode: Mode;
+  /** custom CLI command line */
+  command?: string;
+  /** PermissionMode is the Claude Code permission mode the session runs with. */
+  permissionMode: string;
+  pid: number;
+  status: AgentsStatus;
+  /** Live is true while the agent process is running (runtime state, not persisted). */
+  live: boolean;
+  /** what the agent is doing right now */
+  activity: string;
+  /** last few lines of output, for the card */
+  tail: string;
+  /** the agent's most recent message in full */
+  lastMessage: string;
+  /** AgentSessionID is the CLI's own session id, used to resume. */
+  agentSessionId: string;
+  /** ConPTY terminal id while the session has one */
+  terminalId: string;
+  /** path of the CLI's own transcript when known */
+  transcriptRef: string;
+  /** session this one was handed off / reviews */
+  parentId: string;
+  /** try-N-ways group */
+  group: string;
+  /** Chain records automation provenance for lifecycle events, never tool authority. */
+  chain?: string[];
+  /** see Review* constants */
+  review: string;
+  reviewNote: string;
+  checkState: string;
+  checkCommand: string;
+  checkOutput: string;
+  files: number;
+  additions: number;
+  deletions: number;
+  /** completed turns */
+  turns: number;
+  /** prompts sent */
+  prompts: number;
+  /** Pending are the permission requests awaiting a decision (runtime state). */
+  pending: PermissionRequest[];
+  result: string;
+  error: string;
+  exitCode?: number;
+  startedAt: string;
+  endedAt?: string;
+  updatedAt: string;
+}
+
 /** SettingChange is a changed setting. */
 export interface SettingChange {
   key: string;
@@ -55,8 +1671,116 @@ export interface Shell {
   command: string;
 }
 
+/** Shortcut contains non-secret launch configuration, never credentials or environment overrides. */
+export interface Shortcut {
+  id: string;
+  name: string;
+  executable: string;
+  arguments: string[];
+  workingDirectory: string;
+  revision: number;
+  createdAt: number;
+  updatedAt: number;
+}
+
+/** Sources lists sources that have visible notifications, with counts. */
+export interface SourceCount {
+  source: string;
+  count: number;
+  unread: number;
+}
+
+/** SourcePref is the preference for one source. A missing entry means defaults. */
+export interface SourcePref {
+  /** Enabled false drops the source's notifications entirely. */
+  enabled: boolean;
+  /** Native shows an OS notification as well. */
+  native: boolean;
+  /** Sound allows sound for new notifications; Windows controls native volume. */
+  sound: boolean;
+}
+
+/** StartSpec is a request to start an agent. */
+export interface StartSpec {
+  kind: string;
+  /** empty means local */
+  machine?: string;
+  /** empty preserves the CLI default */
+  reasoning?: string;
+  /** project or worktree directory */
+  dir: string;
+  /** the task; may be empty (session starts idle) */
+  prompt: string;
+  /** optional */
+  model: string;
+  /** "" = adapter default */
+  mode: Mode;
+  /** custom CLI command line */
+  command: string;
+  title: string;
+  /** PermissionMode: "" | default | acceptEdits | plan (Claude Code). */
+  permissionMode: string;
+  /**
+   * NewWorktree creates a fresh worktree of the repository at Dir on a new branch and
+   * runs the agent there.
+   */
+  newWorktree: boolean;
+  /** branch name for NewWorktree ("" = generated) */
+  branch: string;
+  baseRef: string;
+  parentId: string;
+  group: string;
+  /** Key makes the request idempotent: the same key never starts a second session. */
+  key: string;
+}
+
 /** State of a session. */
 export type State = "running" | "exited";
+
+/** Status is a work tree snapshot. */
+export interface Status {
+  branch: BranchState;
+  files: FileStatus[];
+  staged: number;
+  unstaged: number;
+  untracked: number;
+  conflicted: number;
+  /** Dirty is the number of paths with any change (staged, unstaged, untracked or conflicted). */
+  dirty: number;
+}
+
+export interface Step {
+  id: string;
+  name: string;
+  type: string;
+  params: unknown;
+  when: string;
+  timeoutSec: number;
+  retries: number;
+  backoffMs: number;
+  onError: string;
+  /**
+   * Strategy is at-most-once, key (executor must deduplicate), or repeatable
+   * (the user explicitly asserts that repeating the action is safe).
+   */
+  strategy: string;
+}
+
+export interface StepType {
+  type: string;
+  label: string;
+  available: boolean;
+  reason: string;
+  sideEffect: boolean;
+  keySupported: boolean;
+  fields: Field[];
+}
+
+export interface Summary {
+  definition: Definition;
+  lastStatus: string;
+  lastRunAt: number;
+}
 
 /** TerminalAttachment is scrollback to restore a screen after reconnect. */
 export interface TerminalAttachment {
@@ -78,12 +1802,165 @@ export interface TerminalRef {
   id: string;
 }
 
+export interface Thread {
+  id: string;
+  messages: Message[];
+}
+
+/** ToolInfo is one discovered tool. All strings are sanitised. */
+export interface ToolInfo {
+  name: string;
+  title?: string;
+  description?: string;
+  inputSchema?: unknown;
+  outputSchema?: unknown;
+  /** Annotations are the server's claims. They are hints only. */
+  readOnlyHint?: boolean;
+  destructiveHint?: boolean;
+  idempotentHint?: boolean;
+  openWorldHint?: boolean;
+  /** Effect is our classification derived from the hints: read | write | destructive. */
+  effect: string;
+  /** Permission is the stored per-tool decision ("allow"|"ask"|"deny") or "". */
+  permission?: string;
+}
+
+export interface Trigger {
+  type: string;
+  schedule: string;
+  catchUp: string;
+  event: string;
+  filter: string;
+}
+
+/** TryParams configures TryN. */
+export interface TryParams {
+  /** repository to branch from */
+  dir: string;
+  /** agent kind, run once per worktree */
+  kind: string;
+  prompt: string;
+  /** 2..8 */
+  n: number;
+  model: string;
+  mode: Mode;
+  permissionMode: string;
+  baseRef: string;
+}
+
+/** TryResult lists the sessions of a try-N-ways group. */
+export interface TryResult {
+  group: string;
+  sessions: Session[];
+  errors: string[];
+}
+
+/**
+ * Untrusted is text authored by someone other than the user or Orole OS (issue
+ * and PR titles/bodies, comments, labels, branch names, diffs, CI logs). It is
+ * DATA: it must never be placed in an agent's instruction channel. It marshals
+ * to a plain JSON string so the UI can render it (as text/safe markdown only);
+ * agent-facing code uses [Untrusted.Fenced].
+ */
+export type Untrusted = string;
+
+/** UpdateParams changes editable settings; nil fields stay as they are. */
+export interface UpdateParams {
+  name?: string;
+  oauthClientId?: string;
+  scopes?: string;
+  /** "" clears */
+  clientSecret?: string;
+  bearerToken?: string;
+}
+
+/** UpdateStatus describes the framework's checked release, never a guessed GitHub tag. */
+export interface UpdateStatus {
+  enabled: boolean;
+  available: boolean;
+  currentVersion: string;
+  version: string;
+  checking: boolean;
+  installing: boolean;
+  error: string;
+}
+
+/** User is a GitHub account. */
+export interface User {
+  login: string;
+  id: number;
+  avatar_url: string;
+  html_url: string;
+  type: string;
+  name?: string;
+}
+
+/** WorkflowRun is a GitHub Actions run. */
+export interface WorkflowRun {
+  id: number;
+  name: Untrusted;
+  display_title: Untrusted;
+  run_number: number;
+  event: string;
+  status: string;
+  conclusion: string;
+  head_branch: Untrusted;
+  head_sha: string;
+  html_url: string;
+  created_at: string;
+  updated_at: string;
+  actor: User;
+  /** Repo is "owner/name" (filled by the client; not part of the API object). */
+  repo: string;
+}
+
 /** Workspace is a named layout. */
 export interface Workspace {
   id: string;
   name: string;
   position: number;
   layout: unknown;
+}
+
+/** Worktree is a git worktree of a project merged with live git state. */
+export interface Worktree {
+  id: string;
+  projectId: string;
+  name: string;
+  path: string;
+  branch: string;
+  head: string;
+  baseRef: string;
+  isMain: boolean;
+  detached: boolean;
+  locked: boolean;
+  prunable: boolean;
+  createdAt: number;
+  upstream: string;
+  ahead: number;
+  behind: number;
+  staged: number;
+  unstaged: number;
+  untracked: number;
+  dirty: number;
+  /** Error is set when git state could not be read for this worktree. */
+  error?: string;
+}
+
+/** WriteOptions control Write. */
+export interface WriteOptions {
+  /**
+   * IfMatch is the Etag of the version being replaced. Required when the file
+   * exists unless Force is set.
+   */
+  ifMatch?: string;
+  /** Create requires that the file does not exist yet. */
+  create?: boolean;
+  /**
+   * Force overwrites regardless of etag (the user chose "overwrite" after a
+   * conflict). It still never creates paths outside the roots.
+   */
+  force?: boolean;
 }
 
 // ---- Services ----
@@ -160,10 +2037,712 @@ export const Terminals = {
   },
 } as const;
 
+/** Projects is the bound service for the project registry. */
+export const Projects = {
+  /** Add registers the git repository containing path. */
+  add(path: string): Promise<Project> {
+    return call("Projects.Add", path);
+  },
+  /** List returns registered projects, most recently opened first. */
+  list(): Promise<Project[]> {
+    return call("Projects.List");
+  },
+  /** Open records that a project was opened. */
+  open(id: string): Promise<void> {
+    return call("Projects.Open", id);
+  },
+  /** PickFolder shows the native folder picker and returns the chosen path ("" if cancelled). */
+  pickFolder(): Promise<string> {
+    return call("Projects.PickFolder");
+  },
+  /** Remove unregisters a project (files stay on disk). */
+  remove(id: string): Promise<void> {
+    return call("Projects.Remove", id);
+  },
+  /** SetWorktreeRoot configures where new worktrees are created ("" = default). */
+  setWorktreeRoot(id: string, root: string): Promise<Project> {
+    return call("Projects.SetWorktreeRoot", id, root);
+  },
+} as const;
+
+/**
+ * Git is the bound service for read-only git state of registered projects and worktrees.
+ * A worktreeID, when given, takes precedence over projectID.
+ */
+export const Git = {
+  /** Branches lists local and remote-tracking branches. */
+  branches(projectID: string, worktreeID: string): Promise<Branch[]> {
+    return call("Git.Branches", projectID, worktreeID);
+  },
+  /** CreateBranch creates a branch at start ("" = HEAD) without checking it out. */
+  createBranch(projectID: string, worktreeID: string, name: string, start: string): Promise<void> {
+    return call("Git.CreateBranch", projectID, worktreeID, name, start);
+  },
+  /** Diff returns a parsed diff. */
+  diff(req: DiffRequest): Promise<DiffResult> {
+    return call("Git.Diff", req);
+  },
+  /** Log returns recent commits reachable from ref ("" = HEAD). */
+  log(projectID: string, worktreeID: string, ref: string, limit: number): Promise<Commit[]> {
+    return call("Git.Log", projectID, worktreeID, ref, limit);
+  },
+  /** Status returns porcelain status with branch ahead/behind. */
+  status(projectID: string, worktreeID: string): Promise<Status> {
+    return call("Git.Status", projectID, worktreeID);
+  },
+} as const;
+
+/** Worktrees is the bound service for git worktrees. */
+export const Worktrees = {
+  /** Create adds a worktree on new branch orole/<slug(name)> started at baseRef ("" = HEAD). */
+  create(projectID: string, name: string, baseRef: string): Promise<Worktree> {
+    return call("Worktrees.Create", projectID, name, baseRef);
+  },
+  /** List returns worktrees of a project, or of every project when projectID is "". */
+  list(projectID: string): Promise<Worktree[]> {
+    return call("Worktrees.List", projectID);
+  },
+  /** Remove deletes a linked worktree; force discards local changes. */
+  remove(id: string, force: boolean): Promise<void> {
+    return call("Worktrees.Remove", id, force);
+  },
+} as const;
+
+/**
+ * System binds desktop OS integration and stateless access to daemon host metrics.
+ * Autostart and diagnostics remain desktop concerns; metrics come from the daemon.
+ */
+export const System = {
+  /** AutostartStatus reports whether the daemon starts when the user signs in. */
+  autostartStatus(): Promise<AutostartStatus> {
+    return call("System.AutostartStatus");
+  },
+  /** Diagnostics returns the support snapshot (versions, paths, daemon, credential store, WebView2, log tail). */
+  diagnostics(): Promise<Report> {
+    return call("System.Diagnostics");
+  },
+  /** DisableAutostart removes the logon registration. */
+  disableAutostart(): Promise<AutostartStatus> {
+    return call("System.DisableAutostart");
+  },
+  /** EnableAutostart registers the packaged orole-daemon to start at logon (no admin rights). */
+  enableAutostart(): Promise<AutostartStatus> {
+    return call("System.EnableAutostart");
+  },
+  /** Metrics returns a real host observation sampled and cached by the daemon. */
+  metrics(): Promise<HostMetrics> {
+    return call("System.Metrics");
+  },
+} as const;
+
+/**
+ * Updates owns only this desktop's transient native update transaction. Release
+ * verification, download and replacement are exclusively MyGo's implementation.
+ * It does not generate keys or silently enable unsigned builds.
+ */
+export const Updates = {
+  check(): Promise<UpdateStatus> {
+    return call("Updates.Check");
+  },
+  /**
+   * Install requires both explicit caller intent and a Go-owned native confirmation.
+   * The confirmation binds to the cached framework release; no caller-supplied URL
+   * or version can select executable content. Stopping the daemon ends its sessions.
+   */
+  install(confirmed: boolean): Promise<UpdateStatus> {
+    return call("Updates.Install", confirmed);
+  },
+  status(): Promise<UpdateStatus> {
+    return call("Updates.Status");
+  },
+} as const;
+
+/**
+ * GitHub is the bound service for the GitHub integration. All text fields in
+ * the returned models are untrusted data authored on GitHub: render as text or
+ * through the safe markdown renderer, never as HTML or instructions.
+ */
+export const GitHub = {
+  /** Checks lists check runs for a commit. */
+  checks(repo: string, ref: string): Promise<CheckRun[]> {
+    return call("GitHub.Checks", repo, ref);
+  },
+  /**
+   * Clone starts cloning repo ("owner/name") into destDir/<name>; progress arrives
+   * as GitHubClone events. Needs confirmed.
+   */
+  clone(repo: string, destDir: string, confirmed: boolean): Promise<GitHubCloneEvent> {
+    return call("GitHub.Clone", repo, destDir, confirmed);
+  },
+  /** Comment adds a comment to an issue or pull request (needs confirmed). */
+  comment(repo: string, number: number, body: string, confirmed: boolean): Promise<Comment> {
+    return call("GitHub.Comment", repo, number, body, confirmed);
+  },
+  /** CreateIssue opens an issue (needs Confirmed). */
+  createIssue(w: IssueWrite): Promise<Issue> {
+    return call("GitHub.CreateIssue", w);
+  },
+  /** FailedRuns lists recent failed runs across the user's most recently pushed repositories. */
+  failedRuns(repos: number): Promise<WorkflowRun[]> {
+    return call("GitHub.FailedRuns", repos);
+  },
+  /** Issue returns one issue with its comments. */
+  issue(repo: string, number: number): Promise<IssueDetail> {
+    return call("GitHub.Issue", repo, number);
+  },
+  /** IssueAgentProjects lists registered local projects whose live origin matches repo. */
+  issueAgentProjects(repo: string): Promise<Project[]> {
+    return call("GitHub.IssueAgentProjects", repo);
+  },
+  /** IssueAgentRuns returns durable issue-to-session/worktree/PR provenance. */
+  issueAgentRuns(repo: string, number: number): Promise<IssueAgentRun[]> {
+    return call("GitHub.IssueAgentRuns", repo, number);
+  },
+  /** Issues lists issues (pull requests excluded). */
+  issues(q: IssueQuery): Promise<Issue[]> {
+    return call("GitHub.Issues", q);
+  },
+  /** Labels lists a repository's labels. */
+  labels(repo: string): Promise<Label[]> {
+    return call("GitHub.Labels", repo);
+  },
+  /**
+   * Login connects with source "gh" (existing GitHub CLI login) or "pat"
+   * (pasted token, saved in Windows Credential Manager). The token is never echoed back.
+   */
+  login(source: string, token: string): Promise<GitHubStatus> {
+    return call("GitHub.Login", source, token);
+  },
+  /** Logout disconnects and removes any stored token. */
+  logout(): Promise<GitHubStatus> {
+    return call("GitHub.Logout");
+  },
+  /** Milestones lists a repository's open milestones. */
+  milestones(repo: string): Promise<Milestone[]> {
+    return call("GitHub.Milestones", repo);
+  },
+  /** Notifications lists the inbox. */
+  notifications(all: boolean, limit: number): Promise<Notification[]> {
+    return call("GitHub.Notifications", all, limit);
+  },
+  /** PrepareIssuePR inspects a stopped session's clean committed branch; it never pushes. */
+  prepareIssuePR(id: string, title: string, body: string, base: string): Promise<IssuePRPreparation> {
+    return call("GitHub.PrepareIssuePR", id, title, body, base);
+  },
+  /** PublishIssuePR publishes the exact reviewed snapshot after Go policy and confirmation gates. */
+  publishIssuePR(id: string, token: string, confirmed: boolean): Promise<IssueAgentRun> {
+    return call("GitHub.PublishIssuePR", id, token, confirmed);
+  },
+  /** Pull returns one pull request. */
+  pull(repo: string, number: number): Promise<PullRequest> {
+    return call("GitHub.Pull", repo, number);
+  },
+  /** PullComments lists inline review comments. */
+  pullComments(repo: string, number: number): Promise<ReviewComment[]> {
+    return call("GitHub.PullComments", repo, number);
+  },
+  /** PullFiles lists changed files with their patches. */
+  pullFiles(repo: string, number: number): Promise<PullFile[]> {
+    return call("GitHub.PullFiles", repo, number);
+  },
+  /** PullStatus returns the review state and check runs of a pull request. */
+  pullStatus(repo: string, number: number): Promise<PullStatus> {
+    return call("GitHub.PullStatus", repo, number);
+  },
+  /** Pulls lists pull requests of a repository. */
+  pulls(repo: string, state: string, limit: number): Promise<PullRequest[]> {
+    return call("GitHub.Pulls", repo, state, limit);
+  },
+  /** Repos lists the user's repositories, or searches GitHub when query is set. */
+  repos(query: string, limit: number): Promise<Repo[]> {
+    return call("GitHub.Repos", query, limit);
+  },
+  /** RunJobs lists the jobs of a run. */
+  runJobs(repo: string, runID: number): Promise<Job[]> {
+    return call("GitHub.RunJobs", repo, runID);
+  },
+  /** RunLogs returns one job's log (jobID != 0) or every file of the run's log archive. */
+  runLogs(repo: string, runID: number, jobID: number): Promise<LogFile[]> {
+    return call("GitHub.RunLogs", repo, runID, jobID);
+  },
+  /** Runs lists workflow runs of a repository. */
+  runs(q: RunQuery): Promise<WorkflowRun[]> {
+    return call("GitHub.Runs", q);
+  },
+  /** Search runs a server-side issue/PR search (GitHub search syntax). */
+  search(query: string, limit: number): Promise<SearchResult> {
+    return call("GitHub.Search", query, limit);
+  },
+  /** StartIssueAgent launches only the explicitly reviewed task, using the central manager. */
+  startIssueAgent(spec: IssueAgentStart): Promise<IssueAgentRun> {
+    return call("GitHub.StartIssueAgent", spec);
+  },
+  /** Status returns the connection state (and detects an existing gh login). */
+  status(): Promise<GitHubStatus> {
+    return call("GitHub.Status");
+  },
+  /** UpdateIssue edits an issue, e.g. close/reopen, labels, assignees (needs Confirmed). */
+  updateIssue(w: IssueWrite): Promise<Issue> {
+    return call("GitHub.UpdateIssue", w);
+  },
+} as const;
+
+/** Files forwards provider-scoped file operations to the daemon. */
+export const Files = {
+  /** AddRoot obtains approval through the native folder picker, never an arbitrary frontend path. */
+  addRoot(): Promise<Root | null> {
+    return call("Files.AddRoot");
+  },
+  delete(provider: string, path: string, permanent: boolean): Promise<DeleteResult> {
+    return call("Files.Delete", provider, path, permanent);
+  },
+  list(provider: string, path: string): Promise<Entry[]> {
+    return call("Files.List", provider, path);
+  },
+  mkdir(provider: string, path: string): Promise<FilesInfo> {
+    return call("Files.Mkdir", provider, path);
+  },
+  providers(): Promise<FileProvider[]> {
+    return call("Files.Providers");
+  },
+  read(provider: string, path: string, offset: number, length: number): Promise<FileRead> {
+    return call("Files.Read", provider, path, offset, length);
+  },
+  removeRoot(id: string): Promise<void> {
+    return call("Files.RemoveRoot", id);
+  },
+  rename(provider: string, from: string, to: string): Promise<FilesInfo> {
+    return call("Files.Rename", provider, from, to);
+  },
+  roots(provider: string): Promise<Root[]> {
+    return call("Files.Roots", provider);
+  },
+  search(provider: string, path: string, query: string, limit: number): Promise<Entry[]> {
+    return call("Files.Search", provider, path, query, limit);
+  },
+  stat(provider: string, path: string): Promise<FilesInfo> {
+    return call("Files.Stat", provider, path);
+  },
+  write(provider: string, path: string, data: string, ifMatch: string, create: boolean, force: boolean): Promise<FileWriteResult> {
+    return call("Files.Write", provider, path, data, ifMatch, create, force);
+  },
+} as const;
+
+/** Notifications forwards persisted center operations; notification creation is daemon-owned. */
+export const Notifications = {
+  dismiss(ids: string[], source: string, all: boolean): Promise<number> {
+    return call("Notifications.Dismiss", ids, source, all);
+  },
+  list(source: string, unreadOnly: boolean): Promise<NotificationList> {
+    return call("Notifications.List", source, unreadOnly);
+  },
+  markRead(ids: string[], source: string, all: boolean): Promise<number> {
+    return call("Notifications.MarkRead", ids, source, all);
+  },
+  prefs(): Promise<Prefs> {
+    return call("Notifications.Prefs");
+  },
+  setPrefs(prefs: Prefs): Promise<Prefs> {
+    return call("Notifications.SetPrefs", prefs);
+  },
+  /** Test creates a real notification through the daemon's saved preferences. */
+  test(): Promise<Result> {
+    return call("Notifications.Test");
+  },
+} as const;
+
+/** Search searches only the daemon-owned local providers. */
+export const Search = {
+  query(query: string, providers: string[], limit: number): Promise<Response> {
+    return call("Search.Query", query, providers, limit);
+  },
+} as const;
+
+/** Shell exposes only explicitly permitted URL schemes, never arbitrary commands or filesystem paths. */
+export const Shell = {
+  openExternal(raw: string): Promise<void> {
+    return call("Shell.OpenExternal", raw);
+  },
+} as const;
+
+/**
+ * Agents is the stateless bound service for daemon-owned coding-agent sessions.
+ * Remote sessions report lost transport honestly: it does not prove the remote
+ * process or its descendants stopped.
+ */
+export const Agents = {
+  /** Approve answers a pending permission request. The daemon decides and audits; this only relays. */
+  approve(id: string, requestID: string, allow: boolean, reason: string): Promise<void> {
+    return call("Agents.Approve", id, requestID, allow, reason);
+  },
+  /** CancelRun stops a running orchestration run. */
+  cancelRun(id: string): Promise<void> {
+    return call("Agents.CancelRun", id);
+  },
+  /**
+   * Check runs a command in the session's directory in the background; the result arrives as
+   * the session's checkState (passing/failing).
+   */
+  check(id: string, command: string): Promise<Session> {
+    return call("Agents.Check", id, command);
+  },
+  /** Detect reports which agent CLIs are installed (cached for a minute unless refresh). */
+  detect(refresh: boolean): Promise<Detection[]> {
+    return call("Agents.Detect", refresh);
+  },
+  /** Diff returns the changes a session made relative to the commit it started from. */
+  diff(id: string): Promise<ReviewDiff> {
+    return call("Agents.Diff", id);
+  },
+  /** Events returns history entries with id greater than after (0 = from the start). */
+  events(id: string, after: number, limit: number): Promise<Event[]> {
+    return call("Agents.Events", id, after, limit);
+  },
+  /** Get returns one session. */
+  get(id: string): Promise<Session> {
+    return call("Agents.Get", id);
+  },
+  /** HandOff starts a second agent (kind) in the session's directory, briefed with its summary. */
+  handOff(p: HandOffParams, key: string): Promise<Session> {
+    return call("Agents.HandOff", p, key);
+  },
+  /** List returns every session, newest first. */
+  list(): Promise<Session[]> {
+    return call("Agents.List");
+  },
+  /** LoopUntil runs a command until it passes, asking the agent to fix failures (up to maxRounds). */
+  loopUntil(p: LoopParams, key: string): Promise<Run> {
+    return call("Agents.LoopUntil", p, key);
+  },
+  /** Options discovers harnesses and approved working directories on the selected box. */
+  options(machine: string): Promise<LaunchOptions> {
+    return call("Agents.Options", machine);
+  },
+  /** Prompt sends a message to an agent; an ended session is resumed first. */
+  prompt(id: string, text: string): Promise<Session> {
+    return call("Agents.Prompt", id, text);
+  },
+  /** Remove deletes a session that is not running. */
+  remove(id: string): Promise<void> {
+    return call("Agents.Remove", id);
+  },
+  /**
+   * Restart relaunches an ended session: resumed in its CLI session when fresh is false and the
+   * CLI supports it, otherwise started over from its task. prompt may be empty.
+   */
+  restart(id: string, fresh: boolean, prompt: string): Promise<Session> {
+    return call("Agents.Restart", id, fresh, prompt);
+  },
+  /** Review records a decision: "approve", "send-back" (note is the feedback) or "discard". */
+  review(id: string, decision: string, note: string): Promise<Session> {
+    return call("Agents.Review", id, decision, note);
+  },
+  /** ReviewWith starts a second agent that reviews the session's diff. */
+  reviewWith(p: ReviewParams, key: string): Promise<Session> {
+    return call("Agents.ReviewWith", p, key);
+  },
+  /** Runs lists recent orchestration runs. */
+  runs(): Promise<Run[]> {
+    return call("Agents.Runs");
+  },
+  /** Start launches an agent. spec.Key makes the request idempotent. */
+  start(spec: StartSpec): Promise<Session> {
+    return call("Agents.Start", spec);
+  },
+  /** Stop ends a running agent (its record stays). */
+  stop(id: string): Promise<Session> {
+    return call("Agents.Stop", id);
+  },
+  /**
+   * Transcript returns the newest `limit` conversation entries (prompts, messages, tool use,
+   * permission requests and decisions), oldest first.
+   */
+  transcript(id: string, limit: number): Promise<Event[]> {
+    return call("Agents.Transcript", id, limit);
+  },
+  /** TryN starts N agents on the same task in N fresh worktrees. */
+  tryN(p: TryParams, key: string): Promise<TryResult> {
+    return call("Agents.TryN", p, key);
+  },
+} as const;
+
+/** Automations forwards typed requests to the daemon-owned automation engine. */
+export const Automations = {
+  approvals(): Promise<Approval[]> {
+    return call("Automations.Approvals");
+  },
+  approve(runId: string, stepId: string, approved: boolean, note: string): Promise<void> {
+    return call("Automations.Approve", runId, stepId, approved, note);
+  },
+  cancel(id: string): Promise<void> {
+    return call("Automations.Cancel", id);
+  },
+  config(): Promise<Config> {
+    return call("Automations.Config");
+  },
+  delete(id: string): Promise<void> {
+    return call("Automations.Delete", id);
+  },
+  detail(id: string): Promise<Detail> {
+    return call("Automations.Detail", id);
+  },
+  generateSecret(): Promise<void> {
+    return call("Automations.GenerateSecret");
+  },
+  list(): Promise<Summary[]> {
+    return call("Automations.List");
+  },
+  preview(schedule: string): Promise<string[]> {
+    return call("Automations.Preview", schedule);
+  },
+  run(id: string): Promise<AutomationsRun> {
+    return call("Automations.Run", id);
+  },
+  runs(id: string): Promise<AutomationsRun[]> {
+    return call("Automations.Runs", id);
+  },
+  save(definition: Definition): Promise<SaveResult> {
+    return call("Automations.Save", definition);
+  },
+  setConfig(config: Config): Promise<Config> {
+    return call("Automations.SetConfig", config);
+  },
+  stepTypes(): Promise<StepType[]> {
+    return call("Automations.StepTypes");
+  },
+  templates(): Promise<Definition[]> {
+    return call("Automations.Templates");
+  },
+} as const;
+
+export const MCP = {
+  add(p: AddParams): Promise<ServerState> {
+    return call("MCP.Add", p);
+  },
+  call(id: string, tool: string, arguments_: Record<string, unknown>, callID: string, timeoutMs: number): Promise<CallResult> {
+    return call("MCP.Call", id, tool, arguments_, callID, timeoutMs);
+  },
+  cancel(callID: string): Promise<boolean> {
+    return call("MCP.Cancel", callID);
+  },
+  cancelAuth(id: string): Promise<void> {
+    return call("MCP.CancelAuth", id);
+  },
+  catalog(id: string): Promise<Catalog> {
+    return call("MCP.Catalog", id);
+  },
+  connect(id: string): Promise<void> {
+    return call("MCP.Connect", id);
+  },
+  diagnostics(id: string): Promise<Diagnostics> {
+    return call("MCP.Diagnostics", id);
+  },
+  discoverAuth(id: string): Promise<Discovery> {
+    return call("MCP.DiscoverAuth", id);
+  },
+  enable(id: string, enabled: boolean): Promise<ServerState> {
+    return call("MCP.Enable", id, enabled);
+  },
+  list(): Promise<ServerState[]> {
+    return call("MCP.List");
+  },
+  refreshCatalog(id: string): Promise<Catalog> {
+    return call("MCP.RefreshCatalog", id);
+  },
+  remove(id: string): Promise<void> {
+    return call("MCP.Remove", id);
+  },
+  setToolPermission(id: string, tool: string, decision: string): Promise<void> {
+    return call("MCP.SetToolPermission", id, tool, decision);
+  },
+  signOut(id: string): Promise<void> {
+    return call("MCP.SignOut", id);
+  },
+  startAuth(id: string): Promise<AuthStart> {
+    return call("MCP.StartAuth", id);
+  },
+  tools(id: string): Promise<ToolInfo[]> {
+    return call("MCP.Tools", id);
+  },
+  update(id: string, p: UpdateParams): Promise<ServerState> {
+    return call("MCP.Update", id, p);
+  },
+} as const;
+
+export const Policy = {
+  addRule(rule: Rule): Promise<Rule> {
+    return call("Policy.AddRule", rule);
+  },
+  deleteRule(id: number): Promise<void> {
+    return call("Policy.DeleteRule", id);
+  },
+  pending(): Promise<Pending[]> {
+    return call("Policy.Pending");
+  },
+  resolve(id: string, allow: boolean, remember: boolean): Promise<void> {
+    return call("Policy.Resolve", id, allow, remember);
+  },
+  rules(): Promise<Rule[]> {
+    return call("Policy.Rules");
+  },
+} as const;
+
+/** Plugins is a stateless bridge; all validation, trust and execution live in Go's daemon. */
+export const Plugins = {
+  list(): Promise<PluginRecord[]> {
+    return call("Plugins.List");
+  },
+  remove(req: PluginRef): Promise<void> {
+    return call("Plugins.Remove", req);
+  },
+  run(req: PluginRunRequest): Promise<PluginRunResult> {
+    return call("Plugins.Run", req);
+  },
+  save(req: PluginSaveRequest): Promise<PluginRecord> {
+    return call("Plugins.Save", req);
+  },
+  trust(req: PluginTrustRequest): Promise<PluginRecord> {
+    return call("Plugins.Trust", req);
+  },
+} as const;
+
+/**
+ * Mail forwards typed mail operations to the daemon. All returned content is
+ * untrusted plain text; mutations wait for the daemon policy approval.
+ */
+export const Mail = {
+  folders(): Promise<Folder[]> {
+    return call("Mail.Folders");
+  },
+  list(query: Query): Promise<Page> {
+    return call("Mail.List", query);
+  },
+  reply(message: Reply): Promise<Mutation> {
+    return call("Mail.Reply", message);
+  },
+  search(query: Query): Promise<Page> {
+    return call("Mail.Search", query);
+  },
+  send(message: Compose): Promise<Mutation> {
+    return call("Mail.Send", message);
+  },
+  status(): Promise<MailStatus> {
+    return call("Mail.Status");
+  },
+  thread(id: string): Promise<Thread> {
+    return call("Mail.Thread", id);
+  },
+  trash(id: string): Promise<Mutation> {
+    return call("Mail.Trash", id);
+  },
+} as const;
+
+/**
+ * Drive forwards typed file operations; no credentials or durable state live in
+ * the desktop process. Preview text is untrusted; dataUrl is a re-encoded PNG.
+ */
+export const Drive = {
+  list(query: DriveQuery): Promise<DrivePage> {
+    return call("Drive.List", query);
+  },
+  preview(id: string): Promise<Preview> {
+    return call("Drive.Preview", id);
+  },
+  search(query: DriveQuery): Promise<DrivePage> {
+    return call("Drive.Search", query);
+  },
+  stat(id: string): Promise<File> {
+    return call("Drive.Stat", id);
+  },
+  status(): Promise<DriveStatus> {
+    return call("Drive.Status");
+  },
+  trash(id: string): Promise<DriveMutation> {
+    return call("Drive.Trash", id);
+  },
+} as const;
+
+export const Machines = {
+  cancel(operationID: string): Promise<void> {
+    return call("Machines.Cancel", operationID);
+  },
+  execute(p: Command): Promise<CommandResult> {
+    return call("Machines.Execute", p);
+  },
+  health(id: string): Promise<MachineHealth> {
+    return call("Machines.Health", id);
+  },
+  list(): Promise<Machine[]> {
+    return call("Machines.List");
+  },
+  listFiles(p: FileRequest): Promise<Entry[]> {
+    return call("Machines.ListFiles", p);
+  },
+  pair(p: PairRequest): Promise<Machine> {
+    return call("Machines.Pair", p);
+  },
+  probe(address: string): Promise<Identity> {
+    return call("Machines.Probe", address);
+  },
+  readFile(p: FileReadRequest): Promise<ReadResult> {
+    return call("Machines.ReadFile", p);
+  },
+  remove(id: string): Promise<void> {
+    return call("Machines.Remove", id);
+  },
+  rename(id: string, name: string): Promise<Machine> {
+    return call("Machines.Rename", id, name);
+  },
+  setAccess(p: Access): Promise<Machine> {
+    return call("Machines.SetAccess", p);
+  },
+  statFile(p: FileRequest): Promise<FilesInfo> {
+    return call("Machines.StatFile", p);
+  },
+  writeFile(p: FileWriteRequest): Promise<FilesInfo> {
+    return call("Machines.WriteFile", p);
+  },
+} as const;
+
+export const Applications = {
+  launch(id: string): Promise<LaunchResult> {
+    return call("Applications.Launch", id);
+  },
+  list(): Promise<Shortcut[]> {
+    return call("Applications.List");
+  },
+  pickExecutable(): Promise<string> {
+    return call("Applications.PickExecutable");
+  },
+  remove(id: string): Promise<void> {
+    return call("Applications.Remove", id);
+  },
+  save(req: SaveRequest): Promise<Shortcut> {
+    return call("Applications.Save", req);
+  },
+} as const;
+
+/** Desktop forwards to the native lifecycle controller. It owns no durable state. */
+export const Desktop = {
+  ready(): Promise<DesktopNavigation> {
+    return call("Desktop.Ready");
+  },
+} as const;
+
 // ---- Events ----
 
 /** Events sent by the Go side. Subscribe with `events.name.on(listener)`. */
 export const events = {
+  /** AgentUpdated fires whenever a session's state changes (status, activity, tail, counts). */
+  agentsUpdated: event<Session>("agents:updated"),
+  /** AgentEvent carries one new entry of a session's history (message, tool use, permission request...). */
+  agentsEvent: event<Event>("agents:event"),
+  /** AgentRemoved fires when a session is deleted. */
+  agentsRemoved: event<AgentRef>("agents:removed"),
+  /** AgentRunUpdated fires when an orchestration run (loop-until, try-N) changes. */
+  agentsRun: event<Run>("agents:run"),
+  applicationsChanged: event<ApplicationRef>("applications:changed"),
+  desktopNavigate: event<DesktopNavigation>("desktop:navigate"),
   /** TerminalOutput carries pty output; Data is base64. */
   terminalOutput: event<TerminalChunk>("terminal:output"),
   /** TerminalChanged fires when a terminal starts or exits. */
@@ -174,4 +2753,21 @@ export const events = {
   settingsChanged: event<SettingChange>("settings:changed"),
   /** DaemonState reports connection state of the daemon link. */
   daemonState: event<DaemonLink>("daemon:state"),
+  /** GitHubChanged fires when the GitHub connection or cached data changed. */
+  githubChanged: event<GitHubChange>("github:changed"),
+  /** GitHubClone reports progress of a clone started with GitHub.Clone. */
+  githubClone: event<GitHubCloneEvent>("github:clone"),
+  mcpStatus: event<ServerState>("mcp:status"),
+  mcpAuthUrl: event<AuthStart>("mcp:auth-url"),
+  mcpAuthDone: event<AuthDone>("mcp:auth-done"),
+  policyPending: event<ApprovalQueue>("policy:pending"),
+  notificationsChanged: event<NotificationEvent>("notifications:changed"),
+  filesChanged: event<FilesChanged>("files:changed"),
+  filesRootsChanged: event<FileRootsChange>("files:rootsChanged"),
+  notificationsNativeState: event<NotificationNativeState>("notifications:nativeState"),
+  pluginsChanged: event<PluginChange>("plugins:changed"),
+  /** ProjectsChanged fires when the project registry changes. */
+  projectsChanged: event<ProjectRef>("projects:changed"),
+  /** WorktreesChanged fires when worktrees of a project were created or removed. */
+  worktreesChanged: event<ProjectRef>("worktrees:changed"),
 } as const;

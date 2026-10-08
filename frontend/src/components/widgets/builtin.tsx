@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
-import { Activity, CalendarDays, CheckCircle2, Circle, NotebookPen, SquareTerminal, Server } from "lucide-react";
+import { CalendarDays, CheckCircle2, Circle, NotebookPen, SquareTerminal, Server } from "lucide-react";
 import { Terminals, events, type Info } from "@/mygo";
 import { inDesktop } from "@/lib/backend";
 import { useDaemon } from "@/stores/daemon";
 import { useUI } from "@/stores/ui";
+import { HostActivity } from "@/features/system/HostActivity";
 import { Widget } from "./Widget";
 import type { WidgetProps } from "./registry";
 
@@ -69,13 +70,19 @@ export function ClockWidget({ onRemove }: WidgetProps) {
         <time dateTime={now.toISOString()} className="text-2xl font-light tabular-nums">{now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</time>
         <span className="text-muted-foreground">{now.toLocaleDateString([], { weekday: "long", day: "numeric", month: "long" })}</span>
       </div>
-      <div className="mt-2 grid grid-cols-7 gap-y-0.5 text-center font-mono text-xs" role="grid" aria-label={now.toLocaleDateString([], { month: "long", year: "numeric" })}>
-        {["M", "T", "W", "T", "F", "S", "S"].map((d, i) => <span key={i} className="text-muted-foreground/70">{d}</span>)}
-        {cells.map((c, i) => (
-          <span key={i} role="gridcell" aria-current={c === now.getDate() ? "date" : undefined}
-            className={c === now.getDate() ? "rounded bg-primary text-primary-foreground" : "text-foreground/80"}>{c}</span>
-        ))}
-      </div>
+      <table className="mt-2 w-full table-fixed text-center font-mono text-xs">
+        <caption className="sr-only">{now.toLocaleDateString([], { month: "long", year: "numeric" })}</caption>
+        <thead><tr>
+          {["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"].map((day) => <th key={day} scope="col" aria-label={day} className="font-normal text-muted-foreground">{day[0]}</th>)}
+        </tr></thead>
+        <tbody>{Array.from({ length: Math.ceil(cells.length / 7) }, (_, week) => (
+          <tr key={week}>{Array.from({ length: 7 }, (_, day) => {
+            const date = cells[week * 7 + day];
+            return <td key={day} aria-current={date === now.getDate() ? "date" : undefined}
+              className={date === now.getDate() ? "rounded bg-primary text-primary-foreground" : "text-foreground/80"}>{date}</td>;
+          })}</tr>
+        ))}</tbody>
+      </table>
     </Widget>
   );
 }
@@ -157,20 +164,5 @@ export function NotesWidget({ onRemove, config, onConfig }: WidgetProps) {
 }
 
 export function ActivityWidget({ onRemove }: WidgetProps) {
-  const health = useDaemon((s) => s.health);
-  const [samples, setSamples] = useState<number[]>([]);
-  useEffect(() => {
-    if (health) setSamples((s) => [...s.slice(-59), health.memAllocMB]);
-  }, [health]);
-  const max = Math.max(1, ...samples);
-  return (
-    <Widget title="System activity" icon={<Activity />} status={health ? "ready" : inDesktop ? "loading" : "offline"} message={!inDesktop ? "Preview mode: no daemon." : undefined} onRemove={onRemove}>
-      <p className="text-muted-foreground">Daemon memory</p>
-      <svg viewBox="0 0 120 32" className="mt-1 h-16 w-full" preserveAspectRatio="none" role="img" aria-label="Daemon memory over the last samples">
-        <polyline fill="none" stroke="var(--primary)" strokeWidth="1" vectorEffect="non-scaling-stroke"
-          points={samples.map((v, i) => `${(i / Math.max(1, samples.length - 1)) * 120},${32 - (v / max) * 30 - 1}`).join(" ")} />
-      </svg>
-      <p className="font-mono text-xs text-muted-foreground">{samples.length ? `${samples[samples.length - 1]!.toFixed(1)} MB · ${samples.length} samples` : "waiting for samples"}</p>
-    </Widget>
-  );
+  return <HostActivity onRemove={onRemove} />;
 }

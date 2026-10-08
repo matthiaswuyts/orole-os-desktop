@@ -1,4 +1,4 @@
-import { Bell, ChevronDown, EllipsisIcon, PanelLeftClose, Search } from "lucide-react";
+import { ChevronDown, EllipsisIcon, PanelLeftClose, Search } from "lucide-react";
 import { MORE, PRIMARY, SETTINGS, type NavItem } from "@/lib/nav";
 import { cn } from "@/lib/utils";
 import { useUI } from "@/stores/ui";
@@ -9,6 +9,9 @@ import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "@/compone
 import { Tip } from "@/components/tip";
 import { SidebarProjects } from "./SidebarProjects";
 import { Logo } from "./Logo";
+import { NotificationCenter } from "@/features/notifications/NotificationCenter";
+import { useAgentCounts } from "@/stores/agents";
+import { Badge } from "@/components/ui/badge";
 
 const row = "flex h-side-row w-full items-center gap-2 rounded-md px-2 text-left text-sidebar-foreground text-sm outline-none hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring";
 
@@ -17,10 +20,13 @@ export function Sidebar() {
   const { view, setView, setPalette, toggleSidebar } = useUI();
   const link = useDaemon((s) => s.link);
   const { list, activeId, select } = useWorkspaces();
+  const agentCounts = useAgentCounts();
   const item = (n: NavItem) => (
     <button key={n.id} type="button" aria-current={view === n.id ? "page" : undefined} onClick={() => setView(n.id)}
       className={cn(row, view === n.id && "bg-sidebar-accent text-sidebar-accent-foreground")}>
       <n.icon className="size-3.5 shrink-0" /><span className="truncate">{n.label}</span>
+      {n.id === "agents" && agentCounts.needsYou > 0 && <Badge size="sm" variant="warning" className="ml-auto">{agentCounts.needsYou}</Badge>}
+      {n.id === "review" && agentCounts.reviewable > 0 && <Badge size="sm" variant="secondary" className="ml-auto">{agentCounts.reviewable}</Badge>}
     </button>
   );
   const moreActive = MORE.some((m) => m.id === view);
@@ -34,11 +40,11 @@ export function Sidebar() {
           </MenuTrigger>
           <MenuPopup align="start" className="min-w-44">
             {list.map((w) => <MenuItem key={w.id} onClick={() => select(w.id)}>{w.name}</MenuItem>)}
-            <MenuSeparator /><MenuItem onClick={() => setView("settings")}>Manage workspaces…</MenuItem>
+            <MenuSeparator /><MenuItem onClick={() => useUI.getState().openSettings("workspaces")}>Manage workspaces…</MenuItem>
           </MenuPopup>
         </Menu>
         <span className="flex-1" />
-        <Tip label="Notifications" side="bottom"><button type="button" aria-label="Notifications, none unread" className="inline-flex size-6 items-center justify-center rounded-md text-muted-foreground hover:bg-sidebar-accent hover:text-foreground"><Bell className="size-3.5" /></button></Tip>
+        <NotificationCenter />
       </div>
       <div className="titlebar-nodrag flex min-h-0 flex-1 flex-col gap-2 px-2 pb-1">
         <button type="button" onClick={() => setPalette(true)} aria-label="Search (Ctrl+K)" className="flex h-7 items-center gap-2 rounded-md border bg-background/40 px-2 text-muted-foreground text-sm outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring">

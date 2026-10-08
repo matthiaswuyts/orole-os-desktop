@@ -16,7 +16,7 @@ function Centered({ icon, title, children, action }: { icon: ReactNode; title: s
 export function NeedsDesktop({ what }: { what: string }) {
   return (
     <Centered icon={<MonitorX />} title={`${what} needs the desktop app`}>
-      <p>This is a browser preview with no daemon behind it. Launch Orole OS (<code className="font-mono">bun run dev</code> or the installed app) to use it.</p>
+      <p>This is a browser preview with no daemon behind it. Launch Orole OS (<code className="font-mono">go tool mygo dev</code> or the installed app) to use it.</p>
     </Centered>
   );
 }

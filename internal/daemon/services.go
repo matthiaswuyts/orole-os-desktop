@@ -41,6 +41,17 @@ type Workspace struct {
 // (svc_<name>.go) and adds one line here.
 func (d *Daemon) registerServices() {
 	d.registerCore()
+	d.registerAutomations()
+	d.registerMCP()
+	d.registerPlugins()
+	d.registerMetrics()
+	d.registerApplications()
+	d.registerMailDrive()
+	d.registerProjects()
+	d.registerGitHub()
+	d.registerMachines()
+	d.registerFiles()
+	d.registerAgents()
 }
 
 func (d *Daemon) registerCore() {

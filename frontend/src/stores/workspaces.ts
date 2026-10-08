@@ -39,6 +39,7 @@ interface State {
   load: () => Promise<void>;
   select: (id: string) => void;
   create: (name: string) => Promise<void>;
+  rename: (id: string, name: string) => Promise<void>;
   remove: (id: string) => Promise<void>;
   setWidgets: (w: WidgetInstance[]) => void;
   addWidget: (type: string, w: number, h: number) => void;
@@ -46,21 +47,34 @@ interface State {
   configureWidget: (id: string, config: Record<string, unknown>) => void;
 }
 
+// Serialize mutations so a slow save cannot overwrite a newer one or recreate
+// a deleted workspace. Also protects preview localStorage read/modify/write.
+let mutations: Promise<unknown> = Promise.resolve();
+function mutate<T>(operation: () => Promise<T>): Promise<T> {
+  const next = mutations.then(operation);
+  mutations = next.catch(() => {});
+  return next;
+}
+
 async function listWs(): Promise<Workspace[]> {
   if (inDesktop) return Workspaces.list();
   try { return JSON.parse(localStorage.getItem(previewKey + ".ws") ?? "[]") as Workspace[]; } catch { return []; }
 }
-async function saveWs(w: Workspace): Promise<Workspace> {
-  if (inDesktop) return Workspaces.save(w);
-  const all = await listWs();
-  const id = w.id || crypto.randomUUID();
-  const next = { ...w, id };
-  localStorage.setItem(previewKey + ".ws", JSON.stringify([...all.filter((x) => x.id !== id), next]));
-  return next;
+function saveWs(w: Workspace): Promise<Workspace> {
+  return mutate(async () => {
+    if (inDesktop) return Workspaces.save(w);
+    const all = await listWs();
+    const id = w.id || crypto.randomUUID();
+    const next = { ...w, id };
+    localStorage.setItem(previewKey + ".ws", JSON.stringify([...all.filter((x) => x.id !== id), next]));
+    return next;
+  });
 }
-async function delWs(id: string) {
-  if (inDesktop) return Workspaces.delete(id);
-  localStorage.setItem(previewKey + ".ws", JSON.stringify((await listWs()).filter((x) => x.id !== id)));
+function delWs(id: string) {
+  return mutate(async () => {
+    if (inDesktop) return Workspaces.delete(id);
+    localStorage.setItem(previewKey + ".ws", JSON.stringify((await listWs()).filter((x) => x.id !== id)));
+  });
 }
 
 const toWs = (w: Workspace): Ws => {
@@ -68,19 +82,24 @@ const toWs = (w: Workspace): Ws => {
   return { id: w.id, name: w.name, position: w.position, layout: { widgets: Array.isArray(l.widgets) ? l.widgets : [] } };
 };
 
-let saveTimer: ReturnType<typeof setTimeout> | undefined;
-function scheduleSave(get: () => State) {
-  clearTimeout(saveTimer);
-  saveTimer = setTimeout(() => {
-    const ws = get().list.find((w) => w.id === get().activeId);
-    if (ws) void saveWs({ id: ws.id, name: ws.name, position: ws.position, layout: ws.layout }).catch((e) => useWorkspaces.setState({ error: String(e) }));
-  }, 400);
+const saveTimers = new Map<string, number>();
+const removing = new Set<string>();
+function scheduleSave(ws: Ws) {
+  window.clearTimeout(saveTimers.get(ws.id));
+  saveTimers.set(ws.id, window.setTimeout(() => {
+    saveTimers.delete(ws.id);
+    void saveWs({ id: ws.id, name: ws.name, position: ws.position, layout: ws.layout })
+      .catch((error: unknown) => useWorkspaces.setState({ error: String(error) }));
+  }, 400));
 }
 
 export const useWorkspaces = create<State>((set, get) => {
   const patchActive = (f: (w: Ws) => Ws) => {
-    set((s) => ({ list: s.list.map((w) => (w.id === s.activeId ? f(w) : w)) }));
-    scheduleSave(get);
+    const activeId = get().activeId;
+    if (!activeId || removing.has(activeId)) return;
+    set((s) => ({ list: s.list.map((w) => (w.id === activeId ? f(w) : w)) }));
+    const ws = get().list.find((w) => w.id === activeId);
+    if (ws) scheduleSave(ws);
   };
   return {
     loaded: false,
@@ -109,13 +128,42 @@ export const useWorkspaces = create<State>((set, get) => {
       set((s) => ({ list: [...s.list, toWs(saved)], activeId: saved.id }));
       localStorage.setItem("orole.activeWorkspace", saved.id);
     },
+    async rename(id, name) {
+      const ws = get().list.find((item) => item.id === id);
+      name = name.trim();
+      if (!ws || removing.has(id) || !name) return;
+      const pending = saveTimers.has(id);
+      window.clearTimeout(saveTimers.get(id));
+      saveTimers.delete(id);
+      set((s) => ({ list: s.list.map((item) => item.id === id ? { ...item, name } : item) }));
+      try {
+        await saveWs({ ...ws, name });
+      } catch (error) {
+        set((s) => ({ list: s.list.map((item) => item.id === id && item.name === name ? { ...item, name: ws.name } : item) }));
+        const current = get().list.find((item) => item.id === id);
+        if (pending && current && !removing.has(id)) scheduleSave(current);
+        throw error;
+      }
+    },
     async remove(id) {
-      if (get().list.length <= 1) return;
-      await delWs(id);
-      set((s) => {
-        const list = s.list.filter((w) => w.id !== id);
-        return { list, activeId: s.activeId === id ? list[0]!.id : s.activeId };
-      });
+      if (removing.has(id) || get().list.filter((ws) => !removing.has(ws.id)).length <= 1) return;
+      removing.add(id);
+      const pending = saveTimers.has(id);
+      window.clearTimeout(saveTimers.get(id));
+      saveTimers.delete(id);
+      try {
+        await delWs(id);
+        set((s) => {
+          const list = s.list.filter((w) => w.id !== id);
+          return { list, activeId: s.activeId === id ? list[0]!.id : s.activeId };
+        });
+      } catch (error) {
+        const ws = get().list.find((w) => w.id === id);
+        if (pending && ws) scheduleSave(ws);
+        throw error;
+      } finally {
+        removing.delete(id);
+      }
     },
     setWidgets: (widgets) => patchActive((w) => ({ ...w, layout: { ...w.layout, widgets } })),
     addWidget(type, w, h) {

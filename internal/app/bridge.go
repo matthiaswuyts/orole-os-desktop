@@ -59,9 +59,10 @@ type DaemonLink struct {
 type Link struct {
 	DataDir string
 	// DaemonExe is the orole-daemon binary to launch when none is running ("" = search).
-	DaemonExe string
-	mu        sync.Mutex
-	c         *ipc.Client
+	DaemonExe   string
+	mu          sync.Mutex
+	c           *ipc.Client
+	maintenance bool
 }
 
 // NewLink creates the link; Start connects (launching the daemon if needed).
@@ -69,23 +70,76 @@ func NewLink(dataDir string) *Link { return &Link{DataDir: dataDir} }
 
 // Start ensures the daemon is running and subscribes to events.
 func (l *Link) Start(ctx context.Context) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.maintenance {
+		return fmt.Errorf("desktop update in progress")
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if l.c != nil {
+		return nil
+	}
 	c, err := control.Ensure(ctx, l.DataDir, l.DaemonExe, "desktop")
 	if err != nil {
 		DaemonState.Broadcast(DaemonLink{Connected: false, Error: err.Error()})
 		return err
 	}
 	c.OnEvent(forward)
-	if err := c.Subscribe(ctx, "terminal.*", "settings.*"); err != nil {
+	if err := c.Subscribe(ctx, "terminal.*", "settings.*", "projects.*", "worktrees.*", "github.*", "files.*", "notifications.*", "agents.*", "mcp.*", "policy.*", "applications.*", "plugins.*"); err != nil {
+		c.Close()
 		return err
 	}
-	l.mu.Lock()
 	l.c = c
-	l.mu.Unlock()
 	DaemonState.Broadcast(DaemonLink{Connected: true})
 	return nil
 }
 
+// beginMaintenance closes this window's link before stopping the daemon, so
+// health polling cannot relaunch an old binary while its resources are replaced.
+func (l *Link) beginMaintenance() error {
+	l.mu.Lock()
+	if l.maintenance {
+		l.mu.Unlock()
+		return fmt.Errorf("desktop update already in progress")
+	}
+	l.maintenance = true
+	c := l.c
+	l.c = nil
+	l.mu.Unlock()
+	if c != nil {
+		c.Close()
+	}
+	return nil
+}
+
+func (l *Link) endMaintenance() {
+	l.mu.Lock()
+	l.maintenance = false
+	l.mu.Unlock()
+}
+
 func forward(event string, data json.RawMessage) {
+	forwardMCP(event, data)
+	if forwardPlugins(event, data) {
+		return
+	}
+	if forwardApplications(event, data) {
+		return
+	}
+	if forwardAgents(event, data) {
+		return
+	}
+	if forwardFilesNotifications(event, data) {
+		return
+	}
+	if forwardGitHub(event, data) {
+		return
+	}
+	if forwardProjects(event, data) {
+		return
+	}
 	switch event {
 	case "terminal.output":
 		var o struct {
@@ -116,6 +170,10 @@ func forward(event string, data json.RawMessage) {
 
 func (l *Link) call(ctx context.Context, method string, params, out any) error {
 	l.mu.Lock()
+	if l.maintenance {
+		l.mu.Unlock()
+		return fmt.Errorf("desktop update in progress")
+	}
 	c := l.c
 	l.mu.Unlock()
 	if c == nil {
@@ -124,9 +182,28 @@ func (l *Link) call(ctx context.Context, method string, params, out any) error {
 		}
 		l.mu.Lock()
 		c = l.c
+		if l.maintenance || c == nil {
+			l.mu.Unlock()
+			return fmt.Errorf("desktop update in progress")
+		}
 		l.mu.Unlock()
 	}
-	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	timeout := 30 * time.Second
+	switch method {
+	case "mcp.call", "mail.send", "mail.reply", "mail.trash", "drive.trash",
+		"mail.folders", "mail.list", "mail.search", "mail.thread",
+		"drive.list", "drive.search", "drive.stat", "drive.preview",
+		"plugins.trust", "plugins.run",
+		"github.issue.agent.start", "github.issue.pr.publish",
+		"agents.start", "agents.restart", "agents.prompt", "agents.check", "agents.review",
+		"agents.handoff", "agents.reviewWith", "agents.tryN", "applications.launch",
+		"machines.probe", "machines.pair", "machines.access", "machines.remove",
+		"machines.health", "machines.execute", "machines.files.list", "machines.files.stat",
+		"machines.files.read", "machines.files.write",
+		"files.list", "files.stat", "files.read", "files.write", "files.search":
+		timeout = 16 * time.Minute // five-minute approval followed by a bounded tool call
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	return c.Call(ctx, method, params, out)
 }

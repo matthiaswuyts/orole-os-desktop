@@ -22,6 +22,9 @@ func Endpoint(dataDir string) string {
 	if err == nil {
 		name = u.Uid // SID: unique per user, no path-unsafe characters
 	}
+	if absolute, err := filepath.Abs(dataDir); err == nil {
+		dataDir = absolute
+	}
 	sum := sha256.Sum256([]byte(strings.ToLower(filepath.Clean(dataDir))))
 	// SID isolates users; the dataDir hash lets one user run isolated instances (dev, tests).
 	return `\\.\pipe\orole-daemon-` + name + "-" + hex.EncodeToString(sum[:6])

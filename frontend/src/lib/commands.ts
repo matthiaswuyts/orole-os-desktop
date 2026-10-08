@@ -14,7 +14,9 @@ export interface Command {
 export interface SearchProvider {
   id: string;
   label: string;
-  search: (query: string, signal: AbortSignal) => Promise<Command[]>;
+  /** Sensitive integrations are searched only when their chip is selected. */
+  explicitOnly?: boolean;
+  search: (query: string, signal: AbortSignal, reportError?: (message: string) => void) => Promise<Command[]>;
 }
 
 const commands = new Map<string, Command>();

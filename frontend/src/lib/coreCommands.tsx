@@ -3,6 +3,7 @@ import { NAV } from "@/lib/nav";
 import { registerCommands, type Command } from "@/lib/commands";
 import { useSettings } from "@/stores/settings";
 import { useUI } from "@/stores/ui";
+import { useAgents } from "@/stores/agents";
 
 /** Built-in Orole OS commands. Called once at startup. */
 export function registerCoreCommands() {
@@ -19,6 +20,7 @@ export function registerCoreCommands() {
     { id: "ascii.pause", title: "Toggle background animation", category: "Appearance", keywords: ["ascii", "pause", "play"], run: () => s().set("ascii", { paused: !s().ascii.paused }) },
     { id: "ascii.hide", title: "Toggle ASCII background", category: "Appearance", run: () => s().set("ascii", { enabled: !s().ascii.enabled }) },
     { id: "terminal.new", title: "New terminal", category: "Terminals", keywords: ["shell", "powershell"], run: () => useUI.getState().setView("terminals") },
+    { id: "agent.new", title: "New agent…", category: "Agents", keywords: ["claude", "codex", "start"], run: () => { useUI.getState().setView("agents"); useAgents.getState().setStartDialogOpen(true); } },
   ];
   return registerCommands([...go, ...cmds]);
 }
