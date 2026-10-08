@@ -1,0 +1,14 @@
+{
+  "name": "Orole OS",
+  "identifier": "be.orole.os",
+  "version": "0.1.0",
+  "copyright": "Copyright (c) 2026 Orole",
+  "main": "./cmd/desktop",
+  "devUrl": "http://localhost:5173",
+  "devCommand": "bun run --cwd frontend dev",
+  "buildCommand": "bun run --cwd frontend build",
+  "frontendDist": "frontend/dist",
+  "bindings": "frontend/src/mygo.ts",
+  "out": "build",
+  "urlSchemes": ["orole"]
+}

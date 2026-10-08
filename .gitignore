@@ -1,0 +1,12 @@
+node_modules/
+dist/
+build/
+.mygo/
+*.log
+*.db
+*.db-wal
+*.db-shm
+.env*
+frontend/test-results/
+frontend/playwright-report/
+.orole-dev/
