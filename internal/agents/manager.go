@@ -49,12 +49,13 @@ type Manager struct {
 	order    []string
 	boot     string
 
-	launchMu sync.Mutex // serialize starts/resumes against each other and shutdown
-	bgWork   sync.WaitGroup
-	mu       sync.Mutex
-	live     map[string]*liveSess
-	changed  chan struct{}
-	closing  bool
+	launchMu   sync.Mutex   // serialize starts/resumes against each other and shutdown
+	worktreeMu sync.RWMutex // removal excludes manual and background Git readers
+	bgWork     sync.WaitGroup
+	mu         sync.Mutex
+	live       map[string]*liveSess
+	changed    chan struct{}
+	closing    bool
 
 	bg       context.Context // cancelled by Shutdown; owns background checks
 	bgCancel context.CancelFunc
@@ -762,6 +763,12 @@ func (m *Manager) Restart(ctx context.Context, id string, fresh bool, prompt str
 func (m *Manager) relaunch(ctx context.Context, id, prompt string, fresh bool) (Session, error) {
 	m.launchMu.Lock()
 	defer m.launchMu.Unlock()
+	return m.relaunchLocked(ctx, id, prompt, fresh)
+}
+
+// relaunchLocked requires launchMu; scoped delivery uses it to pin the recipient
+// across the final identity check and a continuation launch.
+func (m *Manager) relaunchLocked(ctx context.Context, id, prompt string, fresh bool) (Session, error) {
 	if err := ctx.Err(); err != nil {
 		return Session{}, err
 	}
@@ -1088,6 +1095,8 @@ func (m *Manager) finalize(ls *liveSess, e Event) {
 
 // refreshDiffStat updates the +/- counts shown in Review.
 func (m *Manager) refreshDiffStat(id string) {
+	m.worktreeMu.RLock()
+	defer m.worktreeMu.RUnlock()
 	if m.cfg.Worktrees == nil {
 		return
 	}
@@ -1118,6 +1127,8 @@ func (m *Manager) background(f func()) bool {
 
 // Diff returns the work a session produced relative to its base commit.
 func (m *Manager) Diff(ctx context.Context, id string) (ReviewDiff, error) {
+	m.worktreeMu.RLock()
+	defer m.worktreeMu.RUnlock()
 	s, err := m.Get(id)
 	if err != nil {
 		return ReviewDiff{}, err

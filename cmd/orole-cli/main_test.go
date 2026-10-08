@@ -21,6 +21,16 @@ func TestRunUsageAndErrors(t *testing.T) {
 		{[]string{"daemon", "status"}, 0, "not running"},
 		{[]string{"daemon", "stop"}, 0, "not running"},
 		{[]string{"terminal", "list"}, 1, ""}, // needs a daemon
+		{[]string{"terminal", "create", "-tmux", "-shell", "sh"}, 1, ""},
+		{[]string{"terminal", "persistent"}, 1, ""},
+		{[]string{"terminal", "restore", "orole-session"}, 1, ""},
+		{[]string{"terminal", "close", "session"}, 1, ""},
+		{[]string{"terminal", "restore"}, 2, ""},
+		{[]string{"terminal", "close"}, 2, ""},
+		{[]string{"terminal", "persistent", "extra"}, 2, ""},
+		{[]string{"terminal", "create", "unexpected"}, 2, ""},
+		{[]string{"terminal", "create", "-unknown"}, 2, ""},
+		{[]string{"terminal", "unsupported"}, 2, ""},
 		{[]string{"settings", "set", "k"}, 2, ""},
 	}
 	for _, c := range cases {

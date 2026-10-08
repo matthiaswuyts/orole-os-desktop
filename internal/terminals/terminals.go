@@ -1,9 +1,9 @@
 // Package terminals manages interactive pseudoterminal sessions behind a
-// platform-neutral Backend (ConPTY on Windows).
+// platform-neutral Backend (ConPTY on Windows, native PTY on Linux).
 //
-// Lifecycle honesty: sessions live in the daemon process. They survive GUI
-// restarts. They do NOT survive daemon termination or a Windows reboot; after
-// either, sessions are simply gone and the UI must offer to start new ones.
+// Sessions survive GUI restarts. Native sessions end with the daemon. Opt-in
+// Linux tmux sessions can be enumerated/restored after daemon restart while
+// their isolated tmux server lives; no backend restores processes after reboot.
 package terminals
 
 import (
@@ -58,18 +58,19 @@ const (
 
 // Info is a session snapshot.
 type Info struct {
-	ID        string     `json:"id"`
-	Title     string     `json:"title"`
-	Shell     string     `json:"shell"`
-	Cwd       string     `json:"cwd"`
-	Cols      int        `json:"cols"`
-	Rows      int        `json:"rows"`
-	Pid       int        `json:"pid"`
-	State     State      `json:"state"`
-	ExitCode  *int       `json:"exitCode,omitempty"`
-	StartedAt time.Time  `json:"startedAt"`
-	EndedAt   *time.Time `json:"endedAt,omitempty"`
-	Owner     string     `json:"owner,omitempty"` // e.g. "agent:<id>" for agent-owned terminals
+	ID           string     `json:"id"`
+	Title        string     `json:"title"`
+	Shell        string     `json:"shell"`
+	Cwd          string     `json:"cwd"`
+	Cols         int        `json:"cols"`
+	Rows         int        `json:"rows"`
+	Pid          int        `json:"pid"`
+	State        State      `json:"state"`
+	ExitCode     *int       `json:"exitCode,omitempty"`
+	StartedAt    time.Time  `json:"startedAt"`
+	EndedAt      *time.Time `json:"endedAt,omitempty"`
+	Owner        string     `json:"owner,omitempty"`        // e.g. "agent:<id>" for agent-owned terminals
+	PersistentID string     `json:"persistentId,omitempty"` // reconnectable tmux session, if opted in
 }
 
 // Sink receives live output and state changes.
@@ -110,13 +111,14 @@ type Session struct {
 
 // CreateOptions configures a new session.
 type CreateOptions struct {
-	Shell   string // Shell.ID, or "" for default
-	Cwd     string
-	Cols    int
-	Rows    int
-	Title   string
-	Owner   string
-	Command string // optional explicit command line overriding Shell
+	Shell       string // Shell.ID, or "" for default
+	Cwd         string
+	Cols        int
+	Rows        int
+	Title       string
+	Owner       string
+	Command     string // optional explicit command line overriding Shell
+	Persistence string // "" for daemon lifetime; "tmux" for Linux tmux server lifetime
 }
 
 // Create starts a session.
@@ -149,20 +151,38 @@ func (m *Manager) Create(o CreateOptions) (Info, error) {
 		}
 		cmd, shellName = sel.Command, sel.ID
 	}
-	p, err := m.be.Start(StartSpec{Command: cmd, Cwd: o.Cwd, Cols: o.Cols, Rows: o.Rows})
+	spec := StartSpec{Command: cmd, Cwd: o.Cwd, Cols: o.Cols, Rows: o.Rows}
+	var p Process
+	var err error
+	switch o.Persistence {
+	case "":
+		p, err = m.be.Start(spec)
+	case "tmux":
+		be, ok := m.be.(persistentBackend)
+		if !ok {
+			return Info{}, errors.New("terminals: tmux persistence is unavailable on this platform")
+		}
+		p, err = be.StartPersistent(spec)
+	default:
+		return Info{}, fmt.Errorf("terminals: unknown persistence %q", o.Persistence)
+	}
 	if err != nil {
 		return Info{}, err
 	}
 	s := &Session{m: m, p: p, info: Info{ID: uuid.NewString(), Title: o.Title, Shell: shellName, Cwd: o.Cwd,
 		Cols: o.Cols, Rows: o.Rows, Pid: p.Pid(), State: Running, StartedAt: time.Now().UTC(), Owner: o.Owner}}
+	if persistent, ok := p.(persistentProcess); ok {
+		s.info.PersistentID = persistent.PersistentID()
+	}
 	if s.info.Title == "" {
 		s.info.Title = shellName
 	}
 	m.mu.Lock()
 	m.sess[s.info.ID] = s
 	m.mu.Unlock()
+	info := s.info
 	go s.pump()
-	return s.info, nil
+	return info, nil
 }
 
 func (s *Session) pump() {
@@ -293,12 +313,23 @@ func (m *Manager) Close(id string) error {
 	m.mu.Lock()
 	delete(m.sess, id)
 	m.mu.Unlock()
+	if persistent, ok := s.p.(persistentProcess); ok {
+		if err := persistent.Terminate(); err != nil {
+			_ = s.p.Close()
+			return err
+		}
+	}
 	return s.p.Close()
 }
 
-// Shutdown closes every session.
+// Shutdown closes native sessions but only detaches persistent tmux clients.
+// Use Close to explicitly terminate a persistent session.
 func (m *Manager) Shutdown() {
-	for _, i := range m.List() {
-		_ = m.Close(i.ID)
+	m.mu.Lock()
+	sessions := m.sess
+	m.sess = map[string]*Session{}
+	m.mu.Unlock()
+	for _, s := range sessions {
+		_ = s.p.Close()
 	}
 }

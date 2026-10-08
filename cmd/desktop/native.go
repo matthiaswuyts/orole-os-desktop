@@ -10,6 +10,8 @@ import (
 	"github.com/rayorole/orole-os-desktop/internal/applications"
 )
 
+const launcherShortcut = "Ctrl+Alt+Space"
+
 // nativeDesktop owns only GUI-lifetime state. Call prepareNativeDesktop before
 // App.Run and Attach in WhenReady after creating the main window.
 type nativeDesktop struct {
@@ -44,6 +46,8 @@ func prepareNativeDesktop() (*nativeDesktop, bool) {
 		n.mu.Unlock()
 	})
 	mygo.App.OnWillQuit(func(_ *mygo.QuitEvent) {
+		// Release only our shortcut while the native event loop is still alive.
+		mygo.GlobalShortcut.Unregister(launcherShortcut)
 		n.mu.Lock()
 		tray := n.tray
 		n.tray = nil
@@ -67,6 +71,7 @@ func prepareNativeDesktop() (*nativeDesktop, bool) {
 	n.menu = mygo.NewMenu([]*mygo.MenuItem{
 		{Label: "Orole OS", Submenu: []*mygo.MenuItem{
 			{Label: "Show Orole OS", Click: func(*mygo.MenuItem, *mygo.Window) { n.show() }},
+			{ID: "launcher", Label: "Open Home", Click: func(*mygo.MenuItem, *mygo.Window) { n.navigate("home") }},
 			{ID: "hide", Label: "Hide to tray", Accelerator: "CmdOrCtrl+Shift+H", Disabled: true, Click: func(*mygo.MenuItem, *mygo.Window) { n.hide() }},
 			mygo.Separator(),
 			{Label: "Quit Orole OS", Accelerator: "CmdOrCtrl+Q", Click: func(*mygo.MenuItem, *mygo.Window) { mygo.App.Quit() }},
@@ -121,6 +126,15 @@ func (n *nativeDesktop) Attach(win *mygo.Window) {
 		n.window = nil
 		n.mu.Unlock()
 	})
+	// Attach runs from WhenReady: global shortcuts require the native event loop.
+	// Do not register Ctrl+K globally; it belongs to the focused application.
+	if err := mygo.GlobalShortcut.Register(launcherShortcut, func() { n.navigate("home") }); err != nil {
+		log.Printf("desktop: system-wide shortcut %s unavailable; use the Orole OS menu or tray: %v", launcherShortcut, err)
+		n.menu.ItemByID("launcher").SetLabel("Open Home (system-wide shortcut unavailable)")
+	} else {
+		// This is a status label, not a second application-menu accelerator.
+		n.menu.ItemByID("launcher").SetLabel("Open Home (" + launcherShortcut + " system-wide)")
+	}
 }
 
 func (n *nativeDesktop) show() {

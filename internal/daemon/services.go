@@ -158,6 +158,21 @@ func (d *Daemon) registerCore() {
 	// Terminals.
 	handle(d, "terminals.shells", func(ctx context.Context, _ none) ([]terminals.Shell, error) { return d.Terminals.Shells(), nil })
 	handle(d, "terminals.list", func(ctx context.Context, _ none) ([]terminals.Info, error) { return d.Terminals.List(), nil })
+	handle(d, "terminals.persistent", func(ctx context.Context, _ none) ([]terminals.PersistentSession, error) {
+		return d.Terminals.PersistentSessions()
+	})
+	handle(d, "terminals.restore", func(ctx context.Context, p struct {
+		ID   string `json:"id"`
+		Cols int    `json:"cols"`
+		Rows int    `json:"rows"`
+	}) (terminals.Info, error) {
+		info, err := d.Terminals.Restore(p.ID, p.Cols, p.Rows)
+		if err == nil {
+			d.audit("terminal.restore", info.ID, "allowed", p.ID)
+			d.IPC.Publish("terminal.changed", info)
+		}
+		return info, err
+	})
 	handle(d, "terminals.create", func(ctx context.Context, p terminals.CreateOptions) (terminals.Info, error) {
 		p.Owner = "" // owners are assigned by trusted daemon code only
 		p.Command = ""

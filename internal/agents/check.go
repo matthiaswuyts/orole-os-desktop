@@ -142,7 +142,10 @@ func (m *Manager) Review(ctx context.Context, id, decision, note string) (Sessio
 			}
 		}
 		if s.WorktreeOwned && m.cfg.Worktrees != nil {
-			if err := m.cfg.Worktrees.Remove(ctx, s.Project, s.Dir); err != nil {
+			m.worktreeMu.Lock()
+			err := m.cfg.Worktrees.Remove(ctx, s.Project, s.Dir)
+			m.worktreeMu.Unlock()
+			if err != nil {
 				m.cfg.Audit("agent.review", id, "error", "discard: "+err.Error())
 				return Session{}, fmt.Errorf("remove worktree: %w", err)
 			}

@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -9,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -50,10 +52,84 @@ type authSession struct {
 	mu     sync.Mutex
 	blob   *credBlob
 	loaded bool
+
+	// Keep retired credentials for this session too: in-flight responses can
+	// echo the token that was replaced or revoked while the request ran.
+	secretMu sync.RWMutex
+	secrets  []string
 }
 
 func newAuthSession(id string, creds credentials.Store, hc *http.Client, sourceURL func(context.Context) (string, error)) *authSession {
 	return &authSession{id: id, creds: creds, hc: hc, sourceURL: sourceURL}
+}
+
+func (a *authSession) remember(secrets ...string) {
+	a.secretMu.Lock()
+	defer a.secretMu.Unlock()
+	for _, secret := range secrets {
+		if secret == "" {
+			continue
+		}
+		found := false
+		for _, known := range a.secrets {
+			if known == secret {
+				found = true
+				break
+			}
+		}
+		if !found {
+			a.secrets = append(a.secrets, secret)
+		}
+	}
+	// Replace longer values first when a rotated token contains an old one.
+	sort.Slice(a.secrets, func(i, j int) bool { return len(a.secrets[i]) > len(a.secrets[j]) })
+}
+
+func (a *authSession) scrub(s string) string {
+	a.secretMu.RLock()
+	defer a.secretMu.RUnlock()
+	for _, secret := range a.secrets {
+		s = strings.ReplaceAll(s, secret, "[REDACTED]")
+	}
+	return s
+}
+
+func (a *authSession) scrubJSON(raw []byte) []byte {
+	a.secretMu.RLock()
+	empty := len(a.secrets) == 0
+	a.secretMu.RUnlock()
+	if empty {
+		return raw
+	}
+	var value any
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	if decoder.Decode(&value) != nil {
+		return []byte("null")
+	}
+	var scrubValue func(any) any
+	scrubValue = func(value any) any {
+		switch v := value.(type) {
+		case string:
+			return a.scrub(v)
+		case []any:
+			for i := range v {
+				v[i] = scrubValue(v[i])
+			}
+		case map[string]any:
+			out := make(map[string]any, len(v))
+			for key, item := range v {
+				out[a.scrub(key)] = scrubValue(item)
+			}
+			return out
+		}
+		return value
+	}
+	out, err := json.Marshal(scrubValue(value))
+	if err != nil {
+		return []byte("null")
+	}
+	return out
 }
 
 func (a *authSession) loadLocked() (*credBlob, error) {
@@ -72,11 +148,13 @@ func (a *authSession) loadLocked() (*credBlob, error) {
 	if err := json.Unmarshal(raw, &b); err != nil {
 		return nil, fmt.Errorf("credential record unreadable: %w", err)
 	}
+	a.remember(b.AccessToken, b.RefreshToken, b.ClientSecret)
 	a.loaded, a.blob = true, &b
 	return a.blob, nil
 }
 
 func (a *authSession) saveLocked(b *credBlob) error {
+	a.remember(b.AccessToken, b.RefreshToken, b.ClientSecret)
 	raw, err := json.Marshal(b)
 	if err != nil {
 		return err
@@ -219,20 +297,26 @@ type tokenResponse struct {
 	ExpiresIn    int64  `json:"expires_in"`
 }
 
-// tokenError is an RFC 6749 §5.2 error. Description is untrusted and sanitised.
+// tokenError retains only a recognized OAuth identifier, never provider prose.
 type tokenError struct {
-	Status      int
-	Code        string
-	Description string
+	Status int
+	Code   string
+}
+
+func oauthErrorCode(code string) string {
+	switch code {
+	case "invalid_request", "invalid_client", "invalid_grant", "unauthorized_client",
+		"unsupported_grant_type", "invalid_scope", "access_denied",
+		"unsupported_response_type", "server_error", "temporarily_unavailable",
+		"invalid_target", "authorization_pending", "slow_down", "expired_token":
+		return code
+	default:
+		return "unknown_error"
+	}
 }
 
 func (e *tokenError) Error() string {
-	s := fmt.Sprintf("token endpoint: HTTP %d", e.Status)
-	if e.Code != "" {
-		s += " " + e.Code
-	}
-	// Do not expose provider descriptions: they can echo submitted token material.
-	return s
+	return fmt.Sprintf("token endpoint: HTTP %d %s", e.Status, oauthErrorCode(e.Code))
 }
 
 // postToken performs a token-endpoint request with the client's authentication method.
@@ -265,20 +349,20 @@ func postToken(ctx context.Context, hc *http.Client, endpoint, clientID, clientS
 	if resp.StatusCode != http.StatusOK {
 		var e struct {
 			Error string `json:"error"`
-			Desc  string `json:"error_description"`
+			// Descriptions are deliberately not retained: providers can echo secrets.
 		}
 		_ = json.Unmarshal(body, &e)
-		return nil, &tokenError{Status: resp.StatusCode, Code: untrusted.Line(e.Error, 64), Description: untrusted.Line(e.Desc, 300)}
+		return nil, &tokenError{Status: resp.StatusCode, Code: oauthErrorCode(e.Error)}
 	}
 	var tr tokenResponse
 	if err := json.Unmarshal(body, &tr); err != nil {
-		return nil, fmt.Errorf("token endpoint returned invalid JSON: %w", err)
+		return nil, errors.New("token endpoint returned invalid JSON")
 	}
 	if tr.AccessToken == "" {
 		return nil, errors.New("token endpoint response has no access_token")
 	}
 	if tr.TokenType != "" && !strings.EqualFold(tr.TokenType, "bearer") {
-		return nil, fmt.Errorf("unsupported token_type %q (only Bearer is implemented)", untrusted.Line(tr.TokenType, 32))
+		return nil, errors.New("unsupported token_type (only Bearer is implemented)")
 	}
 	return &tr, nil
 }
@@ -325,7 +409,7 @@ func (h sdkHandler) Authorize(ctx context.Context, req *http.Request, resp *http
 		if i := strings.Index(v, `scope="`); i >= 0 {
 			rest := v[i+len(`scope="`):]
 			if j := strings.IndexByte(rest, '"'); j >= 0 {
-				scope = untrusted.Line(rest[:j], 256)
+				scope = untrusted.Line(h.a.scrub(rest[:j]), 256)
 			}
 		}
 	}

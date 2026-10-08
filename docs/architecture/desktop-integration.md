@@ -22,14 +22,17 @@ Executable boundaries on Windows:
 
 ## Real framework APIs
 
-Implementation research read both the local `../_upstream/mygo` source and the pinned `github.com/egoist/mygo@v0.3.3` module. Relevant sources are `app.go`, `modules.go`, `menu.go`, `window.go`, `deeplink.go`, `single_instance.go`, and `docs/app.md`. No tray, menu, scheme-registration, or instance-forwarding framework was copied or reimplemented.
+Implementation research read both the local `../_upstream/mygo` source and the pinned `github.com/egoist/mygo@v0.3.3` module. Relevant sources are `app.go`, `modules.go` (including `GlobalShortcut.Register`/`Unregister`), `menu.go`, `window.go`, `deeplink.go`, `single_instance.go`, and `docs/app.md`/`docs/native.md`. No tray, menu, system-wide shortcut, scheme-registration, or instance-forwarding framework was copied or reimplemented.
 
-`cmd/desktop/native.go` uses MyGo's `NewTray`, `NewMenu`, `App.SetMenu`, `Window.SetAutoHideMenuBar`, `OnClose`, `OnBeforeQuit`, `OnWillQuit`, `RequestSingleInstanceLock`, `OnSecondInstance`, `RegisterURLScheme`, and `OnOpenURL` APIs.
+`cmd/desktop/native.go` uses MyGo's `NewTray`, `NewMenu`, `App.SetMenu`, `Window.SetAutoHideMenuBar`, `GlobalShortcut.Register`, `GlobalShortcut.Unregister`, `OnClose`, `OnBeforeQuit`, `OnWillQuit`, `RequestSingleInstanceLock`, `OnSecondInstance`, `RegisterURLScheme`, and `OnOpenURL` APIs.
 
 - The tray has Show, Hide, Applications, and Quit actions. Show also restores a minimized window and focuses it.
 - Closing the main window hides it while a tray exists. Quit marks the GUI as quitting before window-close interception, then destroys the tray while the event loop is alive. No daemon shutdown or start-at-login setting changes occur.
 - If tray creation fails, Hide remains disabled and closing the window uses the normal application shutdown behavior. The error is logged; there is no fake tray state.
 - The application menu is auto-hidden to preserve the existing title bar, accessible with Alt/F10. Shortcuts: Applications `Ctrl+Shift+L`, Home `Ctrl+Shift+1`, Settings `Ctrl+,`, Hide `Ctrl+Shift+H`, Quit `Ctrl+Q`. MyGo supplies normal Edit menu roles. These are application-menu shortcuts, not registered system-wide hotkeys.
+- Separately, `Ctrl+Alt+Space` is registered **system-wide** after the app is ready and the main window exists. It shows/restores/focuses Orole and navigates to Home, including when Orole is hidden to the tray or another application is focused. It uses the same navigation event/snapshot path as menu actions and deep links. `Ctrl+K` is not captured globally.
+- The Orole OS menu's Open Home action displays the system-wide shortcut when registration succeeds. If registration fails (for example, another app owns the keys), it instead displays “system-wide shortcut unavailable” and logs the error. The menu action remains usable, startup continues, and tray/menu navigation still works. This label is not a menu accelerator or a claim of a second registration.
+- Quit unregisters `Ctrl+Alt+Space` in `OnWillQuit`, while the native event loop is alive; hiding the GUI does not unregister it. Binding generation bypasses native registration.
 - Existing Files/Notifications code owns native notifications. This slice creates no parallel notification integration.
 
 ### Deep links
@@ -47,6 +50,7 @@ MyGo receives both cold-start launch arguments and forwarded second-instance arg
 - MyGo v0.3.3's single-instance transport uses a local Unix-domain socket on Windows as well as Unix, not a TCP/network-interface listener. This is framework-owned GUI activation, separate from Orole's authenticated named-pipe daemon IPC. Incoming activation data is still untrusted and passes the strict parser.
 - The framework lock is best-effort: if its socket cannot be created or it exhausts retries, its implementation returns true and permits another instance. This implementation does not claim a stronger lock or replace it with a hand-rolled service.
 - Native tray availability is platform/framework dependent. Linux requires AppIndicator support; click behavior differs by platform. This is a Windows-first feature, not a promise of identical tray behavior everywhere.
+- System-wide shortcut registration depends on the desktop. MyGo uses native registration on Windows and key grabs on X11. Wayland uses the XDG desktop portal, may ask for permission or let the user remap the keys, and requires an installed desktop entry. Portal activation may finish after `Register` returns; a successful return alone does not prove live activation on every desktop.
 - Programmatically registering a portable production executable makes that path the current-user URL handler. Moving/deleting that executable can leave a stale OS association. Installed builds should use the installer/uninstaller lifecycle; registration success is not proof that a user's OS/browser will permit opening a link.
 - Native UI, installer routing, and OS process creation require Windows runtime acceptance. Source-level implementation and added regression tests are not a claim that this manual acceptance has already run.
 
@@ -95,3 +99,14 @@ Tray-menu mouse selection of Show/Hide/Quit remains unverified: Windows UI
 Automation exposed the app window but neither an Orole tray button nor a hidden-icon
 control. Native menu shortcuts, hide/restore behavior and GUI-only quit were exercised.
 Use isolated data for OS-handler acceptance; do not drive a window receiving other user input.
+
+### System-wide shortcut acceptance
+
+The new system-wide shortcut requires a fresh native build; earlier menu-shortcut evidence above does not verify it. Parent/native acceptance should:
+
+1. Start the desktop, focus another application, and press `Ctrl+Alt+Space`. Confirm Orole comes forward on Home, not merely the previously selected module.
+2. Repeat with Orole minimized and hidden to the tray. Confirm restoration, focus, and Home navigation; verify `Ctrl+K` remains available to the other application.
+3. Quit Orole via its menu. Confirm the shortcut no longer activates Orole and a subsequent launch can register it again.
+4. In an isolated session, reserve `Ctrl+Alt+Space` in another app before starting Orole. Confirm startup/navigation still work, the Open Home menu action says “system-wide shortcut unavailable”, and the registration error is logged. Release the competing registration and restart Orole to restore the shortcut.
+
+Do not claim conflict, background activation, or quit-time release verified from a build or application-menu smoke alone.

@@ -39,7 +39,7 @@ not-yet-used switch for the GUI; the daemon task starts the daemon without openi
 A Windows service is **not** the default and is not implemented. Reasons:
 
 1. **Session 0 isolation.** Services run in session 0 with no desktop. Orole's daemon launches the user's shells
-   (ConPTY), git, editors and, later, agents that must see the user's environment, profile, `HKCU`, drive mappings
+   (ConPTY), git, editors and agents that must see the user's environment, profile, `HKCU`, drive mappings
    and credential store. A service would run as `LocalSystem` or a service account and see none of that.
 2. **Credential Manager is per-user.** `internal/credentials` stores secrets in the *user's* vault; a service
    account cannot read them, and running as the user needs the user's password at install time.

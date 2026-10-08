@@ -1,17 +1,12 @@
 package agents
 
 import (
-	"bytes"
 	"context"
-	"errors"
 	"fmt"
-	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
-	"time"
 
 	"github.com/rayorole/orole-os-desktop/internal/git"
 )
@@ -82,79 +77,8 @@ func (g GitWorktrees) Head(ctx context.Context, dir string) (string, error) {
 	return git.ResolveCommit(ctx, dir, "HEAD")
 }
 
-const maxDiffBytes = 8 << 20
-
-// Diff stages everything into a throwaway copy of the index (so the real index and work
-// tree are untouched) and diffs that against base.
+// Diff uses the shared isolated review runner; repository filters and hooks are
+// never executed by automatic statistics or manual review.
 func (g GitWorktrees) Diff(ctx context.Context, dir, base string) (Diff, error) {
-	if base == "" || !git.ValidRef(base) {
-		return Diff{}, fmt.Errorf("invalid base ref %q", base)
-	}
-	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
-	defer cancel()
-	idxOut, err := gitOut(ctx, dir, nil, "rev-parse", "--path-format=absolute", "--git-path", "index")
-	if err != nil {
-		return Diff{}, err
-	}
-	tmp, err := os.CreateTemp("", "orole-index-*")
-	if err != nil {
-		return Diff{}, err
-	}
-	tmpPath := tmp.Name()
-	defer os.Remove(tmpPath)
-	if src, err := os.Open(strings.TrimSpace(string(idxOut))); err == nil {
-		_, _ = io.Copy(tmp, src)
-		src.Close()
-	}
-	tmp.Close()
-	env := []string{"GIT_INDEX_FILE=" + tmpPath}
-	if _, err := gitOut(ctx, dir, env, "add", "-A", "--", "."); err != nil {
-		return Diff{}, err
-	}
-	out, err := gitOut(ctx, dir, env, "diff", "--cached", "--no-color", "--no-ext-diff", "--no-textconv", "-M",
-		"--src-prefix=a/", "--dst-prefix=b/", base, "--")
-	if err != nil {
-		return Diff{}, err
-	}
-	res := git.ParseDiff(string(out))
-	if len(out) >= maxDiffBytes {
-		res.Truncated = true
-	}
-	return res, nil
-}
-
-func gitOut(ctx context.Context, dir string, extraEnv []string, args ...string) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, "git", append([]string{"-c", "core.quotepath=off"}, args...)...)
-	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "GIT_OPTIONAL_LOCKS=0", "LC_ALL=C")
-	cmd.Env = append(cmd.Env, extraEnv...)
-	hideWindow(cmd)
-	var out, errb bytes.Buffer
-	cmd.Stdout = &limitWriter{w: &out, max: maxDiffBytes}
-	cmd.Stderr = &limitWriter{w: &errb, max: 64 << 10}
-	if err := cmd.Run(); err != nil {
-		var ee *exec.ExitError
-		if errors.As(err, &ee) || ctx.Err() == nil {
-			return nil, fmt.Errorf("git %s: %w: %s", args[0], err, strings.TrimSpace(errb.String()))
-		}
-		return nil, ctx.Err()
-	}
-	return out.Bytes(), nil
-}
-
-// limitWriter drops output past max rather than failing the command.
-type limitWriter struct {
-	w   *bytes.Buffer
-	max int
-}
-
-func (l *limitWriter) Write(p []byte) (int, error) {
-	if room := l.max - l.w.Len(); room > 0 {
-		if len(p) > room {
-			l.w.Write(p[:room])
-		} else {
-			l.w.Write(p)
-		}
-	}
-	return len(p), nil
+	return git.DiffWorktree(ctx, dir, base)
 }

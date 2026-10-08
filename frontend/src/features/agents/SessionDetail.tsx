@@ -60,7 +60,7 @@ function Transcript({ session }: { session: Session }) {
 function TranscriptEntry({ event: ev, session }: { event: AgentEvent; session: Session }) {
   if (ev.kind === "permission") {
     const data = ev.data as Partial<PermissionRequest> | null;
-    const request: PermissionRequest = { id: data?.id ?? String(ev.id), tool: data?.tool ?? ev.text, summary: data?.summary ?? ev.text, at: data?.at ?? ev.at, input: data?.input };
+    const request: PermissionRequest = { id: data?.id ?? String(ev.id), tool: data?.tool ?? ev.text, summary: data?.summary ?? ev.text, at: data?.at ?? ev.at, input: data?.input, inputJSON: data?.inputJSON ?? "" };
     return <PermissionCard sessionId={session.id} request={request} resolved={!session.pending?.some((r) => r.id === request.id)} />;
   }
   if (ev.kind === "prompt") return <div className="ml-auto max-w-[85%] rounded-lg bg-accent px-3 py-2 text-sm"><p className="mb-1 text-xs font-medium text-muted-foreground">You</p><p className="whitespace-pre-wrap break-words">{ev.text}</p></div>;

@@ -63,4 +63,12 @@ func (d *Daemon) registerMailDrive() {
 		return driveAdapter.Preview(ctx, p.ID)
 	})
 	mailDriveHandler(d, "drive.trash", func(ctx context.Context, p mailDriveID) (drive.Mutation, error) { return driveAdapter.Trash(ctx, p.ID) })
+	// Resolve Agents at invocation time: its registration follows Mail/Drive.
+	handoff := func() driveHandoff { return driveHandoff{adapter: driveAdapter, agents: d.Agents, policy: d.Policy} }
+	mailDriveHandler(d, "drive.recipients", func(ctx context.Context, p none) ([]drive.Recipient, error) {
+		return handoff().recipients(ctx, p)
+	})
+	mailDriveHandler(d, "drive.share", func(ctx context.Context, p drive.ShareRequest) (drive.ShareResult, error) {
+		return handoff().share(ctx, p)
+	})
 }

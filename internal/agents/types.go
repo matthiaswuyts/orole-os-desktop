@@ -67,7 +67,9 @@ type PermissionRequest struct {
 	Tool    string          `json:"tool"`
 	Summary string          `json:"summary"`
 	Input   json.RawMessage `json:"input"`
-	At      time.Time       `json:"at"`
+	// InputJSON preserves the exact JSON representation for approval disclosure.
+	InputJSON string    `json:"inputJSON"`
+	At        time.Time `json:"at"`
 }
 
 // Session is one agent run, persisted in agent_sessions.

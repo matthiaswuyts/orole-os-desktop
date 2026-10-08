@@ -35,6 +35,10 @@ usage:
   orole daemon install       start the daemon at logon (Task Scheduler, no admin)
   orole daemon uninstall     remove the logon task
   orole terminal list
+  orole terminal create [-tmux] [-shell id] [-cwd directory]
+  orole terminal persistent
+  orole terminal restore <persistent-id>
+  orole terminal close <terminal-id>
   orole settings get [key]
   orole settings set <key> <json-or-text>
   orole version
@@ -277,14 +281,64 @@ func (c *cli) connect() (*ipc.Client, error) {
 }
 
 func (c *cli) terminal(args []string) error {
-	if len(args) != 1 || args[0] != "list" {
-		return usageError("terminal supports: list")
+	if len(args) == 0 {
+		return usageError("terminal supports: list, create, persistent, restore, close")
+	}
+	var options terminals.CreateOptions
+	switch args[0] {
+	case "create":
+		fs := flag.NewFlagSet("terminal create", flag.ContinueOnError)
+		fs.SetOutput(c.err)
+		tmux := fs.Bool("tmux", false, "use Linux tmux persistence")
+		fs.StringVar(&options.Shell, "shell", "", "shell ID")
+		fs.StringVar(&options.Cwd, "cwd", "", "working directory")
+		if err := fs.Parse(args[1:]); err != nil {
+			return usageError(err.Error())
+		}
+		if fs.NArg() != 0 {
+			return usageError("terminal create accepts flags only")
+		}
+		if *tmux {
+			options.Persistence = "tmux"
+		}
+	case "list", "persistent":
+		if len(args) != 1 {
+			return usageError("terminal " + args[0] + " accepts no arguments")
+		}
+	case "restore", "close":
+		if len(args) != 2 {
+			return usageError("terminal " + args[0] + " requires a session ID")
+		}
+	default:
+		return usageError("terminal supports: list, create, persistent, restore, close")
 	}
 	cl, err := c.connect()
 	if err != nil {
 		return err
 	}
 	defer cl.Close()
+	switch args[0] {
+	case "create":
+		var info terminals.Info
+		if err := cl.Call(c.ctx, "terminals.create", options, &info); err != nil {
+			return err
+		}
+		return json.NewEncoder(c.out).Encode(info)
+	case "persistent":
+		var sessions []terminals.PersistentSession
+		if err := cl.Call(c.ctx, "terminals.persistent", struct{}{}, &sessions); err != nil {
+			return err
+		}
+		return json.NewEncoder(c.out).Encode(sessions)
+	case "restore":
+		var info terminals.Info
+		if err := cl.Call(c.ctx, "terminals.restore", map[string]string{"id": args[1]}, &info); err != nil {
+			return err
+		}
+		return json.NewEncoder(c.out).Encode(info)
+	case "close":
+		return cl.Call(c.ctx, "terminals.close", map[string]string{"id": args[1]}, nil)
+	}
 	var list []terminals.Info
 	if err := cl.Call(c.ctx, "terminals.list", struct{}{}, &list); err != nil {
 		return err

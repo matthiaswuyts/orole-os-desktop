@@ -18,6 +18,81 @@ func mklinkJunction(t *testing.T, link, target string) {
 	}
 }
 
+func TestApprovedRootThroughAncestorJunction(t *testing.T) {
+	_, base := newRoot(t)
+	target := filepath.Join(base, "target")
+	root := filepath.Join(target, "approved")
+	outside := filepath.Join(target, "approved-sibling")
+	for _, dir := range []string{root, outside} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	alias := filepath.Join(base, "alias")
+	mklinkJunction(t, alias, target)
+	aliasRoot := filepath.Join(alias, "approved")
+	canonical, err := CanonicalRoot(aliasRoot)
+	if err != nil || !samePath(canonical, root) {
+		t.Fatalf("canonical root: %q %v", canonical, err)
+	}
+	l := NewLocal(StaticRoots("local", canonical))
+	file := filepath.Join(aliasRoot, "note.txt")
+	info, err := l.Write(ctx, file, []byte("original"), WriteOptions{Create: true})
+	if err != nil {
+		t.Fatalf("create through ancestor junction: %v", err)
+	}
+	if _, err := l.Stat(ctx, file); err != nil {
+		t.Fatalf("stat through ancestor junction: %v", err)
+	}
+	if _, err := l.Write(ctx, file, []byte("updated"), WriteOptions{IfMatch: info.Etag}); err != nil {
+		t.Fatalf("update through ancestor junction: %v", err)
+	}
+	if got, err := l.Read(ctx, file, ReadOptions{}); err != nil || string(got.Data) != "updated" {
+		t.Fatalf("read through ancestor junction: %+v %v", got, err)
+	}
+	if entries, err := l.List(ctx, aliasRoot); err != nil || len(entries) != 1 {
+		t.Fatalf("list through ancestor junction: %+v %v", entries, err)
+	}
+	dir := filepath.Join(aliasRoot, "folder")
+	if _, err := l.Mkdir(ctx, dir); err != nil {
+		t.Fatalf("mkdir through ancestor junction: %v", err)
+	}
+	renamed := filepath.Join(dir, "renamed.txt")
+	if _, err := l.Rename(ctx, file, renamed); err != nil {
+		t.Fatalf("rename through ancestor junction: %v", err)
+	}
+	if _, err := l.Delete(ctx, renamed, DeleteOptions{Permanent: true}); err != nil {
+		t.Fatalf("delete through ancestor junction: %v", err)
+	}
+
+	write(t, filepath.Join(outside, "secret.txt"), "private")
+	mklinkJunction(t, filepath.Join(root, "escape"), outside)
+	for _, denied := range []string{
+		filepath.Join(alias, "approved-sibling"),
+		filepath.Join(aliasRoot, "escape"),
+	} {
+		if _, err := l.Read(ctx, filepath.Join(denied, "secret.txt"), ReadOptions{}); !errors.Is(err, ErrDenied) {
+			t.Fatalf("read outside approved root via %q: %v", denied, err)
+		}
+		if _, err := l.Write(ctx, filepath.Join(denied, "new.txt"), []byte("bad"), WriteOptions{Create: true}); !errors.Is(err, ErrDenied) {
+			t.Fatalf("create outside approved root via %q: %v", denied, err)
+		}
+	}
+
+	// Replacing the approved canonical directory with a junction must still
+	// fail closed, even though the caller uses the original ancestor alias.
+	if err := os.Rename(root, root+"-moved"); err != nil {
+		t.Fatal(err)
+	}
+	mklinkJunction(t, root, outside)
+	if _, err := l.Read(ctx, filepath.Join(aliasRoot, "secret.txt"), ReadOptions{}); !errors.Is(err, ErrDenied) {
+		t.Fatalf("read through retargeted root: %v", err)
+	}
+	if _, err := l.Read(ctx, filepath.Join(root, "secret.txt"), ReadOptions{}); !errors.Is(err, ErrDenied) {
+		t.Fatalf("canonical read through retargeted root: %v", err)
+	}
+}
+
 func TestJunctionEscapeIsDenied(t *testing.T) {
 	l, root := newRoot(t)
 	outside, _ := realPath(t.TempDir())

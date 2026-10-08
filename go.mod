@@ -5,6 +5,7 @@ go 1.27.1
 require (
 	github.com/Microsoft/go-winio v0.6.2
 	github.com/UserExistsError/conpty v0.1.4
+	github.com/creack/pty v1.1.24
 	github.com/danieljoos/wincred v1.2.3
 	github.com/egoist/mygo v0.3.3
 	github.com/google/uuid v1.6.0

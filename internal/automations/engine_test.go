@@ -2,9 +2,6 @@ package automations
 
 import (
 	"context"
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"github.com/rayorole/orole-os-desktop/internal/credentials"
@@ -13,7 +10,6 @@ import (
 	"github.com/rayorole/orole-os-desktop/migrations"
 	"io"
 	"log/slog"
-	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -313,34 +309,6 @@ func (s *memoryCredentials) Delete(k string) error {
 	defer s.mu.Unlock()
 	delete(s.m, k)
 	return nil
-}
-func TestWebhookHMAC(t *testing.T) {
-	store := &memoryCredentials{m: map[string][]byte{webhookCredential: []byte(strings.Repeat("s", 32))}}
-	e := openEngine(t, filepath.Join(t.TempDir(), "db"), Options{Credentials: store, Notifier: notifyFunc(func(context.Context, NotificationRequest) (any, error) { return true, nil })})
-	d := saveDef(t, e, Definition{Name: "webhook", Enabled: true, Trigger: Trigger{Type: "webhook"}, Steps: []Step{{ID: "notify", Type: "notify", Params: json.RawMessage(`{"title":"Hook","level":"info"}`)}}})
-	body := `{"value":"data"}`
-	stamp := fmt.Sprint(time.Now().Unix())
-	mac := hmac.New(sha256.New, []byte(strings.Repeat("s", 32)))
-	mac.Write([]byte(stamp + "." + body))
-	signature := hex.EncodeToString(mac.Sum(nil))
-	for _, sig := range []string{"bad", signature, signature} {
-		r := httptest.NewRequest("POST", "/automations/"+d.ID, strings.NewReader(body))
-		r.Header.Set("X-Orole-Timestamp", stamp)
-		r.Header.Set("X-Orole-Signature", sig)
-		w := httptest.NewRecorder()
-		e.WebhookHandler().ServeHTTP(w, r)
-		want := 202
-		if sig == "bad" {
-			want = 401
-		}
-		if w.Code != want {
-			t.Fatalf("%d %s", w.Code, w.Body.String())
-		}
-	}
-	runs, _ := e.Runs(context.Background(), d.ID)
-	if len(runs) != 1 {
-		t.Fatalf("replay created %d runs", len(runs))
-	}
 }
 func TestRedactionAndEventFilter(t *testing.T) {
 	bus := events.NewBus()

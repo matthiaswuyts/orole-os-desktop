@@ -1,5 +1,5 @@
 import { Tooltip, TooltipPopup, TooltipTrigger } from "@/components/ui/tooltip";
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { Asterisk, Hexagon, Sparkles, SquareTerminal, Terminal, Check, Circle, LoaderCircle } from "lucide-react";
 import { Agents, type Session, type PermissionRequest, type ReviewDiff } from "@/mygo";
 import { useAgents } from "@/stores/agents";
@@ -7,6 +7,7 @@ import { useBoxes } from "@/stores/boxes";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Checkbox } from "@/components/ui/checkbox";
 import { DiffView } from "@/components/diff/DiffView";
 import { toDiffFiles } from "@/lib/diff";
 import { cn } from "@/lib/utils";
@@ -31,9 +32,27 @@ export function SessionBadge({ session: s }: { session: Session }) {
 export function ErrorNote({ error }: { error: string | null }) {
   return error ? <p role="alert" className="whitespace-pre-wrap break-words text-xs text-destructive-foreground">{error}</p> : null;
 }
+function approvalText(value: string): string {
+  return value.replace(/[\u0000-\u001f\u007f-\u009f\u061c\u200b-\u200f\u2028-\u202e\u2060-\u206f\ufeff]/g,
+    (character) => `\\u${character.charCodeAt(0).toString(16).padStart(4, "0")}`);
+}
+
 export function PermissionCard({ sessionId, request, resolved = false }: { sessionId: string; request: PermissionRequest; resolved?: boolean }) {
   const action = useAction();
-  return <div className="flex flex-col gap-2 rounded-md border border-warning/30 bg-warning/5 p-2 text-xs"><div className="flex items-center justify-between gap-2"><strong>{request.tool}</strong><span className="text-muted-foreground">{resolved ? "Resolved" : "Permission requested"}</span></div><p className="whitespace-pre-wrap break-words font-mono">{request.summary}</p>{!resolved && <div className="flex gap-1"><Button size="xs" disabled={action.busy} onClick={() => void action.run(async () => { await Agents.approve(sessionId, request.id, true, ""); useAgents.getState().upsert(await Agents.get(sessionId)); })}>Allow</Button><Button size="xs" variant="outline" disabled={action.busy} onClick={() => void action.run(async () => { await Agents.approve(sessionId, request.id, false, ""); useAgents.getState().upsert(await Agents.get(sessionId)); })}>Deny</Button></div>}<ErrorNote error={action.error} /></div>;
+  const reviewId = useId();
+  const [reviewed, setReviewed] = useState("");
+  const complete = !!request.inputJSON;
+  return <div className="flex min-w-0 flex-col gap-2 rounded-md border border-warning/30 bg-warning/5 p-2 text-xs">
+    <div className="flex items-center justify-between gap-2"><strong className="break-all font-mono">{approvalText(JSON.stringify(request.tool))}</strong><span className="shrink-0 text-muted-foreground">{resolved ? "Resolved" : "Permission requested"}</span></div>
+    <p className="text-muted-foreground">Complete tool arguments. Control and directional characters are shown as escapes; this is untrusted agent input.</p>
+    {complete ? <pre aria-label="Complete tool arguments" tabIndex={0} className="selectable max-h-72 overflow-auto whitespace-pre-wrap break-all rounded border bg-background p-2 font-mono">{approvalText(request.inputJSON)}</pre>
+      : <p role="alert">The complete input is unavailable. This request cannot be approved.</p>}
+    {!resolved && <>
+      <div className="flex items-start gap-2"><Checkbox id={reviewId} checked={reviewed === request.id} disabled={!complete || action.busy} onCheckedChange={(checked) => setReviewed(checked ? request.id : "")} /><label htmlFor={reviewId}>I reviewed the complete tool name and arguments.</label></div>
+      <div className="flex gap-1"><Button size="xs" disabled={!complete || reviewed !== request.id || action.busy} onClick={() => void action.run(async () => { await Agents.approve(sessionId, request.id, true, ""); useAgents.getState().upsert(await Agents.get(sessionId)); })}>Allow</Button><Button size="xs" variant="outline" disabled={action.busy} onClick={() => void action.run(async () => { await Agents.approve(sessionId, request.id, false, ""); useAgents.getState().upsert(await Agents.get(sessionId)); })}>Deny</Button></div>
+    </>}
+    <ErrorNote error={action.error} />
+  </div>;
 }
 export function ReplyBox({ session, onSent }: { session: Session; onSent?: () => void }) {
   const [text, setText] = useState("");

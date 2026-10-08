@@ -169,6 +169,18 @@ func (n *oauthNetwork) client(base *http.Client) (*http.Client, error) {
 	return client, nil
 }
 
+// streamClient uses the same destination policy for every live MCP request,
+// including initialization, tool POSTs and the long-lived session GET. Only the
+// overall request timeout is removed; DNS and connection establishment stay bounded.
+func (n *oauthNetwork) streamClient(base *http.Client) (*http.Client, error) {
+	client, err := n.client(base)
+	if err != nil {
+		return nil, err
+	}
+	client.Timeout = 0
+	return client, nil
+}
+
 func oauthPostToken(ctx context.Context, base *http.Client, source, endpoint, clientID, clientSecret, style string, form url.Values) (*tokenResponse, error) {
 	network, err := newOAuthNetwork(source)
 	if err != nil {

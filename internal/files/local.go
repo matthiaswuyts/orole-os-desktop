@@ -143,10 +143,25 @@ func (l *Local) resolve(ctx context.Context, p string, follow bool) (resolved, e
 		return resolved{}, err
 	}
 	var best Root
+	var real string
 	found := false
 	for _, r := range roots {
 		if within(r.Path, clean) && (!found || len(r.Path) > len(best.Path)) {
 			best, found = r, true
+		}
+	}
+	if !found && len(roots) > 0 {
+		// Approval stores a canonical path, while callers may still use an
+		// ancestor junction or an 8.3 name (including Windows' temp directory).
+		// Resolve that alias before looking up a root, never instead of checking
+		// containment or validating that the approved root itself is unchanged.
+		real, err = resolvePath(clean, follow)
+		if err == nil {
+			for _, r := range roots {
+				if within(r.Path, real) && (!found || len(r.Path) > len(best.Path)) {
+					best, found = r, true
+				}
+			}
 		}
 	}
 	if !found {
@@ -156,17 +171,13 @@ func (l *Local) resolve(ctx context.Context, p string, follow bool) (resolved, e
 	if err != nil {
 		return resolved{}, err
 	}
-	res := resolved{display: clean, root: best, rootReal: rootReal}
+	res := resolved{display: clean, real: real, root: best, rootReal: rootReal}
 	if samePath(clean, best.Path) {
 		res.real, res.isRoot = rootReal, true
 		return res, nil
 	}
-	if follow {
-		res.real, err = evalExisting(clean)
-	} else {
-		var parent string
-		parent, err = realPath(filepath.Dir(clean))
-		res.real = filepath.Join(parent, filepath.Base(clean))
+	if res.real == "" {
+		res.real, err = resolvePath(clean, follow)
 	}
 	if err != nil {
 		return resolved{}, mapErr(err, clean)
@@ -176,6 +187,17 @@ func (l *Local) resolve(ctx context.Context, p string, follow bool) (resolved, e
 	}
 	res.isRoot = samePath(res.real, rootReal)
 	return res, nil
+}
+
+func resolvePath(clean string, follow bool) (string, error) {
+	if follow {
+		return evalExisting(clean)
+	}
+	parent, err := realPath(filepath.Dir(clean))
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(parent, filepath.Base(clean)), nil
 }
 
 func evalExisting(p string) (string, error) {

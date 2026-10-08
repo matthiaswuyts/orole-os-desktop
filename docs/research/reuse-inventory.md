@@ -17,9 +17,9 @@ What Orole takes from outside, what it re-implements, and what it leaves. Compan
 | Local API transport | Shipyard: loopback HTTP / Unix socket | **Replaced**: named pipe + token | `internal/ipc` |
 | Service install | Shipyard: systemd/launchd | **Replaced**: Task Scheduler logon task | `internal/platform` |
 | Session durability via tmux | Shipyard | **Not reproduced**; honest persistence instead | ADR 0006 |
-| Remote boxes, tailnet/ssh onboarding, pairing/trust Go packages | Shipyard | **Not used** (local-first); possible later for remote machines | planned |
-| Browser panes (child webviews) | Shipyard + Tauri | **Open**: no verified MyGo equivalent | `docs/research/mygo-compatibility.md` |
-| Plugin SDK / host | Shipyard | **Not used**; trust model must be designed first | `docs/security/threat-model.md` |
+| Remote boxes, tailnet/ssh onboarding, pairing/trust Go packages | Shipyard | **Re-implemented**, not copied; native + pinned SSH transport | `internal/machines`; external SSH acceptance remains open |
+| Browser panes (child webviews) | Shipyard + Tauri | **Re-implemented** as restricted iframe previews; no verified child-WebView debugging | `features/browser`; site embedding restrictions remain visible |
+| Plugin SDK / host | Shipyard | **Replaced** with declarative MCP capability manifests, no arbitrary React plugin code | `internal/plugins`, `features/plugins`, `docs/architecture/plugins.md` |
 | Terminal emulator in the UI | xterm.js (also used by Shipyard) | **Dependency** | `features/terminals` |
 | Secrets | Windows Credential Manager via wincred | **Dependency** | `internal/credentials` |
 | SQLite | modernc.org/sqlite | **Dependency** | `internal/database` |

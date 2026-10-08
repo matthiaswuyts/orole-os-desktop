@@ -30,6 +30,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/rayorole/orole-os-desktop/internal/database"
+	"github.com/rayorole/orole-os-desktop/internal/files"
 	"github.com/rayorole/orole-os-desktop/internal/git"
 )
 
@@ -139,12 +140,13 @@ func defaultRoot(p Project) string {
 }
 
 // Add registers the git repository containing path. A linked worktree resolves to its main
-// checkout. Adding a project twice returns the existing one.
+// checkout, whose fully resolved native path is pinned as the approved file root.
+// Adding a project twice returns the existing one.
 func (s *Service) Add(ctx context.Context, path string) (Project, error) {
 	if strings.TrimSpace(path) == "" {
 		return Project{}, invalid("path is required")
 	}
-	canon, err := canonical(path)
+	canon, err := approvedProjectPath(path)
 	if err != nil {
 		return Project{}, invalid("%v", err)
 	}
@@ -165,7 +167,7 @@ func (s *Service) Add(ctx context.Context, path string) (Project, error) {
 	if list[0].Bare {
 		return Project{}, invalid("bare repositories are not supported")
 	}
-	main, err := canonical(list[0].Path)
+	main, err := approvedProjectPath(list[0].Path)
 	if err != nil {
 		return Project{}, err
 	}
@@ -262,6 +264,17 @@ func (s *Service) SetWorktreeRoot(ctx context.Context, id, root string) (Project
 		return Project{}, err
 	}
 	return s.Get(ctx, id)
+}
+
+// approvedProjectPath resolves native aliases only during explicit registration.
+// Unlike canonical, approval must fail if resolution fails and must expand
+// Windows junctions and short names as well as ordinary symlinks.
+func approvedProjectPath(p string) (string, error) {
+	abs, err := filepath.Abs(filepath.FromSlash(p))
+	if err != nil {
+		return "", err
+	}
+	return files.CanonicalRoot(abs)
 }
 
 // canonical returns an absolute, symlink-resolved, cleaned path.

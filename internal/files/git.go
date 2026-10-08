@@ -1,14 +1,14 @@
 package files
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/rayorole/orole-os-desktop/internal/git"
 )
 
 // NewGit returns the "git" provider: the local path policy applied to project
@@ -40,33 +40,25 @@ func NewGit(src RootSource) *Local {
 // gitAnnotate sets Entry.Git from `git status`. Failures leave entries
 // unmarked: status is decoration, never a reason to fail a listing.
 func gitAnnotate(ctx context.Context, dir string, entries []Entry) {
-	git, err := exec.LookPath("git")
+	top, err := git.Toplevel(ctx, dir)
+	if err != nil {
+		return
+	}
+	relative, err := filepath.Rel(top, dir)
 	if err != nil {
 		return
 	}
 	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
-	run := func(args ...string) ([]byte, error) {
-		// core.fsmonitor/hooksPath in an untrusted repo's config can run programs.
-		base := []string{"-c", "core.fsmonitor=false", "-c", "core.hooksPath=NUL", "-C", dir}
-		c := exec.CommandContext(ctx, git, append(base, args...)...)
-		c.Env = append(os.Environ(), "GIT_OPTIONAL_LOCKS=0", "GIT_TERMINAL_PROMPT=0")
-		hideWindow(c)
-		var out bytes.Buffer
-		c.Stdout = &out
-		err := c.Run()
-		return out.Bytes(), err
-	}
-	pfx, err := run("rev-parse", "--show-prefix")
+	result, err := git.GetStatus(ctx, dir)
 	if err != nil {
 		return
 	}
-	prefix := strings.TrimSpace(string(pfx))
-	out, err := run("status", "--porcelain=v1", "-z", "--untracked-files=normal", "--", ".")
-	if err != nil {
-		return
+	prefix := ""
+	if relative != "." {
+		prefix = filepath.ToSlash(relative) + "/"
 	}
-	status := parsePorcelain(out, prefix)
+	status := immediateGitStatus(result.Files, prefix)
 	for i := range entries {
 		if s, ok := status[entries[i].Name]; ok {
 			entries[i].Git = s
@@ -74,34 +66,23 @@ func gitAnnotate(ctx context.Context, dir string, entries []Entry) {
 	}
 }
 
-// parsePorcelain maps the immediate child name (relative to prefix) to a
-// two-letter status; directories get the status of their first changed child.
-func parsePorcelain(out []byte, prefix string) map[string]string {
+// immediateGitStatus maps repository-relative paths to immediate children. A
+// directory carries its first changed child's two-letter porcelain status.
+func immediateGitStatus(files []git.FileStatus, prefix string) map[string]string {
 	res := map[string]string{}
-	recs := bytes.Split(out, []byte{0})
-	for i := 0; i < len(recs); i++ {
-		r := string(recs[i])
-		if len(r) < 4 {
+	for _, file := range files {
+		path := strings.TrimSuffix(file.Path, "/")
+		if !strings.HasPrefix(path, prefix) {
 			continue
 		}
-		xy, p := r[:2], r[3:]
-		if xy[0] == 'R' || xy[0] == 'C' || xy[1] == 'R' || xy[1] == 'C' {
-			i++ // the original path follows as its own record
+		name := strings.TrimPrefix(path, prefix)
+		if i := strings.IndexByte(name, '/'); i >= 0 {
+			name = name[:i]
 		}
-		p = strings.TrimSuffix(p, "/")
-		if !strings.HasPrefix(p, prefix) {
-			continue
-		}
-		rest := p[len(prefix):]
-		name := rest
-		if j := strings.IndexByte(rest, '/'); j >= 0 {
-			name = rest[:j]
-		}
-		if name == "" {
-			continue
-		}
-		if _, seen := res[name]; !seen {
-			res[name] = xy
+		if name != "" {
+			if _, seen := res[name]; !seen {
+				res[name] = strings.ReplaceAll(file.Index+file.Worktree, ".", " ")
+			}
 		}
 	}
 	return res

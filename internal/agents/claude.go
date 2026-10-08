@@ -98,24 +98,26 @@ func (c Claude) Start(ctx context.Context, h *Host, spec LaunchSpec) (Process, e
 		b, _ := json.Marshal(map[string]any{"type": "user", "message": map[string]any{"role": "user", "content": prompt}})
 		return append(b, '\n')
 	}
-	p.encodeReply = func(id string, allow bool, reason string, input json.RawMessage) []byte {
-		var resp map[string]any
-		if allow {
-			if len(input) == 0 {
-				input = json.RawMessage("{}")
-			}
-			resp = map[string]any{"behavior": "allow", "updatedInput": input}
-		} else {
-			if reason == "" {
-				reason = "The user denied this action."
-			}
-			resp = map[string]any{"behavior": "deny", "message": reason}
-		}
-		b, _ := json.Marshal(map[string]any{"type": "control_response",
-			"response": map[string]any{"subtype": "success", "request_id": id, "response": resp}})
-		return append(b, '\n')
-	}
+	p.encodeReply = encodeClaudeReply
 	return p, nil
+}
+
+func encodeClaudeReply(id string, allow bool, reason string, input json.RawMessage) []byte {
+	var resp map[string]any
+	if allow {
+		if len(input) == 0 {
+			input = json.RawMessage("{}")
+		}
+		resp = map[string]any{"behavior": "allow", "updatedInput": input}
+	} else {
+		if reason == "" {
+			reason = "The user denied this action."
+		}
+		resp = map[string]any{"behavior": "deny", "message": reason}
+	}
+	b, _ := json.Marshal(map[string]any{"type": "control_response",
+		"response": map[string]any{"subtype": "success", "request_id": id, "response": resp}})
+	return append(b, '\n')
 }
 
 // hookEvents are the Claude Code hook events the daemon listens to in terminal mode.
@@ -240,11 +242,25 @@ func decodeClaude(p *pipeProc, line []byte) []Event {
 	case "control_request":
 		if m.Request.Subtype == "can_use_tool" {
 			p.pmu.Lock()
-			p.pendingIn[m.RequestID] = m.Request.Input
+			var canceled []Event
+			for id, pending := range p.pendingIn {
+				if pending.requestID == m.RequestID {
+					delete(p.pendingIn, id)
+					canceled = append(canceled, Event{Kind: EvPermCancel, Data: jraw(map[string]string{"id": id})})
+				}
+			}
+			if len(canceled) > 0 || m.RequestID == "" || len(m.Request.Input) > 64<<10 || !json.Valid(m.Request.Input) {
+				p.pmu.Unlock()
+				_ = p.write(encodeClaudeReply(m.RequestID, false, "Tool input is invalid, oversized, or reuses a pending request ID", nil))
+				return canceled
+			}
+			// UI IDs identify immutable snapshots, never agent-controlled/reused IDs.
+			id := uuid.NewString()
+			p.pendingIn[id] = pendingPermission{requestID: m.RequestID, input: m.Request.Input}
 			p.pmu.Unlock()
 			return []Event{{Kind: EvPermission, Text: m.Request.ToolName, Data: jraw(PermissionRequest{
-				ID: m.RequestID, Tool: m.Request.ToolName, Summary: summarizeTool(m.Request.ToolName, m.Request.Input),
-				Input: m.Request.Input, At: time.Now().UTC()})}}
+				ID: id, Tool: m.Request.ToolName, Summary: summarizeTool(m.Request.ToolName, m.Request.Input),
+				Input: m.Request.Input, InputJSON: string(m.Request.Input), At: time.Now().UTC()})}}
 		}
 		// Anything else would block the CLI forever; refuse explicitly.
 		b, _ := json.Marshal(map[string]any{"type": "control_response", "response": map[string]any{
@@ -252,9 +268,15 @@ func decodeClaude(p *pipeProc, line []byte) []Event {
 		_ = p.write(append(b, '\n'))
 	case "control_cancel_request":
 		p.pmu.Lock()
-		delete(p.pendingIn, m.RequestID)
+		var canceled []Event
+		for id, pending := range p.pendingIn {
+			if pending.requestID == m.RequestID {
+				delete(p.pendingIn, id)
+				canceled = append(canceled, Event{Kind: EvPermCancel, Data: jraw(map[string]string{"id": id})})
+			}
+		}
 		p.pmu.Unlock()
-		return []Event{{Kind: EvPermCancel, Data: jraw(map[string]string{"id": m.RequestID})}}
+		return canceled
 	case "result":
 		ok := !m.IsError && (m.Subtype == "" || m.Subtype == "success")
 		res := strings.TrimSpace(m.Result)

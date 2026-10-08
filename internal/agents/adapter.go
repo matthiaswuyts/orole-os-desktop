@@ -268,6 +268,11 @@ func checkToken(what, v string) error {
 
 // ---- pipe (structured) processes ----
 
+type pendingPermission struct {
+	requestID string
+	input     json.RawMessage
+}
+
 // pipeProc is a headless child process speaking a line-delimited JSON protocol.
 type pipeProc struct {
 	cmd      *exec.Cmd
@@ -282,7 +287,7 @@ type pipeProc struct {
 	encodePrompt func(prompt string) []byte
 	encodeReply  func(requestID string, allow bool, reason string, input json.RawMessage) []byte
 	pmu          sync.Mutex
-	pendingIn    map[string]json.RawMessage
+	pendingIn    map[string]pendingPermission
 }
 
 // startPipe launches bin and decodes each stdout line with decode.
@@ -300,7 +305,7 @@ func startPipe(dir, bin string, args []string, decode func(p *pipeProc, line []b
 		return nil, err
 	}
 	p := &pipeProc{cmd: cmd, stdin: stdin, events: make(chan Event, 256), stderr: &tailBuf{max: 8 << 10},
-		exited: make(chan struct{}), pendingIn: map[string]json.RawMessage{}}
+		exited: make(chan struct{}), pendingIn: map[string]pendingPermission{}}
 	cmd.Stderr = p.stderr
 	j, err := newJob()
 	if err != nil {
@@ -389,7 +394,7 @@ func (p *pipeProc) Respond(id string, allow bool, reason string) error {
 	if !ok {
 		return fmt.Errorf("no pending permission request %q", id)
 	}
-	return p.write(p.encodeReply(id, allow, reason, in))
+	return p.write(p.encodeReply(in.requestID, allow, reason, in.input))
 }
 
 func (p *pipeProc) Stop() error {

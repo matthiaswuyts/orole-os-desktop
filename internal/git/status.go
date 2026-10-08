@@ -39,11 +39,53 @@ type Status struct {
 
 // GetStatus runs `git status --porcelain=v2 --branch -z` in dir.
 func GetStatus(ctx context.Context, dir string) (Status, error) {
-	out, err := runDefault(ctx, dir, "status", "--porcelain=v2", "--branch", "-z", "--untracked-files=normal", "--no-renames")
+	return getStatus(ctx, dir, 0)
+}
+
+func getStatus(ctx context.Context, dir string, depth int) (Status, error) {
+	if depth > 64 {
+		return Status{}, fmt.Errorf("git status: submodule nesting exceeds review limit")
+	}
+	ctx, cancel := context.WithTimeout(ctx, DefaultTimeout)
+	defer cancel()
+	repo, err := openReviewRepo(ctx, dir)
 	if err != nil {
 		return Status{}, err
 	}
-	return ParseStatus(out)
+	defer repo.close()
+	out, truncated, err := repo.run(ctx, dir, nil, "status", "--porcelain=v2", "--branch", "-z", "--untracked-files=normal", "--no-renames", "--ignore-submodules=dirty")
+	if truncated {
+		return Status{}, fmt.Errorf("git status: output exceeds review limit")
+	}
+	if err != nil {
+		return Status{}, err
+	}
+	result, err := ParseStatus(out)
+	if err != nil {
+		return Status{}, err
+	}
+	dirty, err := repo.dirtySubmodules(ctx, depth)
+	if err != nil {
+		return Status{}, err
+	}
+	for _, path := range dirty {
+		found := false
+		for i := range result.Files {
+			file := &result.Files[i]
+			if file.Path == path {
+				found = true
+				if file.Worktree == "." {
+					file.Worktree = "M"
+					result.Unstaged++
+				}
+				break
+			}
+		}
+		if !found {
+			result.add(path, "", ".M")
+		}
+	}
+	return result, nil
 }
 
 // ParseStatus parses `git status --porcelain=v2 --branch -z` output.

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"math/rand/v2"
+	"net/http"
 	"sync"
 	"time"
 
@@ -86,8 +87,9 @@ func (c *conn) setStatus(s Status) {
 }
 
 func (c *conn) noteError(err error) {
+	message := c.m.authSession(c.id).scrub(err.Error())
 	c.mu.Lock()
-	c.lastErr = untrusted.Line(err.Error(), 500)
+	c.lastErr = untrusted.Line(message, 500)
 	c.lastErrAt = time.Now()
 	cfg := c.cfg
 	c.mu.Unlock()
@@ -183,12 +185,13 @@ func (c *conn) reconnect() {
 func (c *conn) run(ctx context.Context) {
 	for ctx.Err() == nil {
 		c.setStatus(StatusConnecting)
-		sess, err := c.dial(ctx)
+		sess, hc, err := c.dial(ctx)
 		if err == nil {
 			stopClose := context.AfterFunc(ctx, func() { _ = sess.Close() })
 			c.onConnected(sess)
 			waitErr := sess.Wait()
 			stopClose()
+			hc.CloseIdleConnections()
 			c.onLost(waitErr, ctx)
 			if ctx.Err() != nil {
 				return
@@ -258,8 +261,16 @@ func (c *conn) sleep(ctx context.Context, d time.Duration) bool {
 	}
 }
 
-func (c *conn) dial(ctx context.Context) (*sdk.ClientSession, error) {
+func (c *conn) dial(ctx context.Context) (*sdk.ClientSession, *http.Client, error) {
 	cfg := c.config()
+	network, err := newOAuthNetwork(cfg.URL)
+	if err != nil {
+		return nil, nil, err
+	}
+	hc, err := network.streamClient(c.m.hc)
+	if err != nil {
+		return nil, nil, err
+	}
 	dctx, cancel := context.WithTimeout(ctx, c.m.connectTimeout)
 	defer cancel()
 	client := sdk.NewClient(&sdk.Implementation{Name: "orole-os", Title: "Orole OS", Version: c.m.version}, &sdk.ClientOptions{
@@ -270,15 +281,16 @@ func (c *conn) dial(ctx context.Context) (*sdk.ClientSession, error) {
 	})
 	tr := &sdk.StreamableClientTransport{
 		Endpoint:     cfg.URL,
-		HTTPClient:   c.m.mcpHC,
+		HTTPClient:   hc,
 		OAuthHandler: sdkHandler{a: c.m.authSession(cfg.ID)},
 		MaxRetries:   2,
 	}
 	sess, err := client.Connect(dctx, tr, nil)
 	if err != nil {
-		return nil, classifyConnectErr(err)
+		hc.CloseIdleConnections()
+		return nil, nil, classifyConnectErr(err)
 	}
-	return sess, nil
+	return sess, hc, nil
 }
 
 func classifyConnectErr(err error) error {

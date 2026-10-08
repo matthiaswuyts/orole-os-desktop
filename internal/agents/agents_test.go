@@ -204,7 +204,7 @@ func TestLifecycleStartPermissionApproveDone(t *testing.T) {
 		t.Fatalf("status after start = %s", s.Status)
 	}
 	s = e.wait(t, s.ID, "needs-you", status(agents.StatusNeedsYou))
-	if len(s.Pending) != 1 || s.Pending[0].Tool != "Bash" || s.Pending[0].Summary != "echo hi" || s.Pending[0].ID != "req-1" {
+	if len(s.Pending) != 1 || s.Pending[0].Tool != "Bash" || string(s.Pending[0].Input) != `{"command":"echo hi"}` || s.Pending[0].InputJSON != string(s.Pending[0].Input) {
 		t.Fatalf("pending = %+v", s.Pending)
 	}
 	if err := e.m.Prompt(ctx10(t), s.ID, "meanwhile"); err == nil {
@@ -213,7 +213,7 @@ func TestLifecycleStartPermissionApproveDone(t *testing.T) {
 	if err := e.m.Approve(ctx10(t), s.ID, "nope", true, ""); err == nil {
 		t.Fatal("approving an unknown request must fail")
 	}
-	if err := e.m.Approve(ctx10(t), s.ID, "req-1", true, ""); err != nil {
+	if err := e.m.Approve(ctx10(t), s.ID, s.Pending[0].ID, true, ""); err != nil {
 		t.Fatal(err)
 	}
 	s = e.wait(t, s.ID, "done", status(agents.StatusDone))
@@ -244,8 +244,8 @@ func TestLifecycleStartPermissionApproveDone(t *testing.T) {
 func TestPermissionDenyIsRelayedAndAudited(t *testing.T) {
 	e := newEnv(t)
 	s := e.start(t, agents.StartSpec{Prompt: "NEEDPERM"})
-	e.wait(t, s.ID, "needs-you", status(agents.StatusNeedsYou))
-	if err := e.m.Approve(ctx10(t), s.ID, "req-1", false, "not on my machine"); err != nil {
+	s = e.wait(t, s.ID, "needs-you", status(agents.StatusNeedsYou))
+	if err := e.m.Approve(ctx10(t), s.ID, s.Pending[0].ID, false, "not on my machine"); err != nil {
 		t.Fatal(err)
 	}
 	s = e.wait(t, s.ID, "done", status(agents.StatusDone))
@@ -659,8 +659,8 @@ func TestPolicyDenialCannotBeOverriddenByUserAllow(t *testing.T) {
 		}
 	})
 	s := e.start(t, agents.StartSpec{Prompt: "NEEDPERM"})
-	e.wait(t, s.ID, "permission", status(agents.StatusNeedsYou))
-	if err := e.m.Approve(ctx10(t), s.ID, "req-1", true, ""); !errors.Is(err, blocked) {
+	s = e.wait(t, s.ID, "permission", status(agents.StatusNeedsYou))
+	if err := e.m.Approve(ctx10(t), s.ID, s.Pending[0].ID, true, ""); !errors.Is(err, blocked) {
 		t.Fatalf("policy denial was not returned: %v", err)
 	}
 	s = e.wait(t, s.ID, "done after policy denial", status(agents.StatusDone))

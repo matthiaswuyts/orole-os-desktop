@@ -68,6 +68,9 @@ type Preview struct {
 	Text      string `json:"text"`
 	DataURL   string `json:"dataUrl"`
 	Truncated bool   `json:"truncated"`
+	ServerID  string `json:"serverId"`
+	// SnapshotHash is set only for complete, safe text eligible for one-shot sharing.
+	SnapshotHash string `json:"snapshotHash"`
 }
 type Mutation struct {
 	ID        string `json:"id"`
@@ -247,14 +250,8 @@ func (a *Adapter) Trash(ctx context.Context, id string) (Mutation, error) {
 	return Mutation{ID: confirmed, Confirmed: true}, nil
 }
 func (a *Adapter) Preview(ctx context.Context, id string) (Preview, error) {
-	if _, err := maildrive.ID(id); err != nil {
-		return Preview{}, ErrBadRequest
-	}
-	raw, err := a.call(ctx, "preview", map[string]any{"id": id})
-	if err != nil {
-		return Preview{}, err
-	}
-	return parsePreview(raw, id)
+	snapshot, err := a.readSnapshot(ctx, "", id)
+	return snapshot.Preview, err
 }
 func parsePreview(raw json.RawMessage, id string) (Preview, error) {
 	m, err := maildrive.Object(raw)
@@ -330,5 +327,8 @@ func parsePreview(raw json.RawMessage, id string) (Preview, error) {
 		p.Truncated = p.Truncated || truncated
 	}
 	p.Text = untrusted.Text(text, MaxPreviewText)
+	if !p.Truncated && len(text) > 0 && len(text) <= MaxShareBytes && text == p.Text {
+		p.SnapshotHash = contentHash(p.MimeType, text)
+	}
 	return p, nil
 }

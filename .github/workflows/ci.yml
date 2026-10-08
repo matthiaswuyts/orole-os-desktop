@@ -54,6 +54,8 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      # Only packages with no Windows-only dependency (terminals/ConPTY make the daemon Windows-only today).
-      - name: Go test (race), platform-independent packages
-        run: go test -race ./internal/ipc/... ./internal/database/... ./internal/platform/... ./internal/paths/... ./internal/credentials/...
+      - name: Install Linux terminal persistence dependency
+        run: sudo apt-get update && sudo apt-get install -y tmux
+      # Native Linux PTY/tmux joins the portable lane; this is not a Linux desktop release.
+      - name: Go test (race), portable packages and Linux terminals
+        run: go test -race ./internal/ipc/... ./internal/database/... ./internal/platform/... ./internal/paths/... ./internal/credentials/... ./internal/terminals/...

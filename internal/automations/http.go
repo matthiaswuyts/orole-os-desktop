@@ -55,7 +55,7 @@ func (s *SafeHTTP) Do(ctx context.Context, p HTTPPolicy, r HTTPRequest) (HTTPRes
 	return s.do(ctx, p, r, nil)
 }
 
-func (s *SafeHTTP) do(ctx context.Context, p HTTPPolicy, r HTTPRequest, beforeDispatch func(*http.Request) error) (HTTPResult, error) {
+func (s *SafeHTTP) do(ctx context.Context, p HTTPPolicy, r HTTPRequest, beforeDispatch func(context.Context, httpRequestSnapshot) error) (HTTPResult, error) {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
@@ -131,7 +131,7 @@ func (s *SafeHTTP) do(ctx context.Context, p HTTPPolicy, r HTTPRequest, beforeDi
 	}
 	defer transport.CloseIdleConnections()
 	client := &http.Client{
-		Transport: authorizedTransport{transport: transport, beforeDispatch: beforeDispatch},
+		Transport: authorizedTransport{transport: transport, body: r.Body, beforeDispatch: beforeDispatch},
 		CheckRedirect: func(next *http.Request, via []*http.Request) error {
 			if req.Header.Get("Idempotency-Key") != "" {
 				return errors.New("idempotency-key requests require a direct endpoint; redirects are not followed")
@@ -186,12 +186,23 @@ func (s *SafeHTTP) do(ctx context.Context, p HTTPPolicy, r HTTPRequest, beforeDi
 	return result, nil
 }
 
+// httpRequestSnapshot is detached from the dispatched request: strings retain
+// the exact immutable body/target, and headers are copied before authorization.
+// A callback cannot rewrite the live request while the user considers approval.
+type httpRequestSnapshot struct {
+	Method  string      `json:"method"`
+	URL     string      `json:"url"`
+	Headers http.Header `json:"headers"`
+	Body    string      `json:"body"`
+}
+
 // Authorization runs for the initial concrete request and every redirect, before
 // DNS or connection establishment. Low-level SafeHTTP callers only apply SSRF
 // restrictions; the automation engine always supplies the shared-policy hook.
 type authorizedTransport struct {
 	transport      http.RoundTripper
-	beforeDispatch func(*http.Request) error
+	body           string
+	beforeDispatch func(context.Context, httpRequestSnapshot) error
 }
 
 func (t authorizedTransport) RoundTrip(req *http.Request) (*http.Response, error) {
@@ -199,7 +210,17 @@ func (t authorizedTransport) RoundTrip(req *http.Request) (*http.Response, error
 		return nil, err
 	}
 	if t.beforeDispatch != nil {
-		if err := t.beforeDispatch(req); err != nil {
+		body := ""
+		if req.Body != nil && req.Body != http.NoBody {
+			// SafeHTTP creates bodies from one immutable string. net/http either
+			// replays it for 307/308 or removes it when rewriting to GET.
+			body = t.body
+		}
+		snapshot := httpRequestSnapshot{
+			Method: req.Method, URL: req.URL.String(),
+			Headers: req.Header.Clone(), Body: body,
+		}
+		if err := t.beforeDispatch(req.Context(), snapshot); err != nil {
 			return nil, err
 		}
 	}

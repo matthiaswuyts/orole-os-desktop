@@ -5,12 +5,14 @@ import (
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -77,10 +79,10 @@ func (e *Engine) stopWebhook() {
 	}
 }
 
-// WebhookHandler verifies timestamp.body with HMAC-SHA256. The local listener
-// accepts POST /automations/{id}, X-Orole-Timestamp (unix seconds), and
-// X-Orole-Signature (hex HMAC). The timestamp window is 5 minutes; the signature
-// also serves as a durable delivery key, so retries cannot duplicate the run.
+// WebhookHandler authenticates only the v1 envelope documented in
+// docs/architecture/automations.md: method, canonical target, timestamp, exact
+// provenance header and body, each prefixed by its uint64 big-endian byte length.
+// The timestamp window is 5 minutes; the signature is a durable delivery key.
 func (e *Engine) WebhookHandler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != "POST" {
@@ -88,8 +90,18 @@ func (e *Engine) WebhookHandler() http.Handler {
 			return
 		}
 		id := strings.TrimPrefix(r.URL.Path, "/automations/")
-		if id == r.URL.Path || id == "" || strings.Contains(id, "/") {
+		if id == r.URL.Path || id == "" || id == "." || id == ".." || strings.ContainsAny(id, "/\\") {
 			http.NotFound(w, r)
+			return
+		}
+		target := "/automations/" + url.PathEscape(id)
+		if r.URL.EscapedPath() != target || r.URL.RawQuery != "" || r.URL.ForceQuery {
+			http.NotFound(w, r)
+			return
+		}
+		// Multiple signed headers are ambiguous across clients and proxies.
+		if len(r.Header.Values("X-Orole-Timestamp")) != 1 || len(r.Header.Values("X-Orole-Signature")) != 1 || len(r.Header.Values("X-Orole-Chain")) > 1 {
+			http.Error(w, "invalid authentication headers", http.StatusUnauthorized)
 			return
 		}
 		body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, MaxWebhookBody))
@@ -100,7 +112,7 @@ func (e *Engine) WebhookHandler() http.Handler {
 		timestamp := r.Header.Get("X-Orole-Timestamp")
 		sec, err := strconv.ParseInt(timestamp, 10, 64)
 		now := e.clock.Now().Unix()
-		if err != nil || sec < now-300 || sec > now+300 {
+		if err != nil || strconv.FormatInt(sec, 10) != timestamp || sec < now-300 || sec > now+300 {
 			http.Error(w, "invalid timestamp", http.StatusUnauthorized)
 			return
 		}
@@ -113,13 +125,35 @@ func (e *Engine) WebhookHandler() http.Handler {
 			http.Error(w, "credential unavailable", http.StatusServiceUnavailable)
 			return
 		}
-		sig, err := hex.DecodeString(strings.TrimPrefix(r.Header.Get("X-Orole-Signature"), "sha256="))
-		mac := hmac.New(sha256.New, secret)
-		mac.Write([]byte(timestamp + "."))
-		mac.Write(body)
-		if err != nil || !hmac.Equal(sig, mac.Sum(nil)) {
+		signature := r.Header.Get("X-Orole-Signature")
+		if len(signature) != len("v1=")+sha256.Size*2 || !strings.HasPrefix(signature, "v1=") {
 			http.Error(w, "invalid signature", http.StatusUnauthorized)
 			return
+		}
+		var sig [sha256.Size]byte
+		if _, err := hex.Decode(sig[:], []byte(signature[len("v1="):])); err != nil {
+			http.Error(w, "invalid signature", http.StatusUnauthorized)
+			return
+		}
+		rawChain := r.Header.Get("X-Orole-Chain")
+		mac := hmac.New(sha256.New, secret)
+		mac.Write([]byte("OROLE-WEBHOOK-V1\x00"))
+		var size [8]byte
+		for _, field := range [][]byte{[]byte(r.Method), []byte(target), []byte(timestamp), []byte(rawChain), body} {
+			binary.BigEndian.PutUint64(size[:], uint64(len(field)))
+			mac.Write(size[:])
+			mac.Write(field)
+		}
+		if !hmac.Equal(sig[:], mac.Sum(nil)) {
+			http.Error(w, "invalid signature", http.StatusUnauthorized)
+			return
+		}
+		chain := []string{}
+		if rawChain != "" {
+			if err := json.Unmarshal([]byte(rawChain), &chain); err != nil || chain == nil {
+				http.Error(w, "invalid provenance chain", http.StatusBadRequest)
+				return
+			}
 		}
 		d, err := e.definition(r.Context(), id)
 		if err != nil || !d.Enabled || d.Trigger.Type != "webhook" {
@@ -143,14 +177,7 @@ func (e *Engine) WebhookHandler() http.Handler {
 				return
 			}
 		}
-		chain := []string{}
-		if raw := r.Header.Get("X-Orole-Chain"); raw != "" {
-			if err = json.Unmarshal([]byte(raw), &chain); err != nil {
-				http.Error(w, "invalid provenance chain", http.StatusBadRequest)
-				return
-			}
-		}
-		run, err := e.trigger(context.Background(), id, "webhook", data, chain, "webhook:"+id+":"+hex.EncodeToString(sig))
+		run, err := e.trigger(context.Background(), id, "webhook", data, chain, "webhook:"+id+":"+hex.EncodeToString(sig[:]))
 		if err != nil {
 			http.Error(w, e.redact.Text(err.Error()), http.StatusConflict)
 			return

@@ -34,3 +34,12 @@ func (s Drive) Trash(ctx context.Context, id string) (out drive.Mutation, err er
 	err = s.L.call(ctx, "drive.trash", map[string]string{"id": id}, &out)
 	return
 }
+
+func (s Drive) Recipients(ctx context.Context) (out []drive.Recipient, err error) {
+	err = s.L.call(ctx, "drive.recipients", nil, &out)
+	return
+}
+func (s Drive) Share(ctx context.Context, request drive.ShareRequest) (out drive.ShareResult, err error) {
+	err = s.L.call(ctx, "drive.share", request, &out)
+	return
+}

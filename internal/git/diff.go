@@ -63,7 +63,7 @@ type DiffOptions struct {
 
 // Diff runs git diff in dir and parses the result.
 func Diff(ctx context.Context, dir string, o DiffOptions) (DiffResult, error) {
-	args := []string{"diff", "--no-color", "--no-ext-diff", "--no-textconv", "-M", "--src-prefix=a/", "--dst-prefix=b/"}
+	args := []string{"diff", "--no-color", "--no-ext-diff", "--no-textconv", "--ignore-submodules=dirty", "-M", "--src-prefix=a/", "--dst-prefix=b/"}
 	if o.Context > 0 && o.Context <= 1000 {
 		args = append(args, "-U"+strconv.Itoa(o.Context))
 	}
@@ -94,12 +94,24 @@ func Diff(ctx context.Context, dir string, o DiffOptions) (DiffResult, error) {
 		}
 		args = append(args, ":(literal)"+o.Path)
 	}
-	out, trunc, err := run(ctx, DefaultTimeout, dir, args...)
+	ctx, cancel := context.WithTimeout(ctx, DefaultTimeout)
+	defer cancel()
+	repo, err := openReviewRepo(ctx, dir)
+	if err != nil {
+		return DiffResult{}, err
+	}
+	defer repo.close()
+	out, trunc, err := repo.run(ctx, dir, nil, args...)
 	if err != nil {
 		return DiffResult{}, err
 	}
 	res := ParseDiff(string(out))
 	res.Truncated = trunc
+	if !trunc {
+		if err := repo.addDirtySubmoduleDiff(ctx, dir, o, &res); err != nil {
+			return DiffResult{}, err
+		}
+	}
 	return res, nil
 }
 

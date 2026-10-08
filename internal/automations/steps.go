@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/rayorole/orole-os-desktop/internal/automations/expr"
-	"net/http"
 	"path/filepath"
 	"strings"
 )
@@ -112,8 +111,8 @@ func (e *Engine) invoke(ctx context.Context, r Run, s Step, p map[string]any, ke
 		}
 		chain, _ := json.Marshal(r.Chain)
 		headers["X-Orole-Chain"] = string(chain)
-		return e.http.do(ctx, HTTPPolicy{AllowedHosts: r.Definition.AllowedHosts, AllowHTTP: r.Definition.AllowHTTP, MaxBytes: 64 << 10}, HTTPRequest{Method: str(p, "method"), URL: str(p, "url"), Headers: headers, Body: str(p, "body")}, func(request *http.Request) error {
-			if err := e.authorizeHTTP(request.Context(), actor, request.Method, request.URL.String()); err != nil {
+		return e.http.do(ctx, HTTPPolicy{AllowedHosts: r.Definition.AllowedHosts, AllowHTTP: r.Definition.AllowHTTP, MaxBytes: 64 << 10}, HTTPRequest{Method: str(p, "method"), URL: str(p, "url"), Headers: headers, Body: str(p, "body")}, func(ctx context.Context, request httpRequestSnapshot) error {
+			if err := e.authorizeHTTP(ctx, actor, request); err != nil {
 				return err
 			}
 			return beforeDispatch()

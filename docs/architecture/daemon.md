@@ -35,9 +35,11 @@ Core methods (`registerCore`):
 | `workspaces.list` / `save` / `delete` | named layouts (JSON, <= 1 MiB); save upserts, delete returns `not_found` for unknown ids |
 | `terminals.*` | see `windows-terminals.md`; create is audited and publishes `terminal.changed` |
 
-Other registered modules (projects, git, worktrees, GitHub, files) are listed in `ipc-protocol.md`. Several
-`internal/` packages (agents, mcp, policy, automations, notifications) exist but are not registered in the
-daemon yet; they are not reachable over IPC.
+`registerServices` also wires automations, MCP/policy, declarative plugins, host metrics,
+application shortcuts, Mail/Drive adapters, projects/Git, GitHub, machines, files and agents.
+Notifications and search are registered through the integration service initializers.
+These modules are reachable through authenticated IPC; unavailable configuration is reported
+explicitly rather than replaced with mock data. See the module guides and `ipc-protocol.md`.
 
 ## Operating it
 

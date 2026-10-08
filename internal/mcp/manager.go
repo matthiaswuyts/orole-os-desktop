@@ -32,8 +32,9 @@ type Options struct {
 	Policy *policy.Engine // required for InvokeChecked
 	Events *events.Bus    // optional daemon event bus with automation provenance
 	Log    *slog.Logger
-	// HTTP is the client for OAuth/discovery requests (default: 30s timeout). MCP traffic
-	// uses the same transport without an overall timeout (streams are long-lived).
+	// HTTP is the client for OAuth/discovery requests (default: 30s timeout). Each
+	// MCP connection guards its transport using the configured server's trust,
+	// without an overall timeout (streams are long-lived).
 	HTTP    *http.Client
 	Version string // reported to servers as client version
 
@@ -52,7 +53,6 @@ type Manager struct {
 	events  *events.Bus
 	log     *slog.Logger
 	hc      *http.Client // discovery + OAuth
-	mcpHC   *http.Client // MCP streams
 	version string
 
 	backoffBase, backoffMax, connectTimeout, callTimeout time.Duration
@@ -79,7 +79,7 @@ func New(o Options) *Manager {
 		o.Version = "0.0.0"
 	}
 	m := &Manager{db: o.DB, creds: o.Creds, pub: o.Pub, policy: o.Policy, events: o.Events, log: o.Log, hc: hc,
-		mcpHC: &http.Client{Transport: hc.Transport, CheckRedirect: hc.CheckRedirect, Jar: hc.Jar}, version: o.Version,
+		version:     o.Version,
 		backoffBase: or(o.BackoffBase, time.Second), backoffMax: or(o.BackoffMax, time.Minute),
 		connectTimeout: or(o.ConnectTimeout, 30*time.Second), callTimeout: or(o.CallTimeout, 60*time.Second),
 		conns: map[string]*conn{}, flows: map[string]*authFlow{}, sessions: map[string]*authSession{}}
@@ -296,6 +296,7 @@ func (m *Manager) Add(ctx context.Context, p AddParams) (ServerState, error) {
 		}
 	}
 	if p.ClientSecret != "" {
+		m.authSession(cfg.ID).remember(p.ClientSecret)
 		if err := m.creds.Set(clientSecretKey(cfg.ID), []byte(p.ClientSecret)); err != nil {
 			_ = m.authSession(cfg.ID).Clear()
 			return ServerState{}, fmt.Errorf("credential store: %w", err)
@@ -350,6 +351,7 @@ func (m *Manager) Update(ctx context.Context, id string, p UpdateParams) (Server
 		}
 	}
 	if p.ClientSecret != nil {
+		m.authSession(id).remember(*p.ClientSecret)
 		if *p.ClientSecret == "" {
 			_ = m.creds.Delete(clientSecretKey(id))
 		} else if err := m.creds.Set(clientSecretKey(id), []byte(*p.ClientSecret)); err != nil {

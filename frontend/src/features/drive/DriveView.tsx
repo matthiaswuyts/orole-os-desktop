@@ -13,6 +13,7 @@ import { errorText, Failure, Loading, NoResults, useRemote } from "@/features/mc
 import { VirtualList } from "@/features/mcp/VirtualList";
 import { safePreview } from "./preview";
 import { useUI } from "@/stores/ui";
+import { DriveActions } from "./DriveActions";
 
 export function DriveView() {
   const status = useRemote(() => Drive.status(), "drive-status");
@@ -82,6 +83,7 @@ function DriveBrowser({ capabilities, setup }: { capabilities: DriveCapabilities
           <div className="flex flex-col gap-3">
             <h2 className="break-words font-medium">{selected.name}</h2>
             <Badge variant="outline">Untrusted file content</Badge>
+            <DriveActions key={`${selected.id}:${preview.data?.snapshotHash ?? ""}`} file={selected} preview={preview.loading ? null : preview.data ?? null} canTrash={capabilities.canTrash} trashed={() => { setSelected(null); files.reload(); }} />
             {!capabilities.canPreview && <NoResults title="Preview unavailable">The server did not expose a compatible, bounded preview tool.</NoResults>}
             <Failure error={preview.error} retry={preview.reload} />
             {preview.loading && <Loading>Loading safe preview…</Loading>}

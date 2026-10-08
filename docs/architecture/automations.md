@@ -29,6 +29,14 @@ Immediately before dispatch, command/test and HTTP steps use the daemon's shared
 
 MCP, agent and GitHub steps call injected interfaces. Their adapters retain the daemon's own permission checks. MCP has no durable idempotency-key support and cannot select key strategy. Agent adapters use the orchestrator journal. Notifications use the existing notification service and its source preferences; a muted source may produce no notification.
 
+### HTTP request authorization
+
+Before DNS resolution or connection establishment, HTTP authorization receives a detached snapshot of the concrete method, full URL, all explicit headers (including automation chain and idempotency headers), and exact rendered body. Headers are copied and the body is retained as an immutable string; authorization cannot mutate the live request. A body-only change to a recipient or operation therefore changes the disclosed approval detail even when the endpoint is unchanged. Permitted headers and body bytes are not removed to make an approval fit.
+
+The entire snapshot passes through the same fail-closed secret and display-completeness checks as other native effects. Recognized secrets in headers or bodies, oversized detail, invisible display alterations, or invalid UTF-8 prevent dispatch rather than presenting a concealed, truncated, or replacement-character version. These checks are defense in depth, not detection of every possible opaque credential.
+
+Redirect authorization describes the next actual request after HTTP method/body transformations and the existing redirect header-stripping policy. In particular, POST redirects rewritten to GET disclose an empty body; 307/308 redirects disclose the preserved body. Every redirected request must pass policy before its own DNS lookup or connection, and denial sends nothing to that destination. Host allowlists, pinned public-address dialing, redirect limits, and the prohibition on redirecting idempotency-key requests remain unchanged.
+
 ## Crash recovery, approvals and limits
 
 Each step is journaled before invocation and after completion, with a stable SHA-256 `(run,step)` idempotency key. Finished steps are never repeated on restart. For side effects:
@@ -51,7 +59,66 @@ Disabled by default. Settings > Automations sets concurrency, enables the listen
 
 The HMAC key is stored only under Credential Manager target `Orole OS/automations/webhook-hmac`. It is never returned to the frontend or stored in SQLite. A local sender running as the same Windows user can read it through `internal/credentials`; remote senders must be provisioned by the user's own trusted secret management workflow.
 
-Send `POST /automations/<id>` with JSON (maximum 256 KiB), `X-Orole-Timestamp` (Unix seconds), and `X-Orole-Signature` (hex HMAC-SHA256, optionally prefixed `sha256=`). The signed bytes are `<timestamp>.<exact body bytes>`. Verification uses constant-time comparison and a ±5 minute timestamp window. Repeated identical signed deliveries deduplicate durably by signature. `X-Orole-Chain` optionally carries a JSON array of causing automation IDs. Return status is 202 with `runId`, 204 for a nonmatching filter, 401 for invalid authentication, or an explicit error.
+Send `POST /automations/<id>` with JSON (maximum 256 KiB), one `X-Orole-Timestamp` header (canonical decimal Unix seconds, no leading zeroes or `+`), and one `X-Orole-Signature` header containing `v1=<64 hex characters>`. **Only this versioned format is accepted:** the former bare/`sha256=` signature over timestamp and body is rejected. Use the stored credential bytes as the HMAC key; do not hex-decode the credential's text.
+
+### Version 1 signing contract
+
+The HMAC-SHA256 input is the literal 17-byte prefix `OROLE-WEBHOOK-V1\x00` (16 ASCII characters followed by one NUL byte), then **five length-prefixed fields in this order**:
+
+1. Method: the exact ASCII bytes `POST`.
+2. Target: the ASCII bytes of `/automations/` followed by Go `url.PathEscape(id)` (UTF-8 ID bytes, uppercase percent escapes). Ordinary generated UUID IDs require no escaping. Only the canonical spelling is accepted: no redundant escaping, slash/backslash in the decoded ID, `.`/`..` IDs, trailing slash, or query string (even a bare `?`). Scheme, host and port are not signed, allowing a user-managed tunnel to forward the same canonical path.
+3. Timestamp: the exact `X-Orole-Timestamp` bytes.
+4. Provenance: the exact `X-Orole-Chain` header value after HTTP's surrounding whitespace removal, or zero bytes if absent/empty. A nonempty value must be a JSON array of causing automation IDs, not `null`. Do not reserialize it after signing; even equivalent JSON with different internal whitespace changes the signature. ASCII JSON with escaped non-ASCII characters avoids header-encoding differences.
+5. Body: the exact transmitted body bytes, not parsed or reserialized JSON.
+
+Each field is encoded as its **unsigned 64-bit big-endian byte length followed immediately by those bytes**; there are no separators, terminators or implicit newlines. Prefix and field lengths are included in the HMAC. `X-Orole-Signature` itself is not. Hex digits may use either case; the version prefix is exactly `v1=`. Duplicate timestamp, signature or chain headers are rejected, rather than selecting one value. Any future field affecting provenance or dispatch must be added to a new authenticated envelope version, not an unsigned header.
+
+Verification uses constant-time comparison and the existing inclusive ±5-minute timestamp window. Repeated identical signed deliveries deduplicate durably by signature and return the original run ID, including after daemon restart and regardless of hex digit case. Changing the target, method, timestamp, body or chain invalidates the captured signature. Authenticated chains still enforce self-recursion and maximum depth; knowing the global credential grants signing authority, so provision it only to trusted senders. Return status is 202 with `runId`, 204 for a nonmatching filter, 401 for invalid authentication, 404 for a noncanonical/unknown target, or an explicit error.
+
+This Python sender accepts already-provisioned credential bytes in memory; it does not retrieve, print or persist secrets:
+
+```python
+import hashlib
+import hmac
+import json
+import struct
+import time
+import urllib.parse
+import urllib.request
+
+
+def send_webhook(base_url, automation_id, credential, body, causes=None):
+    if not automation_id or automation_id in (".", "..") or any(
+        c in automation_id for c in "/\\"
+    ):
+        raise ValueError("automation ID must be one canonical path segment")
+    target = "/automations/" + urllib.parse.quote(automation_id, safe="$&+:=@")
+    timestamp = str(int(time.time()))
+    chain = "" if causes is None else json.dumps(
+        causes, ensure_ascii=True, separators=(",", ":")
+    )
+    fields = [b"POST", target.encode("ascii"), timestamp.encode("ascii"),
+              chain.encode("ascii"), body]
+    envelope = b"OROLE-WEBHOOK-V1\x00" + b"".join(
+        struct.pack(">Q", len(field)) + field for field in fields
+    )
+    headers = {
+        "Content-Type": "application/json",
+        "X-Orole-Timestamp": timestamp,
+        "X-Orole-Signature": "v1=" + hmac.new(
+            credential, envelope, hashlib.sha256
+        ).hexdigest(),
+    }
+    if chain:
+        headers["X-Orole-Chain"] = chain
+    request = urllib.request.Request(
+        base_url.rstrip("/") + target, data=body, headers=headers, method="POST"
+    )
+    with urllib.request.urlopen(request, timeout=10) as response:
+        return response.status, json.load(response) if response.status == 202 else None
+```
+
+Supply `body` as the exact JSON byte sequence and `base_url` as the configured listener origin (for example `http://127.0.0.1:8765`). For retries, retain the original timestamp, chain, body and signature rather than creating a new delivery. The webhook regressions use the real loopback server and persisted runs to cover cross-target replay, changed provenance, canonical paths, malformed/legacy signatures, time/body limits and replay after engine restart.
 
 ## API and verification
 

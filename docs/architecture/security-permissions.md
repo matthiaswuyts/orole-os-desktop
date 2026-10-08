@@ -1,17 +1,34 @@
 # Security and permissions
 
 Principles from `AGENTS.md`: permissions are decided in Go; the UI is not a security boundary; secrets only in
-the credential store; no network listener; external content is data.
+the credential store; no network-facing management listener; external content is data.
 
 ## Local access control
 
 | Boundary | Control | Code |
 |---|---|---|
 | Who can talk to the daemon | pipe DACL = current user SID only, protected; plus a per-run 256-bit token in a 0600 file, constant-time compare; `hello` first, 5 s deadline | `internal/ipc` |
-| Network exposure | none: no TCP/HTTP listener anywhere | |
+| Network exposure | No TCP/HTTP daemon management listener. OAuth callbacks and explicitly enabled signed webhooks bind loopback only; acceptance-only WebView2 CDP is opt-in loopback | `internal/mcp`, `internal/automations`, packaged acceptance launcher |
 | Frontend to Go | MyGo bindings expose only methods of bound services; they hold no authority beyond what the daemon enforces | `internal/app` |
 | Terminals created from the UI | `owner` and `command` fields are cleared; only daemon code can mark agent-owned terminals | `svc` `terminals.create` |
-| Files | only inside approved, fully-resolved roots (`file_roots`) | `internal/files` |
+| Files | only inside approved, fully-resolved roots (`file_roots` for local; pinned `projects.path` for git) | `internal/files` |
+
+### Project file roots and upgrades
+
+Explicit project registration resolves the repository's main checkout to its native canonical path,
+including symlinks, Windows junctions, and short (8.3) names, before persisting `projects.path`.
+The git file provider uses that stored path verbatim as its approval. Every access checks that the root
+still resolves to the approved location; replacing a checkout or an ancestor with a link to another
+location does not grant access to that target, even when it is another Git repository. Callers may use
+an ancestor alias only when it resolves inside an unchanged approved root.
+
+No SQL backfill or startup filesystem canonicalization is performed for existing project records.
+Earlier registration already stored absolute, symlink-resolved paths; those stored values remain the
+authority, rather than whatever they point at during upgrade. Unchanged canonical records continue to
+work. Legacy noncanonical records (including unexpanded Windows aliases), inaccessible roots, and
+retargeted roots fail closed in the git file provider and are shown as unhealthy roots. Remove the
+registration and explicitly add the intended repository again to approve its current canonical location.
+Listing, opening, or restarting never silently repairs an approval or rewrites a stored project path.
 
 ## Decision engine (`internal/policy`)
 
@@ -32,6 +49,20 @@ discard, including calls from automations. Missing authorization fails closed. A
 dispatched agent key reads the existing result without launching again or requesting another approval.
 CLI-reported tool approvals are also checked against policy before an Allow reaches the CLI.
 This does not sandbox an agent's process: worktree separation is not OS isolation.
+
+### Complete agent tool approval
+
+Structured Claude requests disclose the complete original JSON and tool name, not the
+short activity summary. The UI escapes control/directional characters, preserves numeric
+representations, and requires review before enabling Allow. The daemon supplies an opaque
+one-use snapshot ID; cancellation or agent request-ID reuse cannot authorize replacement
+arguments. Duplicate pending wire IDs and inputs exceeding 64 KiB are denied before
+publishing an approvable request. The existing Go policy decision still runs before dispatch.
+
+A disposable browser surface exercised a padded command's otherwise-hidden suffix, omitted
+write content, a 64-bit numeric representation and a bidi character. All remained visible
+as inert escaped text; replacing the snapshot reset the review gate. This UI smoke does not
+substitute for the backend protocol regressions or a production Claude authentication check.
 
 ## Untrusted text (`internal/untrusted`)
 

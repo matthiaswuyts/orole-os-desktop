@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -15,7 +16,7 @@ import (
 const (
 	maxResultText  = 256 << 10 // per text block
 	maxResultTotal = 1 << 20
-	maxArgsDetail  = 1500
+	maxArgsDetail  = 1500 // whole disclosure, below the policy engine's 2000-character limit
 )
 
 // ErrCanceled is returned when a call was canceled via CancelCall or its context.
@@ -54,6 +55,7 @@ func (m *Manager) CallTool(ctx context.Context, id, tool string, args map[string
 			return nil, err
 		}
 	}
+	auth := m.authSession(id)
 	start := time.Now()
 	res, err := sess.CallTool(cctx, &sdk.CallToolParams{Name: tool, Arguments: args})
 	lat := time.Since(start)
@@ -69,11 +71,11 @@ func (m *Manager) CallTool(ctx context.Context, id, tool string, args map[string
 			return nil, ErrCanceled
 		case errors.Is(err, ErrReauthRequired):
 			c.markAuthRequired(err)
-			return nil, fmt.Errorf("%w: %s", ErrReauthRequired, untrusted.Line(err.Error(), 300))
+			return nil, fmt.Errorf("%w: %s", ErrReauthRequired, untrusted.Line(auth.scrub(err.Error()), 300))
 		}
-		return nil, fmt.Errorf("tool call failed: %s", untrusted.Line(err.Error(), 400))
+		return nil, fmt.Errorf("tool call failed: %s", untrusted.Line(auth.scrub(err.Error()), 400))
 	}
-	out := convertResult(res)
+	out := convertResult(res, auth)
 	out.LatencyMs = lat.Milliseconds()
 	return out, nil
 }
@@ -127,14 +129,28 @@ func (m *Manager) InvokeChecked(ctx context.Context, id, tool string, args map[s
 	if err != nil {
 		return nil, err
 	}
-	aj, _ := json.Marshal(args)
-	detail := fmt.Sprintf("Server %q wants to run tool %q.\nArguments: %s", cfg.Name, tool, untrusted.Line(string(aj), maxArgsDetail))
+	// Freeze the JSON document before asking. Never execute caller-owned maps
+	// that can change while approval is pending, or authorize a hidden suffix.
+	aj, err := json.Marshal(args)
+	if err != nil {
+		return nil, errors.New("mcp: arguments cannot be disclosed as JSON")
+	}
+	detail := fmt.Sprintf("Server %q wants to run tool %q.\nArguments: %s", cfg.Name, tool, aj)
+	if untrusted.Text(detail, maxArgsDetail) != detail || m.authSession(id).scrub(detail) != detail {
+		return nil, errors.New("mcp: complete arguments cannot be safely disclosed within the approval limit")
+	}
+	var frozen map[string]any
+	decoder := json.NewDecoder(bytes.NewReader(aj))
+	decoder.UseNumber()
+	if err := decoder.Decode(&frozen); err != nil {
+		return nil, errors.New("mcp: arguments cannot be disclosed as a JSON object")
+	}
 	err = m.policy.Require(ctx, policy.Request{Actor: actor, Action: "mcp.tool.call", Resource: "mcp/" + id + "/" + tool,
 		Effect: policy.Effect(ti.Effect), FromHint: true, Detail: detail})
 	if err != nil {
 		return nil, err
 	}
-	return m.CallTool(ctx, id, tool, args, opts)
+	return m.CallTool(ctx, id, tool, frozen, opts)
 }
 
 // CancelCall cancels an in-flight call started with the given CallID.
@@ -155,12 +171,14 @@ func (m *Manager) CancelCall(callID string) bool {
 
 // convertResult flattens an SDK result into sanitised, size-bounded blocks. Binary
 // payloads are summarised, not forwarded.
-func convertResult(res *sdk.CallToolResult) *CallResult {
+func convertResult(res *sdk.CallToolResult, auth *authSession) *CallResult {
 	out := &CallResult{IsError: res.IsError, Untrusted: true, Content: []ContentBlock{}}
 	raw, err := json.Marshal(res)
 	if err != nil {
 		return out
 	}
+	// Redact before display normalization or truncation can split a credential.
+	raw = auth.scrubJSON(raw)
 	var w struct {
 		Content []struct {
 			Type     string `json:"type"`

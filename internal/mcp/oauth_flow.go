@@ -170,7 +170,10 @@ func (m *Manager) runFlow(ctx context.Context, flow *authFlow, ln net.Listener, 
 		}
 		m.mu.Unlock()
 	}()
+	as := m.authSession(cfg.ID)
+	as.remember(reg.secret, verifier)
 	fail := func(err error) {
+		err = errors.New(as.scrub(err.Error()))
 		m.log.Warn("mcp authorization failed", "server", cfg.ID, "err", err)
 		m.audit("mcp.auth.finish", "mcp/"+cfg.ID, "error", untrusted.Line(err.Error(), 300))
 		m.setError(cfg.ID, "authorization failed: "+err.Error())
@@ -182,6 +185,7 @@ func (m *Manager) runFlow(ctx context.Context, flow *authFlow, ln net.Listener, 
 		fail(err)
 		return
 	}
+	as.remember(code)
 	form := url.Values{
 		"grant_type":    {"authorization_code"},
 		"code":          {code},
@@ -199,7 +203,6 @@ func (m *Manager) runFlow(ctx context.Context, flow *authFlow, ln net.Listener, 
 	b := &credBlob{Kind: "oauth", ClientID: reg.clientID, ClientSecret: reg.secret, AuthStyle: reg.style,
 		TokenEndpoint: disc.AS.TokenEndpoint, Resource: disc.Resource, Scope: strings.Join(scopes, " ")}
 	applyToken(b, tr)
-	as := m.authSession(cfg.ID)
 	if err := as.Set(b); err != nil {
 		fail(err)
 		return
@@ -207,7 +210,7 @@ func (m *Manager) runFlow(ctx context.Context, flow *authFlow, ln net.Listener, 
 	if err := m.saveAuthState(cfg.ID, disc, reg, b); err != nil {
 		m.log.Warn("mcp auth state not saved", "err", err)
 	}
-	m.audit("mcp.auth.finish", "mcp/"+cfg.ID, "allowed", "registration="+reg.kind+" scopes="+untrusted.Line(b.Scope, 200))
+	m.audit("mcp.auth.finish", "mcp/"+cfg.ID, "allowed", "registration="+reg.kind+" scopes="+untrusted.Line(as.scrub(b.Scope), 200))
 	m.publish("mcp.auth.done", AuthDone{ServerID: cfg.ID, OK: true})
 	m.Connect(cfg.ID)
 }
@@ -235,7 +238,7 @@ func awaitCallback(ctx context.Context, ln net.Listener, state, issuer string, i
 			http.Error(w, "state mismatch", http.StatusBadRequest) // not our flow: keep waiting
 			return
 		case q.Get("error") != "":
-			res.err = fmt.Errorf("authorization server returned error %q: %s", untrusted.Line(q.Get("error"), 64), untrusted.Line(q.Get("error_description"), 300))
+			res.err = fmt.Errorf("authorization server returned error %s", oauthErrorCode(q.Get("error")))
 		case q.Get("code") == "":
 			res.err = errors.New("authorization response has no code")
 		case issRequired && q.Get("iss") == "":
@@ -291,6 +294,7 @@ func (m *Manager) resolveClient(ctx context.Context, cfg ServerConfig, disc *Dis
 		secret := ""
 		if raw, err := m.creds.Get(clientSecretKey(cfg.ID)); err == nil {
 			secret = string(raw)
+			m.authSession(cfg.ID).remember(secret)
 		} else if !errors.Is(err, credentials.ErrNotFound) {
 			return clientReg{}, fmt.Errorf("credential store: %w", err)
 		}

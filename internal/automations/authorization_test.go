@@ -244,7 +244,7 @@ func TestAuthorizationDetailFailsClosed(t *testing.T) {
 				if field == "escaped-secret-target" {
 					target = "https://public.example/%70rivate-value"
 				}
-				err = e.authorizeHTTP(context.Background(), "automation:test", "GET", target)
+				err = e.authorizeHTTP(context.Background(), "automation:test", httpRequestSnapshot{Method: "GET", URL: target})
 			} else {
 				err = e.authorizeCommand(context.Background(), "automation:test", "command.run", command)
 			}

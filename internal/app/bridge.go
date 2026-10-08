@@ -284,6 +284,28 @@ func (t Terminals) Create(ctx context.Context, shell string, cwd string, cols, r
 	return out, err
 }
 
+// CreatePersistent starts a Linux terminal in this Orole home's tmux server.
+// Unsupported platforms return an error rather than silently using a native PTY.
+func (t Terminals) CreatePersistent(ctx context.Context, shell string, cwd string, cols, rows int) (terminals.Info, error) {
+	var out terminals.Info
+	err := t.L.call(ctx, "terminals.create", terminals.CreateOptions{Shell: shell, Cwd: cwd, Cols: cols, Rows: rows, Persistence: "tmux"}, &out)
+	return out, err
+}
+
+// PersistentSessions lists surviving tmux sessions after a daemon restart.
+func (t Terminals) PersistentSessions(ctx context.Context) ([]terminals.PersistentSession, error) {
+	var out []terminals.PersistentSession
+	err := t.L.call(ctx, "terminals.persistent", struct{}{}, &out)
+	return out, err
+}
+
+// Restore reconnects to a tmux session without relaunching its command.
+func (t Terminals) Restore(ctx context.Context, id string, cols, rows int) (terminals.Info, error) {
+	var out terminals.Info
+	err := t.L.call(ctx, "terminals.restore", map[string]any{"id": id, "cols": cols, "rows": rows}, &out)
+	return out, err
+}
+
 // Write sends input; data is raw text (keystrokes/paste, "\u0003" for Ctrl-C).
 func (t Terminals) Write(ctx context.Context, id string, data string) error {
 	return t.L.call(ctx, "terminals.write", map[string]any{"id": id, "data": []byte(data)}, nil)

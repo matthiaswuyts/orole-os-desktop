@@ -28,7 +28,7 @@ Orole OS is three layers plus a database. The rules below are binding (`AGENTS.m
 
 ## Why a separate daemon
 
-The window can close, crash or restart while terminals and (planned) agents keep running. Both the
+The window can close, crash or restart while daemon-owned terminals and agents keep running. Both the
 desktop app and the CLI are clients of the same daemon. See `docs/decisions/0002-daemon-separate-process.md`.
 
 ## Request flow
@@ -52,10 +52,10 @@ daemon to start at logon is not something the daemon can do for itself when it i
 ## Untrusted content
 
 Mail, issue text, MCP tool output and repository files are data, never instructions. `internal/untrusted` strips
-control and bidi characters before such text reaches the UI or audit log; `internal/policy` is the planned
-single gate for side effects (`docs/security/threat-model.md`).
+control and bidi characters before such text reaches display and approval boundaries; `internal/policy`
+is the central Go authorization gate for sensitive actions (`docs/security/threat-model.md`).
 
 ## Related
 
 `daemon.md`, `ipc-protocol.md`, `windows-runtime.md`, `windows-terminals.md`, `database-schema.md`,
-`component-structure.md`, `security-permissions.md`, `credentials.md`.
+`design-system.md`, `integration-matrix.md`, `component-structure.md`, `security-permissions.md`, `credentials.md`.

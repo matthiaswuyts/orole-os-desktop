@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"unicode/utf8"
 
 	"github.com/rayorole/orole-os-desktop/internal/policy"
 	"github.com/rayorole/orole-os-desktop/internal/untrusted"
@@ -35,20 +36,35 @@ func (e *Engine) authorizeCommand(ctx context.Context, actor, action string, com
 	})
 }
 
-func (e *Engine) authorizeHTTP(ctx context.Context, actor, method, target string) error {
+func (e *Engine) authorizeHTTP(ctx context.Context, actor string, request httpRequestSnapshot) error {
+	// JSON replaces invalid UTF-8. Reject it rather than authorize text that
+	// differs from the exact bytes sent on the wire.
+	if !utf8.ValidString(request.Method) || !utf8.ValidString(request.URL) || !utf8.ValidString(request.Body) {
+		return &authorizationError{cause: errors.New("HTTP authority detail cannot be displayed in full")}
+	}
+	for name, values := range request.Headers {
+		if !utf8.ValidString(name) || e.redact.Text(name) != name {
+			return &authorizationError{cause: errors.New("HTTP authority header cannot be displayed in full")}
+		}
+		for _, value := range values {
+			if !utf8.ValidString(value) {
+				return &authorizationError{cause: errors.New("HTTP authority detail cannot be displayed in full")}
+			}
+		}
+	}
 	// URL escaping must not turn a known credential into visible approval text.
-	decoded, err := url.QueryUnescape(target)
+	decoded, err := url.QueryUnescape(request.URL)
 	if err != nil || e.redact.Text(decoded) != decoded {
 		return &authorizationError{cause: errors.New("HTTP authority target contains a secret or invalid escaping")}
 	}
 	effect := policy.EffectDestructive
-	if method == http.MethodGet || method == http.MethodHead {
+	if request.Method == http.MethodGet || request.Method == http.MethodHead {
 		effect = policy.EffectRead
 	}
 	return e.requireEffect(ctx, policy.Request{
-		Actor: actor, Action: "http.request", Resource: "http/" + method + " " + target,
+		Actor: actor, Action: "http.request", Resource: "http/" + request.Method + " " + request.URL,
 		Effect: effect,
-	}, map[string]any{"method": method, "url": target})
+	}, map[string]any{"method": request.Method, "url": request.URL, "headers": request.Headers, "body": request.Body})
 }
 
 func (e *Engine) requireEffect(ctx context.Context, request policy.Request, detail any) error {

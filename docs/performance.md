@@ -33,6 +33,32 @@ Notes:
   xterm.js rendering, which are added on top in the UI.
 - Batching inserts in a transaction is ~6x cheaper per row than autocommit.
 
+### MCP Streamable HTTP loopback latency
+
+```powershell
+go test -run '^$' -bench '^BenchmarkMCPLoopbackCallTool$' -benchmem -count=3 ./tests/performance
+```
+
+`BenchmarkMCPLoopbackCallTool` measures one sequential, warm `mcp.Manager.CallTool` invocation over real
+Streamable HTTP to a loopback `httptest` server running the maintained `github.com/modelcontextprotocol/go-sdk/mcp`
+SDK. The local fixture echoes a short text argument. This is a transport/manager regression benchmark, **not
+production Mail or Drive network latency**; it does not contact either service or use stored user credentials.
+
+The timed path includes manager catalog lookup, call timeout handling, SDK request/response serialization,
+loopback HTTP, fixture argument decoding and result creation, and manager result sanitization. Setup uses a
+temporary database and in-memory credentials. Server startup, database migrations, MCP initialization/catalog
+discovery, two warmup calls, payload allocation, full response validation, and teardown are outside the timer.
+Warmup calls validate distinct echoed payloads; the last timed response is checked for exact text, text block
+type, untrusted marking, and absence of truncation or tool errors. Each timed call also fails on transport or
+tool errors.
+
+This adapter-facing primitive excludes `InvokeChecked` policy/approval overhead, daemon IPC, UI rendering,
+OAuth login/refresh, TLS, WAN latency, and real provider work. `ns/op` and `allocs/op` include both client and
+fixture work in the same process. It measures warm round trips, not connection establishment or tail latency.
+Observed on Windows amd64, Intel Core i7-9700K, 2026-10-08: three passing runs
+measured 3.97–5.00 ms/op, 364,096–368,410 B/op and 289–292 allocs/op.
+These are SDK loopback measurements, not production Mail or Drive latency.
+
 ## Daemon start, idle memory, idle CPU (`scripts/measure-daemon.ps1`)
 
 ```powershell

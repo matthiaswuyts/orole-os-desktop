@@ -30,6 +30,11 @@ async function installFilesBridge(page: Page) {
       "Settings.All": () => ({}), "Workspaces.List": () => [], "Projects.List": () => [], "Worktrees.List": () => [],
       "Agents.List": () => [], "Agents.Runs": () => [], "Agents.Detect": () => [],
       "Policy.Pending": () => [],
+      "Plugins.List": () => [], "Desktop.Ready": () => ({ view: "", sequence: 0 }), "Settings.Set": () => null,
+      "Updates.Check": () => ({ enabled: false, available: false, error: "" }), "Terminals.List": () => [],
+      "Machines.List": () => [{ id: "local", name: "This computer", kind: "local", status: "online" }], "MCP.List": () => [],
+      "Agents.Options": () => ({ machine: "local", harnesses: [], projects: [], directories: [], worktree: false, unavailableReason: "" }),
+      "Workspaces.Save": (workspace) => ({ ...(workspace as object), id: "files-workspace" }),
       "Notifications.List": () => ({ items: [], sources: [], unread: 0 }), "Notifications.Prefs": () => ({ default: { enabled: true, native: false }, sources: {} }),
       "GitHub.Status": () => ({ connected: false }),
       "Files.Providers": () => [{ id: "local", label: "Local", connected: true, managedRoots: true }, { id: "git", label: "Projects", connected: true, managedRoots: false }, { id: "remote", label: "Remote", connected: false, managedRoots: false, note: "Remote machines are not connected." }, { id: "drive", label: "Drive", connected: false, managedRoots: false, note: "Orole Drive is not connected." }],
@@ -145,9 +150,8 @@ test("palette finds files before the Files view has loaded", async ({ page }, te
   const palette = page.getByRole("dialog", { name: "Command palette" });
   await palette.getByRole("button", { name: "Files", exact: true }).click();
   await palette.getByRole("combobox").fill("00-readme");
-  await expect(palette.getByRole("option", { name: "00-readme.ts", exact: true })).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath("files-palette.png") });
-  await palette.getByRole("option", { name: "00-readme.ts", exact: true }).click();
+  await palette.getByRole("option", { name: /^00-readme\.ts\b/ }).click();
   await expect(page.getByLabel("Editor for C:\\work\\fixture\\00-readme.ts")).toBeVisible();
 });
 

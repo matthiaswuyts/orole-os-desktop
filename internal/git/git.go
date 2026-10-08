@@ -12,6 +12,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"strings"
@@ -72,7 +73,7 @@ func sanitizedEnv() []string {
 }
 
 // safeConfig neutralizes repository-controlled command execution.
-var safeConfig = []string{"-c", "core.fsmonitor=false", "-c", "core.quotepath=false", "-c", "core.pager=cat", "-c", "protocol.ext.allow=never"}
+var safeConfig = []string{"--no-pager", "--no-replace-objects", "-c", "core.fsmonitor=false", "-c", "core.hooksPath=" + os.DevNull, "-c", "core.quotepath=false", "-c", "core.pager=cat", "-c", "protocol.ext.allow=never", "-c", "maintenance.auto=false", "-c", "gc.auto=0"}
 
 type limitBuffer struct {
 	buf       bytes.Buffer
@@ -97,12 +98,17 @@ func (l *limitBuffer) Write(p []byte) (int, error) {
 // run executes git in dir (empty = current directory) and returns stdout.
 // truncated reports that output exceeded the cap and the process was stopped.
 func run(ctx context.Context, timeout time.Duration, dir string, args ...string) (out []byte, truncated bool, err error) {
+	return runInput(ctx, timeout, dir, nil, nil, args...)
+}
+
+func runInput(ctx context.Context, timeout time.Duration, dir string, env []string, stdin io.Reader, args ...string) (out []byte, truncated bool, err error) {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	full := append(append([]string{}, safeConfig...), args...)
 	cmd := exec.CommandContext(ctx, "git", full...)
 	cmd.Dir = dir
-	cmd.Env = sanitizedEnv()
+	cmd.Env = append(sanitizedEnv(), env...)
+	cmd.Stdin = stdin
 	stdout := &limitBuffer{max: maxOutput, cancel: cancel}
 	var stderr limitBuffer
 	stderr.max, stderr.cancel = 1<<20, func() {}

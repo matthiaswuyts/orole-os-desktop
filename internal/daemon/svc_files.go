@@ -96,11 +96,11 @@ func (d *Daemon) projectRoots(ctx context.Context) ([]files.Root, error) {
 		if p.MachineID != "" && p.MachineID != "local" {
 			continue
 		}
-		path := p.Path
-		if real, err := files.CanonicalRoot(path); err == nil {
-			path = real
-		}
-		out = append(out, files.Root{ID: p.ID, Provider: "git", Path: path, Label: p.Name})
+		// Registration pins the fully resolved native path. Never resolve it
+		// into new authority here: Local.rootReal must detect retargeted roots.
+		// Legacy rows retain their stored authority and fail closed if it no
+		// longer matches; only explicit registration can approve a new target.
+		out = append(out, files.Root{ID: p.ID, Provider: "git", Path: p.Path, Label: p.Name})
 	}
 	return out, nil
 }

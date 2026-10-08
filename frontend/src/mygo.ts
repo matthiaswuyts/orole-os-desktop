@@ -773,6 +773,8 @@ export interface Info {
   endedAt?: string;
   /** e.g. "agent:<id>" for agent-owned terminals */
   owner?: string;
+  /** reconnectable tmux session, if opted in */
+  persistentId?: string;
 }
 
 /** Issue is an issue (pull requests also appear in issue lists with PullRequest set). */
@@ -1130,7 +1132,17 @@ export interface PermissionRequest {
   tool: string;
   summary: string;
   input: unknown;
+  /** InputJSON preserves the exact JSON representation for approval disclosure. */
+  inputJSON: string;
   at: string;
+}
+
+/**
+ * PersistentSession identifies a live tmux session, not a saved process image.
+ * IDs are scoped to the current Orole home and disappear when the tmux server exits.
+ */
+export interface PersistentSession {
+  id: string;
 }
 
 export interface PluginAction {
@@ -1226,6 +1238,9 @@ export interface Preview {
   text: string;
   dataUrl: string;
   truncated: boolean;
+  serverId: string;
+  /** SnapshotHash is set only for complete, safe text eligible for one-shot sharing. */
+  snapshotHash: string;
 }
 
 /** Project is a registered git repository. */
@@ -1361,6 +1376,15 @@ export interface ReadResult {
   size: number;
   truncated: boolean;
   info: FilesInfo;
+}
+
+export interface Recipient {
+  id: string;
+  title: string;
+  kind: string;
+  model: string;
+  live: boolean;
+  revision: string;
 }
 
 export interface Reply {
@@ -1662,6 +1686,24 @@ export interface Session {
 export interface SettingChange {
   key: string;
   value: unknown;
+}
+
+/**
+ * ShareRequest identifies the exact reviewed content and selected recipient.
+ * No caller-supplied file contents or credentials are accepted.
+ */
+export interface ShareRequest {
+  serverId: string;
+  fileId: string;
+  snapshotHash: string;
+  sessionId: string;
+  recipientRevision: string;
+  task: string;
+}
+
+export interface ShareResult {
+  sessionId: string;
+  snapshotHash: string;
 }
 
 /** Shell is a selectable shell. */
@@ -2019,13 +2061,28 @@ export const Terminals = {
   create(shell: string, cwd: string, cols: number, rows: number): Promise<Info> {
     return call("Terminals.Create", shell, cwd, cols, rows);
   },
+  /**
+   * CreatePersistent starts a Linux terminal in this Orole home's tmux server.
+   * Unsupported platforms return an error rather than silently using a native PTY.
+   */
+  createPersistent(shell: string, cwd: string, cols: number, rows: number): Promise<Info> {
+    return call("Terminals.CreatePersistent", shell, cwd, cols, rows);
+  },
   /** List returns live and exited sessions. */
   list(): Promise<Info[]> {
     return call("Terminals.List");
   },
+  /** PersistentSessions lists surviving tmux sessions after a daemon restart. */
+  persistentSessions(): Promise<PersistentSession[]> {
+    return call("Terminals.PersistentSessions");
+  },
   /** Resize changes the pty size. */
   resize(id: string, cols: number, rows: number): Promise<void> {
     return call("Terminals.Resize", id, cols, rows);
+  },
+  /** Restore reconnects to a tmux session without relaunching its command. */
+  restore(id: string, cols: number, rows: number): Promise<Info> {
+    return call("Terminals.Restore", id, cols, rows);
   },
   /** Shells lists installed shells. */
   shells(): Promise<Shell[]> {
@@ -2648,8 +2705,14 @@ export const Drive = {
   preview(id: string): Promise<Preview> {
     return call("Drive.Preview", id);
   },
+  recipients(): Promise<Recipient[]> {
+    return call("Drive.Recipients");
+  },
   search(query: DriveQuery): Promise<DrivePage> {
     return call("Drive.Search", query);
+  },
+  share(request: ShareRequest): Promise<ShareResult> {
+    return call("Drive.Share", request);
   },
   stat(id: string): Promise<File> {
     return call("Drive.Stat", id);

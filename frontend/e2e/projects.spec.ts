@@ -21,6 +21,13 @@ async function installBridge(page: Page) {
       "Settings.All": () => ({}),
       "Workspaces.List": () => [],
       "Workspaces.Save": (w: W) => ({ ...w, id: "ws1" }),
+      "Settings.Set": () => null, "Policy.Pending": () => [], "Plugins.List": () => [],
+      "Desktop.Ready": () => ({ view: "", sequence: 0 }), "Updates.Check": () => ({ enabled: false, available: false, error: "" }),
+      "Agents.List": () => [], "Agents.Runs": () => [], "Agents.Detect": () => [], "Terminals.List": () => [],
+      "Machines.List": () => [{ id: "local", name: "This computer", kind: "local", status: "online" }], "MCP.List": () => [],
+      "Agents.Options": () => ({ machine: "local", harnesses: [], projects: [], directories: [], worktree: false, unavailableReason: "" }),
+      "Notifications.List": () => ({ items: [], sources: [], unread: 0 }),
+      "Notifications.Prefs": () => ({ default: { enabled: true, native: false, sound: false }, sources: {} }),
       "Projects.List": () => state.projects,
       "Projects.PickFolder": () => "C:\\code\\newrepo",
       "Projects.Add": (path: string) => { const p = mk("p2", path.split("\\").pop()!); state.projects.push(p); state.wts.p2 = [wt("m2", "p2", p.name, { isMain: true, branch: "main" })]; return p; },
@@ -40,7 +47,7 @@ async function installBridge(page: Page) {
   });
 }
 
-test("sidebar tree shows the project, worktrees and the 'more worktrees' collapse", async ({ page }) => {
+test("sidebar tree shows the project, worktrees and the 'more worktrees' collapse", async ({ page }, testInfo) => {
   await installBridge(page);
   await page.goto("/");
   const tree = page.getByRole("region", { name: "Projects" });
@@ -49,14 +56,14 @@ test("sidebar tree shows the project, worktrees and the 'more worktrees' collaps
   await expect(tree.getByText("main checkout")).toBeVisible();
   await expect(tree.getByText("3 more worktrees")).toBeVisible();
   await expect(tree.getByRole("img", { name: "uncommitted changes" })).toHaveCount(2);
-  await page.screenshot({ path: "../.orole-dev/e2e-sidebar.png" });
+  await page.screenshot({ path: testInfo.outputPath("sidebar.png") });
   await tree.getByText("3 more worktrees").click();
   await expect(tree.getByText("eta", { exact: true })).toBeVisible();
   await tree.getByRole("button", { name: "Collapse orole-os" }).click();
   await expect(tree.getByText("main checkout")).toBeHidden();
 });
 
-test("worktrees view lists, creates and removes with confirmation", async ({ page }) => {
+test("worktrees view lists, creates and removes with confirmation", async ({ page }, testInfo) => {
   await installBridge(page);
   await page.goto("/");
   await page.getByRole("button", { name: "Worktrees", exact: true }).click();
@@ -71,12 +78,12 @@ test("worktrees view lists, creates and removes with confirmation", async ({ pag
   await page.getByRole("button", { name: "Remove worktree beta" }).click();
   await expect(page.getByRole("alertdialog")).toContainText("Remove worktree beta?");
   await expect(page.getByRole("alertdialog")).toContainText("uncommitted");
-  await page.screenshot({ path: "../.orole-dev/e2e-worktrees.png" });
+  await page.screenshot({ path: testInfo.outputPath("worktrees.png") });
   await page.getByRole("button", { name: "Remove worktree", exact: true }).click();
   await expect(page.getByRole("row")).toHaveCount(9);
 });
 
-test("projects view: detail, and a 6000-line diff stays virtualized", async ({ page }) => {
+test("projects view: detail, and a 6000-line diff stays virtualized", async ({ page }, testInfo) => {
   await installBridge(page);
   await page.goto("/");
   await page.getByRole("region", { name: "Projects" }).getByText("orole-os", { exact: true }).first().click();
@@ -92,7 +99,7 @@ test("projects view: detail, and a 6000-line diff stays virtualized", async ({ p
   await diff.getByRole("button", { name: /logo\.png/ }).click();
   await expect(diff.getByText("Binary file not shown")).toBeVisible();
   await diff.scrollIntoViewIfNeeded();
-  await page.screenshot({ path: "../.orole-dev/e2e-diff.png" });
+  await page.screenshot({ path: testInfo.outputPath("diff.png") });
 });
 
 test("add via folder picker", async ({ page }) => {

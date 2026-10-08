@@ -90,3 +90,33 @@ func TestFileValidationAndSanitation(t *testing.T) {
 		}
 	}
 }
+
+func TestOnlyCompleteUnchangedBoundedTextHasShareDigest(t *testing.T) {
+	for _, tc := range []struct {
+		name, mime, text string
+		eligible         bool
+	}{
+		{"plain", "text/plain", "hello", true},
+		{"markdown", "text/markdown", "# Heading", true},
+		{"json", "application/json", `{"ok":true}`, true},
+		{"csv", "text/csv", "a,b\n1,2", true},
+		{"limit", "text/plain", strings.Repeat("x", MaxShareBytes), true},
+		{"oversized", "text/plain", strings.Repeat("x", MaxShareBytes+1), false},
+		{"unsafe controls", "text/plain", "hello\u202e", false},
+		{"empty", "text/plain", "", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p, err := parsePreview(previewJSON(tc.mime, tc.text), "f1")
+			if err != nil || (p.SnapshotHash != "") != tc.eligible {
+				t.Fatalf("eligible=%v hash=%q err=%v", tc.eligible, p.SnapshotHash, err)
+			}
+		})
+	}
+	p, err := parsePreview(json.RawMessage(`{"mimeType":"text/plain","text":"partial","truncated":true}`), "f1")
+	if err != nil || p.SnapshotHash != "" {
+		t.Fatalf("partial content eligible: %+v %v", p, err)
+	}
+	if contentHash("text/plain", "hello") == contentHash("text/markdown", "hello") || contentHash("text/plain", "hello") == contentHash("text/plain", "changed") {
+		t.Fatal("snapshot digest does not bind MIME type and exact bytes")
+	}
+}

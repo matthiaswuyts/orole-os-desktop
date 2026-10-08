@@ -7,8 +7,9 @@ Source: `internal/terminals` (`terminals.go` manager, `backend_windows.go` ConPT
 
 The daemon's `terminals.Manager` owns every session; the UI is a view.
 
-- `Backend` abstracts the platform (`Start(StartSpec)`, `Shells()`); only a Windows backend exists, which is why
-  the daemon does not build on Linux/macOS yet.
+- `Backend` abstracts the platform (`Start(StartSpec)`, `Shells()`). Windows uses ConPTY;
+  Linux uses a native PTY with opt-in [tmux persistence](linux-terminals.md). This does not
+  make the entire desktop or credential stack portable to Linux/macOS.
 - Shells detected on `PATH`/known locations: Windows PowerShell (`powershell`), PowerShell 7 (`pwsh`),
   Command Prompt (`cmd`), Git Bash (`git-bash`, from `%ProgramFiles%\Git`).
 - Limits: 64 sessions per manager; per-session scrollback ring of 1 MiB (`ScrollbackBytes`).
@@ -30,8 +31,8 @@ The daemon's `terminals.Manager` owns every session; the UI is a view.
 | Daemon stopped (`orole daemon stop`, crash, log off) | **End** |
 | Reboot | **End** (nothing is restored; there is no tmux equivalent on Windows) |
 
-The UI and docs must not imply otherwise. Shipyard relies on tmux for survival across everything; Orole
-deliberately does not pretend to.
+The UI and docs must not imply otherwise. Linux's optional tmux server can outlive a daemon,
+but not a reboot; Windows has no equivalent persistent terminal mode.
 
 ## Measured echo latency
 
@@ -90,6 +91,8 @@ of a known Codex/OpenCode/Gemini/custom CLI conversation.
   It does not stage changes in the user's real index. Approve records a decision, **not a merge**;
   Send back delivers feedback; Discard removes only a worktree created for that session. Ordinary
   project-directory changes are not reverted by Discard. Run check records actual exit/output state.
+  Worktree removal excludes the manager's manual/background Git readers, so an automatic
+  diff cannot retain a Windows directory handle while Discard removes the worktree.
 - Session transcripts are backed by bounded event history; CLI transcript paths are retained when
   provided by hooks. Structured permissions are transient: there is no live request to approve after
   the daemon process that owned it dies.
