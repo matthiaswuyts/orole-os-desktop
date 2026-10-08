@@ -37,7 +37,13 @@ type Workspace struct {
 	Layout   json.RawMessage `json:"layout"`
 }
 
+// registerServices wires every daemon module. Each module lives in its own file
+// (svc_<name>.go) and adds one line here.
 func (d *Daemon) registerServices() {
+	d.registerCore()
+}
+
+func (d *Daemon) registerCore() {
 	handle(d, "daemon.health", func(ctx context.Context, _ none) (Health, error) {
 		var ms runtime.MemStats
 		runtime.ReadMemStats(&ms)

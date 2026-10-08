@@ -1,16 +1,27 @@
-import { AppWindow, Bot, FolderGit2, GitPullRequest, HardDrive, Home, Mail, Server, Settings, SquareTerminal, Workflow } from "lucide-react";
+import { AppWindow, Bot, FolderGit2, GitBranch, GitPullRequest, HardDrive, Home, Inbox, LayoutDashboard, Mail, Server, Settings, SquareTerminal, Workflow } from "lucide-react";
 import type { ViewId } from "@/stores/ui";
 
-export const NAV: { id: ViewId; label: string; icon: typeof Home; group: "main" | "bottom" }[] = [
-  { id: "home", label: "Home", icon: Home, group: "main" },
-  { id: "mail", label: "Mail", icon: Mail, group: "main" },
-  { id: "drive", label: "Drive", icon: HardDrive, group: "main" },
-  { id: "github", label: "GitHub", icon: GitPullRequest, group: "main" },
-  { id: "agents", label: "Agents", icon: Bot, group: "main" },
-  { id: "projects", label: "Projects", icon: FolderGit2, group: "main" },
-  { id: "terminals", label: "Terminals", icon: SquareTerminal, group: "main" },
-  { id: "automations", label: "Automations", icon: Workflow, group: "main" },
-  { id: "machines", label: "Machines", icon: Server, group: "main" },
-  { id: "applications", label: "Applications", icon: AppWindow, group: "main" },
-  { id: "settings", label: "Settings", icon: Settings, group: "bottom" },
+export interface NavItem { id: ViewId; label: string; icon: typeof Home; title?: string; blurb?: string }
+
+/** Primary rows, as in Shipyard's sidebar. */
+export const PRIMARY: NavItem[] = [
+  { id: "home", label: "Home", icon: Home },
+  { id: "agents", label: "Agent Dashboard", icon: LayoutDashboard, blurb: "Every agent on every machine, by what it needs." },
+  { id: "review", label: "Review", icon: Inbox, blurb: "Agents' finished work, to approve, send back or discard." },
+  { id: "worktrees", label: "Worktrees", icon: GitBranch, blurb: "Every worktree of every project." },
+  { id: "automations", label: "Automations", icon: Workflow, blurb: "Workflows that run on triggers." },
 ];
+/** Behind "More". */
+export const MORE: NavItem[] = [
+  { id: "mail", label: "Mail", icon: Mail, blurb: "Orole Mail." },
+  { id: "drive", label: "Drive", icon: HardDrive, blurb: "Orole Drive." },
+  { id: "github", label: "GitHub", icon: GitPullRequest, blurb: "Repositories, issues and pull requests." },
+  { id: "projects", label: "Projects", icon: FolderGit2, blurb: "Projects on your machines." },
+  { id: "terminals", label: "Terminals", icon: SquareTerminal, blurb: "Persistent terminals." },
+  { id: "machines", label: "Machines", icon: Server, blurb: "Local and remote machines." },
+  { id: "applications", label: "Applications", icon: AppWindow, blurb: "Launcher for apps and shortcuts." },
+];
+export const SETTINGS: NavItem = { id: "settings", label: "Settings", icon: Settings };
+export const NAV: NavItem[] = [...PRIMARY, ...MORE, SETTINGS];
+export const navItem = (id: ViewId) => NAV.find((n) => n.id === id)!;
+export { Bot };
