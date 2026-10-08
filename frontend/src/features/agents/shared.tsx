@@ -1,3 +1,4 @@
+import { Tooltip, TooltipPopup, TooltipTrigger } from "@/components/ui/tooltip";
 import { useEffect, useState } from "react";
 import { Asterisk, Hexagon, Sparkles, SquareTerminal, Terminal, Check, Circle, LoaderCircle } from "lucide-react";
 import { Agents, type Session, type PermissionRequest, type ReviewDiff } from "@/mygo";
@@ -13,7 +14,7 @@ import { duration, folderOf, kindLabel, useAction, useNow, errText, isRemoteProc
 
 export function AgentGlyph({ kind }: { kind: string }) {
   const Icon = ({ claude: Asterisk, codex: Hexagon, opencode: SquareTerminal, gemini: Sparkles } as Record<string, typeof Terminal>)[kind] ?? Terminal;
-  return <span title={kindLabel(kind)} className="inline-flex size-6 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground"><Icon className="size-3.5" /></span>;
+  return <Tooltip><TooltipTrigger render={<span tabIndex={0}  className="inline-flex size-6 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground" />}><Icon className="size-3.5" /></TooltipTrigger><TooltipPopup><span className="max-w-sm whitespace-pre-wrap break-words">{kindLabel(kind)}</span></TooltipPopup></Tooltip>;
 }
 export function StateGlyph({ status }: { status: string }) {
   const Icon = status === "working" ? LoaderCircle : status === "done" ? Check : Circle;
@@ -22,7 +23,7 @@ export function StateGlyph({ status }: { status: string }) {
 export function SessionMeta({ session: s }: { session: Session }) {
   const now = useNow();
   const machine = useBoxes((state) => state.machines.find((item) => item.id === (s.machine || "local"))?.name);
-  return <p className="truncate text-[11px] text-muted-foreground" title={s.dir}>{[machine ?? s.machine, folderOf(s), s.branch, s.model, s.reasoning ? `${s.reasoning} reasoning` : "", duration(now - Date.parse(s.startedAt))].filter(Boolean).join(" · ")}</p>;
+  return <Tooltip><TooltipTrigger render={<p tabIndex={0} className="truncate text-[11px] text-muted-foreground"  />}>{[machine ?? s.machine, folderOf(s), s.branch, s.model, s.reasoning ? `${s.reasoning} reasoning` : "", duration(now - Date.parse(s.startedAt))].filter(Boolean).join(" · ")}</TooltipTrigger><TooltipPopup><span className="max-w-sm whitespace-pre-wrap break-words">{s.dir}</span></TooltipPopup></Tooltip>;
 }
 export function SessionBadge({ session: s }: { session: Session }) {
   return <Badge variant={s.status === "failed" ? "error" : s.review === "approved" ? "success" : "secondary"}>{s.review === "approved" ? "Approved" : s.status === "needs-you" ? "Needs you" : s.status}</Badge>;

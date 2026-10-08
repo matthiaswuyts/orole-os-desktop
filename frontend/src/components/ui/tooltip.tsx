@@ -10,36 +10,7 @@ export const TooltipCreateHandle: typeof TooltipPrimitive.createHandle =
 export const TooltipProvider: typeof TooltipPrimitive.Provider =
   TooltipPrimitive.Provider;
 
-// Shipyard: a tooltip opens on focus only when the keyboard moved focus there
-// (Tab, arrows). Focus put back by code (a popover closing onto its
-// trigger, a sheet's first button) leaves it shut, so it never covers what
-// just appeared.
-let lastNav = 0;
-if (typeof window !== "undefined") {
-  window.addEventListener(
-    "keydown",
-    (e) => {
-      if (e.key === "Tab" || e.key.startsWith("Arrow") || e.key === "Home" || e.key === "End") lastNav = Date.now();
-    },
-    true,
-  );
-}
-
-// focusFromKeyboard says whether the keyboard just moved focus, for
-// tooltips that open on focus without a trigger of their own (tip.tsx).
-export const focusFromKeyboard = () => Date.now() - lastNav <= 600;
-
-export function Tooltip({ onOpenChange, ...props }: TooltipPrimitive.Root.Props): React.ReactElement {
-  return (
-    <TooltipPrimitive.Root
-      {...props}
-      onOpenChange={(open, details) => {
-        if (open && details.reason === "trigger-focus" && Date.now() - lastNav > 600) details.cancel();
-        onOpenChange?.(open, details);
-      }}
-    />
-  );
-}
+export const Tooltip: typeof TooltipPrimitive.Root = TooltipPrimitive.Root;
 
 export function TooltipTrigger(
   props: TooltipPrimitive.Trigger.Props,

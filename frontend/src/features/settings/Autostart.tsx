@@ -1,3 +1,4 @@
+import { Tooltip, TooltipPopup, TooltipTrigger } from "@/components/ui/tooltip";
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { Copy, RefreshCw } from "lucide-react";
 import { System, type AutostartStatus, type Report } from "@/mygo";
@@ -82,11 +83,11 @@ export function AutostartPanel() {
         </Row>
         {report && (
           <>
-            <Row label="Credential store"><span className="font-mono" title={report.credentialStore.detail}>{report.credentialStore.ok ? "ok" : `failed: ${report.credentialStore.detail}`}</span></Row>
+            <Row label="Credential store"><Tooltip><TooltipTrigger render={<span tabIndex={0} className="font-mono"  />}>{report.credentialStore.ok ? "ok" : `failed: ${report.credentialStore.detail}`}</TooltipTrigger><TooltipPopup><span className="max-w-sm whitespace-pre-wrap break-words">{report.credentialStore.detail}</span></TooltipPopup></Tooltip></Row>
             <Row label="WebView2 runtime"><span className="font-mono">{report.webview2}</span></Row>
             <Row label="Database schema"><span className="font-mono">{report.dbSchemaVersion >= 0 ? `v${report.dbSchemaVersion} (${report.dbSource})` : `unknown (${report.dbSource})`}</span></Row>
-            <Row label="Data directory"><span className="block max-w-sm truncate font-mono" title={report.dataDir}>{report.dataDir}</span></Row>
-            <Row label="IPC pipe"><span className="block max-w-sm truncate font-mono" title={report.endpoint}>{report.endpoint}</span></Row>
+            <Row label="Data directory"><Tooltip><TooltipTrigger render={<span tabIndex={0} className="block max-w-sm truncate font-mono"  />}>{report.dataDir}</TooltipTrigger><TooltipPopup><span className="max-w-sm whitespace-pre-wrap break-words">{report.dataDir}</span></TooltipPopup></Tooltip></Row>
+            <Row label="IPC pipe"><Tooltip><TooltipTrigger render={<span tabIndex={0} className="block max-w-sm truncate font-mono"  />}>{report.endpoint}</TooltipTrigger><TooltipPopup><span className="max-w-sm whitespace-pre-wrap break-words">{report.endpoint}</span></TooltipPopup></Tooltip></Row>
             <div className="px-3 py-2.5">
               <div className="mb-1 text-xs text-muted-foreground">Last log lines ({report.logPath})</div>
               <pre className="max-h-40 overflow-auto rounded-md bg-muted/50 p-2 font-mono text-xs">{report.logTail.length ? report.logTail.join("\n") : "no log lines yet"}</pre>

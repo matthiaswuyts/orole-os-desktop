@@ -10,6 +10,7 @@ import { Field, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "@/components/ui/tooltip";
 
 type Viewport = "mobile" | "tablet" | "desktop";
 type LoadState = "idle" | "loading" | "loaded" | "slow" | "error";
@@ -72,7 +73,6 @@ export function BrowserView() {
   return (
     <div className="flex h-full min-h-0 flex-col">
       <header className="flex shrink-0 flex-col gap-2 border-b bg-background p-3">
-        <h1 className="text-sm font-medium">Browser preview</h1>
         <form onSubmit={navigate} className="flex items-end gap-2">
           <Field className="min-w-0 flex-1" invalid={Boolean(urlError)}>
             <FieldLabel htmlFor="browser-preview-url" className="sr-only">Preview URL</FieldLabel>
@@ -90,7 +90,7 @@ export function BrowserView() {
           </ToggleGroup>
           <div className="flex items-center gap-2">
             <span className="text-xs tabular-nums text-muted-foreground">{widths[viewport]} px</span>
-            <Button size="sm" variant="outline" disabled={!navigation.url || !inDesktop || opening} onClick={() => void openExternal()} title={!inDesktop ? "Opening the default browser requires the desktop app" : "Open the entered URL in your default browser"}><ExternalLink data-icon="inline-start" />Open in browser</Button>
+            <Tooltip><TooltipTrigger render={<span tabIndex={!navigation.url || !inDesktop || opening ? 0 : -1} className="inline-flex" aria-label="Open in browser" />}><Button size="sm" variant="outline" disabled={!navigation.url || !inDesktop || opening} onClick={() => void openExternal()}><ExternalLink data-icon="inline-start" />Open in browser</Button></TooltipTrigger><TooltipPopup>{!inDesktop ? "Opening the default browser requires the desktop app" : !navigation.url ? "Enter a URL first" : opening ? "Opening your default browser…" : "Open the entered URL in your default browser"}</TooltipPopup></Tooltip>
           </div>
         </div>
         <p className="text-xs text-muted-foreground">Sandboxed preview. Some sites block embedding or require permissions unavailable here. If a page is blank, open it in your browser. The address bar shows the requested URL, not navigation inside the page.</p>

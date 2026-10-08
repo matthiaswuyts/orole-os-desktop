@@ -1,13 +1,13 @@
 import { useEffect, type ReactNode } from "react";
 import { PanelLeftOpen, Plus } from "lucide-react";
-import { TooltipProvider } from "@/components/ui/tooltip";
+import { Tooltip, TooltipPopup, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Sidebar } from "./Sidebar";
 import { StatusBar } from "./StatusBar";
 import { CommandPalette } from "./CommandPalette";
 import { useUI } from "@/stores/ui";
 import { inDesktop } from "@/lib/backend";
 import { navItem } from "@/lib/nav";
-import { Tip } from "@/components/tip";
+import { Kbd, KbdGroup } from "@/components/ui/kbd";
 
 export function AppShell({ children }: { children: ReactNode }) {
   const { setFocused, sidebarOpen, toggleSidebar, setPalette, view } = useUI();
@@ -30,8 +30,8 @@ export function AppShell({ children }: { children: ReactNode }) {
           {sidebarOpen && <Sidebar />}
           <div className="flex min-h-0 min-w-0 flex-1 flex-col">
             <header className="titlebar-drag flex h-8 shrink-0 items-center gap-2 border-b pl-2" style={{ height: "var(--titlebar-h)", paddingRight: "var(--mygo-titlebar-inset-right, 0.5rem)" }}>
-              {!sidebarOpen && <Tip label="Show sidebar (Ctrl+B)" side="bottom"><button type="button" aria-label="Show sidebar" onClick={toggleSidebar} className="titlebar-nodrag inline-flex size-6 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"><PanelLeftOpen className="size-3.5" /></button></Tip>}
-              <button type="button" aria-label="Open command palette" onClick={() => setPalette(true)} className="titlebar-nodrag inline-flex size-6 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"><Plus className="size-3.5" /></button>
+              {!sidebarOpen && <Tooltip><TooltipTrigger render={<button type="button" aria-label="Show sidebar" onClick={toggleSidebar} className="titlebar-nodrag inline-flex size-6 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground" />}><PanelLeftOpen className="size-3.5" /></TooltipTrigger><TooltipPopup side="bottom"><span className="flex items-center gap-2">Show sidebar <KbdGroup aria-label="Ctrl+B"><Kbd>Ctrl</Kbd><Kbd>B</Kbd></KbdGroup></span></TooltipPopup></Tooltip>}
+              <Tooltip><TooltipTrigger render={<button type="button" aria-label="Open command palette" onClick={() => setPalette(true)} className="titlebar-nodrag inline-flex size-6 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground" />}><Plus className="size-3.5" /></TooltipTrigger><TooltipPopup side="bottom"><span className="flex items-center gap-2">Search <KbdGroup aria-label="Ctrl+K"><Kbd>Ctrl</Kbd><Kbd>K</Kbd></KbdGroup></span></TooltipPopup></Tooltip>
               {view !== "home" && <h1 className="font-medium text-sm">{n.label}</h1>}
               {view !== "home" && n.blurb && <span className="truncate text-muted-foreground text-xs">{n.blurb}</span>}
             </header>

@@ -1,3 +1,4 @@
+import { Tooltip, TooltipPopup, TooltipTrigger } from "@/components/ui/tooltip";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AppWindow, FolderOpen, Pencil, Plus, RefreshCw, Rocket, Trash2 } from "lucide-react";
 import { Applications, events, type Shortcut } from "@/mygo";
@@ -74,7 +75,7 @@ export function ApplicationsView() {
   return (
     <div className="flex h-full min-h-0 flex-col overflow-auto">
       <header className="flex flex-wrap items-center gap-3 border-b px-4 py-3">
-        <div className="mr-auto"><h1 className="font-semibold text-base">Applications</h1><p className="text-muted-foreground text-xs">Open an Orole module or a shortcut you configured.</p></div>
+        <p className="mr-auto text-muted-foreground text-xs">Open an Orole module or a shortcut you configured.</p>
         <Button size="sm" variant="outline" disabled={!inDesktop} onClick={() => { setEditing("new"); setNotice(""); }}><Plus data-icon="inline-start" />Add shortcut</Button>
         <Button size="icon-sm" variant="ghost" aria-label="Refresh applications" disabled={!inDesktop} onClick={() => void refresh()}><RefreshCw /></Button>
       </header>
@@ -96,7 +97,7 @@ export function ApplicationsView() {
               : filtered.length === 0 ? <Empty><EmptyHeader><EmptyMedia variant="icon"><AppWindow /></EmptyMedia><EmptyTitle>{shortcuts.length ? "No matching shortcuts" : "Add your first application"}</EmptyTitle><EmptyDescription>{shortcuts.length ? "Try a different name or executable path." : "Choose a local executable. Orole stores its shortcut in the daemon so it remains available after restarting the desktop."}</EmptyDescription></EmptyHeader></Empty>
                 : <ul className="divide-y rounded-lg border">{filtered.map((shortcut) => <li key={shortcut.id} className="flex flex-wrap items-center gap-2 px-3 py-3">
                   <AppWindow className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
-                  <div className="min-w-0 flex-1"><h3 className="truncate font-medium text-sm">{shortcut.name}</h3><p className="truncate font-mono text-muted-foreground text-xs" title={shortcut.executable}>{shortcut.executable}</p>{shortcut.arguments.length > 0 && <p className="truncate font-mono text-muted-foreground text-xs" title={JSON.stringify(shortcut.arguments)}>{JSON.stringify(shortcut.arguments)}</p>}</div>
+                  <div className="min-w-0 flex-1"><h3 className="truncate font-medium text-sm">{shortcut.name}</h3><Tooltip><TooltipTrigger render={<p tabIndex={0} className="truncate font-mono text-muted-foreground text-xs"  />}>{shortcut.executable}</TooltipTrigger><TooltipPopup><span className="max-w-sm whitespace-pre-wrap break-words">{shortcut.executable}</span></TooltipPopup></Tooltip>{shortcut.arguments.length > 0 && <Tooltip><TooltipTrigger render={<p tabIndex={0} className="truncate font-mono text-muted-foreground text-xs"  />}>{JSON.stringify(shortcut.arguments)}</TooltipTrigger><TooltipPopup><span className="max-w-sm whitespace-pre-wrap break-words">{JSON.stringify(shortcut.arguments)}</span></TooltipPopup></Tooltip>}</div>
                   {removing === shortcut.id ? <div className="flex flex-wrap items-center gap-2"><span className="text-sm">Remove shortcut only?</span><Button size="sm" variant="destructive-outline" disabled={deleting} onClick={() => void remove(shortcut.id)}>Remove shortcut</Button><Button size="sm" variant="ghost" disabled={deleting} onClick={() => setRemoving(null)}>Cancel</Button></div> : <>
                     <Button size="sm" variant="outline" disabled={launching !== null} onClick={() => void launch(shortcut)}>{launching === shortcut.id ? <Spinner data-icon="inline-start" /> : <Rocket data-icon="inline-start" />}{launching === shortcut.id ? "Awaiting policy" : "Launch"}</Button>
                     <Button size="icon-sm" variant="ghost" aria-label={`Edit ${shortcut.name}`} onClick={() => setEditing(shortcut)}><Pencil /></Button>

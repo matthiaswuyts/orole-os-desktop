@@ -1,5 +1,5 @@
 import { Fragment, useCallback, useEffect, useState } from "react";
-import { FilePlus2, FolderOpen, FolderPlus, RefreshCw } from "lucide-react";
+import { FilePlus2, FolderPlus, RefreshCw } from "lucide-react";
 import { Files, events } from "@/mygo";
 import type { Entry, FileProvider, Root } from "@/mygo";
 import { inDesktop } from "@/lib/backend";
@@ -80,7 +80,6 @@ export function FilesView() {
   if (!inDesktop) return <NeedsDesktop what="Files" />;
   return <div className="flex h-full min-h-0 flex-col" data-testid="files-view">
     <header className="flex shrink-0 flex-wrap items-center gap-3 border-b px-4 py-2">
-      <h1 className="flex items-center gap-2 text-sm font-semibold"><FolderOpen className="size-4 text-muted-foreground" />Files</h1>
       <ToggleGroup aria-label="File providers" size="sm" value={[provider]} onValueChange={(values) => { if (values[0]) useFiles.getState().setLocation(String(values[0]), ""); }}>
         {providers.map((p) => <ToggleGroupItem key={p.id} value={p.id} aria-label={`${p.label} files`}>{p.label}</ToggleGroupItem>)}
       </ToggleGroup>

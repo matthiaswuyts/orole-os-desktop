@@ -1,3 +1,4 @@
+import { Tooltip, TooltipPopup, TooltipTrigger } from "@/components/ui/tooltip";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { FileDiff, FileMinus2, FilePlus2, FilePen } from "lucide-react";
@@ -58,13 +59,10 @@ export function DiffView({ files, truncated, className }: DiffViewProps) {
             const Icon = statusIcon[f.status];
             return (
               <li key={`${f.path}:${i}`}>
-                <button type="button" aria-current={active === i ? "true" : undefined} title={f.oldPath ? `${f.oldPath} → ${f.path}` : f.path}
-                  onClick={() => { virt.scrollToIndex(starts[i] ?? 0, { align: "start" }); setActive(i); }}
-                  className={cn("flex h-6 w-full items-center gap-1.5 px-2 text-left text-xs outline-none hover:bg-sidebar-accent focus-visible:ring-2 focus-visible:ring-ring", active === i && "bg-sidebar-accent")}>
-                  <Icon className={cn("size-3 shrink-0", statusColor[f.status])} aria-label={f.status} />
-                  <span className="min-w-0 flex-1 truncate">{f.path}</span>
-                  {!f.binary && <span className="shrink-0 font-mono text-[10px] text-muted-foreground">{f.additions > 0 && <span className="text-success">+{f.additions}</span>}{f.additions > 0 && f.deletions > 0 && " "}{f.deletions > 0 && <span className="text-destructive">-{f.deletions}</span>}</span>}
-                </button>
+                <Tooltip><TooltipTrigger render={<button type="button" aria-current={active === i ? "true" : undefined} onClick={() => { virt.scrollToIndex(starts[i] ?? 0, { align: "start" }); setActive(i); }}
+                className={cn("flex h-6 w-full items-center gap-1.5 px-2 text-left text-xs outline-none hover:bg-sidebar-accent focus-visible:ring-2 focus-visible:ring-ring", active === i && "bg-sidebar-accent")} />}><Icon className={cn("size-3 shrink-0", statusColor[f.status])} aria-label={f.status} />
+                <span className="min-w-0 flex-1 truncate">{f.path}</span>
+                {!f.binary && <span className="shrink-0 font-mono text-[10px] text-muted-foreground">{f.additions > 0 && <span className="text-success">+{f.additions}</span>}{f.additions > 0 && f.deletions > 0 && " "}{f.deletions > 0 && <span className="text-destructive">-{f.deletions}</span>}</span>}</TooltipTrigger><TooltipPopup><span className="max-w-sm whitespace-pre-wrap break-words">{f.oldPath ? `${f.oldPath} → ${f.path}` : f.path}</span></TooltipPopup></Tooltip>
               </li>
             );
           })}

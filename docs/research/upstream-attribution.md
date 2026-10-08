@@ -3,10 +3,17 @@
 Source: https://github.com/cosscom/shipyard @ c809c5eccfc31a386be6bb82b8b0839eaf7ec89b, MIT, Copyright (c) 2026 Sean Brydon.
 | Upstream path | Orole path | Modification |
 |---|---|---|
-| app/src/components/ui/*.tsx | frontend/src/components/ui/*.tsx | none beyond import stubs for lib/focus-home and lib/platform |
+| app/src/components/ui/*.tsx | frontend/src/components/ui/*.tsx | import stubs for lib/focus-home and lib/platform; tooltip root uses coss/Base UI directly instead of Shipyard's global keyboard-focus timer |
 | app/src/lib/utils.ts | frontend/src/lib/utils.ts | none |
 | app/src/index.css (tokens, density, base layer) | frontend/src/index.css | removed plugin @source, Tauri/sidebar-resize/worktree-tone rules; Orole additions appended |
-| app/src/themes/builtin.ts (colours) | frontend/src/themes/builtin.ts | trimmed to colour sets; renamed Orole Midnight/Obsidian/Light |
+| app/src/themes/builtin.ts (colours) | frontend/src/themes/builtin.ts | renamed Orole Midnight/Obsidian/Light; expanded to a shared UI/terminal registry with Solarized and Catppuccin palettes |
+
+Theme palette references: [Solarized](https://ethanschoonover.com/solarized/) and
+[Catppuccin palette v1.8.0](https://github.com/catppuccin/palette/tree/v1.8.0).
+Orole's semantic-token mappings are original; no third-party theme renderer is embedded.
+Keyboard and tooltip compositions follow the [coss Kbd](https://coss.com/ui/docs/components/kbd)
+and [coss Tooltip](https://coss.com/ui/docs/components/tooltip) contracts using the
+already attributed local primitives. The custom `components/tip.tsx` layer was removed.
 
 ### Dither Kit charts
 

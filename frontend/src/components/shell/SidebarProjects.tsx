@@ -1,3 +1,4 @@
+import { Tooltip, TooltipPopup, TooltipTrigger } from "@/components/ui/tooltip";
 import { useEffect, useState } from "react";
 import { ChevronRight, FolderGit2, FolderPlus, GitBranch, Home, MoreHorizontal, Plus, TriangleAlert } from "lucide-react";
 import type { Project, Worktree } from "@/mygo";
@@ -83,10 +84,10 @@ function ProjectNode({ project, wts, open, onToggle }: { project: Project; wts: 
         <button type="button" aria-label={`${open ? "Collapse" : "Expand"} ${project.name}`} aria-expanded={open} onClick={onToggle} className="inline-flex size-4 shrink-0 items-center justify-center rounded text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring">
           <ChevronRight className={cn("size-3 transition-transform", open && "rotate-90")} />
         </button>
-        <button type="button" onClick={goProject} title={project.path} className="flex min-w-0 flex-1 items-center gap-1.5 self-stretch outline-none">
+        <Tooltip><TooltipTrigger render={<button type="button" onClick={goProject} className="flex min-w-0 flex-1 items-center gap-1.5 self-stretch outline-none" />}>
           <span className="truncate">{project.name}</span>
           <span className="shrink-0 rounded bg-sidebar-accent px-1 font-normal text-[10px] text-muted-foreground">{project.machineId}</span>
-        </button>
+        </TooltipTrigger><TooltipPopup><span className="max-w-sm whitespace-pre-wrap break-words">{project.path}</span></TooltipPopup></Tooltip>
         <Menu>
           <MenuTrigger render={<button type="button" aria-label={`Actions for ${project.name}`} className="inline-flex size-5 shrink-0 items-center justify-center rounded text-muted-foreground opacity-0 outline-none hover:text-foreground focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-sidebar-ring group-hover/row:opacity-100 data-popup-open:opacity-100" />}><MoreHorizontal className="size-3.5" /></MenuTrigger>
           <MenuPopup align="start" side="right" className="min-w-44">
@@ -120,12 +121,12 @@ function WorktreeRow({ wt }: { wt: Worktree }) {
   const label = wt.isMain ? "main checkout" : wt.name;
   return (
     <li>
-      <button type="button" onClick={() => setView("worktrees")} title={`${wt.path}\n${wt.branch || "(detached)"}`} className={cn(rowBase, "pl-2 text-[13px] text-sidebar-foreground")}>
+      <Tooltip><TooltipTrigger render={<button type="button" onClick={() => setView("worktrees")} className={cn(rowBase, "pl-2 text-[13px] text-sidebar-foreground")} />}>
         <Icon className="size-3.5 shrink-0 text-muted-foreground" />
         <span className="min-w-0 flex-1 truncate">{label}</span>
         {(wt.ahead > 0 || wt.behind > 0) && <span className="shrink-0 font-mono text-[10px] text-muted-foreground tabular-nums">{wt.ahead > 0 && `↑${wt.ahead}`}{wt.behind > 0 && `↓${wt.behind}`}</span>}
-        <span role="img" aria-label={dotLabel[state]} title={`${wt.branch || "detached"}: ${dotLabel[state]}${wt.dirty ? ` (${wt.dirty})` : ""}`} className={cn("size-1.5 shrink-0 rounded-full", dot[state])} />
-      </button>
+        <span role="img" aria-label={dotLabel[state]} className={cn("size-1.5 shrink-0 rounded-full", dot[state])} />
+      </TooltipTrigger><TooltipPopup><span className="max-w-sm whitespace-pre-wrap break-words">{`${wt.path}\n${wt.branch || "(detached)"}: ${dotLabel[state]}${wt.dirty ? ` (${wt.dirty})` : ""}`}</span></TooltipPopup></Tooltip>
     </li>
   );
 }

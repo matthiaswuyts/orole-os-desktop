@@ -7,11 +7,23 @@ import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { Search, X } from "lucide-react";
 import { Terminals, events } from "@/mygo";
 import { cn } from "@/lib/utils";
+import { useSettings } from "@/stores/settings";
+import { getBuiltinTheme } from "@/themes/builtin";
 
 const b64 = (s: string) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
 
 function cssVar(n: string) {
   return getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+}
+
+function terminalTheme() {
+  return {
+    ...getBuiltinTheme(useSettings.getState().appearance.theme).terminal,
+    background: "#00000000",
+    foreground: cssVar("--foreground") || "#ddd",
+    cursor: cssVar("--primary") || "#9bf",
+    cursorAccent: cssVar("--background"),
+  };
 }
 
 /** One xterm.js view bound to a daemon terminal. Reconnect = Attach (scrollback) + live chunks past `seq`. */
@@ -26,7 +38,7 @@ export function TerminalPane({ id, active, onFocus, fontSize }: { id: string; ac
   useEffect(() => {
     const term = new Terminal({
       fontFamily: '"JetBrains Mono Variable", Consolas, monospace', fontSize, cursorBlink: true, scrollback: 10000,
-      allowProposedApi: true, theme: { background: "#00000000", foreground: cssVar("--foreground") || "#ddd", cursor: cssVar("--primary") || "#9bf" },
+      allowProposedApi: true, theme: terminalTheme(),
       allowTransparency: true,
     });
     const fit = new FitAddon();
@@ -36,6 +48,9 @@ export function TerminalPane({ id, active, onFocus, fontSize }: { id: string; ac
     termRef.current = term; search.current = srch;
     term.open(host.current!);
     fit.fit();
+    // Observe the applied CSS rather than React effect order; update live sessions in place.
+    const themeObserver = new MutationObserver(() => { term.options.theme = terminalTheme(); });
+    themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ["class", "style"] });
 
     let seq = 0;
     let ready = false;
@@ -70,7 +85,7 @@ export function TerminalPane({ id, active, onFocus, fontSize }: { id: string; ac
     const onResize = term.onResize(({ cols, rows }) => void Terminals.resize(id, cols, rows).catch(() => {}));
     const ro = new ResizeObserver(() => { try { fit.fit(); } catch { /* host hidden */ } });
     ro.observe(host.current!);
-    return () => { ro.disconnect(); onResize.dispose(); onData.dispose(); onBin.dispose(); offOut(); offChg(); term.dispose(); };
+    return () => { themeObserver.disconnect(); ro.disconnect(); onResize.dispose(); onData.dispose(); onBin.dispose(); offOut(); offChg(); term.dispose(); };
   }, [id, fontSize]);
 
   useEffect(() => { if (active) termRef.current?.focus(); }, [active]);

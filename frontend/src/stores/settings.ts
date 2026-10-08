@@ -1,8 +1,9 @@
 import { create } from "zustand";
 import { Settings, events } from "@/mygo";
 import { inDesktop, previewKey } from "@/lib/backend";
+import type { BuiltinThemeId } from "@/themes/builtin";
 
-export type ThemeId = "midnight" | "obsidian" | "light" | "custom";
+export type ThemeId = BuiltinThemeId | "custom";
 export type Density = "compact" | "comfortable";
 
 export interface Appearance {

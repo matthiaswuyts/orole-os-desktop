@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from "react";
 import { Accessibility, Bell, Bot, Cpu, HardDrive, Image, Palette, PlugZap, Server, ShieldCheck, SquareTerminal, Stethoscope, Workflow, Download } from "lucide-react";
-import { useSettings, type ThemeId } from "@/stores/settings";
+import { useSettings } from "@/stores/settings";
+import { BUILTIN_THEMES } from "@/themes/builtin";
 import { useDaemon } from "@/stores/daemon";
 import { SCENES } from "@/components/ascii/AsciiBackground";
 import { Switch } from "@/components/ui/switch";
@@ -69,18 +70,12 @@ export function Field({ label, hint, children, htmlFor }: { label: string; hint?
   );
 }
 
-const THEMES: { id: ThemeId; label: string; sw: string[] }[] = [
-  { id: "midnight", label: "Orole Midnight", sw: ["#0b1020", "#1b2a50", "#8fb0ff", "#f0b45a"] },
-  { id: "obsidian", label: "Orole Obsidian", sw: ["#0c0c0e", "#1e1e22", "#6fe0b0", "#8fb0ff"] },
-  { id: "light", label: "Orole Light", sw: ["#f3f5fa", "#ffffff", "#34509a", "#a8741c"] },
-];
-
 export function ThemePicker() {
   const { theme } = useSettings((s) => s.appearance);
   const set = useSettings((s) => s.set);
   return (
-    <div role="radiogroup" aria-label="Theme" className="flex gap-2 p-3">
-      {THEMES.map((t) => (
+    <div role="radiogroup" aria-label="Theme" className="flex flex-wrap gap-2 p-3">
+      {BUILTIN_THEMES.map((t) => (
         <button key={t.id} role="radio" aria-checked={theme === t.id} onClick={() => set("appearance", { theme: t.id })}
           className={cn("flex w-36 flex-col gap-1.5 rounded-lg border p-2 text-left hover:bg-accent", theme === t.id ? "border-primary" : "border-border")}>
           <span className="flex h-9 overflow-hidden rounded">{t.sw.map((c) => <span key={c} className="flex-1" style={{ background: c }} />)}</span>

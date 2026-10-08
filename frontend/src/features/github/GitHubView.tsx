@@ -1,3 +1,4 @@
+import { Tooltip, TooltipPopup, TooltipTrigger } from "@/components/ui/tooltip";
 import { useEffect } from "react";
 import { Bell, FolderGit2, GitPullRequest, CircleDot, PlayCircle } from "lucide-react";
 import { GitHub } from "@/mygo";
@@ -55,7 +56,7 @@ export function GitHubView() {
         </div>
         <span className="flex-1" />
         {tab !== "repos" && tab !== "notifications" && <RepoPicker />}
-        <span className="text-muted-foreground text-xs" title={status.rate.map((r) => `${r.resource}: ${r.remaining}/${r.limit}`).join("\n")}>{status.user?.login}</span>
+        <Tooltip><TooltipTrigger render={<span tabIndex={0} className="text-muted-foreground text-xs"  />}>{status.user?.login}</TooltipTrigger><TooltipPopup><span className="max-w-sm whitespace-pre-wrap break-words">{status.rate.map((r) => `${r.resource}: ${r.remaining}/${r.limit}`).join("\n")}</span></TooltipPopup></Tooltip>
       </div>
       <div role="tabpanel" className="flex min-h-0 flex-1">
         {tab === "repos" && <ReposTab />}

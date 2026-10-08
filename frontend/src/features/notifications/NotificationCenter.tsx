@@ -12,6 +12,7 @@ import { Select, SelectGroup, SelectItem, SelectPopup, SelectTrigger, SelectValu
 import { Sheet, SheetDescription, SheetHeader, SheetPanel, SheetPopup, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "@/components/ui/tooltip";
 
 export function NotificationCenter() {
   const [open, setOpen] = useState(false);
@@ -26,10 +27,10 @@ export function NotificationCenter() {
 
   return (
     <Sheet open={open} onOpenChange={(value) => { setOpen(value); if (value) void n.load(); }}>
-      <SheetTrigger render={<Button variant="ghost" size="icon-xs" className="relative" />} aria-label={countKnown ? `Notifications, ${n.unread} unread` : "Notifications, unread count unavailable"} title="Notifications">
+      <Tooltip><TooltipTrigger render={<SheetTrigger render={<Button variant="ghost" size="icon-xs" className="relative" />} />} aria-label={countKnown ? `Notifications, ${n.unread} unread` : "Notifications, unread count unavailable"}>
         <Bell />
         {countKnown && n.unread > 0 && <Badge size="sm" className="absolute -right-1 -top-1" aria-hidden="true">{n.unread > 99 ? "99+" : n.unread}</Badge>}
-      </SheetTrigger>
+      </TooltipTrigger><TooltipPopup>Notifications</TooltipPopup></Tooltip>
       <SheetPopup>
         <SheetHeader>
           <SheetTitle>Notifications</SheetTitle>
@@ -68,8 +69,8 @@ export function NotificationCenter() {
                       <time dateTime={new Date(item.at * 1000).toISOString()} className="mt-1 block text-xs text-muted-foreground">{new Date(item.at * 1000).toLocaleString()}</time>
                     </div>
                     <div className="flex shrink-0 items-start gap-0.5">
-                      {!item.read && <Button size="icon-xs" variant="ghost" disabled={unavailable || n.busy} aria-label={`Mark read: ${item.title}`} title="Mark read" onClick={() => void n.markRead([item.id])}><Check /></Button>}
-                      <Button size="icon-xs" variant="ghost" disabled={unavailable || n.busy} aria-label={`Dismiss: ${item.title}`} title="Dismiss" onClick={() => void n.dismiss([item.id])}><X /></Button>
+                      {!item.read && <Tooltip><TooltipTrigger render={<Button size="icon-xs" variant="ghost" disabled={unavailable || n.busy} aria-label={`Mark read: ${item.title}`} onClick={() => void n.markRead([item.id])} />}><Check /></TooltipTrigger><TooltipPopup>Mark read</TooltipPopup></Tooltip>}
+                      <Tooltip><TooltipTrigger render={<Button size="icon-xs" variant="ghost" disabled={unavailable || n.busy} aria-label={`Dismiss: ${item.title}`} onClick={() => void n.dismiss([item.id])} />}><X /></TooltipTrigger><TooltipPopup>Dismiss</TooltipPopup></Tooltip>
                     </div>
                   </li>
                 ))}

@@ -13,6 +13,7 @@ import { Separator } from "@/components/ui/separator";
 import { Spinner } from "@/components/ui/spinner";
 import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "@/components/ui/tooltip";
+import { Kbd, KbdGroup } from "@/components/ui/kbd";
 import { AgentGlyph, ErrorNote } from "./shared";
 import { baseName, errText, newKey, useAction } from "./format";
 
@@ -200,11 +201,11 @@ export function AgentLaunchForm({ onStarted, onBusyChange, requirePrompt = true 
       </Popover>
       <div className="ml-auto flex items-center gap-1">
         <Tooltip><TooltipTrigger render={<Button type="button" variant="ghost" size="icon-xs" disabled={!inDesktop || source.loading || action.busy} onClick={source.refresh} />} aria-label="Refresh launch options"><RefreshCw /></TooltipTrigger><TooltipPopup>Refresh boxes, projects and installed harnesses</TooltipPopup></Tooltip>
-        <Tooltip><TooltipTrigger render={<Button type="submit" size="icon-sm" disabled={!canStart} />} aria-label={action.busy ? "Starting agent" : "Start task"}>{action.busy ? <Spinner /> : <ArrowUp />}</TooltipTrigger><TooltipPopup>Start task · Enter</TooltipPopup></Tooltip>
+        <Tooltip><TooltipTrigger render={<Button type="submit" size="icon-sm" disabled={!canStart} />} aria-label={action.busy ? "Starting agent" : "Start task"}>{action.busy ? <Spinner /> : <ArrowUp />}</TooltipTrigger><TooltipPopup><span className="flex items-center gap-2">Start task <Kbd>Enter</Kbd></span></TooltipPopup></Tooltip>
       </div>
     </div>
     <div className="flex flex-col gap-1 px-3 pb-3">
-      <p id={`${id}-hint`} className="text-xs text-muted-foreground">{action.busy ? "Starting on the selected box. Approve any request in Permissions; your task stays here until launch succeeds." : "Enter to start · Shift+Enter for a new line"}</p>
+      <p id={`${id}-hint`} className="text-xs text-muted-foreground">{action.busy ? "Starting on the selected box. Approve any request in Permissions; your task stays here until launch succeeds." : <><Kbd>Enter</Kbd> to start · <KbdGroup aria-label="Shift+Enter"><Kbd>Shift</Kbd><Kbd>Enter</Kbd></KbdGroup> for a new line</>}</p>
       {blocked && <p role="status" className="text-xs text-muted-foreground">{blocked}</p>}
       {machine !== "local" && options && !options.unavailableReason && <p className="text-xs text-muted-foreground">Remote tasks run once on this box. Follow-up messages and interactive terminals are unavailable.</p>}
       <ErrorNote error={source.error ?? null} /><ErrorNote error={action.error} />

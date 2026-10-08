@@ -1,3 +1,4 @@
+import { Tooltip, TooltipPopup, TooltipTrigger } from "@/components/ui/tooltip";
 import { useEffect, useMemo, useState } from "react";
 import { GitBranch, Home, Plus, RefreshCw, Trash2 } from "lucide-react";
 import type { Worktree } from "@/mygo";
@@ -61,14 +62,14 @@ export function WorktreesView() {
                   <TableCell className="font-medium">{p.name}</TableCell>
                   <TableCell>
                     <div className="flex items-center gap-1.5">{w.isMain ? <Home className="size-3.5 text-muted-foreground" aria-label="main checkout" /> : <GitBranch className="size-3.5 text-muted-foreground" />}<span>{w.isMain ? "main checkout" : w.name}</span>{w.locked && <Badge size="sm" variant="outline">locked</Badge>}{w.prunable && <Badge size="sm" variant="warning">missing</Badge>}</div>
-                    <div className="truncate font-mono text-[11px] text-muted-foreground" title={w.path}>{w.path}</div>
+                    <Tooltip><TooltipTrigger render={<div tabIndex={0} className="truncate font-mono text-[11px] text-muted-foreground"  />}>{w.path}</TooltipTrigger><TooltipPopup><span className="max-w-sm whitespace-pre-wrap break-words">{w.path}</span></TooltipPopup></Tooltip>
                   </TableCell>
                   <TableCell className="font-mono text-xs">{w.branch || (w.detached ? `detached @ ${w.head.slice(0, 7)}` : "-")}</TableCell>
                   <TableCell className="font-mono text-xs tabular-nums">{w.upstream ? `↑${w.ahead} ↓${w.behind}` : <span className="text-muted-foreground">no upstream</span>}</TableCell>
                   <TableCell>
-                    {state === "error" ? <span title={w.error} className="text-destructive-foreground text-xs">unreadable</span>
+                    {state === "error" ? <Tooltip><TooltipTrigger render={<span tabIndex={0}  className="text-destructive-foreground text-xs" />}>unreadable</TooltipTrigger><TooltipPopup><span className="max-w-sm whitespace-pre-wrap break-words">{w.error}</span></TooltipPopup></Tooltip>
                       : w.dirty === 0 ? <span className="text-muted-foreground text-xs">clean</span>
-                      : <Badge variant="warning" title={`${w.staged} staged, ${w.unstaged} unstaged, ${w.untracked} untracked`}>{w.dirty}</Badge>}
+                      : <Tooltip><TooltipTrigger render={<Badge tabIndex={0} variant="warning"  />}>{w.dirty}</TooltipTrigger><TooltipPopup><span className="max-w-sm whitespace-pre-wrap break-words">{`${w.staged} staged, ${w.unstaged} unstaged, ${w.untracked} untracked`}</span></TooltipPopup></Tooltip>}
                   </TableCell>
                   <TableCell>{!w.isMain && <Button size="icon-xs" variant="ghost" aria-label={`Remove worktree ${w.name}`} onClick={() => { setForce(false); setRemoving(w); }}><Trash2 /></Button>}</TableCell>
                 </TableRow>

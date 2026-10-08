@@ -6,6 +6,7 @@ import { inDesktop } from "@/lib/backend";
 import { useDaemon } from "@/stores/daemon";
 import { useSettings } from "@/stores/settings";
 import type { ThemeId } from "@/stores/settings";
+import { BUILTIN_THEMES } from "@/themes/builtin";
 import { useUI } from "@/stores/ui";
 import type { ViewId } from "@/stores/ui";
 
@@ -70,7 +71,7 @@ export function FirstRunGuide() {
     </div>
     {progress.step === 1 && <div className="my-4 flex flex-wrap gap-4">
       <label className="flex flex-col gap-1">Theme<select className="rounded-md border bg-background px-2 py-1" value={appearance.theme} onChange={(e) => set("appearance", { theme: e.target.value as ThemeId })}>
-        <option value="midnight">Orole Midnight</option><option value="obsidian">Orole Obsidian</option><option value="light">Orole Light</option>{appearance.theme === "custom" && <option value="custom">Custom theme</option>}
+        {BUILTIN_THEMES.map((theme) => <option key={theme.id} value={theme.id}>{theme.label}</option>)}{appearance.theme === "custom" && <option value="custom">Custom theme</option>}
       </select></label>
       <label className="flex flex-col gap-1">Background scene<select className="rounded-md border bg-background px-2 py-1" value={ascii.scene} onChange={(e) => set("ascii", { scene: e.target.value })}>{SCENES.map((scene) => <option key={scene.id} value={scene.id}>{scene.label}</option>)}</select></label>
       <label className="flex items-center gap-2"><input type="checkbox" checked={ascii.staticOnly} onChange={(e) => set("ascii", { staticOnly: e.target.checked })} />Use a still background</label>

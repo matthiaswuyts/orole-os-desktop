@@ -1,3 +1,4 @@
+import { Tooltip, TooltipPopup, TooltipTrigger } from "@/components/ui/tooltip";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Tabs } from "@base-ui/react/tabs";
 import { ArrowLeft } from "lucide-react";
@@ -64,7 +65,7 @@ function TranscriptEntry({ event: ev, session }: { event: AgentEvent; session: S
   }
   if (ev.kind === "prompt") return <div className="ml-auto max-w-[85%] rounded-lg bg-accent px-3 py-2 text-sm"><p className="mb-1 text-xs font-medium text-muted-foreground">You</p><p className="whitespace-pre-wrap break-words">{ev.text}</p></div>;
   if (ev.kind === "message") return <div className="max-w-[85%] text-sm"><p className="mb-1 text-xs font-medium text-muted-foreground">Agent</p><p className="whitespace-pre-wrap break-words leading-relaxed">{ev.text}</p></div>;
-  if (ev.kind === "tool") return <p className="truncate rounded bg-muted/50 px-2 py-1 font-mono text-xs" title={ev.text}>{ev.text}</p>;
+  if (ev.kind === "tool") return <Tooltip><TooltipTrigger render={<p tabIndex={0} className="truncate rounded bg-muted/50 px-2 py-1 font-mono text-xs"  />}>{ev.text}</TooltipTrigger><TooltipPopup><span className="max-w-sm whitespace-pre-wrap break-words">{ev.text}</span></TooltipPopup></Tooltip>;
   if (ev.kind === "error") return <ErrorNote error={ev.text} />;
   return <div className="text-xs text-muted-foreground"><span className="font-medium">{ev.kind.replaceAll("_", " ")}</span>{ev.text && <p className="whitespace-pre-wrap break-words">{ev.text}</p>}</div>;
 }

@@ -4,6 +4,7 @@ import { registerCommands, type Command } from "@/lib/commands";
 import { useSettings } from "@/stores/settings";
 import { useUI } from "@/stores/ui";
 import { useAgents } from "@/stores/agents";
+import { BUILTIN_THEMES } from "@/themes/builtin";
 
 /** Built-in Orole OS commands. Called once at startup. */
 export function registerCoreCommands() {
@@ -13,9 +14,10 @@ export function registerCoreCommands() {
   }));
   const s = () => useSettings.getState();
   const cmds: Command[] = [
-    { id: "theme.midnight", title: "Theme: Orole Midnight", category: "Appearance", run: () => s().set("appearance", { theme: "midnight" }) },
-    { id: "theme.obsidian", title: "Theme: Orole Obsidian", category: "Appearance", run: () => s().set("appearance", { theme: "obsidian" }) },
-    { id: "theme.light", title: "Theme: Orole Light", category: "Appearance", run: () => s().set("appearance", { theme: "light" }) },
+    ...BUILTIN_THEMES.map((theme): Command => ({
+      id: `theme.${theme.id}`, title: `Theme: ${theme.label}`, category: "Appearance", keywords: [theme.id],
+      run: () => s().set("appearance", { theme: theme.id }),
+    })),
     { id: "density.toggle", title: "Toggle compact density", category: "Appearance", run: () => s().set("appearance", { density: s().appearance.density === "compact" ? "comfortable" : "compact" }) },
     { id: "ascii.pause", title: "Toggle background animation", category: "Appearance", keywords: ["ascii", "pause", "play"], run: () => s().set("ascii", { paused: !s().ascii.paused }) },
     { id: "ascii.hide", title: "Toggle ASCII background", category: "Appearance", run: () => s().set("ascii", { enabled: !s().ascii.enabled }) },

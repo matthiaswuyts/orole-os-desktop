@@ -1,3 +1,4 @@
+import { Tooltip, TooltipPopup, TooltipTrigger } from "@/components/ui/tooltip";
 import { useEffect, useMemo, useState } from "react";
 import { ExternalLink, GitBranch, MessageSquare } from "lucide-react";
 import { GitHub, type PullRequest } from "@/mygo";
@@ -14,7 +15,7 @@ const STATES = ["open", "closed", "all"] as const;
 
 function RowStatus({ repo, number }: { repo: string; number: number }) {
   const s = useAsync(() => GitHub.pullStatus(repo, number), [repo, number]);
-  if (s.error) return <span title={s.error} className="text-[11px] text-muted-foreground">status unavailable</span>;
+  if (s.error) return <Tooltip><TooltipTrigger render={<span tabIndex={0}  className="text-[11px] text-muted-foreground" />}>status unavailable</TooltipTrigger><TooltipPopup><span className="max-w-sm whitespace-pre-wrap break-words">{s.error}</span></TooltipPopup></Tooltip>;
   if (!s.data) return <span className="text-[11px] text-muted-foreground">…</span>;
   const c = s.data.checks;
   return (

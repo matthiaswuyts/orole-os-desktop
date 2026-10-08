@@ -4,9 +4,9 @@ import { cn } from "@/lib/utils";
 import { useUI } from "@/stores/ui";
 import { useDaemon } from "@/stores/daemon";
 import { useWorkspaces } from "@/stores/workspaces";
-import { Kbd } from "@/components/ui/kbd";
+import { Kbd, KbdGroup } from "@/components/ui/kbd";
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "@/components/ui/menu";
-import { Tip } from "@/components/tip";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "@/components/ui/tooltip";
 import { SidebarProjects } from "./SidebarProjects";
 import { Logo } from "./Logo";
 import { NotificationCenter } from "@/features/notifications/NotificationCenter";
@@ -31,7 +31,7 @@ export function Sidebar() {
   );
   const moreActive = MORE.some((m) => m.id === view);
   return (
-    <nav aria-label="Applications" className="titlebar-drag flex w-[190px] shrink-0 flex-col border-r bg-sidebar" style={{ paddingTop: "var(--mygo-titlebar-height, 0px)" }}>
+    <nav aria-label="Applications" className="titlebar-drag flex w-[190px] shrink-0 flex-col border-r bg-sidebar">
       <div className="titlebar-nodrag flex h-8 shrink-0 items-center gap-1 px-2">
         <Logo className="size-4 text-foreground" />
         <Menu>
@@ -48,7 +48,7 @@ export function Sidebar() {
       </div>
       <div className="titlebar-nodrag flex min-h-0 flex-1 flex-col gap-2 px-2 pb-1">
         <button type="button" onClick={() => setPalette(true)} aria-label="Search (Ctrl+K)" className="flex h-7 items-center gap-2 rounded-md border bg-background/40 px-2 text-muted-foreground text-sm outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring">
-          <Search className="size-3.5" /><span className="flex-1 text-left">Search</span><Kbd>⌘K</Kbd>
+          <Search className="size-3.5" /><span className="flex-1 text-left">Search</span><KbdGroup aria-label="Ctrl+K"><Kbd>Ctrl</Kbd><Kbd>K</Kbd></KbdGroup>
         </button>
         <div className="flex flex-col gap-px">
           {PRIMARY.map(item)}
@@ -68,7 +68,7 @@ export function Sidebar() {
           <SETTINGS.icon className="size-3.5" />Settings
         </button>
         <span className={cn("size-1.5 shrink-0 rounded-full", link === "connected" ? "bg-success" : link === "offline" ? "bg-destructive" : "bg-muted-foreground/60")} role="status" aria-label={`Daemon ${link}`} />
-        <Tip label="Hide sidebar" side="top"><button type="button" aria-label="Hide sidebar" onClick={toggleSidebar} className="inline-flex size-6 items-center justify-center rounded-md text-muted-foreground hover:bg-sidebar-accent hover:text-foreground"><PanelLeftClose className="size-3.5" /></button></Tip>
+        <Tooltip><TooltipTrigger render={<button type="button" aria-label="Hide sidebar" onClick={toggleSidebar} className="inline-flex size-6 items-center justify-center rounded-md text-muted-foreground hover:bg-sidebar-accent hover:text-foreground" />}><PanelLeftClose className="size-3.5" /></TooltipTrigger><TooltipPopup><span className="flex items-center gap-2">Hide sidebar <KbdGroup aria-label="Ctrl+B"><Kbd>Ctrl</Kbd><Kbd>B</Kbd></KbdGroup></span></TooltipPopup></Tooltip>
       </div>
     </nav>
   );

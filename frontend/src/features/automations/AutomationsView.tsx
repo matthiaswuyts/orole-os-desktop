@@ -45,7 +45,7 @@ export function AutomationsView() {
   if (!inDesktop) return <NeedsDesktop what="Automations" />;
   const current = resource.data?.items.find((s) => s.definition.id === selected) ?? resource.data?.items[0];
   return <div className="flex h-full min-h-0 flex-col overflow-auto">
-    <header className="flex min-h-10 flex-wrap items-center justify-between gap-2 border-b px-3 py-2"><h1 className="font-medium text-sm">Automations</h1><div className="flex gap-2"><Button size="xs" variant="outline" onClick={() => { void resource.refresh(); setCatalogRevision((n) => n + 1); }} disabled={busy}><RefreshCw data-icon="inline-start" />Refresh</Button><Button size="xs" onClick={() => edit(newDefinition())} disabled={!!draft || !catalogLoaded || offline}><Plus data-icon="inline-start" />New automation</Button></div></header>
+    <header className="flex min-h-10 flex-wrap items-center justify-end gap-2 border-b px-3 py-2"><Button size="xs" variant="outline" onClick={() => { void resource.refresh(); setCatalogRevision((n) => n + 1); }} disabled={busy}><RefreshCw data-icon="inline-start" />Refresh</Button><Button size="xs" onClick={() => edit(newDefinition())} disabled={!!draft || !catalogLoaded || offline}><Plus data-icon="inline-start" />New automation</Button></header>
     <div className="flex flex-col gap-3 p-3">
       {offline && <Alert variant="warning"><AlertTitle>Daemon offline</AlertTitle><AlertDescription>Results below may be stale. Reconnect the daemon to run or save automations.</AlertDescription></Alert>}
       {(resource.error || error) && <Failure message={error || resource.error || ""} />}

@@ -35,7 +35,7 @@ export function MachinesView() {
   const current = items.find((item) => item.id === selected);
   return <div className="flex h-full min-h-0 flex-col sm:flex-row">
     <aside aria-label="Machines" className="flex shrink-0 flex-col border-b sm:w-60 sm:border-r sm:border-b-0">
-      <div className="flex h-10 items-center justify-between border-b px-3"><h2 className="text-sm font-medium">Machines</h2><Button size="xs" variant="outline" onClick={() => setAdding(true)}><Plus />Pair</Button></div>
+      <div className="flex h-10 items-center justify-end border-b px-3"><Button size="xs" variant="outline" onClick={() => setAdding(true)}><Plus />Pair</Button></div>
       <div className="overflow-auto p-1">
         {items.map((item) => <button key={item.id} type="button" aria-current={!adding && selected === item.id ? "true" : undefined} onClick={() => { setSelected(item.id); setAdding(false); }} className={cn("flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-sm outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring", !adding && selected === item.id && "bg-accent")}>
           {item.kind === "local" ? <Monitor className="size-4 shrink-0" /> : <Server className="size-4 shrink-0" />}<span className="min-w-0"><span className="block truncate font-medium">{item.name}</span><span className="block truncate text-xs text-muted-foreground">{item.kind === "local" ? "This computer · native" : item.address}</span></span>

@@ -1,3 +1,4 @@
+import { Tooltip, TooltipPopup, TooltipTrigger } from "@/components/ui/tooltip";
 import { useEffect, useState } from "react";
 import { Plus, RefreshCw } from "lucide-react";
 import { Agents, type Session, type Run } from "@/mygo";
@@ -22,7 +23,7 @@ export function AgentsView() {
   if (!available) return <NeedsDesktop what="Agents" />;
   if (offline || link === "offline") return <div className="flex h-full"><NotConnected app="Agent Dashboard" what={error || "The daemon is offline. Reconnect to manage agents."} action={{ label: "Retry", onClick: () => { void useDaemon.getState().refresh(); void refresh(); } }} /></div>;
   return <div className="flex h-full min-h-0 flex-col">{openId && sessions[openId] ? <SessionDetail key={openId} session={sessions[openId]} /> : <>
-    <header className="flex min-h-12 shrink-0 flex-wrap items-center gap-3 border-b bg-sidebar/40 px-6 py-2"><h2 className="text-sm font-medium">Agent Dashboard</h2><p className="min-w-0 flex-1 text-xs text-muted-foreground">{counts.total} agents · {counts.needsYou} needs you · {counts.working} working</p><Button size="sm" variant="ghost" disabled={loading} onClick={() => void refresh()} aria-label="Refresh agents"><RefreshCw /></Button><Button size="sm" onClick={() => setStartDialogOpen(true)}><Plus />New agent</Button></header>
+    <header className="flex min-h-12 shrink-0 flex-wrap items-center gap-3 border-b bg-sidebar/40 px-6 py-2"><p className="min-w-0 flex-1 text-xs text-muted-foreground">{counts.total} agents · {counts.needsYou} needs you · {counts.working} working</p><Button size="sm" variant="ghost" disabled={loading} onClick={() => void refresh()} aria-label="Refresh agents"><RefreshCw /></Button><Button size="sm" onClick={() => setStartDialogOpen(true)}><Plus />New agent</Button></header>
     {runs.length > 0 && <div aria-label="Orchestration runs" className="flex shrink-0 gap-2 overflow-x-auto border-b px-6 py-2">{runs.map((run) => <RunItem key={run.id} run={run} />)}</div>}
     {!loaded ? <p role="status" className="p-6 text-muted-foreground">Loading agents…</p> : <div className="min-h-0 flex-1 overflow-auto"><div className="grid grid-cols-[repeat(auto-fit,minmax(250px,1fr))] items-start gap-x-4 gap-y-6 px-6 pt-4 pb-6">{COLUMN_SPECS.map((c) => <section key={c.id} aria-label={c.title} className="min-w-0"><header className="mb-2 flex min-h-5 items-center gap-2 px-0.5"><StateGlyph status={c.id} /><h3 className="text-xs font-medium">{c.title}</h3><span className={cn("ml-auto font-mono text-[11px] tabular-nums", c.id === "needs-you" && cols[c.id].length ? "text-warning-foreground" : "text-muted-foreground")}>{cols[c.id].length}</span></header><div className="flex flex-col gap-row-gap">{cols[c.id].length ? cols[c.id].map((s) => <AgentCard key={s.id} session={s} />) : <p className="rounded-lg border border-dashed px-3 py-4 text-center text-xs text-muted-foreground">{c.empty}</p>}</div></section>)}</div></div>}
   </>}{startDialogOpen && <StartAgentDialog />}</div>;
@@ -34,12 +35,12 @@ function AgentCard({ session: s }: { session: Session }) {
   const canReply = remote ? !s.live && s.status !== "lost" : !(s.live && s.mode === "terminal");
   return <article aria-label={sessionTitle(s)} className={cn("flex min-w-0 flex-col rounded-lg border bg-card", s.status === "needs-you" && "border-warning/45", s.status === "failed" && "border-destructive/40")}>
     <div className="flex flex-col gap-2 px-3 pt-row-pad">
-      <div className="flex items-center gap-2"><AgentGlyph kind={s.kind} /><h4 className="min-w-0 flex-1 truncate text-[13px] font-medium" title={sessionTitle(s)}>{sessionTitle(s)}</h4></div>
+      <div className="flex items-center gap-2"><AgentGlyph kind={s.kind} /><Tooltip><TooltipTrigger render={<h4 tabIndex={0} className="min-w-0 flex-1 truncate text-[13px] font-medium"  />}>{sessionTitle(s)}</TooltipTrigger><TooltipPopup><span className="max-w-sm whitespace-pre-wrap break-words">{sessionTitle(s)}</span></TooltipPopup></Tooltip></div>
       <SessionMeta session={s} />
       {(s.status === "failed" || s.status === "lost" || s.status === "stopped" || s.review === "approved") && <div><SessionBadge session={s} /></div>}
-      {s.activity && <p className="truncate text-xs text-muted-foreground" title={s.activity}>{s.activity}</p>}
+      {s.activity && <Tooltip><TooltipTrigger render={<p tabIndex={0} className="truncate text-xs text-muted-foreground"  />}>{s.activity}</TooltipTrigger><TooltipPopup><span className="max-w-sm whitespace-pre-wrap break-words">{s.activity}</span></TooltipPopup></Tooltip>}
       {s.error && <ErrorNote error={s.error} />}
-      {s.tail && <div className="rounded-md bg-muted/50 px-2 py-1.5 font-mono text-[11px] leading-snug text-muted-foreground">{s.tail.trimEnd().split(/\r?\n/).slice(-3).map((line, i) => <div key={i} className="truncate whitespace-pre" title={line}>{line || " "}</div>)}</div>}
+      {s.tail && <div className="rounded-md bg-muted/50 px-2 py-1.5 font-mono text-[11px] leading-snug text-muted-foreground">{s.tail.trimEnd().split(/\r?\n/).slice(-3).map((line, i) => <Tooltip key={i}><TooltipTrigger render={<div tabIndex={0} className="truncate whitespace-pre" />}>{line || " "}</TooltipTrigger><TooltipPopup><span className="max-w-sm whitespace-pre-wrap break-words">{line}</span></TooltipPopup></Tooltip>)}</div>}
       {!remote && s.pending?.map((req) => <PermissionCard key={req.id} sessionId={s.id} request={req} />)}
       {reply && <ReplyBox session={s} onSent={() => setReply(false)} />}
     </div>
