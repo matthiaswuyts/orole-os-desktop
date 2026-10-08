@@ -21,9 +21,9 @@ not enough on a clean checkout.
 
 | File | Measured size (v0.1.0 integrated build, 2026-10-08) |
 |---|---|
-| `Orole OS.exe` | 21,664,256 bytes (~20.7 MiB), no console window |
-| `orole-daemon.exe` | 18,138,624 bytes (~17.3 MiB), copied next to the app |
-| `Orole OS Setup 0.1.0.exe` | 12,386,565 bytes (~11.8 MiB), unsigned NSIS installer |
+| `Orole OS.exe` | 21,684,736 bytes (~20.7 MiB), no console window |
+| `orole-daemon.exe` | 18,246,656 bytes (~17.4 MiB), copied next to the app |
+| `Orole OS Setup 0.1.0.exe` | 12,420,523 bytes (~11.8 MiB), unsigned NSIS installer |
 
 ## Installer behaviour (verified: `/S`, `/D=`, uninstaller, and cold/warm OS URL association)
 

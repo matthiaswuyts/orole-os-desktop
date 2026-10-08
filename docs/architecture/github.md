@@ -64,3 +64,9 @@ This smoke did not request an external push or PR creation and does not claim a
 successful model response for that issue. A separate installed Home composer
 smoke received a real Codex response; see `windows-terminals.md`. Live publication
 requires user-reviewed real changes, working Git credentials and explicit approval.
+
+A separate executable smoke exercised the production `internal/github` client with
+the existing `gh` login: authenticated repository, PR and notification reads;
+unconfirmed issue creation rejected; confirmed creation of temporary issue #70;
+confirmed body edit and exact readback; then confirmed closure of that smoke issue.
+This supplies live create/edit evidence for #38 without publishing source changes.

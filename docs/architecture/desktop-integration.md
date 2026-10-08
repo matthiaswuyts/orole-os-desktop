@@ -110,3 +110,10 @@ The new system-wide shortcut requires a fresh native build; earlier menu-shortcu
 4. In an isolated session, reserve `Ctrl+Alt+Space` in another app before starting Orole. Confirm startup/navigation still work, the Open Home menu action says “system-wide shortcut unavailable”, and the registration error is logged. Release the competing registration and restart Orole to restore the shortcut.
 
 Do not claim conflict, background activation, or quit-time release verified from a build or application-menu smoke alone.
+
+Installed acceptance attempt on 2026-10-08 found `Ctrl+Alt+Space` already reserved:
+Win32 `RegisterHotKey` failed **before Orole was launched**, with no Orole GUI running.
+Synthetic activation therefore did not restore the minimized app. The smoke did not
+unregister or replace the other application's shortcut. Background activation,
+Home navigation and release/re-registration remain blocked on an available shortcut;
+tray-menu mouse selection remains unverified as described above.

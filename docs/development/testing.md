@@ -110,3 +110,8 @@ Tests restore preferences and clean only their owned records in `finally`; the d
 also removes dismissed history. Browser layout persistence covers #22; real notification mutations
 cover #23. This does not assert native Windows toast delivery, installer correctness, or survival
 across a daemon restart; use the separate installer/manual checks for those release gates.
+
+Observed on Windows, 2026-10-08: the rebuilt NSIS-installed app passed both native
+Playwright cases (workspace/grid/palette persistence and notification preferences,
+read/dismiss/reload) against its isolated real daemon. The browser suite separately
+passed 16 tests; frontend checks passed 115 tests, with existing lint warnings.
