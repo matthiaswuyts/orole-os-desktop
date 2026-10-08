@@ -47,7 +47,7 @@ frontend/src/
   have separate purposes and remain unchanged.
 
 Browser smoke verified grouped keycaps, hover and keyboard-focused sidebar hints,
-the composed notification-sheet trigger, and keyboard access to the disabled
+the composed notification trigger, and keyboard access to the disabled
 browser-action explanation. The rebuilt NSIS-installed WebView2 app displayed the
 keycaps and sidebar tooltip; its runtime error buffer was empty.
 
@@ -115,6 +115,24 @@ The installed Windows desktop's Test notification action persisted a real
 sound enabled and disabled. The per-source silent preference survived a native
 page reload. OS display and acoustic audibility remain dependent on notification
 permissions, volume, and Focus Assist; API acceptance is not evidence of either.
+
+## Notification panel
+
+The header bell opens a non-modal coss Popover, not a full-height sheet.
+Its independent viewport-corner anchor keeps the panel 12 px from the right edge,
+below the title bar, regardless of MyGo's native caption-button inset. Width is
+420 px (clamped to narrow viewports); height is capped at 440 px with scrolling.
+The header contains source selection, mark-read, an overflow menu, and close.
+Unread filtering, refresh, and dismiss-shown live in the overflow menu.
+Real history is grouped by local calendar date, with unread dots, level icons,
+timestamps, and keyboard-accessible per-entry mark-read/dismiss actions.
+
+Installed WebView2 verification created a real `system.test` notification,
+filtered its source, marked it read, confirmed the unread-only empty state,
+and dismissed it by keyboard. The smaller panel measured 420 px wide with a
+12 px right margin. Browser checks exercised Escape and outside-click dismissal.
+Preview, loading, empty, offline, and mutation-error states remain explicit;
+no screenshot sample notifications are inserted into production history.
 
 ## Home composer and monitoring
 
