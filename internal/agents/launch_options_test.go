@@ -79,7 +79,7 @@ func TestRemoteOutputIsBoundedAndDrained(t *testing.T) {
 }
 
 func TestLocalAdaptersRejectRemoteNamespaceBeforeDispatch(t *testing.T) {
-	for _, adapter := range []Adapter{Claude{}, Codex(), OpenCode(), Gemini(), Custom{}} {
+	for _, adapter := range []Adapter{Claude{}, Codex(), Omp{}, OpenCode(), Gemini(), Custom{}} {
 		if _, err := adapter.Start(context.Background(), nil, LaunchSpec{Machine: "remote-box"}); err == nil {
 			t.Fatalf("%s accepted a remote namespace", adapter.Kind())
 		}

@@ -44,6 +44,8 @@ func main() {
 	mygo.Bind(app.Search{L: link})
 	mygo.Bind(app.Shell{})
 	mygo.Bind(app.Agents{L: link})
+	mygo.Bind(app.Skills{L: link})
+	mygo.Bind(app.Images{L: link})
 	mygo.Bind(app.Automations{L: link})
 	mygo.Bind(app.MCP{L: link})
 	mygo.Bind(app.Policy{L: link})

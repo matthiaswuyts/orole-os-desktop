@@ -13,11 +13,9 @@ import { Menu, MenuItem, MenuPopup, MenuTrigger } from "@/components/ui/menu";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { NeedsDesktop } from "@/features/shared/States";
 import { ConfirmDialog, CreateWorktreeDialog } from "@/features/projects/dialogs";
-import { useUI } from "@/stores/ui";
 
 export function WorktreesView() {
   const { projects, worktrees, loaded, loading, error, load, removeWorktree } = useProjects();
-  const setView = useUI((s) => s.setView);
   const [creatingIn, setCreatingIn] = useState<string | null>(null);
   const [removing, setRemoving] = useState<Worktree | null>(null);
   const [force, setForce] = useState(false);
@@ -34,7 +32,6 @@ export function WorktreesView() {
       <Empty>
         <EmptyHeader><EmptyMedia variant="icon"><GitBranch /></EmptyMedia><EmptyTitle>No worktrees yet</EmptyTitle>
           <EmptyDescription>Worktrees belong to projects. Add a project first.</EmptyDescription></EmptyHeader>
-        <Button onClick={() => setView("projects")}>Go to Projects</Button>
       </Empty>
     );
   }

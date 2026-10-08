@@ -18,12 +18,14 @@ import (
 	"github.com/rayorole/orole-os-desktop/internal/automations"
 	"github.com/rayorole/orole-os-desktop/internal/database"
 	"github.com/rayorole/orole-os-desktop/internal/events"
+	"github.com/rayorole/orole-os-desktop/internal/gateway"
 	"github.com/rayorole/orole-os-desktop/internal/ipc"
 	"github.com/rayorole/orole-os-desktop/internal/machines"
 	"github.com/rayorole/orole-os-desktop/internal/mcp"
 	"github.com/rayorole/orole-os-desktop/internal/plugins"
 	"github.com/rayorole/orole-os-desktop/internal/policy"
 	"github.com/rayorole/orole-os-desktop/internal/projects"
+	"github.com/rayorole/orole-os-desktop/internal/skills"
 	"github.com/rayorole/orole-os-desktop/internal/systemmetrics"
 	"github.com/rayorole/orole-os-desktop/internal/terminals"
 	"github.com/rayorole/orole-os-desktop/migrations"
@@ -47,10 +49,17 @@ type Daemon struct {
 	Machines    *machines.Manager
 	Plugins     *plugins.Manager
 	Metrics     *systemmetrics.Sampler
+	// Skills is the central skill registry and Gateway the MCP gateway hub behind the
+	// `orole-daemon mcp-gateway` processes (svc_skills.go). gatewayExe is this executable.
+	Skills     *skills.Store
+	Gateway    *gateway.Hub
+	gatewayExe string
+	syncMu     sync.Mutex // serializes native skill/MCP-config syncs
 	// Agents runs coding-agent sessions; agentsStart runs once this daemon owns the IPC
 	// endpoint (crash recovery must not run in a refused second daemon), agentsShutdown on exit.
 	Agents                      *agents.Manager
 	agentsStart, agentsShutdown func()
+	gh                          *ghService // GitHub service; agents publish through its client
 	Token                       string
 	Endpoint                    string
 	started                     time.Time

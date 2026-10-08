@@ -77,19 +77,9 @@ func (t terminalCLI) Start(ctx context.Context, h *Host, spec LaunchSpec) (Proce
 	return startPty(h, spec.SessionID, spec.Dir, line, t.name)
 }
 
-// Codex runs `codex [-m model] [prompt]`.
-func Codex() Adapter {
-	return terminalCLI{kind: "codex", name: "Codex", bin: "codex", args: func(model, prompt string) []string {
-		var a []string
-		if model != "" {
-			a = append(a, "-m", model)
-		}
-		if prompt != "" {
-			a = append(a, "--", prompt)
-		}
-		return a
-	}}
-}
+// Codex runs structured sessions through `codex app-server` and keeps the interactive
+// `codex [-m model] [prompt]` TUI as its terminal mode (see codex_appserver.go).
+func Codex() Adapter { return CodexApp{} }
 
 // OpenCode runs `opencode [--model m] [--prompt p]`.
 func OpenCode() Adapter {

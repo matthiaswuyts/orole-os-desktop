@@ -80,3 +80,44 @@ func TestProjectsOverIPC(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestCreateProjectsOverIPC(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("OROLE_HOME", dir)
+	stop := start(t, dir)
+	defer stop()
+	ctx := context.Background()
+	c := control.NewClient(dir, "test")
+	if err := c.Connect(ctx); err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+
+	type project struct {
+		ID    string `json:"id"`
+		Name  string `json:"name"`
+		Path  string `json:"path"`
+		IsGit bool   `json:"isGit"`
+	}
+	var named, plain project
+	if err := c.Call(ctx, "projects.create", map[string]any{"name": "Notes", "path": ""}, &named); err != nil || named.Name != "Notes" || named.Path != "" || named.IsGit {
+		t.Fatalf("folderless: %+v %v", named, err)
+	}
+	folder := t.TempDir()
+	if err := c.Call(ctx, "projects.create", map[string]any{"name": "", "path": folder}, &plain); err != nil || plain.Name != filepath.Base(folder) || plain.IsGit {
+		t.Fatalf("plain folder: %+v %v", plain, err)
+	}
+	var e *ipc.Error
+	if err := c.Call(ctx, "projects.create", map[string]any{"name": "", "path": ""}, nil); !errors.As(err, &e) || e.Code != ipc.CodeBadRequest {
+		t.Fatalf("blank create: %v", err)
+	}
+	for _, id := range []string{named.ID, plain.ID} {
+		if err := c.Call(ctx, "git.status", map[string]any{"projectId": id}, nil); !errors.As(err, &e) || e.Code != ipc.CodeBadRequest {
+			t.Fatalf("git.status on non-git project %s: %v", id, err)
+		}
+	}
+	var wts []struct{ ID string }
+	if err := c.Call(ctx, "worktrees.list", map[string]any{}, &wts); err != nil || len(wts) != 0 {
+		t.Fatalf("worktrees of non-git projects: %+v %v", wts, err)
+	}
+}

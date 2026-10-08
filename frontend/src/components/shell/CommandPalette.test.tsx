@@ -27,18 +27,18 @@ afterEach(() => { cleanup(); off.splice(0).forEach((dispose) => dispose()); });
 const query = (value: string) => fireEvent.change(screen.getByLabelText("Search"), { target: { value } });
 
 it("does not search sensitive providers from All, and hides stale providers when filtered", async () => {
-  const files = vi.fn().mockResolvedValue([{ id: "file.hit", title: "File hit", category: "Files", run: vi.fn() }]);
-  const mail = vi.fn().mockResolvedValue([{ id: "mail.hit", title: "Mail hit", category: "Mail", run: vi.fn() }]);
-  off.push(registerProvider({ id: "files", label: "Files", search: files }), registerProvider({ id: "mail", label: "Mail", explicitOnly: true, search: mail }));
+  const tasks = vi.fn().mockResolvedValue([{ id: "task.hit", title: "Task hit", category: "Tasks", run: vi.fn() }]);
+  const sensitive = vi.fn().mockResolvedValue([{ id: "sensitive.hit", title: "Sensitive hit", category: "Sensitive", run: vi.fn() }]);
+  off.push(registerProvider({ id: "tasks", label: "Tasks", search: tasks }), registerProvider({ id: "sensitive", label: "Sensitive", explicitOnly: true, search: sensitive }));
   render(<CommandPalette />); query("hit");
-  await screen.findByText("File hit");
-  expect(mail).not.toHaveBeenCalled();
-  fireEvent.click(screen.getByRole("button", { name: "Mail" }));
-  expect(screen.queryByText("File hit")).toBeNull();
-  await screen.findByText("Mail hit");
-  expect(files).toHaveBeenCalledTimes(1);
+  await screen.findByText("Task hit");
+  expect(sensitive).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: "Sensitive" }));
+  expect(screen.queryByText("Task hit")).toBeNull();
+  await screen.findByText("Sensitive hit");
+  expect(tasks).toHaveBeenCalledTimes(1);
   query("h");
-  expect(screen.queryByText("Mail hit")).toBeNull();
+  expect(screen.queryByText("Sensitive hit")).toBeNull();
 });
 
 it("drops cancelled responses and explains cancellation", async () => {

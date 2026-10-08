@@ -1,5 +1,6 @@
 import { useState, type FormEvent, type ReactNode } from "react";
-import type { Project } from "@/mygo";
+import { FolderOpen, X } from "lucide-react";
+import { Projects, type Project } from "@/mygo";
 import { branchFor } from "@/lib/projects";
 import { useProjects } from "@/stores/projects";
 import { Button } from "@/components/ui/button";
@@ -7,8 +8,11 @@ import { Input } from "@/components/ui/input";
 import { Field, FieldDescription, FieldLabel } from "@/components/ui/field";
 import { Dialog, DialogFooter, DialogHeader, DialogPanel, DialogPopup, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { AlertDialog, AlertDialogClose, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogPopup, AlertDialogTitle } from "@/components/ui/alert-dialog";
+import { toastManager } from "@/components/ui/toast";
 
 export const errText = (e: unknown) => (e instanceof Error ? e.message : String(e)).replace(/^(bad_request|not_found|conflict|internal|denied): /, "");
+
+export const toastError = (title: string, e: unknown) => toastManager.add({ type: "error", title, description: errText(e), timeout: 8000 });
 
 /** Confirmation for destructive actions. `onConfirm` may reject; the message is shown inline. */
 export function ConfirmDialog({ open, onOpenChange, title, children, confirmLabel, onConfirm, extra }: {
@@ -27,6 +31,52 @@ export function ConfirmDialog({ open, onOpenChange, title, children, confirmLabe
         </AlertDialogFooter>
       </AlertDialogPopup>
     </AlertDialog>
+  );
+}
+
+/** Last path segment of a native path, for suggesting a project name from a folder. */
+const folderName = (p: string) => p.replace(/[\\/]+$/, "").split(/[\\/]/).pop() ?? "";
+
+/** Creates a project: a name plus an optional folder (any folder; a git repository is not required). */
+export function NewProjectDialog() {
+  const open = useProjects((s) => s.newProjectOpen);
+  const setOpen = useProjects((s) => s.setNewProjectOpen);
+  const create = useProjects((s) => s.create);
+  const [name, setName] = useState("");
+  const [path, setPath] = useState("");
+  const [busy, setBusy] = useState(false);
+  const reset = () => { setName(""); setPath(""); };
+  const close = (o: boolean) => { if (busy) return; setOpen(o); if (!o) reset(); };
+  const browse = () => Projects.pickFolder().then((p) => { if (p) setPath(p); }, (e) => toastError("Could not open the folder picker", e));
+  const submit = (e: FormEvent) => {
+    e.preventDefault();
+    if (busy || (!name.trim() && !path)) return;
+    setBusy(true);
+    create(name, path).then((project) => { useProjects.getState().select(project.id); setOpen(false); reset(); }, (x) => toastError("Could not create project", x)).finally(() => setBusy(false));
+  };
+  return (
+    <Dialog open={open} onOpenChange={close}>
+      <DialogPopup>
+        <form onSubmit={submit} className="contents">
+          <DialogHeader><DialogTitle>New project</DialogTitle><DialogDescription>Give the project a name. A folder is optional; it does not need to be a git repository.</DialogDescription></DialogHeader>
+          <DialogPanel className="flex flex-col gap-3">
+            <Field><FieldLabel>Name</FieldLabel><Input autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder={path ? folderName(path) : "My project"} />
+              {path && <FieldDescription>Leave empty to use the folder name.</FieldDescription>}</Field>
+            <Field><FieldLabel>Folder <span className="font-normal text-muted-foreground">(optional)</span></FieldLabel>
+              <div className="flex gap-2">
+                <Input readOnly value={path} placeholder="No folder" className="font-mono" aria-label="Folder" />
+                <Button type="button" variant="outline" onClick={() => void browse()}><FolderOpen />Browse…</Button>
+                {path && <Button type="button" variant="outline" size="icon" aria-label="Clear folder" onClick={() => setPath("")}><X /></Button>}
+              </div>
+              <FieldDescription>{path ? "Orole OS reads this folder in place; nothing is copied or changed." : "Without a folder the project has no files, git state or worktrees."}</FieldDescription></Field>
+          </DialogPanel>
+          <DialogFooter>
+            <Button type="button" variant="outline" disabled={busy} onClick={() => close(false)}>Cancel</Button>
+            <Button type="submit" disabled={busy || (!name.trim() && !path)}>{busy ? "Creating…" : "Create project"}</Button>
+          </DialogFooter>
+        </form>
+      </DialogPopup>
+    </Dialog>
   );
 }
 

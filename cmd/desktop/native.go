@@ -79,7 +79,7 @@ func prepareNativeDesktop() (*nativeDesktop, bool) {
 		{Role: mygo.RoleEditMenu},
 		{Label: "Navigate", Submenu: []*mygo.MenuItem{
 			{Label: "Home", Accelerator: "CmdOrCtrl+Shift+1", Click: func(*mygo.MenuItem, *mygo.Window) { n.navigate("home") }},
-			{Label: "Applications", Accelerator: "CmdOrCtrl+Shift+L", Click: func(*mygo.MenuItem, *mygo.Window) { n.navigate("applications") }},
+			{Label: "Tasks", Accelerator: "CmdOrCtrl+Shift+L", Click: func(*mygo.MenuItem, *mygo.Window) { n.navigate("agents") }},
 			{Label: "Settings", Accelerator: "CmdOrCtrl+,", Click: func(*mygo.MenuItem, *mygo.Window) { n.navigate("settings") }},
 		}},
 	})
@@ -98,7 +98,7 @@ func (n *nativeDesktop) Attach(win *mygo.Window) {
 		Menu: mygo.NewMenu([]*mygo.MenuItem{
 			{Label: "Show Orole OS", Click: func(*mygo.MenuItem, *mygo.Window) { n.show() }},
 			{Label: "Hide Orole OS", Click: func(*mygo.MenuItem, *mygo.Window) { n.hide() }},
-			{Label: "Applications", Click: func(*mygo.MenuItem, *mygo.Window) { n.navigate("applications") }},
+			{Label: "Tasks", Click: func(*mygo.MenuItem, *mygo.Window) { n.navigate("agents") }},
 			mygo.Separator(),
 			{Label: "Quit Orole OS", Click: func(*mygo.MenuItem, *mygo.Window) { mygo.App.Quit() }},
 		}),

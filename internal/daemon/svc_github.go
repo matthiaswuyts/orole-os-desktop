@@ -73,6 +73,7 @@ type ghService struct {
 
 func (d *Daemon) registerGitHub() {
 	g := &ghService{d: d, creds: ghCredentialStore(), cache: map[string]ghCacheItem{}}
+	d.gh = g
 	g.loadSource()
 	g.registerHandlers()
 	g.registerIssueAgents()

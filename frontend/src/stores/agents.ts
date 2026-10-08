@@ -84,11 +84,11 @@ interface State {
   error: string | null;
   /** The last List failed: the daemon could not be reached. */
   offline: boolean;
-  /** The Start agent dialog is open. */
-  startDialogOpen: boolean;
+  /** Project id the dashboard is filtered to; null shows every project. */
+  projectFilter: string | null;
   /** Session shown in the dashboard's detail panel. */
   openId: string | null;
-  setStartDialogOpen: (o: boolean) => void;
+  setProjectFilter: (id: string | null) => void;
   setOpenId: (id: string | null) => void;
   load: () => Promise<void>;
   refresh: () => Promise<void>;
@@ -116,9 +116,9 @@ export const useAgents = create<State>((set, get) => ({
   loading: false,
   error: null,
   offline: false,
-  startDialogOpen: false,
+  projectFilter: null,
   openId: null,
-  setStartDialogOpen: (startDialogOpen) => set({ startDialogOpen }),
+  setProjectFilter: (projectFilter) => set({ projectFilter }),
   setOpenId: (openId) => set({ openId }),
 
   async load() {
@@ -175,9 +175,4 @@ export const useAgents = create<State>((set, get) => ({
 export function useAgentCounts(): AgentCounts {
   const sessions = useAgents((s) => s.sessions);
   return useMemo(() => selectCounts(sessions), [sessions]);
-}
-
-export function useAgentColumns(): Columns {
-  const sessions = useAgents((s) => s.sessions);
-  return useMemo(() => selectColumns(sessions), [sessions]);
 }

@@ -1,6 +1,6 @@
 import { Tooltip, TooltipPopup, TooltipTrigger } from "@/components/ui/tooltip";
 import { useEffect, useId, useState } from "react";
-import { Asterisk, Hexagon, Sparkles, SquareTerminal, Terminal, Check, Circle, LoaderCircle } from "lucide-react";
+import { Check, Circle, LoaderCircle } from "lucide-react";
 import { Agents, type Session, type PermissionRequest, type ReviewDiff } from "@/mygo";
 import { useAgents } from "@/stores/agents";
 import { useBoxes } from "@/stores/boxes";
@@ -12,10 +12,10 @@ import { DiffView } from "@/components/diff/DiffView";
 import { toDiffFiles } from "@/lib/diff";
 import { cn } from "@/lib/utils";
 import { duration, folderOf, kindLabel, useAction, useNow, errText, isRemoteProcess } from "./format";
+import { ProviderLogo } from "./ProviderLogo";
 
 export function AgentGlyph({ kind }: { kind: string }) {
-  const Icon = ({ claude: Asterisk, codex: Hexagon, opencode: SquareTerminal, gemini: Sparkles } as Record<string, typeof Terminal>)[kind] ?? Terminal;
-  return <Tooltip><TooltipTrigger render={<span tabIndex={0}  className="inline-flex size-6 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground" />}><Icon className="size-3.5" /></TooltipTrigger><TooltipPopup><span className="max-w-sm whitespace-pre-wrap break-words">{kindLabel(kind)}</span></TooltipPopup></Tooltip>;
+  return <Tooltip><TooltipTrigger render={<span tabIndex={0} role="img" aria-label={kindLabel(kind)} className="inline-flex size-6 shrink-0 items-center justify-center" />}><ProviderLogo kind={kind} /></TooltipTrigger><TooltipPopup><span className="max-w-sm whitespace-pre-wrap break-words">{kindLabel(kind)}</span></TooltipPopup></Tooltip>;
 }
 export function StateGlyph({ status }: { status: string }) {
   const Icon = status === "working" ? LoaderCircle : status === "done" ? Check : Circle;
@@ -58,8 +58,8 @@ export function ReplyBox({ session, onSent }: { session: Session; onSent?: () =>
   const [text, setText] = useState("");
   const action = useAction();
   const remote = isRemoteProcess(session);
-  if (remote && session.status === "lost") return <p className="text-xs text-muted-foreground">The remote process exit is unconfirmed. Inspect the box, then use Restart fresh after verifying the previous process stopped.</p>;
-  if (session.mode === "terminal" && session.live) return <p className="text-xs text-muted-foreground">Continue in the Terminal tab. This session's foreground process owns its input.</p>;
+  if (remote && session.status === "lost") return <p className="text-xs text-muted-foreground">The remote process exit is unconfirmed. Inspect the box and verify that the previous process stopped before starting a new task.</p>;
+  if (session.mode === "terminal" && session.live) return <p className="text-xs text-muted-foreground">Open the task's Terminal sheet to continue. This session's foreground process owns its input.</p>;
   if (remote && session.live) return <p className="text-xs text-muted-foreground">This SSH process reports output and exit status. It cannot receive messages while running.</p>;
   return <form className="flex flex-col gap-2" onSubmit={(e) => { e.preventDefault(); if (!text.trim()) return; void action.run(async () => { useAgents.getState().upsert(await Agents.prompt(session.id, text)); setText(""); onSent?.(); }); }}>
     {remote && <p className="text-xs text-muted-foreground">Start a fresh task on the same box with this session's model and reasoning. This does not resume the previous conversation.</p>}

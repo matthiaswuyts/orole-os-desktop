@@ -10,26 +10,22 @@ import (
 	"github.com/rayorole/orole-os-desktop/internal/search"
 )
 
-// settingsIndex lists searchable settings. Each entry opens a Settings
-// section; keywords widen matching beyond the title.
-var settingsIndex = []struct{ section, title, keywords string }{
-	{"appearance", "Appearance", "theme colour color dark light midnight obsidian density compact custom"},
-	{"ascii", "ASCII scenes", "background animation scene fps motion"},
-	{"accessibility", "Accessibility", "reduce motion animations a11y"},
-	{"terminal", "Terminal", "font size shell"},
-	{"notifications", "Notifications", "alerts toasts mute sources native"},
-	{"workspaces", "Workspaces", "layouts widgets dashboard"},
-	{"sound", "Sound", "audio volume effects mute"},
-	{"plugins", "Plugins", "extensions install permissions"},
-	{"machines", "Machines", "remote hosts ssh"},
-	{"agents", "Agents", "models permissions"},
-	{"github", "GitHub", "token repositories issues pull requests"},
-	{"mcp", "MCP servers", "model context protocol tools"},
-	{"automations", "Automations", "workflows triggers"},
-	{"security", "Security", "permissions audit credentials"},
-	{"storage", "Storage", "files roots folders disk"},
-	{"updates", "Updates", "version release"},
-	{"diagnostics", "Diagnostics", "daemon health logs"},
+// settingsIndex lists configuration destinations, including top-level views.
+// Keep Settings sections/tabs in step with frontend/src/features/settings/SettingsView.tsx.
+var settingsIndex = []struct{ view, section, tab, title, keywords string }{
+	{"settings", "customization", "appearance", "Theme and density", "appearance theme colour color dark light midnight obsidian density compact custom"},
+	{"settings", "customization", "ascii", "Background scenes", "ascii background animation scene opacity"},
+	{"settings", "customization", "motion", "Motion and accessibility", "accessibility reduce motion animations a11y fps pause static"},
+	{"settings", "customization", "sound", "Sounds", "sound audio volume effects mute"},
+	{"settings", "customization", "terminal", "Terminal font", "terminal font size shell"},
+	{"settings", "workspaces", "", "Workspaces", "layouts widgets dashboard"},
+	{"settings", "integrations", "github", "GitHub", "token repositories issues pull requests"},
+	{"mcp", "", "", "MCP servers", "model context protocol tools"},
+	{"settings", "integrations", "plugins", "Plugins", "extensions install permissions"},
+	{"settings", "notifications", "notifications", "Notifications", "alerts toasts mute sources native"},
+	{"settings", "notifications", "automations", "Automations", "workflows triggers webhook"},
+	{"settings", "system", "updates", "Updates", "version release"},
+	{"settings", "system", "diagnostics", "Diagnostics and startup", "diagnostics daemon health logs autostart login startup"},
 }
 
 // registerSearch wires search.query over the providers this daemon owns.
@@ -85,8 +81,12 @@ func (d *Daemon) registerSearch(reg *files.Registry) {
 		for _, s := range settingsIndex {
 			score := max(search.Fuzzy(q, s.title), search.Fuzzy(q, s.keywords)*0.6)
 			if score > 0 {
-				out = append(out, search.Result{ID: s.section, Title: "Settings: " + s.title, Kind: "setting", Score: score,
-					Action: map[string]string{"view": "settings", "section": s.section}})
+				title := s.title
+				if s.view == "settings" {
+					title = "Settings: " + title
+				}
+				out = append(out, search.Result{ID: s.view + "/" + s.section + "/" + s.tab, Title: title, Kind: "setting", Score: score,
+					Action: map[string]string{"view": s.view, "section": s.section, "tab": s.tab}})
 			}
 		}
 		return out, nil

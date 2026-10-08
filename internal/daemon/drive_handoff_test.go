@@ -183,6 +183,13 @@ func TestDriveScopedHandoffSDK(t *testing.T) {
 	for _, stage := range []string{"share denied", "agent denied", "permission revoked", "destination changed", "expired", "success"} {
 		t.Run(stage, func(t *testing.T) {
 			f := newShareFixture(t)
+			// Exercise revocation while an explicitly configured prompt approval
+			// is pending; direct user task submission no longer asks by default.
+			if _, err := f.h.policy.AddRule(context.Background(), policy.Rule{
+				Actor: "user", Action: "agent.prompt", Resource: f.request.SessionID, Decision: policy.Ask,
+			}); err != nil {
+				t.Fatal(err)
+			}
 			timeout := 8 * time.Second
 			if stage == "expired" {
 				timeout = time.Second

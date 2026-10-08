@@ -37,6 +37,17 @@ type HarnessOption struct {
 	Structured        bool     `json:"structured"`
 	Interactive       bool     `json:"interactive"`
 	UnavailableReason string   `json:"unavailableReason"`
+	// Models are the models the harness itself reports (nil = it does not list any; a custom id may
+	// still be entered when CustomModel is set).
+	Models []ModelOption `json:"models"`
+}
+
+// ModelOption is one model a harness reports, with the reasoning levels that model supports.
+type ModelOption struct {
+	ID        string   `json:"id"`
+	Name      string   `json:"name"`
+	Reasoning []string `json:"reasoning"`
+	Default   bool     `json:"default"`
 }
 
 type ProjectOption struct {
@@ -63,7 +74,9 @@ func reasoningValues(kind string) []string {
 	case "claude":
 		return []string{"low", "medium", "high", "xhigh", "max"}
 	case "codex":
-		return []string{"low", "medium", "high", "xhigh"}
+		return []string{"low", "medium", "high", "xhigh", "max", "ultra"}
+	case "omp":
+		return slices.Clone(ompThinkingLevels)
 	default:
 		return []string{}
 	}
@@ -91,6 +104,9 @@ func validateModel(value string) error {
 func advertisedReasoning(kind, help string) []string {
 	out := []string{}
 	if kind == "codex" && strings.Contains(help, "--config") {
+		return reasoningValues(kind)
+	}
+	if kind == "omp" && strings.Contains(help, "--thinking") {
 		return reasoningValues(kind)
 	}
 	if kind == "claude" {
@@ -136,9 +152,27 @@ func (m *Manager) Options(ctx context.Context, machine string) (LaunchOptions, e
 	if localMachine(machine) {
 		out.Worktree = m.cfg.Worktrees != nil
 		for _, d := range m.Detect(ctx, false) {
-			h := HarnessOption{ID: d.Kind, Name: d.Name, Available: d.Installed, Executable: d.Path, Version: d.Version, Modes: d.Modes, Reasoning: []string{}, CustomModel: d.Kind != "custom", Structured: slices.Contains(d.Modes, ModeStructured), Interactive: slices.Contains(d.Modes, ModeTerminal), UnavailableReason: d.Error}
+			h := HarnessOption{ID: d.Kind, Name: d.Name, Available: d.Installed, Executable: d.Path, Version: d.Version, Modes: d.Modes, Reasoning: []string{}, Models: []ModelOption{}, CustomModel: d.Kind != "custom", Structured: slices.Contains(d.Modes, ModeStructured), Interactive: slices.Contains(d.Modes, ModeTerminal), UnavailableReason: d.Error}
 			if d.Installed && (d.Kind == "claude" || d.Kind == "codex") {
 				h.Reasoning = advertisedReasoning(d.Kind, localHelp(ctx, d.Path))
+				if d.Kind == "codex" {
+					if models, err := codexModels(ctx, d.Path); err != nil {
+						m.cfg.Log.Debug("codex model list unavailable", "err", err)
+					} else if len(models) > 0 {
+						h.Models, h.Reasoning = models, modelReasoning(models)
+					}
+				}
+				if d.Kind == "claude" {
+					if models, err := claudeModels(ctx, d.Path); err != nil {
+						m.cfg.Log.Debug("claude model list unavailable", "err", err)
+					} else if len(models) > 0 {
+						h.Models, h.Reasoning = models, modelReasoning(models)
+					}
+				}
+			}
+			if d.Installed && d.Kind == "omp" {
+				h.Reasoning = advertisedReasoning(d.Kind, localHelp(ctx, d.Path))
+				h.Models = ompModels.list(ctx, d.Path)
 			}
 			out.Harnesses = append(out.Harnesses, h)
 		}
@@ -186,7 +220,7 @@ func (m *Manager) Options(ctx context.Context, machine string) (LaunchOptions, e
 		if d.Path != "" && ((d.Kind == "claude" && (!strings.Contains(d.Help, "--print") || !strings.Contains(d.Help, "--output-format"))) || (d.Kind == "codex" && (!strings.Contains(d.Help, "exec") || !strings.Contains(d.Help, "--config")))) {
 			reason = "Installed CLI does not advertise the required remote process flags"
 		}
-		h := HarnessOption{ID: d.Kind, Name: m.AdapterName(d.Kind), Available: d.Path != "" && reason == "", Executable: d.Path, Version: d.Version, Reasoning: advertisedReasoning(d.Kind, d.Help), CustomModel: true, Modes: []Mode{ModeProcess}, UnavailableReason: reason}
+		h := HarnessOption{ID: d.Kind, Name: m.AdapterName(d.Kind), Available: d.Path != "" && reason == "", Executable: d.Path, Version: d.Version, Reasoning: advertisedReasoning(d.Kind, d.Help), Models: []ModelOption{}, CustomModel: true, Modes: []Mode{ModeProcess}, UnavailableReason: reason}
 		out.Harnesses = append(out.Harnesses, h)
 	}
 	for _, d := range env.Directories {

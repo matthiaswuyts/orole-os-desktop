@@ -45,11 +45,11 @@ func (st *Store) SaveSession(s Session, key string) error {
 	if key != "" {
 		k = key
 	}
-	_, err = st.db.Exec(`INSERT INTO agent_sessions(id,kind,status,project,dir,parent_id,grp,journal_key,started_at,ended_at,updated_at,data)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
+	_, err = st.db.Exec(`INSERT INTO agent_sessions(id,kind,status,project,dir,parent_id,grp,journal_key,started_at,ended_at,updated_at,pr_url,pr_number,data)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(id) DO UPDATE SET status=excluded.status, project=excluded.project, dir=excluded.dir,
-			ended_at=excluded.ended_at, updated_at=excluded.updated_at, data=excluded.data`,
-		s.ID, s.Kind, string(s.Status), s.Project, s.Dir, s.ParentID, s.Group, k, s.StartedAt.Unix(), nullTime(s.EndedAt), s.UpdatedAt.Unix(), string(b))
+			ended_at=excluded.ended_at, updated_at=excluded.updated_at, pr_url=excluded.pr_url, pr_number=excluded.pr_number, data=excluded.data`,
+		s.ID, s.Kind, string(s.Status), s.Project, s.Dir, s.ParentID, s.Group, k, s.StartedAt.Unix(), nullTime(s.EndedAt), s.UpdatedAt.Unix(), s.PRURL, s.PRNumber, string(b))
 	return err
 }
 

@@ -50,10 +50,11 @@ func (p Projects) List(ctx context.Context) ([]projects.Project, error) {
 	return out, err
 }
 
-// Add registers the git repository containing path.
-func (p Projects) Add(ctx context.Context, path string) (projects.Project, error) {
+// Create registers a project. path is optional: a git repository, a plain folder, or empty for a
+// project that is only a name. A blank name defaults to the folder name.
+func (p Projects) Create(ctx context.Context, name, path string) (projects.Project, error) {
 	var out projects.Project
-	err := p.L.call(ctx, "projects.add", map[string]string{"path": path}, &out)
+	err := p.L.call(ctx, "projects.create", map[string]string{"name": name, "path": path}, &out)
 	return out, err
 }
 
@@ -77,7 +78,7 @@ func (p Projects) SetWorktreeRoot(ctx context.Context, id, root string) (project
 // PickFolder shows the native folder picker and returns the chosen path ("" if cancelled).
 func (p Projects) PickFolder(ctx context.Context) (string, error) {
 	paths, err := mygo.Dialog.Open(mygo.OpenDialogOptions{
-		Parent: mygo.CallerWindow(ctx), Title: "Add a project", ButtonLabel: "Add project", Directory: true, CreateDirectories: true,
+		Parent: mygo.CallerWindow(ctx), Title: "Choose a project folder", ButtonLabel: "Select folder", Directory: true, CreateDirectories: true,
 	})
 	if err != nil || len(paths) == 0 {
 		return "", err

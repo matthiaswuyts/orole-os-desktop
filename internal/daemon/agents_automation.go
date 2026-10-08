@@ -26,7 +26,7 @@ func (a agentAutomation) StartAgent(ctx context.Context, r automations.AgentRequ
 		kind = "claude"
 	}
 	ctx = events.WithChain(ctx, r.Chain)
-	return a.d.Agents.Start(ctx, agents.StartSpec{Kind: kind, Dir: p.Path, Prompt: r.Prompt, Key: r.Key})
+	return a.d.Agents.Start(ctx, agents.StartSpec{Kind: kind, ProjectID: p.ID, Machine: p.MachineID, Prompt: r.Prompt, Key: r.Key})
 }
 
 func (a agentAutomation) SendPrompt(ctx context.Context, r automations.AgentRequest) (any, error) {

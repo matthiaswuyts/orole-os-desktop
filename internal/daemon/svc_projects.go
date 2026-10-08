@@ -47,8 +47,14 @@ func (d *Daemon) gitDir(ctx context.Context, t gitTarget) (string, error) {
 	if err != nil {
 		return "", mapProjectErr(err)
 	}
+	if p.Path == "" {
+		return "", &ipc.Error{Code: ipc.CodeBadRequest, Message: "project " + p.Name + " has no folder"}
+	}
 	if p.Missing {
 		return "", &ipc.Error{Code: ipc.CodeNotFound, Message: "project directory is missing: " + p.Path}
+	}
+	if !p.IsGit {
+		return "", &ipc.Error{Code: ipc.CodeBadRequest, Message: "project " + p.Name + " is not a git repository"}
 	}
 	return p.Path, nil
 }
@@ -69,6 +75,19 @@ func (d *Daemon) registerProjects() {
 			return pr, mapProjectErr(err)
 		}
 		d.audit("project.add", pr.ID, "allowed", pr.Path)
+		changed(pr)
+		return pr, nil
+	})
+	handle(d, "projects.create", func(ctx context.Context, p struct {
+		Name string `json:"name"`
+		Path string `json:"path"`
+	}) (projects.Project, error) {
+		pr, err := d.Projects.Create(ctx, p.Name, p.Path)
+		if err != nil {
+			d.audit("project.create", p.Name, "failed", err.Error())
+			return pr, mapProjectErr(err)
+		}
+		d.audit("project.create", pr.ID, "allowed", pr.Path)
 		changed(pr)
 		return pr, nil
 	})
@@ -168,7 +187,7 @@ func (d *Daemon) registerProjects() {
 			}
 			ids = ids[:0]
 			for _, pr := range all {
-				if !pr.Missing {
+				if !pr.Missing && pr.IsGit {
 					ids = append(ids, pr.ID)
 				}
 			}

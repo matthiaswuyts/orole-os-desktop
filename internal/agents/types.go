@@ -74,13 +74,14 @@ type PermissionRequest struct {
 
 // Session is one agent run, persisted in agent_sessions.
 type Session struct {
-	ID      string `json:"id"`
-	Kind    string `json:"kind"`    // claude | codex | opencode | gemini | custom
-	Machine string `json:"machine"` // "local" or a paired machine id
-	Project string `json:"project"` // repository the working directory belongs to ("" if none)
-	Dir     string `json:"dir"`     // working directory (a worktree when one was created)
-	Branch  string `json:"branch"`
-	BaseRef string `json:"baseRef"` // commit the work is reviewed against
+	ID        string `json:"id"`
+	Kind      string `json:"kind"`                // claude | codex | opencode | gemini | custom
+	Machine   string `json:"machine"`             // "local" or a paired machine id
+	Project   string `json:"project"`             // repository the working directory belongs to ("" if none)
+	ProjectID string `json:"projectId,omitempty"` // stable registry association; Project remains the execution root
+	Dir       string `json:"dir"`                 // working directory (a worktree when one was created)
+	Branch    string `json:"branch"`
+	BaseRef   string `json:"baseRef"` // commit the work is reviewed against
 	// WorktreeOwned is set when the daemon created Dir as a worktree for this session.
 	WorktreeOwned bool   `json:"worktreeOwned"`
 	Model         string `json:"model"`
@@ -103,7 +104,10 @@ type Session struct {
 	TerminalID     string `json:"terminalId"`    // ConPTY terminal id while the session has one
 	TranscriptRef  string `json:"transcriptRef"` // path of the CLI's own transcript when known
 	ParentID       string `json:"parentId"`      // session this one was handed off / reviews
-	Group          string `json:"group"`         // try-N-ways group
+	// PRURL and PRNumber are set once the session's branch was published as a pull request.
+	PRURL    string `json:"prUrl"`
+	PRNumber int    `json:"prNumber"`
+	Group    string `json:"group"` // try-N-ways group
 	// Chain records automation provenance for lifecycle events, never tool authority.
 	Chain        []string `json:"chain,omitempty"`
 	Review       string   `json:"review"` // see Review* constants
@@ -145,7 +149,33 @@ const (
 	EvTranscript  = "transcript"  // transcript path known; Text = path
 	EvPermCancel  = "perm_cancel" // agent withdrew a permission request; Data = {id}
 	EvOutputBytes = "output"      // terminal output counter bump (not persisted)
+
+	// Structured-harness events (omp RPC, Codex app-server, Claude stream-json). Adapters emit
+	// these when an item completes (never per streamed token); live typing shows through
+	// EvActivity. Data shapes are the contract with frontend/src/lib/taskEvents.ts.
+	EvReasoning = "reasoning" // model reasoning/thinking; Text = full text; Data = {id}
+	EvImage     = "image"     // generated image; Text = revised prompt; Data = ImageData
 )
+
+// ToolData is Event.Data for EvTool and EvToolResult: the same Id links a call to its result.
+// Adapters set Status "running" on the call and "ok" or "error" on the result.
+type ToolData struct {
+	ID     string          `json:"id"`
+	Name   string          `json:"name"`
+	Server string          `json:"server,omitempty"` // MCP server name when the tool is an MCP tool
+	Status string          `json:"status"`           // running | ok | error
+	Input  json.RawMessage `json:"input,omitempty"`
+	Output string          `json:"output,omitempty"` // truncated to 8 KiB
+}
+
+// ImageData is Event.Data for EvImage. Path is an absolute file under the session's scratch
+// directory; the frontend reads it through Agents.Artifact, never by raw path.
+type ImageData struct {
+	ID     string `json:"id"`
+	Path   string `json:"path"`
+	Mime   string `json:"mime"`
+	Prompt string `json:"prompt"`
+}
 
 // Event is one entry in a session's history.
 type Event struct {
@@ -170,20 +200,22 @@ type Detection struct {
 	Modes       []Mode `json:"modes"`
 	Resume      bool   `json:"resume"`      // can continue a session by the CLI's session id
 	Permissions bool   `json:"permissions"` // permission requests can be approved from the dashboard
-	StatusFeed  string `json:"statusFeed"`  // "stream-json" | "hooks" | "process" (exit only)
+	StatusFeed  string `json:"statusFeed"`  // "stream-json" | "app-server" | "hooks" | "process" (exit only)
 }
 
 // StartSpec is a request to start an agent.
 type StartSpec struct {
-	Kind      string `json:"kind"`
-	Machine   string `json:"machine,omitempty"`   // empty means local
-	Reasoning string `json:"reasoning,omitempty"` // empty preserves the CLI default
-	Dir       string `json:"dir"`                 // project or worktree directory
-	Prompt    string `json:"prompt"`              // the task; may be empty (session starts idle)
-	Model     string `json:"model"`               // optional
-	Mode      Mode   `json:"mode"`                // "" = adapter default
-	Command   string `json:"command"`             // custom CLI command line
-	Title     string `json:"title"`
+	Kind          string   `json:"kind"`
+	ProjectID     string   `json:"projectId,omitempty"`     // resolves Dir through the daemon's project registry
+	Machine       string   `json:"machine,omitempty"`       // empty means local
+	Reasoning     string   `json:"reasoning,omitempty"`     // empty preserves the CLI default
+	Dir           string   `json:"dir"`                     // project or worktree directory
+	Prompt        string   `json:"prompt"`                  // the task; may be empty (session starts idle)
+	AttachmentIDs []string `json:"attachmentIds,omitempty"` // daemon-uploaded files handed to the task
+	Model         string   `json:"model"`                   // optional
+	Mode          Mode     `json:"mode"`                    // "" = adapter default
+	Command       string   `json:"command"`                 // custom CLI command line
+	Title         string   `json:"title"`
 	// PermissionMode: "" | default | acceptEdits | plan (Claude Code).
 	PermissionMode string `json:"permissionMode"`
 	// NewWorktree creates a fresh worktree of the repository at Dir on a new branch and
@@ -208,4 +240,27 @@ type ReviewDiff struct {
 	Truncated bool   `json:"truncated"`
 	Diff      Diff   `json:"diff"`
 	Error     string `json:"error"`
+}
+
+// Artifact is a file a session produced (a generated image), returned by value because the
+// frontend never gets a raw filesystem path to read. Data is base64 in JSON.
+type Artifact struct {
+	Mime string `json:"mime"`
+	Data []byte `json:"data"`
+}
+
+// PublishSpec turns a session's work into a commit, a pushed branch and optionally a pull request,
+// using git and the GitHub CLI/API credentials the daemon already holds. Steps run in order and stop
+// at the first failure; each step is skipped when its flag is off or it is already done.
+type PublishSpec struct {
+	Message string `json:"message"` // commit message ("" = generated from the task title); empty working tree skips the commit
+	Push    bool   `json:"push"`    // push the session branch to origin (sets upstream)
+	PR      bool   `json:"pr"`      // open a pull request for the branch (implies Push)
+	Title   string `json:"title"`   // PR title ("" = session title)
+	Body    string `json:"body"`    // PR body ("" = the task prompt and result)
+	Base    string `json:"base"`    // PR base branch ("" = the session's base ref's branch or the default branch)
+	Draft   bool   `json:"draft"`
+	// Confirmed is the user's explicit confirmation of the remote effects (push, pull request).
+	// Go requires it before anything leaves the machine; the dialog that offers Publish sets it.
+	Confirmed bool `json:"confirmed"`
 }

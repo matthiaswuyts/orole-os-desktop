@@ -15,6 +15,8 @@ import { NativeNavigation } from "@/features/applications/NativeNavigation";
 import { PluginContributions } from "@/features/plugins";
 import { AudioFeedback } from "@/components/shell/AudioFeedback";
 import { useUpdates } from "@/stores/updates";
+import { ToastProvider } from "@/components/ui/toast";
+import { NewProjectDialog } from "@/features/projects/dialogs";
 
 function ViewHost() {
   const view = useUI((s) => s.view);
@@ -34,14 +36,17 @@ export default function App() {
     return () => { off1(); off2(); offAgents(); offUpdates(); };
   }, []);
   return (
-    <AppShell>
-      <Suspense fallback={<div role="status" className="p-6 text-muted-foreground">Loading…</div>}>
-        <ViewHost />
-      </Suspense>
-      <PolicyApprovals />
-      <NativeNavigation />
-      <PluginContributions />
-      <AudioFeedback />
-    </AppShell>
+    <ToastProvider>
+      <AppShell>
+        <Suspense fallback={<div role="status" className="p-6 text-muted-foreground">Loading…</div>}>
+          <ViewHost />
+        </Suspense>
+        <PolicyApprovals />
+        <NativeNavigation />
+        <PluginContributions />
+        <AudioFeedback />
+        <NewProjectDialog />
+      </AppShell>
+    </ToastProvider>
   );
 }

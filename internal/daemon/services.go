@@ -43,6 +43,7 @@ func (d *Daemon) registerServices() {
 	d.registerCore()
 	d.registerAutomations()
 	d.registerMCP()
+	d.registerSkills() // before registerAgents: agent launches read the skills index and gateway exe
 	d.registerPlugins()
 	d.registerMetrics()
 	d.registerApplications()
@@ -52,6 +53,8 @@ func (d *Daemon) registerServices() {
 	d.registerMachines()
 	d.registerFiles()
 	d.registerAgents()
+	d.registerImages()
+	d.registerPublish()
 }
 
 func (d *Daemon) registerCore() {

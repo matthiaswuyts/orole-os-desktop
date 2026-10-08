@@ -27,8 +27,7 @@ export const DEFAULT_WIDGETS: WidgetInstance[] = [
   { id: "w-daemon", type: "daemon-health", x: 0, y: 0, w: 4, h: 5 },
   { id: "w-clock", type: "clock", x: 4, y: 0, w: 4, h: 5 },
   { id: "w-setup", type: "setup", x: 8, y: 0, w: 4, h: 5 },
-  { id: "w-term", type: "terminals", x: 0, y: 5, w: 6, h: 6 },
-  { id: "w-notes", type: "notes", x: 6, y: 5, w: 6, h: 6 },
+  { id: "w-notes", type: "notes", x: 0, y: 5, w: 6, h: 6 },
 ];
 
 interface State {

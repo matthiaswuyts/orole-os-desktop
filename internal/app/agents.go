@@ -95,6 +95,18 @@ func (a Agents) Start(ctx context.Context, spec agents.StartSpec) (agents.Sessio
 	return out, err
 }
 
+// UploadAttachment stages a file in daemon-owned storage for a subsequent task.
+func (a Agents) UploadAttachment(ctx context.Context, spec agents.UploadAttachmentSpec) (agents.Attachment, error) {
+	var out agents.Attachment
+	err := a.L.call(ctx, "agents.uploadAttachment", spec, &out)
+	return out, err
+}
+
+// DiscardAttachment removes a staged upload, never a launched session's file.
+func (a Agents) DiscardAttachment(ctx context.Context, id string) error {
+	return a.L.call(ctx, "agents.discardAttachment", map[string]string{"id": id}, nil)
+}
+
 // Stop ends a running agent (its record stays).
 func (a Agents) Stop(ctx context.Context, id string) (agents.Session, error) {
 	var out agents.Session

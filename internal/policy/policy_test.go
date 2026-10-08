@@ -88,6 +88,43 @@ func TestDefaults(t *testing.T) {
 	}
 }
 
+func TestTaskSubmissionPermissions(t *testing.T) {
+	e, _, _ := newEngine(t)
+	ctx := context.Background()
+	for _, action := range []string{"agent.start", "agent.prompt", "agent.restart"} {
+		for _, actor := range []string{"user", "agent:1", "automation:1", "system"} {
+			req := Request{Actor: actor, Action: action, Resource: "local:project", Effect: EffectDestructive}
+			ev, err := e.Decide(ctx, req)
+			want := Ask
+			if actor == "user" {
+				want = Allow
+			}
+			if err != nil || ev.Decision != want {
+				t.Fatalf("%s %s: got %+v, %v; want %s", actor, action, ev, err, want)
+			}
+		}
+		for _, decision := range []Decision{Deny, Ask} {
+			if _, err := e.AddRule(ctx, Rule{Actor: "user", Action: action, Resource: "restricted", Decision: decision}); err != nil {
+				t.Fatal(err)
+			}
+			ev, err := e.Decide(ctx, Request{Actor: "user", Action: action, Resource: "restricted", Effect: EffectDestructive})
+			if err != nil || ev.Decision != decision {
+				t.Fatalf("explicit %s rule must govern %s: %+v %v", decision, action, ev, err)
+			}
+		}
+	}
+	for _, req := range []Request{
+		{Actor: "user", Action: "agent.start", Effect: EffectDestructive, FromHint: true},
+		{Actor: "user", Action: "agent.tool.use", Effect: EffectDestructive},
+		{Actor: "agent:1", Action: "agent.tool.use", Effect: EffectDestructive},
+	} {
+		ev, err := e.Decide(ctx, req)
+		if err != nil || ev.Decision != Ask {
+			t.Fatalf("task submission must not grant tool or hinted permissions: %+v %v", ev, err)
+		}
+	}
+}
+
 func TestRulesSpecificityAndEffectLimit(t *testing.T) {
 	e, _, _ := newEngine(t)
 	ctx := context.Background()

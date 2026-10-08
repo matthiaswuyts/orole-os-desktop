@@ -1,8 +1,6 @@
 import { useSyncExternalStore, type ComponentType } from "react";
-import { AssignedIssuesWidget, FailedCiWidget, GitHubNotificationsWidget, OpenPullsWidget } from "@/features/github/widgets";
 import { AutomationResultsWidget } from "@/features/automations/AutomationResultsWidget";
-import { MailWidget, DriveWidget } from "@/features/mcp/widgets";
-import { ActivityWidget, ClockWidget, DaemonHealthWidget, NotesWidget, SetupWidget, TerminalsWidget } from "./builtin";
+import { ActivityWidget, ClockWidget, DaemonHealthWidget, NotesWidget, SetupWidget } from "./builtin";
 
 export interface WidgetProps {
   widgetType: string;
@@ -22,18 +20,11 @@ export interface WidgetDef {
 
 const builtins: WidgetDef[] = [
   { type: "daemon-health", title: "Daemon", description: "Local daemon status, version, uptime and memory.", w: 4, h: 5, component: DaemonHealthWidget },
-  { type: "terminals", title: "Terminals", description: "Running terminal sessions.", w: 6, h: 6, component: TerminalsWidget },
   { type: "clock", title: "Clock & calendar", description: "Current time and month calendar.", w: 4, h: 5, component: ClockWidget },
   { type: "notes", title: "Notes", description: "Free-form notes saved with the workspace.", w: 6, h: 6, component: NotesWidget },
   { type: "setup", title: "Get started", description: "Remaining first-run setup steps.", w: 4, h: 5, component: SetupWidget },
   { type: "activity", title: "System activity", description: "Host CPU, memory, disk and uptime, plus daemon heap history.", w: 6, h: 9, component: ActivityWidget },
-  { type: "github-issues", title: "Assigned issues", description: "Open GitHub issues assigned to you.", w: 6, h: 6, component: AssignedIssuesWidget },
-  { type: "github-pulls", title: "Open pull requests", description: "Your open GitHub pull requests.", w: 6, h: 6, component: OpenPullsWidget },
-  { type: "github-notifications", title: "GitHub notifications", description: "Unread GitHub notifications.", w: 6, h: 6, component: GitHubNotificationsWidget },
-  { type: "github-ci", title: "Failed CI", description: "Recent failed workflow runs in your repositories.", w: 6, h: 6, component: FailedCiWidget },
   { type: "automation-results", title: "Automation results", description: "Recent daemon-owned automation runs and their status.", w: 6, h: 6, component: AutomationResultsWidget },
-  { type: "mail", title: "Mail", description: "Messages from your connected MCP mailbox.", w: 6, h: 6, component: MailWidget },
-  { type: "drive", title: "Drive files", description: "Files from your connected MCP Drive.", w: 6, h: 6, component: DriveWidget },
 ];
 
 const registry = new Map(builtins.map((widget) => [widget.type, widget]));

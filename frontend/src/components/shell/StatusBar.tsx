@@ -25,10 +25,9 @@ function BoxStatus({ machine, observation, now, connected }: { machine: Machine;
   const memory = ready
     ? `${machine.name} memory: ${memoryBytes(used)} of ${memoryBytes(health.memoryTotalBytes)} in use`
     : `${machine.name} memory: ${status === "online" ? "unavailable" : status}`;
-  const openMachine = () => { useBoxes.setState({ selectedId: machine.id }); useUI.getState().setView("machines"); };
   return <div className="flex shrink-0 items-center gap-0.5">
     <PreviewCard>
-      <PreviewCardTrigger render={<button type="button" />} className={footerControl} onClick={openMachine} aria-label={`${machine.name}, ${status}. Open machine details`}>
+      <PreviewCardTrigger render={<span tabIndex={0} />} className={footerControl} aria-label={`${machine.name}, ${status}. Machine details`}>
         <span aria-hidden="true" className={cn("size-1.5 rounded-full border border-current", status === "online" && "bg-current", status === "error" && "text-destructive-foreground")} />
         <span className="max-w-28 truncate">{machine.name}</span>
       </PreviewCardTrigger>
@@ -43,12 +42,11 @@ function BoxStatus({ machine, observation, now, connected }: { machine: Machine;
           </dl>
           <p className="text-xs text-muted-foreground">{memory}</p>
           <p className="text-xs text-muted-foreground">{observation?.error || health?.metricError || health?.detail || "Waiting for a host observation."}</p>
-          <p className="text-xs text-muted-foreground">Select the box to view details or edit its name in Machines.</p>
         </div>
       </PreviewCardPopup>
     </PreviewCard>
     <Tooltip>
-      <TooltipTrigger render={<button type="button" />} className={footerControl} onClick={openMachine} aria-label={memory}>
+      <TooltipTrigger render={<span tabIndex={0} />} className={footerControl} aria-label={memory}>
         {percent !== null ? <>
           <Meter value={percent} aria-label={`${machine.name} physical memory used`} className="w-8">
             <MeterTrack className="h-1"><MeterIndicator /></MeterTrack>
@@ -83,7 +81,7 @@ export function StatusBar() {
       <TooltipPopup>Running agent tasks{counts.needsYou > 0 ? `; ${counts.needsYou} need your attention` : ""}</TooltipPopup>
     </Tooltip>
     <Tooltip>
-      <TooltipTrigger render={<button type="button" />} className={footerControl} onClick={() => useUI.getState().setView("settings")}>
+      <TooltipTrigger render={<button type="button" />} className={footerControl} onClick={() => useUI.getState().setView("mcp")}>
         mcp <span className="tabular-nums">{connected && mcp && !mcpError ? `${mcp.filter((server) => server.status === "connected").length}/${mcp.length}` : "—"}</span>
       </TooltipTrigger>
       <TooltipPopup>{mcpError || "Connected / configured MCP servers"}</TooltipPopup>
@@ -92,7 +90,7 @@ export function StatusBar() {
       {machines.map((machine) => <BoxStatus key={machine.id} machine={machine} observation={observations[machine.id]} now={now} connected={connected && !error} />)}
     </div>
     <Tooltip>
-      <TooltipTrigger render={<button type="button" />} className={footerControl} onClick={() => useUI.getState().setView("machines")}>
+      <TooltipTrigger render={<span tabIndex={0} />} className={footerControl}>
         {loaded ? `${online ?? "—"}/${machines.length}` : "—"} online
       </TooltipTrigger>
       <TooltipPopup>{error || `${online ?? "Unknown"} online of ${machines.length} configured boxes${unknown ? `; ${unknown} not yet probed` : ""}. Stale, unknown and failed probes are not counted as offline.`}</TooltipPopup>

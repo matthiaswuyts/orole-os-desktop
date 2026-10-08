@@ -66,6 +66,23 @@ export interface ApprovalQueue {
   items: Pending[];
 }
 
+/**
+ * Artifact is a file a session produced (a generated image), returned by value because the
+ * frontend never gets a raw filesystem path to read. Data is base64 in JSON.
+ */
+export interface Artifact {
+  mime: string;
+  data: string;
+}
+
+/** Attachment identifies a staged file. The opaque ID is the only launch input. */
+export interface Attachment {
+  id: string;
+  name: string;
+  size: number;
+  mime: string;
+}
+
 /** AuthDiag is the non-secret OAuth picture of a server. */
 export interface AuthDiag {
   kind: AuthKind;
@@ -347,7 +364,7 @@ export interface Detection {
   resume: boolean;
   /** permission requests can be approved from the dashboard */
   permissions: boolean;
-  /** "stream-json" | "hooks" | "process" (exit only) */
+  /** "stream-json" | "app-server" | "hooks" | "process" (exit only) */
   statusFeed: string;
 }
 
@@ -431,6 +448,16 @@ export interface DirectoryOption {
   path: string;
   name: string;
   git: boolean;
+}
+
+/** Discovered is a skill found in a harness's own skills directory that the registry does not hold. */
+export interface Discovered {
+  /** claude | codex | omp */
+  harness: string;
+  name: string;
+  description: string;
+  /** directory containing SKILL.md */
+  path: string;
 }
 
 /** Discovery is the outcome of OAuth discovery for an MCP endpoint (no login involved). */
@@ -717,6 +744,11 @@ export interface HarnessOption {
   structured: boolean;
   interactive: boolean;
   unavailableReason: string;
+  /**
+   * Models are the models the harness itself reports (nil = it does not list any; a custom id may
+   * still be entered when CustomModel is set).
+   */
+  models: ModelOption[];
 }
 
 /** Health is the daemon's status snapshot. */
@@ -1039,6 +1071,14 @@ export interface Milestone {
 /** Mode is how an agent is run. */
 export type Mode = "structured" | "terminal" | "process";
 
+/** ModelOption is one model a harness reports, with the reasoning levels that model supports. */
+export interface ModelOption {
+  id: string;
+  name: string;
+  reasoning: string[];
+  default: boolean;
+}
+
 export interface Mutation {
   id: string;
   confirmed: boolean;
@@ -1243,7 +1283,7 @@ export interface Preview {
   snapshotHash: string;
 }
 
-/** Project is a registered git repository. */
+/** Project is a registered project: a git repository, a plain folder, or just a name (no folder). */
 export interface Project {
   id: string;
   name: string;
@@ -1256,8 +1296,10 @@ export interface Project {
   worktreeRoot: string;
   /** WorktreeRootCustom is true when the root was configured rather than the default. */
   worktreeRootCustom: boolean;
-  /** Missing is true when the project directory no longer exists. */
+  /** Missing is true when the project has a folder and it no longer exists. */
   missing: boolean;
+  /** IsGit is true when the project folder is a git work tree (worktrees and git state apply). */
+  isGit: boolean;
 }
 
 export interface ProjectOption {
@@ -1285,6 +1327,32 @@ export interface PromptInfo {
   name: string;
   description?: string;
   arguments?: PromptArg[];
+}
+
+/**
+ * PublishSpec turns a session's work into a commit, a pushed branch and optionally a pull request,
+ * using git and the GitHub CLI/API credentials the daemon already holds. Steps run in order and stop
+ * at the first failure; each step is skipped when its flag is off or it is already done.
+ */
+export interface PublishSpec {
+  /** commit message ("" = generated from the task title); empty working tree skips the commit */
+  message: string;
+  /** push the session branch to origin (sets upstream) */
+  push: boolean;
+  /** open a pull request for the branch (implies Push) */
+  pr: boolean;
+  /** PR title ("" = session title) */
+  title: string;
+  /** PR body ("" = the task prompt and result) */
+  body: string;
+  /** PR base branch ("" = the session's base ref's branch or the default branch) */
+  base: string;
+  draft: boolean;
+  /**
+   * Confirmed is the user's explicit confirmation of the remote effects (push, pull request).
+   * Go requires it before anything leaves the machine; the dialog that offers Publish sets it.
+   */
+  confirmed: boolean;
 }
 
 /** PullFile is one file of a pull request diff. */
@@ -1621,6 +1689,8 @@ export interface Session {
   machine: string;
   /** repository the working directory belongs to ("" if none) */
   project: string;
+  /** stable registry association; Project remains the execution root */
+  projectId?: string;
   /** working directory (a worktree when one was created) */
   dir: string;
   branch: string;
@@ -1655,6 +1725,9 @@ export interface Session {
   transcriptRef: string;
   /** session this one was handed off / reviews */
   parentId: string;
+  /** PRURL and PRNumber are set once the session's branch was published as a pull request. */
+  prUrl: string;
+  prNumber: number;
   /** try-N-ways group */
   group: string;
   /** Chain records automation provenance for lifecycle events, never tool authority. */
@@ -1725,6 +1798,23 @@ export interface Shortcut {
   updatedAt: number;
 }
 
+/** Skill is one registry entry. */
+export interface Skill {
+  /** slug, also the directory name */
+  name: string;
+  /** frontmatter description */
+  description: string;
+  /** full SKILL.md text including frontmatter */
+  body: string;
+  /** resource files next to SKILL.md, relative paths */
+  files: string[];
+  /** disabled skills are neither synced nor listed to agents */
+  enabled: boolean;
+  /** "orole" or "imported:<harness>" */
+  source: string;
+  updatedAt: number;
+}
+
 /** Sources lists sources that have visible notifications, with counts. */
 export interface SourceCount {
   source: string;
@@ -1745,6 +1835,8 @@ export interface SourcePref {
 /** StartSpec is a request to start an agent. */
 export interface StartSpec {
   kind: string;
+  /** resolves Dir through the daemon's project registry */
+  projectId?: string;
   /** empty means local */
   machine?: string;
   /** empty preserves the CLI default */
@@ -1753,6 +1845,8 @@ export interface StartSpec {
   dir: string;
   /** the task; may be empty (session starts idle) */
   prompt: string;
+  /** daemon-uploaded files handed to the task */
+  attachmentIds?: string[];
   /** optional */
   model: string;
   /** "" = adapter default */
@@ -1822,6 +1916,27 @@ export interface Summary {
   definition: Definition;
   lastStatus: string;
   lastRunAt: number;
+}
+
+/** SyncState is one harness's view of the registry. */
+export interface SyncState {
+  /** claude | codex | omp */
+  harness: string;
+  /** display name */
+  name: string;
+  /** the harness is installed */
+  available: boolean;
+  /** native skills directory skills are synced into */
+  dir: string;
+  /** skill names present and current */
+  synced: string[];
+  /** present but differing from the registry */
+  outdated: string[];
+  /** enabled in the registry, absent in the harness */
+  missing: string[];
+  /** "installed" | "outdated" | "missing" | "unsupported" (the "orole" MCP entry) */
+  gateway: string;
+  error: string;
 }
 
 /** TerminalAttachment is scrollback to restore a screen after reconnect. */
@@ -1925,6 +2040,12 @@ export interface UpdateStatus {
   checking: boolean;
   installing: boolean;
   error: string;
+}
+
+/** UploadAttachmentSpec accepts bytes, never a path on the daemon's filesystem. */
+export interface UploadAttachmentSpec {
+  name: string;
+  dataBase64: string;
 }
 
 /** User is a GitHub account. */
@@ -2096,9 +2217,12 @@ export const Terminals = {
 
 /** Projects is the bound service for the project registry. */
 export const Projects = {
-  /** Add registers the git repository containing path. */
-  add(path: string): Promise<Project> {
-    return call("Projects.Add", path);
+  /**
+   * Create registers a project. path is optional: a git repository, a plain folder, or empty for a
+   * project that is only a name. A blank name defaults to the folder name.
+   */
+  create(name: string, path: string): Promise<Project> {
+    return call("Projects.Create", name, path);
   },
   /** List returns registered projects, most recently opened first. */
   list(): Promise<Project[]> {
@@ -2432,6 +2556,13 @@ export const Agents = {
   approve(id: string, requestID: string, allow: boolean, reason: string): Promise<void> {
     return call("Agents.Approve", id, requestID, allow, reason);
   },
+  /**
+   * Artifact returns a file a session produced (an image), validated to live in the session's
+   * scratch directory.
+   */
+  artifact(id: string, path: string): Promise<Artifact> {
+    return call("Agents.Artifact", id, path);
+  },
   /** CancelRun stops a running orchestration run. */
   cancelRun(id: string): Promise<void> {
     return call("Agents.CancelRun", id);
@@ -2450,6 +2581,10 @@ export const Agents = {
   /** Diff returns the changes a session made relative to the commit it started from. */
   diff(id: string): Promise<ReviewDiff> {
     return call("Agents.Diff", id);
+  },
+  /** DiscardAttachment removes a staged upload, never a launched session's file. */
+  discardAttachment(id: string): Promise<void> {
+    return call("Agents.DiscardAttachment", id);
   },
   /** Events returns history entries with id greater than after (0 = from the start). */
   events(id: string, after: number, limit: number): Promise<Event[]> {
@@ -2478,6 +2613,10 @@ export const Agents = {
   /** Prompt sends a message to an agent; an ended session is resumed first. */
   prompt(id: string, text: string): Promise<Session> {
     return call("Agents.Prompt", id, text);
+  },
+  /** Publish commits, pushes and opens a pull request for a session's branch. */
+  publish(id: string, spec: PublishSpec): Promise<Session> {
+    return call("Agents.Publish", id, spec);
   },
   /** Remove deletes a session that is not running. */
   remove(id: string): Promise<void> {
@@ -2520,6 +2659,61 @@ export const Agents = {
   /** TryN starts N agents on the same task in N fresh worktrees. */
   tryN(p: TryParams, key: string): Promise<TryResult> {
     return call("Agents.TryN", p, key);
+  },
+  /** UploadAttachment stages a file in daemon-owned storage for a subsequent task. */
+  uploadAttachment(spec: UploadAttachmentSpec): Promise<Attachment> {
+    return call("Agents.UploadAttachment", spec);
+  },
+} as const;
+
+/**
+ * Skills is the bound service for the central skill registry. Every harness sees these skills:
+ * synced into native skills directories, and served through the Orole MCP gateway.
+ */
+export const Skills = {
+  /** Delete removes a skill from the registry (native copies are removed on the next sync). */
+  delete(name: string): Promise<void> {
+    return call("Skills.Delete", name);
+  },
+  /** Discover lists skills found in harness skill directories that the registry does not hold yet. */
+  discover(): Promise<Discovered[]> {
+    return call("Skills.Discover");
+  },
+  /** Get returns one skill with its full SKILL.md. */
+  get(name: string): Promise<Skill> {
+    return call("Skills.Get", name);
+  },
+  /** Import copies a discovered skill into the registry. */
+  import(harness: string, name: string): Promise<Skill> {
+    return call("Skills.Import", harness, name);
+  },
+  /** List returns every registry skill. */
+  list(): Promise<Skill[]> {
+    return call("Skills.List");
+  },
+  /** Save creates or replaces a skill from SKILL.md text (frontmatter name wins over the argument). */
+  save(name: string, body: string): Promise<Skill> {
+    return call("Skills.Save", name, body);
+  },
+  /** SetEnabled turns a skill on or off for every harness. */
+  setEnabled(name: string, enabled: boolean): Promise<Skill> {
+    return call("Skills.SetEnabled", name, enabled);
+  },
+  /** Sync writes the registry into one harness's native directories ("" = every installed harness). */
+  sync(harness: string): Promise<SyncState[]> {
+    return call("Skills.Sync", harness);
+  },
+  /** SyncState reports, per harness, which skills and the Orole MCP gateway are present and current. */
+  syncState(): Promise<SyncState[]> {
+    return call("Skills.SyncState");
+  },
+} as const;
+
+/** Images is the bound service for image generation through installed harnesses (Codex). */
+export const Images = {
+  /** Start begins an image-generation task; generated images arrive as image events on the session. */
+  start(prompt: string): Promise<Session> {
+    return call("Images.Start", prompt);
   },
 } as const;
 

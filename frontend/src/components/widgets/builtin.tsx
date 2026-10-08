@@ -1,7 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { CalendarDays, CheckCircle2, Circle, NotebookPen, SquareTerminal, Server } from "lucide-react";
-import { Terminals, events, type Info } from "@/mygo";
-import { inDesktop } from "@/lib/backend";
+import { CalendarDays, CheckCircle2, Circle, NotebookPen, Server } from "lucide-react";
 import { useDaemon } from "@/stores/daemon";
 import { useUI } from "@/stores/ui";
 import { HostActivity } from "@/features/system/HostActivity";
@@ -92,11 +90,10 @@ export function SetupWidget({ onRemove }: WidgetProps) {
   const health = useDaemon((s) => s.health);
   const items: { label: string; done: boolean; view?: Parameters<typeof setView>[0] }[] = [
     { label: "Local daemon running", done: !!health },
-    { label: "Connect GitHub", done: false, view: "github" },
-    { label: "Connect Orole Mail", done: false, view: "mail" },
-    { label: "Connect Orole Drive", done: false, view: "drive" },
-    { label: "Configure a coding agent", done: false, view: "agents" },
-    { label: "Add a remote machine", done: false, view: "machines" },
+    { label: "Connect GitHub", done: false, view: "settings" },
+    { label: "Add skills", done: false, view: "skills" },
+    { label: "Add MCP servers", done: false, view: "mcp" },
+    { label: "Start a task", done: false, view: "agents" },
   ];
   return (
     <Widget title="Get started" icon={<CheckCircle2 />} onRemove={onRemove}>
@@ -111,44 +108,6 @@ export function SetupWidget({ onRemove }: WidgetProps) {
         ))}
       </ul>
       <p className="mt-2 text-xs text-muted-foreground">Everything is optional. Orole OS works without any of these.</p>
-    </Widget>
-  );
-}
-
-export function TerminalsWidget({ onRemove }: WidgetProps) {
-  const setView = useUI((s) => s.setView);
-  const [list, setList] = useState<Info[] | null>(null);
-  const [err, setErr] = useState<string | null>(null);
-  useEffect(() => {
-    if (!inDesktop) return;
-    let live = true;
-    Terminals.list().then((l) => live && setList(l), (e) => live && setErr(String(e)));
-    const o1 = events.terminalChanged.on((i) => setList((l) => [...(l ?? []).filter((x) => x.id !== i.id), i]));
-    const o2 = events.terminalRemoved.on(({ id }) => setList((l) => (l ?? []).filter((x) => x.id !== id)));
-    return () => { live = false; o1(); o2(); };
-  }, []);
-  const status = !inDesktop ? "offline" : err ? "error" : list === null ? "loading" : "ready";
-  return (
-    <Widget title="Terminals" icon={<SquareTerminal />} status={status} message={!inDesktop ? "Preview mode: no daemon." : err ?? undefined} onRemove={onRemove}
-      action={{ label: "Open terminals", onClick: () => setView("terminals") }}>
-      {list && list.length === 0 ? (
-        <div className="flex h-full flex-col items-center justify-center gap-2 text-muted-foreground">
-          <p>No terminals running.</p>
-          <button className="rounded border border-border px-2 py-1 hover:bg-accent" onClick={() => setView("terminals")}>Open a terminal</button>
-        </div>
-      ) : (
-        <ul className="space-y-0.5">
-          {list?.map((t) => (
-            <li key={t.id}>
-              <button onClick={() => setView("terminals")} className="flex w-full items-center gap-2 rounded px-1 py-[3px] hover:bg-accent">
-                <span className={t.state === "running" ? "text-success-foreground" : "text-muted-foreground"}>●</span>
-                <span className="flex-1 truncate text-left">{t.title}</span>
-                <span className="font-mono text-xs text-muted-foreground">{t.state === "running" ? `pid ${t.pid}` : `exit ${t.exitCode ?? "?"}`}</span>
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
     </Widget>
   );
 }

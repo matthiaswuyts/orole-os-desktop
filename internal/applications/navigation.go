@@ -13,7 +13,7 @@ var ErrDeepLink = errors.New("applications: unsupported deep link; use orole://o
 // New modules must be built in the React registry before adding them here.
 func InternalView(view string) bool {
 	switch view {
-	case "home", "agents", "review", "worktrees", "automations", "mail", "drive", "github", "projects", "terminals", "applications", "browser", "files", "settings":
+	case "home", "agents", "review", "automations", "skills", "mcp", "settings":
 		return true
 	default:
 		return false

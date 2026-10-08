@@ -36,6 +36,79 @@ Upstream package metadata declares MIT, but the inspected repository contains no
 standalone LICENSE text. This records the declaration, not a claim that an
 upstream license notice was supplied. Retain supplied source notices.
 
+### Oh My Pi logo
+
+Source: [can1357/oh-my-pi](https://github.com/can1357/oh-my-pi/tree/cde91bb38674d365e8c3916d05d2292273bb8554),
+commit `cde91bb38674d365e8c3916d05d2292273bb8554`.
+The upstream [`assets/icon.svg`](https://github.com/can1357/oh-my-pi/blob/cde91bb38674d365e8c3916d05d2292273bb8554/assets/icon.svg)
+(Git blob `f1ccf2a08a90ec4d7f6bb947dc62c5e995114422`) is bundled at
+`frontend/src/assets/oh-my-pi.svg` and used by `features/agents/ProviderLogo.tsx`
+for the `omp` provider across selectors and the sidebar.
+
+Local changes: the three pale `#fafafa` foreground fills use `currentColor`
+to remain visible in light and dark themes; a provenance comment was added.
+Geometry, viewBox, orange accents, connector details, and original comments
+are retained. The SVG contains only static rectangles and circles, with no
+scripts, event handlers, external references, fonts, or runtime network requests.
+The logo remains its owner's brand mark; no trademark rights are asserted.
+
+License notice from the pinned upstream
+[`LICENSE`](https://github.com/can1357/oh-my-pi/blob/cde91bb38674d365e8c3916d05d2292273bb8554/LICENSE):
+
+```text
+MIT License
+
+Copyright (c) 2025 Mario Zechner
+Copyright (c) 2025-2026 Can Bölük
+Copyright (c) 2026 Stencil Labs, Inc.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+### assistant-ui composer attachments
+
+Source: [assistant-ui/assistant-ui](https://github.com/assistant-ui/assistant-ui/tree/9201447608271c64a8a9ca66c69e81d27a1d9fab),
+commit `9201447608271c64a8a9ca66c69e81d27a1d9fab`,
+`packages/ui/src/components/react/assistant-ui/elements/composer.tsx`.
+The standalone `ComposerAttachments` and `ComposerAttachmentChip` subset is adapted
+at `frontend/src/components/assistant-ui/elements/composer-attachments.tsx`, following
+the [requested attachment element](https://www.assistant-ui.com/elements/composer-attachments).
+
+Changes: coss buttons and semantic theme tokens replace catalog surface helpers;
+pending/failed chips can be removed; indeterminate IPC uploads show a spinner rather
+than fabricated percentage progress. No assistant-ui runtime, cloud storage or sample
+files were introduced. The full MIT notice, copyright (c) 2026 AgentbaseAI Inc., is
+retained in the source header.
+
+### beui reasoning range slider
+
+Source: [starc007/ui-components](https://github.com/starc007/ui-components/blob/cbc23255f962098a93a2c103d39e11f93b61d059/components/motion/range-slider.tsx),
+commit `cbc23255f962098a93a2c103d39e11f93b61d059`, distributed through
+[`range-slider.json`](https://beui.dev/r/range-slider.json).
+Copied/adapted path: `frontend/src/components/ui/range-slider.tsx`.
+
+Changes: a native range input supplies pointer/keyboard/accessibility behavior;
+percentage positioning removes the shared gesture hook and ResizeObserver; the
+rounded thumb and semantic color tokens fit the requested composer reference.
+Tick geometry, spring-driven fill/handle and reduced-motion support are retained.
+The full MIT notice, copyright (c) 2026 Saurabh Chauhan, is retained in the source.
+
 ## Dependencies used without copying source
 | Project | Version | Licence | Use |
 |---|---|---|---|

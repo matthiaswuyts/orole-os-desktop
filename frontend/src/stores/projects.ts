@@ -27,8 +27,15 @@ interface State {
   selectedId: string | null;
   select: (id: string | null) => void;
   load: () => Promise<void>;
-  add: (path: string) => Promise<Project>;
-  pickAndAdd: () => Promise<Project | null>;
+  /** Whether the New project dialog is open (one instance, mounted in App). */
+  newProjectOpen: boolean;
+  setNewProjectOpen: (open: boolean) => void;
+  /** New task dialog (one instance, mounted in AppShell): the project it was opened from (null = pick one) and an optional prompt to start from. */
+  newTask: { open: boolean; projectId: string | null; prompt: string };
+  openNewTask: (projectId?: string | null, prompt?: string) => void;
+  closeNewTask: () => void;
+  /** Creates a project from a name and an optional folder; a blank name defaults to the folder name. */
+  create: (name: string, path: string) => Promise<Project>;
   remove: (id: string) => Promise<void>;
   open: (id: string) => Promise<void>;
   setWorktreeRoot: (id: string, root: string) => Promise<void>;
@@ -49,6 +56,11 @@ export const useProjects = create<State>((set, get) => ({
   expanded: loadExpanded(),
   selectedId: null,
   select: (selectedId) => set({ selectedId }),
+  newProjectOpen: false,
+  setNewProjectOpen: (newProjectOpen) => set({ newProjectOpen }),
+  newTask: { open: false, projectId: null, prompt: "" },
+  openNewTask: (projectId = null, prompt = "") => set({ newTask: { open: true, projectId, prompt } }),
+  closeNewTask: () => set((s) => ({ newTask: { ...s.newTask, open: false } })),
 
   async load() {
     if (!inDesktop) { set({ loaded: true }); return; }
@@ -56,7 +68,7 @@ export const useProjects = create<State>((set, get) => ({
     set({ loading: true });
     try {
       const projects = await Projects.list();
-      const lists = await Promise.all(projects.filter((p) => !p.missing).map(async (p) => [p.id, await Worktrees.list(p.id)] as const));
+      const lists = await Promise.all(projects.filter((p) => !p.missing && p.isGit).map(async (p) => [p.id, await Worktrees.list(p.id)] as const));
       set({ projects, worktrees: Object.fromEntries(lists), loaded: true, loading: false, error: null });
     } catch (e) {
       set({ loaded: true, loading: false, error: msg(e) });
@@ -64,15 +76,10 @@ export const useProjects = create<State>((set, get) => ({
     if (reloadQueued) { reloadQueued = false; await get().load(); }
   },
 
-  async add(path) {
-    const p = await Projects.add(path);
+  async create(name, path) {
+    const p = await Projects.create(name.trim(), path);
     await get().load();
     return p;
-  },
-
-  async pickAndAdd() {
-    const path = await Projects.pickFolder();
-    return path ? get().add(path) : null;
   },
 
   async remove(id) {

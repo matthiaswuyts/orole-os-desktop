@@ -33,7 +33,7 @@ func issueTestService(t *testing.T) *ghService {
 	d := &Daemon{DB: db}
 	d.Projects = projects.New(db)
 	d.Policy = policy.New(db.DB, nil, nil)
-	d.Agents = agents.NewManager(agents.Config{Store: agents.NewStore(db), Authorize: func(context.Context, string, string, string) error { return policy.ErrDenied }})
+	d.Agents = agents.NewManager(agents.Config{Store: agents.NewStore(db), ProjectDirectory: d.projectTaskDirectory, Authorize: func(context.Context, string, string, string) error { return policy.ErrDenied }})
 	t.Cleanup(d.Agents.Shutdown)
 	return &ghService{d: d}
 }
@@ -277,7 +277,8 @@ func TestIssueLaunchUsesManagerDenialAndPreservesReviewedSource(t *testing.T) {
 	denials := 0
 	g.d.Agents = agents.NewManager(agents.Config{
 		Store: agents.NewStore(g.d.DB), Adapters: []agents.Adapter{issueInstalledAdapter{}},
-		Authorize: func(context.Context, string, string, string) error { denials++; return policy.ErrDenied },
+		ProjectDirectory: g.d.projectTaskDirectory,
+		Authorize:        func(context.Context, string, string, string) error { denials++; return policy.ErrDenied },
 	})
 	t.Cleanup(g.d.Agents.Shutdown)
 	spec := IssueAgentStart{Repo: "owner/repo", Number: 54, ProjectID: p.ID, Kind: "claude", Task: "Investigate this issue only", IssueUpdatedAt: "2026-10-08T00:00:00Z", Key: "denied-launch-key", Confirmed: true}

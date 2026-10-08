@@ -45,7 +45,7 @@ func invalid(format string, a ...any) error {
 	return fmt.Errorf("%w: %s", ErrInvalid, fmt.Sprintf(format, a...))
 }
 
-// Project is a registered git repository.
+// Project is a registered project: a git repository, a plain folder, or just a name (no folder).
 type Project struct {
 	ID           string `json:"id"`
 	Name         string `json:"name"`
@@ -57,8 +57,10 @@ type Project struct {
 	WorktreeRoot string `json:"worktreeRoot"` // effective root (configured or default)
 	// WorktreeRootCustom is true when the root was configured rather than the default.
 	WorktreeRootCustom bool `json:"worktreeRootCustom"`
-	// Missing is true when the project directory no longer exists.
+	// Missing is true when the project has a folder and it no longer exists.
 	Missing bool `json:"missing"`
+	// IsGit is true when the project folder is a git work tree (worktrees and git state apply).
+	IsGit bool `json:"isGit"`
 }
 
 // Worktree is a git worktree of a project merged with live git state.
@@ -129,13 +131,20 @@ func scanProject(r scanner) (Project, error) {
 	if custom == "" {
 		p.WorktreeRoot = defaultRoot(p)
 	}
-	if st, err := os.Stat(p.Path); err != nil || !st.IsDir() {
-		p.Missing = true
+	if p.Path != "" {
+		if st, err := os.Stat(p.Path); err != nil || !st.IsDir() {
+			p.Missing = true
+		} else if _, err := os.Lstat(filepath.Join(p.Path, ".git")); err == nil {
+			p.IsGit = true
+		}
 	}
 	return p, nil
 }
 
 func defaultRoot(p Project) string {
+	if p.Path == "" {
+		return ""
+	}
 	return filepath.Join(filepath.Dir(p.Path), ".orole-worktrees", p.Name)
 }
 
@@ -146,45 +155,70 @@ func (s *Service) Add(ctx context.Context, path string) (Project, error) {
 	if strings.TrimSpace(path) == "" {
 		return Project{}, invalid("path is required")
 	}
-	canon, err := approvedProjectPath(path)
-	if err != nil {
-		return Project{}, invalid("%v", err)
+	return s.register(ctx, "", path, true)
+}
+
+// Create registers a project by name with an optional folder. The folder need not be a git
+// repository; one that is resolves to its main checkout like [Service.Add]. Without a folder,
+// tasks use a daemon-managed workspace while the public Path stays empty (no git worktrees).
+// A blank name defaults to the folder name. Registering an existing folder returns its project.
+func (s *Service) Create(ctx context.Context, name, path string) (Project, error) {
+	name, path = strings.TrimSpace(name), strings.TrimSpace(path)
+	if name == "" && path == "" {
+		return Project{}, invalid("a project name is required")
 	}
-	if st, err := os.Stat(canon); err != nil || !st.IsDir() {
-		return Project{}, invalid("%s is not a directory", path)
-	}
-	top, err := git.Toplevel(ctx, canon)
-	if err != nil {
-		if errors.Is(err, git.ErrNotRepo) {
-			return Project{}, invalid("%s is not a git repository", path)
+	return s.register(ctx, name, path, false)
+}
+
+func (s *Service) register(ctx context.Context, name, path string, requireGit bool) (Project, error) {
+	root, remote := "", ""
+	if path != "" {
+		canon, err := approvedProjectPath(path)
+		if err != nil {
+			return Project{}, invalid("%v", err)
 		}
-		return Project{}, err
-	}
-	list, err := git.WorktreeList(ctx, top)
-	if err != nil || len(list) == 0 {
-		return Project{}, fmt.Errorf("listing worktrees of %s: %w", top, err)
-	}
-	if list[0].Bare {
-		return Project{}, invalid("bare repositories are not supported")
-	}
-	main, err := approvedProjectPath(list[0].Path)
-	if err != nil {
-		return Project{}, err
-	}
-	existing, err := s.List(ctx)
-	if err != nil {
-		return Project{}, err
-	}
-	for _, p := range existing {
-		if pathKey(p.Path) == pathKey(main) {
-			_ = s.MarkOpened(ctx, p.ID)
-			return s.Get(ctx, p.ID)
+		if st, err := os.Stat(canon); err != nil || !st.IsDir() {
+			return Project{}, invalid("%s is not a directory", path)
+		}
+		root = canon
+		top, err := git.Toplevel(ctx, canon)
+		switch {
+		case errors.Is(err, git.ErrNotRepo):
+			if requireGit {
+				return Project{}, invalid("%s is not a git repository", path)
+			}
+		case err != nil:
+			return Project{}, err
+		default:
+			list, err := git.WorktreeList(ctx, top)
+			if err != nil || len(list) == 0 {
+				return Project{}, fmt.Errorf("listing worktrees of %s: %w", top, err)
+			}
+			if list[0].Bare {
+				return Project{}, invalid("bare repositories are not supported")
+			}
+			if root, err = approvedProjectPath(list[0].Path); err != nil {
+				return Project{}, err
+			}
+			remote = git.RemoteURL(ctx, root)
+		}
+		existing, err := s.List(ctx)
+		if err != nil {
+			return Project{}, err
+		}
+		for _, p := range existing {
+			if p.Path != "" && pathKey(p.Path) == pathKey(root) {
+				_ = s.MarkOpened(ctx, p.ID)
+				return s.Get(ctx, p.ID)
+			}
+		}
+		if name == "" {
+			name = filepath.Base(root)
 		}
 	}
 	id, now := uuid.NewString(), time.Now().Unix()
-	_, err = s.db.ExecContext(ctx, `INSERT INTO projects(id,name,machine_id,path,remote_url,last_opened,created_at) VALUES(?,?,?,?,?,?,?)`,
-		id, filepath.Base(main), machineLocal, main, git.RemoteURL(ctx, main), now, now)
-	if err != nil {
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO projects(id,name,machine_id,path,remote_url,last_opened,created_at) VALUES(?,?,?,?,?,?,?)`,
+		id, name, machineLocal, root, remote, now, now); err != nil {
 		return Project{}, err
 	}
 	return s.Get(ctx, id)
@@ -255,6 +289,9 @@ func (s *Service) SetWorktreeRoot(ctx context.Context, id, root string) (Project
 		root = filepath.Clean(root)
 		if filepath.Dir(root) == root {
 			return Project{}, invalid("worktree root cannot be a drive root")
+		}
+		if p.Path == "" {
+			return Project{}, invalid("project has no folder")
 		}
 		if inside(p.Path, root) {
 			return Project{}, invalid("worktree root cannot be inside the project checkout")

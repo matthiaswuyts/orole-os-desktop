@@ -27,6 +27,9 @@ type Host struct {
 	DataDir string
 	// HookExe is the executable Claude Code hooks call back into ("" disables hooks).
 	HookExe string
+	// GatewayExe is the executable harnesses launch (as `<exe> mcp-gateway`) to reach Orole's central
+	// skills and MCP servers over authenticated IPC ("" = gateway unavailable).
+	GatewayExe string
 }
 
 func (h *Host) sessionDir(id string) (string, error) {
@@ -50,6 +53,20 @@ type LaunchSpec struct {
 	// CLI lets us choose (Claude Code). Both empty = the CLI picks.
 	Resume            string
 	NewAgentSessionID string
+	// Gateway is the stdio MCP server named "orole" every structured harness must be given, so
+	// skills and MCP servers are central whatever model or harness runs. Nil = unavailable.
+	Gateway *Gateway
+	// SkillsPrompt lists the enabled central skills; append it to the harness's system or developer
+	// instructions ("" = none).
+	SkillsPrompt string
+}
+
+// Gateway describes how a harness starts Orole's MCP gateway. Env carries the data directory and
+// session id; it never carries secrets (the gateway authenticates over the daemon pipe itself).
+type Gateway struct {
+	Command string            `json:"command"`
+	Args    []string          `json:"args"`
+	Env     map[string]string `json:"env"`
 }
 
 // Process is a running agent.

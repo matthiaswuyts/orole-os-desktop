@@ -188,7 +188,7 @@ func (o *Orchestrator) HandOff(ctx context.Context, key string, p HandOffParams)
 				return agents.Session{}, "", fmt.Errorf("stop the first agent: %w", err)
 			}
 		}
-		s, err := o.m.Start(ctx, agents.StartSpec{Kind: p.Kind, Machine: src.Machine, Dir: src.Dir, Prompt: b.String(), Model: p.Model, Mode: p.Mode,
+		s, err := o.m.Start(ctx, agents.StartSpec{Kind: p.Kind, Machine: src.Machine, ProjectID: src.ProjectID, Dir: src.Dir, Prompt: b.String(), Model: p.Model, Mode: p.Mode,
 			PermissionMode: p.PermissionMode, Title: "Hand-off: " + src.Title, ParentID: src.ID, Group: src.Group, Key: key})
 		return s, s.ID, err
 	}, sessionByKey(o, key))
@@ -239,7 +239,7 @@ func (o *Orchestrator) ReviewWith(ctx context.Context, key string, p ReviewParam
 		if o.m.AdapterName(p.Kind) != "" && p.Kind == "claude" {
 			perm = "plan"
 		}
-		s, err := o.m.Start(ctx, agents.StartSpec{Kind: p.Kind, Machine: target.Machine, Dir: target.Dir, Prompt: b.String(), Model: p.Model, Mode: p.Mode,
+		s, err := o.m.Start(ctx, agents.StartSpec{Kind: p.Kind, Machine: target.Machine, ProjectID: target.ProjectID, Dir: target.Dir, Prompt: b.String(), Model: p.Model, Mode: p.Mode,
 			PermissionMode: perm, Title: "Review: " + target.Title, ParentID: target.ID, Group: target.Group, Key: key})
 		return s, s.ID, err
 	}, sessionByKey(o, key))

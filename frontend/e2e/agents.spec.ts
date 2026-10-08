@@ -50,7 +50,7 @@ test("dashboard, detail, permission approval and review with a test-only MyGo br
   await page.getByRole("checkbox", { name: "I reviewed the complete tool name and arguments." }).check();
   await page.getByRole("button", { name: "Allow", exact: true }).click();
   await expect(page.getByText("Resolved", { exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "Back to dashboard" }).click();
+  await page.getByRole("button", { name: "Back to tasks" }).click();
   await page.getByRole("button", { name: "New agent", exact: true }).click();
   await expect(page.getByRole("dialog")).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath("agents-start-dialog.png") });

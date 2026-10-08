@@ -206,6 +206,15 @@ func (e *Engine) Decide(ctx context.Context, req Request) (Evaluation, error) {
 }
 
 func defaultFor(req Request) Evaluation {
+	// Submitting a task is the user's instruction, not a tool-use approval.
+	// Stored rules are evaluated first; delegated launches and tool actions keep
+	// their normal policy. Never trust an external effect hint for this default.
+	if req.Actor == "user" && !req.FromHint {
+		switch req.Action {
+		case "agent.start", "agent.prompt", "agent.restart":
+			return Evaluation{Allow, "default", "user-requested task submission"}
+		}
+	}
 	switch req.Effect {
 	case EffectRead:
 		if req.FromHint {

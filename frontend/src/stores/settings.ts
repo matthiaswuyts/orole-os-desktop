@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { Settings, events } from "@/mygo";
 import { inDesktop, previewKey } from "@/lib/backend";
 import type { BuiltinThemeId } from "@/themes/builtin";
+import { SCENES } from "@/components/ascii/scenes";
 
 export type ThemeId = BuiltinThemeId | "custom";
 export type Density = "compact" | "comfortable";
@@ -15,6 +16,8 @@ export interface Appearance {
 
 export interface AsciiSettings {
   scene: string;
+  /** Choose a scene once after saved preferences load, on the next app startup. */
+  randomOnStartup: boolean;
   enabled: boolean;
   paused: boolean;
   /** Frames per second ceiling (1-30). */
@@ -59,6 +62,8 @@ export interface SettingsState {
   error: string | null;
   appearance: Appearance;
   ascii: AsciiSettings;
+  /** Renderer-local scene; random outcomes never replace the saved manual scene. */
+  activeAsciiScene: string;
   accessibility: Accessibility;
   terminal: TerminalSettings;
   sound: SoundSettings;
@@ -69,7 +74,7 @@ export interface SettingsState {
 export const defaults = {
   appearance: { theme: "midnight", density: "compact", customTokens: {} } as Appearance,
   ascii: {
-    scene: "night-coast", enabled: true, paused: false, fps: 12, opacity: 1, intensity: 1,
+    scene: "night-coast", randomOnStartup: false, enabled: true, paused: false, fps: 12, opacity: 1, intensity: 1,
     pauseWhenUnfocused: true, respectReducedMotion: true, staticOnly: false,
   } as AsciiSettings,
   accessibility: { reduceMotion: "system" } as Accessibility,
@@ -93,18 +98,34 @@ async function write(key: string, value: unknown): Promise<void> {
   localStorage.setItem(previewKey, JSON.stringify(all));
 }
 
+// Undefined until the first successful settings load; null means startup random was off.
+// This survives Home remounts, focus changes, settings events, and repeated loads.
+let startupAsciiScene: string | null | undefined;
+
+function activeAsciiScene(ascii: AsciiSettings): string {
+  return ascii.randomOnStartup ? startupAsciiScene ?? ascii.scene : ascii.scene;
+}
+
 export const useSettings = create<SettingsState>((set, get) => ({
   loaded: false,
   error: null,
   ...structuredClone(defaults),
+  activeAsciiScene: defaults.ascii.scene,
   async load() {
     try {
       const all = await readAll();
+      const ascii = { ...defaults.ascii, ...(all.ascii as object) };
+      if (startupAsciiScene === undefined) {
+        startupAsciiScene = ascii.randomOnStartup
+          ? SCENES[Math.floor(Math.random() * SCENES.length)]!.id
+          : null;
+      }
       set({
         loaded: true,
         error: null,
         appearance: { ...defaults.appearance, ...(all.appearance as object) },
-        ascii: { ...defaults.ascii, ...(all.ascii as object) },
+        ascii,
+        activeAsciiScene: activeAsciiScene(ascii),
         accessibility: { ...defaults.accessibility, ...(all.accessibility as object) },
         terminal: { ...defaults.terminal, ...(all.terminal as object) },
         sound: soundSettings(all.sound),
@@ -114,6 +135,14 @@ export const useSettings = create<SettingsState>((set, get) => ({
     }
   },
   set(key, patch) {
+    if (key === "ascii") {
+      const asciiPatch = patch as Partial<AsciiSettings>;
+      const ascii = { ...get().ascii, ...asciiPatch };
+      if (asciiPatch.scene !== undefined) ascii.randomOnStartup = false;
+      set({ ascii, activeAsciiScene: activeAsciiScene(ascii) });
+      write(key, ascii).catch((e) => set({ error: e instanceof Error ? e.message : String(e) }));
+      return;
+    }
     const next = key === "sound" ? soundSettings({ ...get().sound, ...patch }) : { ...get()[key], ...patch };
     set({ [key]: next } as Partial<SettingsState>);
     write(key, next).catch((e) => set({ error: e instanceof Error ? e.message : String(e) }));
@@ -127,7 +156,12 @@ if (inDesktop) {
       useSettings.setState({ sound: soundSettings(value) });
       return;
     }
-    if (key === "appearance" || key === "ascii" || key === "accessibility" || key === "terminal") {
+    if (key === "ascii") {
+      const ascii = { ...defaults.ascii, ...(value as object) };
+      useSettings.setState({ ascii, activeAsciiScene: activeAsciiScene(ascii) });
+      return;
+    }
+    if (key === "appearance" || key === "accessibility" || key === "terminal") {
       useSettings.setState({ [key]: { ...defaults[key], ...(value as object) } } as Partial<SettingsState>);
     }
   });

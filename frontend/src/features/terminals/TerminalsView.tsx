@@ -8,7 +8,6 @@ import { cn } from "@/lib/utils";
 import { TerminalPane } from "./TerminalPane";
 import { NeedsDesktop } from "@/features/shared/States";
 import { useSettings } from "@/stores/settings";
-import { useUI } from "@/stores/ui";
 
 export function TerminalsView() {
   const [list, setList] = useState<Info[]>([]);
@@ -16,18 +15,7 @@ export function TerminalsView() {
   const [panes, setPanes] = useState<string[]>([]);
   const [focus, setFocus] = useState(0);
   const [error, setError] = useState<string | null>(null);
-  const [loaded, setLoaded] = useState(false);
   const fontSize = useSettings((s) => s.terminal.fontSize);
-  const pending = useUI((state) => state.pendingTerminal);
-  useEffect(() => {
-    if (!pending) return;
-    // Consume only after the list has loaded; never create a replacement terminal.
-    if (!loaded) return;
-    if (list.some((terminal) => terminal.id === pending)) {
-      setPanes([pending]); setFocus(0); setError(null);
-    } else setError("The selected terminal no longer exists.");
-    useUI.getState().clearTerminal();
-  }, [pending, list, loaded]);
 
   const create = useCallback(async (shell?: string, split = false) => {
     try {
@@ -46,14 +34,8 @@ export function TerminalsView() {
     void Terminals.list().then((l) => {
       if (!live) return;
       setList(l);
-      setLoaded(true);
       const running = l.filter((t) => t.state === "running");
-      if (useUI.getState().pendingTerminal) {
-        const selected = useUI.getState().pendingTerminal!;
-        if (l.some((terminal) => terminal.id === selected)) { setPanes([selected]); setFocus(0); }
-        else setError("The selected terminal no longer exists.");
-        useUI.getState().clearTerminal();
-      } else if (running.length) setPanes([running[0]!.id]); else void create(undefined, false);
+      if (running.length) setPanes([running[0]!.id]); else void create(undefined, false);
     }).catch((e) => setError(String(e)));
     const o1 = events.terminalChanged.on((i) => setList((l) => [...l.filter((x) => x.id !== i.id), i]));
     const o2 = events.terminalRemoved.on(({ id }) => { setList((l) => l.filter((x) => x.id !== id)); setPanes((p) => p.filter((x) => x !== id)); });

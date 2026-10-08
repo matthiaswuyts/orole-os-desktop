@@ -21,6 +21,13 @@ func publicationRefs(head, base string) error {
 // CreatePull creates a draft only, after the client's write authorizer approves.
 // After an ambiguous failure callers must use FindPullByHead before retrying.
 func (c *Client) CreatePull(ctx context.Context, repo, title, body, head, base string) (PullRequest, error) {
+	return c.OpenPull(ctx, repo, title, body, head, base, true)
+}
+
+// OpenPull is CreatePull with the caller choosing between a draft and a ready-for-review
+// pull request. The same authorizer gate (action github.pull.create) applies to both, and the
+// same ambiguity rule: after an ambiguous failure use FindPullByHead before retrying.
+func (c *Client) OpenPull(ctx context.Context, repo, title, body, head, base string, draft bool) (PullRequest, error) {
 	var pr PullRequest
 	rp, err := repoPath(repo)
 	if err != nil {
@@ -38,7 +45,7 @@ func (c *Client) CreatePull(ctx context.Context, repo, title, body, head, base s
 		Head  string `json:"head"`
 		Base  string `json:"base"`
 		Draft bool   `json:"draft"`
-	}{title, body, head, base, true}
+	}{title, body, head, base, draft}
 	err = c.write(ctx, "github.pull.create", repo, http.MethodPost, rp+"/pulls", in, &pr)
 	return pr, err
 }

@@ -96,6 +96,10 @@ func (d *Daemon) projectRoots(ctx context.Context) ([]files.Root, error) {
 		if p.MachineID != "" && p.MachineID != "local" {
 			continue
 		}
+		// A folderless project has nothing to browse, and the git provider only serves git work trees.
+		if p.Path == "" || (!p.Missing && !p.IsGit) {
+			continue
+		}
 		// Registration pins the fully resolved native path. Never resolve it
 		// into new authority here: Local.rootReal must detect retargeted roots.
 		// Legacy rows retain their stored authority and fail closed if it no

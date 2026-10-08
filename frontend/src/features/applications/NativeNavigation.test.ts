@@ -12,7 +12,7 @@ vi.mock("@/mygo", () => ({
   events: { desktopNavigate: { on: (listener: (request: DesktopNavigation) => void) => { bridge.listener = listener; return bridge.off; } } },
 }));
 vi.mock("@/lib/backend", () => ({ inDesktop: true }));
-vi.mock("@/features/registry", () => ({ views: { home: true, files: true, settings: true } }));
+vi.mock("@/features/registry", () => ({ views: { home: true, skills: true, settings: true } }));
 vi.mock("@/stores/ui", () => ({ useUI: { getState: () => ({ setView: bridge.setView }) } }));
 import { connectNativeNavigation } from "./NativeNavigation";
 
@@ -20,11 +20,11 @@ beforeEach(() => { vi.clearAllMocks(); bridge.listener = null; });
 
 describe("native navigation lifecycle", () => {
   it("applies cold-start navigation once", async () => {
-    bridge.ready.mockResolvedValue({ view: "files", sequence: 1 });
+    bridge.ready.mockResolvedValue({ view: "skills", sequence: 1 });
     const off = connectNativeNavigation();
     await Promise.resolve();
-    bridge.listener?.({ view: "files", sequence: 1 });
-    expect(bridge.setView).toHaveBeenCalledExactlyOnceWith("files");
+    bridge.listener?.({ view: "skills", sequence: 1 });
+    expect(bridge.setView).toHaveBeenCalledExactlyOnceWith("skills");
     off();
   });
 
@@ -43,12 +43,12 @@ describe("native navigation lifecycle", () => {
     let finish!: (request: DesktopNavigation) => void;
     bridge.ready.mockImplementation(() => new Promise<DesktopNavigation>((resolve) => { finish = resolve; }));
     const off = connectNativeNavigation();
-    for (const view of ["https://example.com", "machines", "C:\\app.exe", "launch", "__proto__"]) bridge.listener?.({ view, sequence: 1 });
+    for (const view of ["https://example.com", "machines", "files", "terminals", "applications", "C:\\app.exe", "launch", "__proto__"]) bridge.listener?.({ view, sequence: 1 });
     expect(bridge.setView).not.toHaveBeenCalled();
     off();
     finish({ view: "home", sequence: 1 });
     await Promise.resolve();
-    bridge.listener?.({ view: "files", sequence: 2 });
+    bridge.listener?.({ view: "skills", sequence: 2 });
     expect(bridge.setView).not.toHaveBeenCalled();
     expect(bridge.off).toHaveBeenCalledOnce();
   });

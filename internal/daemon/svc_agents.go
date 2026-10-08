@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,6 +14,7 @@ import (
 	"github.com/rayorole/orole-os-desktop/internal/events"
 	"github.com/rayorole/orole-os-desktop/internal/ipc"
 	"github.com/rayorole/orole-os-desktop/internal/policy"
+	"github.com/rayorole/orole-os-desktop/internal/projects"
 )
 
 // Agent runtime. Local processes are daemon children; SSH processes retain pinned
@@ -44,6 +46,9 @@ func (w agentWorktrees) Create(ctx context.Context, repo, name, base string) (st
 		return "", "", err
 	}
 	wt, err := w.d.Projects.Worktrees.Create(ctx, pid, name, base)
+	if errors.Is(err, projects.ErrConflict) {
+		return "", "", fmt.Errorf("%w: %v", agents.ErrWorktreeExists, err)
+	}
 	if err != nil {
 		return "", "", err
 	}
@@ -75,6 +80,13 @@ func (w agentWorktrees) Diff(ctx context.Context, dir, base string) (agents.Diff
 	return w.git.Diff(ctx, dir, base)
 }
 
+func (d *Daemon) projectTaskDirectory(ctx context.Context, projectID, machine, dir string) (string, error) {
+	if d.Projects == nil {
+		return "", errors.New("project workspaces are unavailable")
+	}
+	return d.Projects.TaskDirectory(ctx, projectID, machine, dir, filepath.Join(d.DataDir, "project-workspaces"))
+}
+
 func (d *Daemon) registerAgents() {
 	exe, _ := os.Executable()
 	var wt agents.Worktrees
@@ -82,11 +94,14 @@ func (d *Daemon) registerAgents() {
 		wt = agentWorktrees{d: d}
 	}
 	d.Agents = agents.NewManager(agents.Config{
-		Store:     agents.NewStore(d.DB),
-		Host:      &agents.Host{Terminals: d.Terminals, DataDir: d.DataDir, HookExe: exe},
-		Log:       d.Log,
-		Worktrees: wt,
-		Machines:  d.Machines,
+		Store:            agents.NewStore(d.DB),
+		Host:             &agents.Host{Terminals: d.Terminals, DataDir: d.DataDir, HookExe: exe, GatewayExe: d.gatewayExe},
+		Log:              d.Log,
+		Worktrees:        wt,
+		Machines:         d.Machines,
+		SkillsPrompt:     d.skillsPrompt,
+		GitHub:           d.publishClient,
+		ProjectDirectory: d.projectTaskDirectory,
 		ProjectOptions: func(ctx context.Context) ([]agents.ProjectOption, error) {
 			out := []agents.ProjectOption{}
 			if d.Projects == nil {
@@ -98,7 +113,7 @@ func (d *Daemon) registerAgents() {
 			}
 			for _, p := range projects {
 				if p.MachineID == "local" && !p.Missing {
-					out = append(out, agents.ProjectOption{ID: p.ID, Name: p.Name, Path: p.Path, Machine: p.MachineID, Git: true})
+					out = append(out, agents.ProjectOption{ID: p.ID, Name: p.Name, Path: p.Path, Machine: p.MachineID, Git: p.IsGit})
 				}
 			}
 			return out, nil
@@ -187,6 +202,12 @@ func (d *Daemon) registerAgents() {
 	})
 	handle(d, "agents.start", func(ctx context.Context, p agents.StartSpec) (agents.Session, error) {
 		return m.Start(ctx, p)
+	})
+	handle(d, "agents.uploadAttachment", func(ctx context.Context, p agents.UploadAttachmentSpec) (agents.Attachment, error) {
+		return m.UploadAttachment(ctx, p)
+	})
+	handle(d, "agents.discardAttachment", func(ctx context.Context, p idArg) (none, error) {
+		return none{}, m.DiscardAttachment(ctx, p.ID)
 	})
 	handle(d, "agents.stop", func(ctx context.Context, p idArg) (agents.Session, error) { return m.Stop(ctx, p.ID) })
 	handle(d, "agents.restart", func(ctx context.Context, p struct {

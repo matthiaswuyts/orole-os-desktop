@@ -55,6 +55,14 @@ bun run --cwd frontend check         # tsc + lint + vitest
 
 Use `$env:OROLE_HOME = ".orole-dev"` to keep development data away from `%LOCALAPPDATA%\Orole`.
 
+The development command builds the bundled daemon **once at startup**. Frontend hot reload does not
+rebuild or restart that separate process. After daemon changes (including harness model discovery),
+finish running tasks/terminals, stop the dev runner, run `go run ./cmd/orole-cli daemon stop` with the
+same `OROLE_HOME`, then start `go tool mygo dev` again. Restarting only the window can retain an old
+daemon. Claude's model menu comes from the installed CLI's initialization catalog, not a fixed list;
+an older daemon without that discovery code will show “Model catalog unavailable” even when Claude
+is installed and working.
+
 CLI (after `./scripts/build.ps1 -DaemonOnly`, or `go run ./cmd/orole-cli ...`):
 
 ```powershell

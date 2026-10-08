@@ -1,5 +1,5 @@
 import { useEffect, type ReactNode } from "react";
-import { PanelLeftOpen, Plus } from "lucide-react";
+import { PanelLeftOpen } from "lucide-react";
 import { Tooltip, TooltipPopup, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Sidebar } from "./Sidebar";
 import { StatusBar } from "./StatusBar";
@@ -9,9 +9,13 @@ import { inDesktop } from "@/lib/backend";
 import { navItem } from "@/lib/nav";
 import { Kbd, KbdGroup } from "@/components/ui/kbd";
 import { NotificationCenter } from "@/features/notifications/NotificationCenter";
+import { NewTaskDialog } from "@/features/projects/NewTaskDialog";
+import { useAgents } from "@/stores/agents";
+import { useDaemon } from "@/stores/daemon";
+import { TaskHeader } from "@/features/tasks/TaskHeader";
 
 export function AppShell({ children }: { children: ReactNode }) {
-  const { setFocused, sidebarOpen, toggleSidebar, setPalette, view } = useUI();
+  const { setFocused, sidebarOpen, toggleSidebar, view } = useUI();
   useEffect(() => {
     const f = () => setFocused(document.hasFocus() && !document.hidden);
     window.addEventListener("focus", f); window.addEventListener("blur", f); document.addEventListener("visibilitychange", f);
@@ -24,6 +28,9 @@ export function AppShell({ children }: { children: ReactNode }) {
     return () => window.removeEventListener("keydown", k);
   }, [toggleSidebar]);
   const n = navItem(view);
+  const task = useAgents((state) => view === "agents" && state.available && !state.offline && state.openId ? state.sessions[state.openId] : undefined);
+  const link = useDaemon((state) => state.link);
+  const activeTask = link === "offline" ? undefined : task;
   return (
     <TooltipProvider delay={300}>
       <div className="flex h-full flex-col bg-background">
@@ -32,9 +39,10 @@ export function AppShell({ children }: { children: ReactNode }) {
           <div className="flex min-h-0 min-w-0 flex-1 flex-col">
             <header className="titlebar-drag flex h-8 shrink-0 items-center gap-2 border-b pl-2" style={{ height: "var(--titlebar-h)", paddingRight: "var(--mygo-titlebar-inset-right, 0.5rem)" }}>
               {!sidebarOpen && <Tooltip><TooltipTrigger render={<button type="button" aria-label="Show sidebar" onClick={toggleSidebar} className="titlebar-nodrag inline-flex size-6 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground" />}><PanelLeftOpen className="size-3.5" /></TooltipTrigger><TooltipPopup side="bottom"><span className="flex items-center gap-2">Show sidebar <KbdGroup aria-label="Ctrl+B"><Kbd>Ctrl</Kbd><Kbd>B</Kbd></KbdGroup></span></TooltipPopup></Tooltip>}
-              <Tooltip><TooltipTrigger render={<button type="button" aria-label="Open command palette" onClick={() => setPalette(true)} className="titlebar-nodrag inline-flex size-6 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground" />}><Plus className="size-3.5" /></TooltipTrigger><TooltipPopup side="bottom"><span className="flex items-center gap-2">Search <KbdGroup aria-label="Ctrl+K"><Kbd>Ctrl</Kbd><Kbd>K</Kbd></KbdGroup></span></TooltipPopup></Tooltip>
-              {view !== "home" && <h1 className="font-medium text-sm">{n.label}</h1>}
-              {view !== "home" && n.blurb && <span className="truncate text-muted-foreground text-xs">{n.blurb}</span>}
+              {activeTask ? <TaskHeader key={activeTask.id} session={activeTask} /> : <>
+                {view !== "home" && <h1 className="font-medium text-sm">{n.label}</h1>}
+                {view !== "home" && n.blurb && <span className="truncate text-muted-foreground text-xs">{n.blurb}</span>}
+              </>}
               <div className="titlebar-nodrag ml-auto flex h-full shrink-0 items-center gap-2 pl-2">
                 <NotificationCenter />
                 <span aria-hidden="true" className="mr-1 h-4 w-px bg-border" />
@@ -51,6 +59,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         <StatusBar />
       </div>
       <CommandPalette />
+      <NewTaskDialog />
     </TooltipProvider>
   );
 }

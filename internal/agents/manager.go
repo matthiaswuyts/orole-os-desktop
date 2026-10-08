@@ -14,6 +14,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/rayorole/orole-os-desktop/internal/events"
+	"github.com/rayorole/orole-os-desktop/internal/github"
 	"github.com/rayorole/orole-os-desktop/internal/machines"
 )
 
@@ -25,6 +26,8 @@ type Config struct {
 	Worktrees      Worktrees // optional; without it NewWorktree and diffs are unavailable
 	Machines       *machines.Manager
 	ProjectOptions func(context.Context) ([]ProjectOption, error)
+	// ProjectDirectory resolves and validates a registered project's task directory.
+	ProjectDirectory func(ctx context.Context, projectID, machine, dir string) (string, error)
 	// Publish delivers "agents.updated" (Session), "agents.event" (Event) and
 	// "agents.removed" ({id}) to subscribed clients.
 	Publish  func(event string, data any)
@@ -39,6 +42,13 @@ type Config struct {
 	Audit    func(action, target, outcome, detail string)
 	Adapters []Adapter // default: all built in
 	MaxLive  int       // default 16
+	// GitHub returns the daemon's authorized GitHub client (its Authorize hook applies policy and
+	// requires the user's confirmation for writes). Publish needs it only to open pull requests
+	// and to look up a repository's default branch; without it those steps fail clearly.
+	GitHub func() (*github.Client, error)
+	// SkillsPrompt returns the enabled central skills index appended to structured harnesses'
+	// instructions ("" = none). Optional.
+	SkillsPrompt func() string
 }
 
 // Manager owns every live agent process and the session records.
@@ -49,13 +59,15 @@ type Manager struct {
 	order    []string
 	boot     string
 
-	launchMu   sync.Mutex   // serialize starts/resumes against each other and shutdown
-	worktreeMu sync.RWMutex // removal excludes manual and background Git readers
-	bgWork     sync.WaitGroup
-	mu         sync.Mutex
-	live       map[string]*liveSess
-	changed    chan struct{}
-	closing    bool
+	launchMu     sync.Mutex   // serialize starts/resumes against each other and shutdown
+	attachmentMu sync.Mutex   // staging expiry/discard excludes launch handoff
+	worktreeMu   sync.RWMutex // removal excludes manual and background Git readers
+	publishMu    sync.Mutex   // one Publish at a time so retries are idempotent
+	bgWork       sync.WaitGroup
+	mu           sync.Mutex
+	live         map[string]*liveSess
+	changed      chan struct{}
+	closing      bool
 
 	bg       context.Context // cancelled by Shutdown; owns background checks
 	bgCancel context.CancelFunc
@@ -92,7 +104,7 @@ func NewManager(cfg Config) *Manager {
 		cfg.MaxLive = 16
 	}
 	if len(cfg.Adapters) == 0 {
-		cfg.Adapters = []Adapter{Claude{}, Codex(), OpenCode(), Gemini(), Custom{}}
+		cfg.Adapters = []Adapter{Claude{}, Codex(), Omp{}, OpenCode(), Gemini(), Custom{}}
 	}
 	m := &Manager{cfg: cfg, st: cfg.Store, adapters: map[string]Adapter{}, boot: uuid.NewString(),
 		live: map[string]*liveSess{}, changed: make(chan struct{})}
@@ -100,6 +112,10 @@ func NewManager(cfg Config) *Manager {
 	for _, a := range cfg.Adapters {
 		m.adapters[a.Kind()] = a
 		m.order = append(m.order, a.Kind())
+	}
+	if cfg.Host != nil && cfg.Host.DataDir != "" {
+		m.bgWork.Add(1)
+		go m.attachmentJanitor()
 	}
 	return m
 }
@@ -221,7 +237,7 @@ func (m *Manager) Events(id string, after int64, limit int) ([]Event, error) {
 }
 
 // transcriptKinds are the events that make up the readable conversation.
-var transcriptKinds = []string{EvPrompt, EvMessage, EvTool, EvToolResult, EvPermission, EvDecision, EvTurnDone, EvError, EvSystem, EvNeedsInput}
+var transcriptKinds = []string{EvPrompt, EvMessage, EvReasoning, EvTool, EvToolResult, EvImage, EvPermission, EvDecision, EvTurnDone, EvError, EvSystem, EvNeedsInput}
 
 // Transcript returns the newest `limit` conversation events, oldest first.
 func (m *Manager) Transcript(id string, limit int) ([]Event, error) {
@@ -359,6 +375,16 @@ func (m *Manager) Start(ctx context.Context, spec StartSpec) (Session, error) {
 			return m.Get(s.ID)
 		}
 	}
+	if spec.ProjectID != "" {
+		if m.cfg.ProjectDirectory == nil {
+			return Session{}, errors.New("project workspaces are unavailable")
+		}
+		dir, err := m.cfg.ProjectDirectory(ctx, spec.ProjectID, spec.Machine, spec.Dir)
+		if err != nil {
+			return Session{}, err
+		}
+		spec.Dir = dir
+	}
 	if err := m.authorize(ctx, "agent.start", spec.Machine+":"+spec.Dir, fmt.Sprintf("Start %s on box %s in %s. Command: %s", spec.Kind, spec.Machine, spec.Dir, spec.Command)); err != nil {
 		return Session{}, err
 	}
@@ -374,6 +400,18 @@ func (m *Manager) Start(ctx context.Context, spec StartSpec) (Session, error) {
 			return m.Get(s.ID)
 		}
 	}
+	// Only new launches resolve uploads. Retried keys return above without copying files.
+	if len(spec.AttachmentIDs) > 0 {
+		m.attachmentMu.Lock()
+		defer m.attachmentMu.Unlock()
+	}
+	attachments, err := m.resolveAttachments(spec.AttachmentIDs)
+	if err != nil {
+		return Session{}, err
+	}
+	if len(attachments) > 0 && !localMachine(spec.Machine) && m.cfg.Machines == nil {
+		return Session{}, errors.New("attachment transfer is unavailable on this box")
+	}
 	a, ok := m.adapters[spec.Kind]
 	if !ok {
 		return Session{}, fmt.Errorf("unknown agent kind %q", spec.Kind)
@@ -387,7 +425,7 @@ func (m *Manager) Start(ctx context.Context, spec StartSpec) (Session, error) {
 		if spec.NewWorktree {
 			return Session{}, errors.New("remote worktree creation is not supported")
 		}
-		if strings.TrimSpace(spec.Prompt) == "" {
+		if strings.TrimSpace(spec.Prompt) == "" && len(attachments) == 0 {
 			return Session{}, errors.New("remote process mode requires a task")
 		}
 		modes = []Mode{ModeProcess}
@@ -438,7 +476,8 @@ func (m *Manager) Start(ctx context.Context, spec StartSpec) (Session, error) {
 	now := time.Now().UTC()
 	s := Session{
 		ID: uuid.NewString(), Kind: spec.Kind, Machine: spec.Machine, Project: dir, Dir: dir, Model: spec.Model, Reasoning: spec.Reasoning,
-		Title: titleFor(spec, a), Task: strings.TrimSpace(spec.Prompt), Mode: mode, Command: strings.TrimSpace(spec.Command),
+		ProjectID: spec.ProjectID,
+		Title:     titleFor(spec, a), Task: strings.TrimSpace(spec.Prompt), Mode: mode, Command: strings.TrimSpace(spec.Command),
 		PermissionMode: spec.PermissionMode, Status: StatusIdle, ParentID: spec.ParentID, Group: spec.Group,
 		Pending: []PermissionRequest{}, StartedAt: now, UpdatedAt: now, Chain: events.ChainFrom(ctx),
 	}
@@ -462,11 +501,7 @@ func (m *Manager) Start(ctx context.Context, spec StartSpec) (Session, error) {
 		if err := ctx.Err(); err != nil {
 			return m.failStart(s, err)
 		}
-		name := spec.Branch
-		if name == "" {
-			name = newBranchName(spec.Kind, s.ID)
-		}
-		path, branch, err := m.cfg.Worktrees.Create(ctx, dir, name, spec.BaseRef)
+		path, branch, err := m.createWorktree(ctx, dir, spec, s)
 		if err != nil {
 			return m.failStart(s, fmt.Errorf("create worktree: %w", err))
 		}
@@ -475,6 +510,22 @@ func (m *Manager) Start(ctx context.Context, spec StartSpec) (Session, error) {
 	if localMachine(s.Machine) && m.cfg.Worktrees != nil {
 		if head, err := m.cfg.Worktrees.Head(ctx, s.Dir); err == nil {
 			s.BaseRef = head
+		}
+	}
+	if s.WorktreeOwned {
+		// Record the worktree before launching so a crash cannot orphan it unrecorded.
+		if err := m.st.SaveSession(s, ""); err != nil {
+			return m.failStart(s, err)
+		}
+	}
+	if len(attachments) > 0 {
+		prompt, err := m.handoffAttachments(ctx, s, attachments)
+		if err != nil {
+			return m.failStart(s, err)
+		}
+		s.Task = prompt
+		if err := m.st.SaveSession(s, ""); err != nil {
+			return m.failStart(s, err)
 		}
 	}
 	if err := m.launch(ctx, &s, s.Task, false); err != nil {
@@ -509,6 +560,9 @@ func (m *Manager) launch(ctx context.Context, s *Session, prompt string, resume 
 	}
 	if s.Mode == ModeTerminal || s.Mode == ModeProcess {
 		spec.Prompt = prompt // delivered on the command line (or via a prompt file)
+	}
+	if s.Mode == ModeStructured && localMachine(s.Machine) {
+		m.attachGateway(&spec)
 	}
 	// Cancellation is honored until dispatch. Once dispatched the daemon, not the
 	// requesting GUI connection, owns the process lifetime.

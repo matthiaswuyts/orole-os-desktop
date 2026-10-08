@@ -88,9 +88,14 @@ func (c Claude) Start(ctx context.Context, h *Host, spec LaunchSpec) (Process, e
 	if spec.Mode == ModeTerminal {
 		return c.startTerminal(h, spec, path, args)
 	}
+	args, err = claudeStructuredArgs(h, spec, args)
+	if err != nil {
+		return nil, err
+	}
 	args = append([]string{"-p", "--output-format", "stream-json", "--input-format", "stream-json", "--verbose",
 		"--permission-prompt-tool", "stdio"}, args...)
-	p, err := startPipe(spec.Dir, path, args, decodeClaude)
+	decoder := claudeDecoder{tools: make(map[string]ToolData)}
+	p, err := startPipe(spec.Dir, path, args, decoder.decode)
 	if err != nil {
 		return nil, err
 	}
@@ -100,6 +105,44 @@ func (c Claude) Start(ctx context.Context, h *Host, spec LaunchSpec) (Process, e
 	}
 	p.encodeReply = encodeClaudeReply
 	return p, nil
+}
+
+// Files keep arbitrary JSON, multiline prompts and large skill indexes out of command
+// lines. These are daemon-owned session files, never native Claude configuration.
+func claudeStructuredArgs(h *Host, spec LaunchSpec, args []string) ([]string, error) {
+	if spec.Gateway == nil && spec.SkillsPrompt == "" {
+		return args, nil
+	}
+	dir, err := h.sessionDir(spec.SessionID)
+	if err != nil {
+		return nil, err
+	}
+	dir, err = filepath.Abs(dir)
+	if err != nil {
+		return nil, err
+	}
+	if spec.Gateway != nil {
+		config, err := json.Marshal(map[string]any{"mcpServers": map[string]*Gateway{"orole": spec.Gateway}})
+		if err != nil {
+			return nil, err
+		}
+		path := filepath.Join(dir, "claude-mcp.json")
+		if err := os.WriteFile(path, config, 0o600); err != nil {
+			return nil, fmt.Errorf("write Claude gateway config: %w", err)
+		}
+		args = append(args, "--mcp-config", path)
+	}
+	if spec.SkillsPrompt != "" {
+		path := filepath.Join(dir, "claude-skills.txt")
+		if err := os.WriteFile(path, []byte(spec.SkillsPrompt), 0o600); err != nil {
+			return nil, fmt.Errorf("write Claude skills prompt: %w", err)
+		}
+		args = append(args, "--append-system-prompt-file", path)
+	}
+	// Claude otherwise reuses the original system-prompt snapshot on resume,
+	// ignoring changes to the central skills index (including removal of all skills).
+	args = append(args, "--system-prompt-snapshot", "off")
+	return args, nil
 }
 
 func encodeClaudeReply(id string, allow bool, reason string, input json.RawMessage) []byte {
@@ -178,6 +221,7 @@ type claudeMsg struct {
 	SessionID string `json:"session_id"`
 	Model     string `json:"model"`
 	Message   struct {
+		ID      string          `json:"id"`
 		Role    string          `json:"role"`
 		Content json.RawMessage `json:"content"`
 	} `json:"message"`
@@ -195,12 +239,53 @@ type claudeMsg struct {
 }
 
 type claudeBlock struct {
-	Type    string          `json:"type"`
-	Text    string          `json:"text"`
-	Name    string          `json:"name"`
-	Input   json.RawMessage `json:"input"`
-	Content json.RawMessage `json:"content"`
-	IsError bool            `json:"is_error"`
+	Type      string          `json:"type"`
+	ID        string          `json:"id"`
+	ToolUseID string          `json:"tool_use_id"`
+	Text      string          `json:"text"`
+	Thinking  string          `json:"thinking"`
+	Name      string          `json:"name"`
+	Input     json.RawMessage `json:"input"`
+	Content   json.RawMessage `json:"content"`
+	IsError   bool            `json:"is_error"`
+}
+
+// The stdout reader calls decode serially. Keep call metadata only until its
+// result so result cards retain tool names even though Claude sends only an ID.
+type claudeDecoder struct {
+	tools map[string]ToolData
+}
+
+func (d *claudeDecoder) decode(p *pipeProc, line []byte) []Event {
+	events := decodeClaude(p, line)
+	for i := range events {
+		ev := &events[i]
+		if ev.Kind != EvTool && ev.Kind != EvToolResult {
+			continue
+		}
+		var tool ToolData
+		if json.Unmarshal(ev.Data, &tool) != nil || tool.ID == "" {
+			continue
+		}
+		if ev.Kind == EvTool {
+			d.tools[tool.ID] = ToolData{Name: tool.Name, Server: tool.Server}
+		} else if call, ok := d.tools[tool.ID]; ok {
+			tool.Name, tool.Server = call.Name, call.Server
+			delete(d.tools, tool.ID)
+			ev.Data = jraw(tool)
+		}
+	}
+	return events
+}
+
+func claudeToolName(name string) (string, string) {
+	if rest, ok := strings.CutPrefix(name, "mcp__"); ok {
+		server, tool, found := strings.Cut(rest, "__")
+		if found && server != "" && tool != "" {
+			return tool, server
+		}
+	}
+	return name, ""
 }
 
 func decodeClaude(p *pipeProc, line []byte) []Event {
@@ -217,14 +302,25 @@ func decodeClaude(p *pipeProc, line []byte) []Event {
 		var blocks []claudeBlock
 		_ = json.Unmarshal(m.Message.Content, &blocks)
 		var out []Event
-		for _, b := range blocks {
+		for index, b := range blocks {
 			switch b.Type {
 			case "text":
 				if t := strings.TrimSpace(b.Text); t != "" {
 					out = append(out, Event{Kind: EvMessage, Text: t})
 				}
+			case "thinking":
+				if strings.TrimSpace(b.Thinking) != "" {
+					out = append(out, Event{Kind: EvReasoning, Text: b.Thinking,
+						Data: jraw(map[string]string{"id": fmt.Sprintf("%s:%d", m.Message.ID, index)})})
+				}
 			case "tool_use":
-				out = append(out, Event{Kind: EvTool, Text: b.Name + ": " + summarizeTool(b.Name, b.Input), Data: jraw(map[string]any{"tool": b.Name})})
+				name, server := claudeToolName(b.Name)
+				label := name
+				if server != "" {
+					label = server + "/" + name
+				}
+				out = append(out, Event{Kind: EvTool, Text: label + ": " + summarizeTool(name, b.Input),
+					Data: jraw(ToolData{ID: b.ID, Name: name, Server: server, Status: "running", Input: b.Input})})
 			}
 		}
 		return out
@@ -234,7 +330,13 @@ func decodeClaude(p *pipeProc, line []byte) []Event {
 			var out []Event
 			for _, b := range blocks {
 				if b.Type == "tool_result" {
-					out = append(out, Event{Kind: EvToolResult, Text: truncate(toolResultText(b.Content), 400), Data: jraw(map[string]bool{"error": b.IsError})})
+					status := "ok"
+					if b.IsError {
+						status = "error"
+					}
+					output := toolResultText(b.Content)
+					out = append(out, Event{Kind: EvToolResult, Text: truncate(output, 400),
+						Data: jraw(ToolData{ID: b.ToolUseID, Status: status, Output: truncate(output, 8<<10)})})
 				}
 			}
 			return out

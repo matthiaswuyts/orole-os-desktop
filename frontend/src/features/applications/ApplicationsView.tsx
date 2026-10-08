@@ -69,7 +69,7 @@ export function ApplicationsView() {
   }
 
   const filter = query.trim().toLocaleLowerCase();
-  const modules = NAV.filter((item) => item.id !== "applications" && views[item.id] && `${item.label} ${item.id}`.toLocaleLowerCase().includes(filter));
+  const modules = NAV.filter((item) => views[item.id] && `${item.label} ${item.id}`.toLocaleLowerCase().includes(filter));
   const filtered = shortcuts.filter((item) => `${item.name} ${item.executable}`.toLocaleLowerCase().includes(filter));
 
   return (

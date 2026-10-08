@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { SCENES } from "@/components/ascii/AsciiBackground";
+import { SCENES } from "@/components/ascii/scenes";
 import { Settings } from "@/mygo";
 import { inDesktop } from "@/lib/backend";
 import { useDaemon } from "@/stores/daemon";
@@ -10,16 +10,16 @@ import { BUILTIN_THEMES } from "@/themes/builtin";
 import { useUI } from "@/stores/ui";
 import type { ViewId } from "@/stores/ui";
 
-const steps: { title: string; description: string; view?: ViewId; action?: string }[] = [
-  { title: "Welcome to Orole OS", description: "Set up your workspace, then connect only the services you want. No Orole account is required." },
+const go = (view: ViewId) => () => useUI.getState().setView(view);
+const steps: { title: string; description: string; open?: () => void; action?: string }[] = [
+  { title: "Welcome to Orole OS", description: "Set up your workspace, then connect only what you want. No Orole account is required." },
   { title: "Make this workspace yours", description: "Choose a theme and scene. You can change motion, density and contrast in Settings." },
   { title: "Check your local daemon", description: "The daemon keeps supported tasks running when the desktop closes. Terminal processes end when the daemon exits or Windows restarts." },
-  { title: "Connect GitHub", description: "Use your existing GitHub CLI sign-in to browse repositories, issues and pull requests.", view: "github", action: "Open GitHub setup" },
-  { title: "Connect Orole Mail", description: "Optional. Authorize your account before mail tools or messages can be discovered. Sending mail requires a separate approval.", view: "mail", action: "Open Mail setup" },
-  { title: "Connect Orole Drive", description: "Optional. Authorize only the Drive access you need. Your Drive is not automatically shared with coding agents.", view: "drive", action: "Open Drive setup" },
-  { title: "Configure a coding agent", description: "Choose an installed CLI and its authentication. A worktree separates edits, but is not a security sandbox.", view: "agents", action: "Open Agent Dashboard" },
-  { title: "Add a remote machine", description: "Optional. Pair a machine only after verifying its SSH identity. Local development does not require a remote host or WSL.", view: "machines", action: "Open Machines" },
-  { title: "Your workspace is ready to explore", description: "Customize the widgets below or open a terminal. Skipped integrations remain available from navigation; finishing this guide does not mark them connected." },
+  { title: "Connect GitHub", description: "Use your existing GitHub CLI sign-in so tasks can push branches and open pull requests.", open: () => useUI.getState().openSettings("integrations", "github"), action: "Open GitHub setup" },
+  { title: "Add skills", description: "Configure skills once; every harness and model can use the ones you enable.", open: go("skills"), action: "Open Skills" },
+  { title: "Add MCP servers", description: "Configure MCP servers once; every harness receives them through Orole's gateway, and Orole decides what each tool call may do.", open: go("mcp"), action: "Open MCP" },
+  { title: "Start a task", description: "Add a project, then start a task on it from the sidebar. A task runs an installed harness on its own branch; a worktree separates edits but is not a security sandbox.", open: go("agents"), action: "Open Tasks" },
+  { title: "Your workspace is ready to explore", description: "Customize the widgets below or start a task from a project in the sidebar. Skipped steps remain available from navigation; finishing this guide does not mark anything connected." },
 ];
 type Progress = { step: number; dismissed: boolean };
 const initial: Progress = { step: 0, dismissed: false };
@@ -35,7 +35,6 @@ export function FirstRunGuide() {
   const ascii = useSettings((s) => s.ascii);
   const settingError = useSettings((s) => s.error);
   const set = useSettings((s) => s.set);
-  const setView = useUI((s) => s.setView);
   useEffect(() => {
     if (!inDesktop || link !== "connected") return;
     let live = true;
@@ -47,13 +46,13 @@ export function FirstRunGuide() {
     }, (e: unknown) => { if (live) setError(String(e)); });
     return () => { live = false; };
   }, [link]);
-  async function save(next: Progress, view?: ViewId) {
+  async function save(next: Progress, open?: () => void) {
     setSaving(true);
     try {
       if (inDesktop) await Settings.set(key, next);
       setProgress(next);
       setError("");
-      if (view) setView(view);
+      open?.();
     } catch (e) { setError(String(e)); }
     finally { setSaving(false); }
   }
@@ -81,8 +80,8 @@ export function FirstRunGuide() {
     <div className="mt-4 flex flex-wrap items-center gap-2">
       <span className="mr-auto text-xs text-muted-foreground">Step {progress.step + 1} of {steps.length}{!inDesktop && " · preview progress is not saved"}</span>
       {progress.step > 0 && <Button size="xs" variant="ghost" disabled={saving} onClick={() => void save({ step: progress.step - 1, dismissed: false })}>Back</Button>}
-      {current.view && <Button size="xs" variant="outline" disabled={saving} onClick={() => void save({ step: next, dismissed: false }, current.view)}>{current.action}</Button>}
-      <Button size="xs" disabled={saving} onClick={() => void save({ step: next, dismissed: progress.step === steps.length - 1 })}>{progress.step === steps.length - 1 ? "Open dashboard" : current.view ? "Skip for now" : "Continue"}</Button>
+      {current.open && <Button size="xs" variant="outline" disabled={saving} onClick={() => void save({ step: next, dismissed: false }, current.open)}>{current.action}</Button>}
+      <Button size="xs" disabled={saving} onClick={() => void save({ step: next, dismissed: progress.step === steps.length - 1 })}>{progress.step === steps.length - 1 ? "Open dashboard" : current.open ? "Skip for now" : "Continue"}</Button>
     </div>
   </section>;
 }

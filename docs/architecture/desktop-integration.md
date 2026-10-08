@@ -26,10 +26,10 @@ Implementation research read both the local `../_upstream/mygo` source and the p
 
 `cmd/desktop/native.go` uses MyGo's `NewTray`, `NewMenu`, `App.SetMenu`, `Window.SetAutoHideMenuBar`, `GlobalShortcut.Register`, `GlobalShortcut.Unregister`, `OnClose`, `OnBeforeQuit`, `OnWillQuit`, `RequestSingleInstanceLock`, `OnSecondInstance`, `RegisterURLScheme`, and `OnOpenURL` APIs.
 
-- The tray has Show, Hide, Applications, and Quit actions. Show also restores a minimized window and focuses it.
+- The tray has Show, Hide, Tasks, and Quit actions. Show also restores a minimized window and focuses it.
 - Closing the main window hides it while a tray exists. Quit marks the GUI as quitting before window-close interception, then destroys the tray while the event loop is alive. No daemon shutdown or start-at-login setting changes occur.
 - If tray creation fails, Hide remains disabled and closing the window uses the normal application shutdown behavior. The error is logged; there is no fake tray state.
-- The application menu is auto-hidden to preserve the existing title bar, accessible with Alt/F10. Shortcuts: Applications `Ctrl+Shift+L`, Home `Ctrl+Shift+1`, Settings `Ctrl+,`, Hide `Ctrl+Shift+H`, Quit `Ctrl+Q`. MyGo supplies normal Edit menu roles. These are application-menu shortcuts, not registered system-wide hotkeys.
+- The application menu is auto-hidden to preserve the existing title bar, accessible with Alt/F10. Shortcuts: Tasks `Ctrl+Shift+L`, Home `Ctrl+Shift+1`, Settings `Ctrl+,`, Hide `Ctrl+Shift+H`, Quit `Ctrl+Q`. MyGo supplies normal Edit menu roles. These are application-menu shortcuts, not registered system-wide hotkeys.
 - Separately, `Ctrl+Alt+Space` is registered **system-wide** after the app is ready and the main window exists. It shows/restores/focuses Orole and navigates to Home, including when Orole is hidden to the tray or another application is focused. It uses the same navigation event/snapshot path as menu actions and deep links. `Ctrl+K` is not captured globally.
 - The Orole OS menu's Open Home action displays the system-wide shortcut when registration succeeds. If registration fails (for example, another app owns the keys), it instead displays “system-wide shortcut unavailable” and logs the error. The menu action remains usable, startup continues, and tray/menu navigation still works. This label is not a menu accelerator or a claim of a second registration.
 - Quit unregisters `Ctrl+Alt+Space` in `OnWillQuit`, while the native event loop is alive; hiding the GUI does not unregister it. Binding generation bypasses native registration.
@@ -37,7 +37,7 @@ Implementation research read both the local `../_upstream/mygo` source and the p
 
 ### Deep links
 
-The only accepted syntax is `orole://open/<module>`, with an exact built-in allowlist in `applications.InternalView`. Examples: `orole://open/applications`, `orole://open/files`, `orole://open/settings`.
+The only accepted syntax is `orole://open/<module>`, with an exact built-in allowlist in `applications.InternalView`. The allowed modules are `home`, `agents` (Tasks), `review`, `automations`, `skills`, `mcp`, `images` and `settings`; modules removed from the shell (mail, drive, github, projects, files, terminals, browser, machines, applications, worktrees) are rejected. Examples: `orole://open/agents`, `orole://open/skills`, `orole://open/settings`.
 
 Queries, fragments, encoded aliases, credentials, ports, external schemes/hosts, executable IDs, arbitrary paths, and unsupported modules are rejected. A deep link can only request internal navigation. It cannot launch a configured shortcut, access a file, run a command, change settings, or submit an agent prompt. Rejected URL contents are not logged.
 

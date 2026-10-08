@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Mail } from "@/mygo";
 import type { Capabilities } from "@/mygo";
 import { inDesktop } from "@/lib/backend";
@@ -12,7 +12,6 @@ import { Dialog, DialogDescription, DialogFooter, DialogHeader, DialogPanel, Dia
 import { MCPSettings } from "@/features/mcp/MCPSettings";
 import { errorText, Failure, Loading, NoResults, useRemote } from "@/features/mcp/shared";
 import { VirtualList } from "@/features/mcp/VirtualList";
-import { useUI } from "@/stores/ui";
 
 export function MailView() {
   const status = useRemote(() => Mail.status(), "mail-status");
@@ -32,12 +31,6 @@ function Mailbox({ capabilities, setup }: { capabilities: Capabilities; setup: (
   const [threadId, setThreadId] = useState("");
   const [compose, setCompose] = useState<"new" | "reply" | null>(null);
   const [notice, setNotice] = useState("");
-  const pending = useUI((state) => state.pendingMailThread);
-  useEffect(() => {
-    if (!pending) return;
-    setThreadId(pending); setCompose(null); setNotice("");
-    useUI.getState().clearMailThread();
-  }, [pending]);
   const folders = useRemote(() => Mail.folders(), "mail-folders", capabilities.canFolders);
   const messages = useRemote(() => search ? Mail.search({ folderId: folder, query: search, pageToken: token, limit: 0 }) : Mail.list({ folderId: folder, query: "", pageToken: token, limit: 0 }), JSON.stringify([folder, search, token]), search ? capabilities.canSearch : capabilities.canList);
   const thread = useRemote(() => Mail.thread(threadId), threadId, Boolean(threadId) && capabilities.canThread);

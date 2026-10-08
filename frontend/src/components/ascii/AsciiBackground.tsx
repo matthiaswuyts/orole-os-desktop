@@ -1,22 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import { load, mount, type PieceName } from "ascii.rest";
+import { load, mount } from "ascii.rest";
 import { useSettings } from "@/stores/settings";
 import { useUI } from "@/stores/ui";
-
-/** Canvas scenes from ascii.rest shown in the picker (all verified colour "scenes"). */
-export const SCENES: { id: PieceName; label: string }[] = [
-  { id: "night-coast" as PieceName, label: "Night coast" },
-  { id: "aurora-fjord" as PieceName, label: "Aurora fjord" },
-  { id: "alpine-dawn" as PieceName, label: "Alpine dawn" },
-  { id: "deep-reef" as PieceName, label: "Deep reef" },
-  { id: "desert-night" as PieceName, label: "Desert night" },
-  { id: "earthrise" as PieceName, label: "Earthrise" },
-  { id: "kyoto-dusk" as PieceName, label: "Kyoto dusk" },
-  { id: "marine-drive" as PieceName, label: "Marine drive" },
-  { id: "misty-forest" as PieceName, label: "Misty forest" },
-  { id: "ocean-sunset" as PieceName, label: "Ocean sunset" },
-  { id: "storm-plains" as PieceName, label: "Storm plains" },
-];
 
 function useMedia(q: string) {
   const [m, setM] = useState(() => matchMedia(q).matches);
@@ -83,6 +68,8 @@ export const BAND_HEIGHT = "clamp(220px, 50vh, 500px)";
 
 export function AsciiBand({ position = 0.42, fade = 0.45 }: { position?: number; fade?: number }) {
   const s = useSettings((x) => x.ascii);
+  const scene = useSettings((x) => x.activeAsciiScene);
+  const loaded = useSettings((x) => x.loaded);
   const a11y = useSettings((x) => x.accessibility);
   const focused = useUI((x) => x.windowFocused);
   const sysReduced = useMedia("(prefers-reduced-motion: reduce)");
@@ -99,14 +86,14 @@ export function AsciiBand({ position = 0.42, fade = 0.45 }: { position?: number;
     const ro = new ResizeObserver(() => setBox({ w: el.clientWidth, h: el.clientHeight }));
     ro.observe(el);
     return () => ro.disconnect();
-  }, [s.enabled]);
+  }, [s.enabled, loaded]);
 
   useEffect(() => {
     const el = ref.current;
-    if (!el || !s.enabled) return;
+    if (!el || !s.enabled || !loaded) return;
     let stop: (() => void) | undefined;
     let live = true;
-    const loader = (load as Record<string, () => Promise<Parameters<typeof mount>[1]>>)[s.scene];
+    const loader = (load as Record<string, () => Promise<Parameters<typeof mount>[1]>>)[scene];
     if (!loader) return;
     loader().then((piece) => {
       if (live) stop = mount(el, piece, { fps: m.fps, motion: true });
@@ -115,9 +102,9 @@ export function AsciiBand({ position = 0.42, fade = 0.45 }: { position?: number;
       live = false;
       stop?.();
     };
-  }, [s.scene, s.enabled, m.fps]);
+  }, [scene, s.enabled, loaded, m.fps]);
 
-  if (!s.enabled) return null;
+  if (!s.enabled || !loaded) return null;
   // Scenes are 2:1; cover the band, crop vertically at `position`.
   const width = Math.max(box.w, box.h * 2);
   const top = (box.h - width / 2) * position;

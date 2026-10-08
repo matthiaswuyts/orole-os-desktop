@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useState } from "react";
+import { Fragment, useState } from "react";
 import { File as FileIcon, Folder, Grid2X2, List } from "lucide-react";
 import { Drive } from "@/mygo";
 import type { DriveCapabilities } from "@/mygo";
@@ -12,7 +12,6 @@ import { MCPSettings } from "@/features/mcp/MCPSettings";
 import { errorText, Failure, Loading, NoResults, useRemote } from "@/features/mcp/shared";
 import { VirtualList } from "@/features/mcp/VirtualList";
 import { safePreview } from "./preview";
-import { useUI } from "@/stores/ui";
 import { DriveActions } from "./DriveActions";
 
 export function DriveView() {
@@ -36,14 +35,6 @@ function DriveBrowser({ capabilities, setup }: { capabilities: DriveCapabilities
   const [selected, setSelected] = useState<Location | null>(null);
   const [navigationError, setNavigationError] = useState<string | null>(null);
   const [navigating, setNavigating] = useState(false);
-  const pending = useUI((state) => state.pendingDriveFile);
-  useEffect(() => {
-    if (!pending) return;
-    setSearch(""); setQuery(""); setPages([""]); setNavigationError(null);
-    if (pending.isFolder) { setPath([{ id: pending.id, name: pending.name }]); setSelected(null); }
-    else { setPath([]); setSelected({ id: pending.id, name: pending.name }); }
-    useUI.getState().clearDriveFile();
-  }, [pending]);
   const files = useRemote(() => search ? Drive.search({ parentId, query: search, pageToken: token, limit: 0 }) : Drive.list({ parentId, query: "", pageToken: token, limit: 0 }), JSON.stringify([parentId, search, token]), search ? capabilities.canSearch : capabilities.canList);
   const preview = useRemote(() => Drive.preview(selected!.id), selected?.id ?? "", !!selected && capabilities.canPreview);
   async function openFolder(folder: Location) {

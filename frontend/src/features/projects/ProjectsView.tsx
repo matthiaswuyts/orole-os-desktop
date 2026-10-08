@@ -16,13 +16,12 @@ import { ConfirmDialog, CreateWorktreeDialog, errText } from "./dialogs";
 import { WorktreeRootField } from "./WorktreeRootField";
 
 export function ProjectsView() {
-  const { projects, loaded, error, selectedId, select, pickAndAdd, remove, load } = useProjects();
-  const [addError, setAddError] = useState<string | null>(null);
+  const { projects, loaded, error, selectedId, select, remove, load, setNewProjectOpen } = useProjects();
   const [removing, setRemoving] = useState<Project | null>(null);
 
   useEffect(() => { void load(); }, [load]);
   const current = projects.find((p) => p.id === selectedId) ?? projects[0];
-  const add = () => { setAddError(null); pickAndAdd().then((p) => p && select(p.id), (e) => setAddError(errText(e))); };
+  const add = () => setNewProjectOpen(true);
 
   if (!inDesktop) return <NeedsDesktop what="Projects" />;
   if (!loaded) return <div role="status" className="flex flex-1 items-center justify-center gap-2 text-muted-foreground text-sm"><Spinner className="size-4" />Loading projects…</div>;
@@ -30,23 +29,22 @@ export function ProjectsView() {
   if (projects.length === 0) {
     return (
       <Empty>
-        <EmptyHeader><EmptyMedia variant="icon"><FolderGit2 /></EmptyMedia><EmptyTitle>Add a project</EmptyTitle>
-          <EmptyDescription>Pick a folder that is a git repository. Orole OS tracks its branches and worktrees; nothing is copied or changed.</EmptyDescription></EmptyHeader>
-        <EmptyContent><Button onClick={add}><FolderPlus />Add project…</Button>{addError && <p role="alert" className="text-destructive-foreground text-sm">{addError}</p>}</EmptyContent>
+        <EmptyHeader><EmptyMedia variant="icon"><FolderGit2 /></EmptyMedia><EmptyTitle>Create a project</EmptyTitle>
+          <EmptyDescription>Name a project and optionally attach a folder. Folders that are git repositories also get branches and worktrees; nothing is copied or changed.</EmptyDescription></EmptyHeader>
+        <EmptyContent><Button onClick={add}><FolderPlus />New project…</Button></EmptyContent>
       </Empty>
     );
   }
   return (
     <div className="flex h-full min-h-0">
       <aside aria-label="Projects" className="flex w-64 shrink-0 flex-col border-r">
-        <div className="flex h-9 shrink-0 items-center justify-between border-b px-3"><span className="font-medium text-sm">Registered</span><Button size="xs" variant="outline" onClick={add}><FolderPlus />Add</Button></div>
-        {addError && <p role="alert" className="px-3 py-1 text-destructive-foreground text-xs">{addError}</p>}
+        <div className="flex h-9 shrink-0 items-center justify-between border-b px-3"><span className="font-medium text-sm">Registered</span><Button size="xs" variant="outline" onClick={add}><FolderPlus />New</Button></div>
         <ul className="min-h-0 flex-1 overflow-auto p-1">
           {projects.map((p) => (
             <li key={p.id}>
               <button type="button" aria-current={current?.id === p.id ? "true" : undefined} onClick={() => select(p.id)} className={cn("flex w-full flex-col gap-0.5 rounded-md px-2 py-1.5 text-left outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring", current?.id === p.id && "bg-accent")}>
                 <span className="flex items-center gap-1.5 text-sm font-medium"><span className="truncate">{p.name}</span><Badge size="sm" variant="outline">{p.machineId}</Badge>{p.missing && <Badge size="sm" variant="error">missing</Badge>}</span>
-                <span className="truncate font-mono text-[11px] text-muted-foreground">{p.path}</span>
+                <span className="truncate font-mono text-[11px] text-muted-foreground">{p.path || "No folder"}</span>
                 <span className="text-[11px] text-muted-foreground">Opened {ago(p.lastOpened)}</span>
               </button>
             </li>
@@ -71,12 +69,12 @@ function ProjectDetail({ project, onRemove }: { project: Project; onRemove: () =
   const [creating, setCreating] = useState(false);
 
   const refresh = useCallback(() => {
-    if (project.missing) return;
+    if (project.missing || !project.isGit) return;
     setBusy(true);
     Promise.all([Git.status(project.id, ""), Git.branches(project.id, ""), Git.log(project.id, "", "", 20)])
       .then(([status, branches, log]) => { setD({ status, branches, log }); setErr(null); })
       .catch((e) => setErr(errText(e))).finally(() => setBusy(false));
-  }, [project.id, project.missing]);
+  }, [project.id, project.missing, project.isGit]);
 
   useEffect(() => {
     refresh();
@@ -93,16 +91,17 @@ function ProjectDetail({ project, onRemove }: { project: Project; onRemove: () =
       <header className="flex items-start gap-2">
         <div className="min-w-0 flex-1">
           <h2 className="truncate font-medium text-base">{project.name}</h2>
-          <p className="truncate font-mono text-muted-foreground text-xs">{project.path}</p>
+          <p className="truncate font-mono text-muted-foreground text-xs">{project.path || "No folder"}</p>
           {project.remoteUrl && <p className="truncate font-mono text-muted-foreground text-xs">{project.remoteUrl}</p>}
         </div>
-        <Button size="sm" variant="outline" onClick={() => setCreating(true)} disabled={project.missing}><GitBranch />New worktree</Button>
-        <Button size="sm" variant="outline" onClick={refresh} disabled={busy || project.missing} aria-label="Refresh">{busy ? <Spinner className="size-3.5" /> : <RefreshCw />}</Button>
+        {project.isGit && <Button size="sm" variant="outline" onClick={() => setCreating(true)}><GitBranch />New worktree</Button>}
+        {project.isGit && <Button size="sm" variant="outline" onClick={refresh} disabled={busy} aria-label="Refresh">{busy ? <Spinner className="size-3.5" /> : <RefreshCw />}</Button>}
         <Button size="sm" variant="destructive-outline" onClick={onRemove}><Trash2 />Remove</Button>
       </header>
       {project.missing && <p role="alert" className="rounded-md border border-destructive/40 p-3 text-destructive-foreground text-sm">This folder no longer exists. Remove the project or restore the folder.</p>}
       {err && <p role="alert" className="text-destructive-foreground text-sm">{err}</p>}
-      {!project.missing && !d && !err && <p role="status" className="flex items-center gap-2 text-muted-foreground text-sm"><Spinner className="size-4" />Reading git state…</p>}
+      {!project.isGit && !project.missing && <p className="text-muted-foreground text-sm">{project.path ? "This folder is not a git repository, so there are no branches or worktrees to show." : "This project has no folder. Git state and worktrees need a folder that is a git repository."}</p>}
+      {project.isGit && !d && !err && <p role="status" className="flex items-center gap-2 text-muted-foreground text-sm"><Spinner className="size-4" />Reading git state…</p>}
       {st && d && (
         <>
           <Section title="Status">
@@ -156,8 +155,8 @@ function ProjectDetail({ project, onRemove }: { project: Project; onRemove: () =
           </Section>
         </>
       )}
-      <Section title="Worktree location"><WorktreeRootField project={project} /></Section>
-      <CreateWorktreeDialog project={project} open={creating} onOpenChange={setCreating} />
+      {project.isGit && <Section title="Worktree location"><WorktreeRootField project={project} /></Section>}
+      {project.isGit && <CreateWorktreeDialog project={project} open={creating} onOpenChange={setCreating} />}
     </div>
   );
 }

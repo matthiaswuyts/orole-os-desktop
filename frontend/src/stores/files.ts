@@ -1,6 +1,5 @@
 import { create } from "zustand";
 import { Files, type FileRead, type FilesInfo, type FileWriteResult } from "@/mygo";
-import { useUI } from "@/stores/ui";
 
 export interface EditorTab {
   id: string;
@@ -86,7 +85,6 @@ export const useFiles = create<FilesState>((set, get) => {
     setLocation: (provider, directory) => set({ provider, directory }),
     activate: (activeId) => set({ activeId }),
     openFile: async (provider, path) => {
-      useUI.getState().setView("files");
       set({ provider, directory: parentPath(path) });
       const existing = get().tabs.find((tab) => tab.provider === provider && tab.path === path);
       if (existing) { set({ activeId: existing.id }); return; }

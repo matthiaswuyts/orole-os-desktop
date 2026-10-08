@@ -13,7 +13,7 @@ frontend/src/
     ascii/                   AsciiBackground.tsx (one canvas band per window), motion.test.ts
   features/                  one directory per view
     registry.tsx             ViewId -> lazy component; a view missing here renders NotImplemented
-    home/ terminals/ projects/ worktrees/ settings/ shared/ (States.tsx: NeedsDesktop, NotConnected, NotImplemented)
+    home/ projects/ tasks/ skills/ mcp/ images/ settings/ shared/ (States.tsx: NeedsDesktop, NotConnected, NotImplemented)
   stores/                    Zustand: daemon (link + health polling), settings, ui (ViewId, focus), workspaces, projects
   lib/                       backend.ts (inDesktop), nav.ts, commands.ts (palette registry), coreCommands.tsx, utils.ts, diff.ts, projects.ts
   themes/                    builtin.ts (shared theme/terminal palette registry), custom.ts (validated custom tokens), themes.css
@@ -32,8 +32,13 @@ frontend/src/
   `Git`, `Worktrees`, `System`, and `events`). `lib/backend.ts` `inDesktop` is false in a plain browser; then
   the app is a **preview**: only UI preferences persist (localStorage), integrations show setup states, views that
   need the daemon show `NeedsDesktop`. No mock data in production paths.
-- **ASCII art** is one canvas per window (`AsciiBand`), never per widget; motion policy is `decideMotion`
-  (disabled/static/paused/reduced-motion/unfocused/low-power/intensity). See `docs/research/ascii-library.md`.
+- **ASCII art** uses one animated canvas per window (`AsciiBand`), never per widget; motion policy is `decideMotion`
+  (disabled/static/paused/reduced-motion/unfocused/low-power/intensity). Settings renders cached, still PNG previews
+  of the 11 real scenes using one temporary 480px canvas at a time, disconnected immediately after capture.
+  `ascii.randomOnStartup` chooses a renderer-local `activeAsciiScene` once after the first successful settings load.
+  Reloading settings, changing focus, or remounting Home does not reshuffle. Enabling the option applies next startup;
+  selecting a preview immediately selects that scene and disables random mode. The saved manual scene is not overwritten
+  by random outcomes. There is no timed slideshow. See `docs/research/ascii-library.md`.
 - Settings > Diagnostics also renders `features/settings/Autostart.tsx` (start-at-login switch, credential store,
   WebView2, schema version, data dir, pipe, log tail) from `System.diagnostics()`.
 
@@ -99,7 +104,7 @@ rapid switches, delayed saves, and deletion during an in-flight save.
 
 `lib/audio.ts` owns one `@web-kits/audio` engine. `shell/AudioFeedback.tsx`
 maps semantic activations to brief synthesized cues; no hover or typing sounds.
-Settings > Sounds persists interface enablement and web volume. A zero volume,
+Settings > Customization > Sounds persists interface enablement and web volume; there is no test-interface-sound action. A zero volume,
 unfocused/hidden window, missing user activation, or stale asynchronous activation
 prevents playback. Losing focus stops voices and suspends the engine.
 In-app notification cues use the source preference and only new events explicitly
@@ -115,6 +120,19 @@ The installed Windows desktop's Test notification action persisted a real
 sound enabled and disabled. The per-source silent preference survived a native
 page reload. OS display and acoustic audibility remain dependent on notification
 permissions, volume, and Focus Assist; API acceptance is not evidence of either.
+
+## Alerts & automations settings
+
+Settings groups this surface into **Alerts** and **Automation limits**, retaining the existing navigation IDs.
+Alerts aligns per-source Allow, Windows, and Sound controls, marks default versus custom preferences, and offers Reset.
+Delivery details are collapsed; errors, connection recovery, saving status, and the real notification test remain visible.
+Automation limits separates concurrency controls from local webhooks. Port and signing instructions are under connection
+details; credential generation and explicit replacement confirmation remain available. Drafts survive save failures,
+and offline state prevents mutations while still allowing cancellation of secret replacement.
+
+Headless verification covers startup scene stability/manual override, alert preferences and disabled actions,
+automation save recovery and secret confirmation. All 11 real scene first frames were generated successfully.
+These checks do not verify browser canvas snapshots or visual layout.
 
 ## Notification panel
 
@@ -136,20 +154,54 @@ no screenshot sample notifications are inserted into production history.
 
 ## Home composer and monitoring
 
-Home has New task and Running agents tabs. Launch options come from the selected
-box's discovered harness capabilities and registered projects/approved directories.
-Model IDs are explicit user input rather than an invented account catalog.
-Harness, reasoning, project, box, and worktree choices reach daemon authorization
-and actual agent launch; see `windows-terminals.md` for installed Codex evidence.
+Home shows the new-task composer directly, without a tab switcher or running-task
+list. Task status and history live in the Tasks dashboard and project task lists.
 
-The composer uses one control row beneath the recessed task field. Projects use
-coss menu radio items; an explicit menu action opens working-directory entry.
-One provider-logo trigger opens coss Harness, Model, and Reasoning submenus.
-The reasoning slider steps through the selected harness's advertised levels,
-with a separate default position; changing harness or box clears incompatible
-model/reasoning choices. Custom model IDs remain explicit input, not a fabricated
-model catalog. The refresh-boxes button is removed; discovery follows box and
-daemon connection changes.
+`HomeAgentComposer` is one coss InputGroup: prompt, assistant-ui attachment chips and
+the entire launch toolbar share the input surface. It is centered and capped at 720px,
+with an opaque card background in both themes and while disabled. There is no New task
+badge or keyboard-hint footer. Project selection includes Create new project without
+losing the draft. System choices use real box names/status and scope available projects.
+Worktree choices include a new isolated worktree, current checkout and existing
+registered worktrees. Folderless projects use their managed workspace.
+
+`AgentModelPicker` uses a compact provider-logo/model/effort trigger (for example,
+Opus 5.5 · X-High), with searchable provider and model pages in one popover.
+`model-options.ts` formats labels without rewriting the actual model selectors.
+The beui-derived `RangeSlider` exposes only daemon-reported reasoning levels;
+Auto leaves the harness override unset. Keyboard control, reduced motion and
+accessible effort labels are supported. Model changes preserve compatible effort
+and clear incompatible selections. Missing catalogs are explicit, not fabricated.
+Start or Enter calls `Agents.start`; Shift+Enter still inserts a newline.
+Duplicate submissions are blocked and uncertain retries reuse their request key.
+
+Files can be selected, dropped or pasted. `useTaskAttachments` uploads through
+`Agents.uploadAttachment`, shows real pending/error/ready state, and prevents launch
+while an attachment is incomplete. Removing a pending chip discards any upload that
+finishes later. A failed start preserves both draft and attachments. Limits are
+8 files per task and 2 MiB per file, enforced again by the daemon within the 4 MiB IPC
+frame budget. Attachment-only tasks are allowed.
+
+The daemon stages opaque IDs under `OROLE_HOME/attachment-uploads`; abandoned staging
+expires after 24 hours. At launch it copies files into an exclusive
+`.orole-attachments-<session UUID>` directory inside the selected workspace/worktree.
+A self-ignoring `.gitignore` is installed before input bytes, keeping normal review
+and `git add --all` from publishing them (not a protection against `git add --force`).
+The actual task prompt includes file references for the harness's file/image tools;
+this is file handoff, not fabricated native multimodal-message support. Session inputs
+remain for restart independently of discarded staging uploads. Remote transfers use
+the existing pinned, root-checked, authorized SFTP path and fail before agent dispatch
+if directory creation or file transfer fails.
+
+An isolated real-daemon IPC smoke uploaded a file, launched a process that read the
+actual prompt's file reference, verified exact contents, retried after staging disposal
+without duplication, and checked Git exclusion. No paid model call, external SSH
+handoff, browser visual check or development server was used for this verification.
+
+Local execution uses structured harnesses. Configured remote boxes use their advertised
+process-mode capabilities and approved directories; unavailable capabilities remain
+unselectable. Remote execution uses the remote harness configuration, not the local
+skills/MCP gateway, and the composer states this limitation.
 
 Notifications live at the right end of the window header, separated from native
 window controls by a vertical divider and MyGo's reserved caption-button inset.
@@ -200,7 +252,117 @@ actions and observed no policy prompts from default search. Remote and live
 Mail/Drive result navigation still requires configured external endpoints. The
 desktop-required preview message names `go tool mygo dev`, not Vite-only startup.
 
+## Skills and MCP servers
+
+These top-level views configure things once for every harness.
+
+- `features/skills/SkillsView.tsx`: the central skill registry (`Skills.*`). Lists skills with search and an
+  enable switch, edits `SKILL.md` (a new skill starts from `skillTemplate`; saving goes through the daemon,
+  which validates the name and frontmatter), deletes with confirmation, imports skills discovered in harness
+  folders, and shows per-harness sync state (installed, synced/outdated/missing counts, gateway entry) with
+  Sync and Sync all. Skills reach every harness through the Orole MCP gateway and are synced to native folders.
+  The list is metadata-only: opening an editor fetches the full body with `Skills.get(name)`. Only the latest
+  open request may populate the editor; closing or starting a new draft discards pending results. The editor
+  cannot save while a body is loading, and save completion cannot overwrite another selected draft.
+- `features/mcp/McpView.tsx`: wraps the `MCPSettings` panel (add server, OAuth, enable, tools, policy). The
+  panel is no longer a Settings > Integrations tab; Mail and Drive still embed it for their setup screens.
+  Configuration search opens the top-level MCP view, not the removed Settings tab.
+  The MCP page offers generic Add by URL, without Mail/Drive quick-add buttons. The add-server
+  form uses `display: contents` so its scrollable body and footer participate in the popup's
+  flex layout and stay inside its rounded border.
+Generated images remain available within task conversations. The separate Images page, gallery,
+sidebar entry, composer shortcut, and deep link have been removed.
+
+## Task view
+
+`features/tasks/TaskView.tsx` is a chat-only agent session, without a tab strip or duplicate header.
+`TaskHeader` replaces the generic page title in `AppShell` while a task is open: task title, bundled
+provider logo, model/reasoning, box, directory, branch, elapsed time, status, PR link, Back and Stop.
+Truncated metadata remains available in a tooltip; controls stay outside the native window-drag region.
+Remove, Resume and Restart fresh are not offered in task chat. Returning to the dashboard restores its page title.
+The titlebar's command-palette plus button is removed; the keyboard shortcut remains.
+`TaskSheets` opens Changes (diff and publishing) from the titlebar, and a Terminal sheet only for local
+terminal-mode sessions. Sheets retain accessible titles, close controls and focus handling.
+Review decisions stay in the Review view.
+
+- **Feed**: `lib/taskEvents.ts` parses `Event.data` per kind (the contract is `internal/agents/types.go`: `ToolData`,
+  `ImageData`, `PermissionRequest`, reasoning `{id}`, `turn_done {ok,result}`) and groups events into items: user prompt,
+  Markdown assistant message, reasoning (collapsed, one-line preview), tool card (call and result merged by `ToolData.id`;
+  data-less legacy events pair in order and settle to "No result recorded" at the turn end), generated image, permission
+  card (keeps the review-checkbox rule), notes, errors and turn separators with duration. History is the newest 500
+  events (`Agents.transcript`, "Load earlier messages" asks for more); live events merge by id; the feed follows the
+  newest event until the user scrolls up. "Thinking…" shows from `Session.activity` while a live session is working.
+- **Markdown** (`components/Markdown.tsx`, `react-markdown` + `remark-gfm`): agent text is untrusted. No raw HTML is parsed,
+  remote images are never fetched (generated images load through `Agents.artifact` into raster `data:` URLs), and links
+  open only http(s) through `Shell.openExternal` (`lib/openExternal.ts`).
+- **Composer**: sends with `Agents.prompt`; when the harness cannot take input (terminal mode live, SSH process) it is
+  disabled and says why.
+- **Publish** (Changes sheet, `PublishPanel`): commit message, Commit, Push branch, Open pull request (title, base, body,
+  draft). Push and PR show a confirmation listing the branch, remote and PR title/base, then call `Agents.publish` with
+  `confirmed: true`. The panel calls the daemon once per step (commit, push, PR) so progress and a failure are attributed
+  to the real step; errors surface as toasts. It is disabled with a reason when the session has no branch or worktree.
+
 ## Checks
 
 `bun run --cwd frontend check` (tsc, oxlint, vitest). Tests exist for real logic only (`commands`, `themes/custom`,
 `ascii/motion`, `diff`, `projects`).
+
+## Navigation, projects and tasks
+
+The sidebar offers Home, Tasks (view id `agents`), Review, Automations, Skills, MCP and Settings (`lib/nav.ts`,
+`features/registry.tsx` and the allowlist in `internal/applications/navigation.go` are kept in step). Under the rows, the
+project tree expands each project to its **tasks**: dashboard-visible sessions associated by `Session.projectId`
+on the same machine, newest first, with status dots and "Needs you" or "Failed" badges. Older sessions without
+an ID still match their `Session.project` folder (`features/projects/tasks.ts`). Folderless projects offer
+"Start a task" immediately; they use a persistent daemon-owned workspace, not a user-selected folder.
+Worktrees are an implementation detail of a task; there is no worktree view. "Open tasks" filters the
+Tasks dashboard (`useAgents.projectFilter`, shown as a clearable chip).
+Project rows include a folder icon and named system badge. Task rows retain status,
+show their execution system beside the title, and place the agent logo at the right edge.
+The sidebar is 256px wide (capped at 45vw on narrow windows). Left-aligned titles take the flexible
+space; system badges are capped at 64px and may shrink rather than squeezing titles.
+Hover tooltips retain the full project/task name and system labels.
+
+`NewTaskDialog` is mounted once in `AppShell` and opened with `useProjects.openNewTask(projectId?, prompt?)` from a project
+row, the Tasks header or the "New task…" command. It starts a task with `Agents.start`: one `StartSpec`
+with `projectId` and an empty `dir` (resolved by the daemon), the chosen harness (cards from `Agents.options`),
+optional model and reasoning, the prompt, and "Isolate on a new branch" (default on for git projects; branch
+`orole/<slug>`, editable, based on the project's current commit). A retry of an identical spec reuses its idempotency key,
+so an uncertain failure never starts a second agent. Errors appear as toasts.
+
+The daemon resolves attached projects to their approved folder and folderless projects to
+`<daemon data>/project-workspaces/<project UUID>`. The directory is created lazily, is reused by future
+tasks and daemon restarts, and never changes the project's public empty `path`. Managed workspaces are
+plain folders, so branch isolation is unavailable. Explicit task directories must belong to the selected
+project or one of its worktrees; missing attached folders never fall back to a managed directory.
+Session `projectId` persists in the existing JSON record and survives restart, hand-off and review.
+Removing a project forgets its registry entry but leaves its workspace files and session history on disk.
+
+A headless smoke created a project with an empty folder through `projects.create`, started a
+real OMP task by `projectId`, and observed completion with the same persisted project ID.
+The isolated daemon shut down afterward; no frontend dev server or visual check was used.
+
+Local new tasks use structured harnesses only (Claude Code, Codex and Oh My Pi), keeping the conversation and
+central skills/MCP integration inside Orole; the Home system picker can also launch supported remote process sessions. The model input
+uses harness-discovered choices and explicitly sends the discovered default (or first available model),
+instead of letting an account-rejected model in native configuration win. Recent-session suggestions are
+used only when discovery returns no models. Reasoning choices follow the selected model, including models
+with no reasoning support; changing models clears an explicit reasoning selection.
+
+Still in the tree but unreachable (no nav entry, no registry entry): `features/{mail,drive,github,files,terminals,browser,machines,applications,worktrees}`
+and `features/projects/ProjectsView.tsx`.
+
+## Task chat composer
+
+The task chat uses the coss input-group textarea with a bottom action row and a round up-arrow Send
+button. No sample usage percentage or unimplemented attachment/research controls are displayed.
+Enter sends; Shift+Enter inserts a newline;
+IME composition does not send. Failed sends retain the draft.
+Sending to a stopped local task uses `Agents.prompt`, which resumes the harness session where supported.
+There is no separate Resume button or daemon-lifetime footer in local task chat. Remote-process limitations
+remain explicit. Lifecycle guarantees remain documented: tasks survive GUI restarts, not daemon exit.
+Headless interaction smoke exercised send/retry and composition keys; no visual check ran.
+
+Headless titlebar smoke exercised task selection, provider logo rendering, Stop, returning to the dashboard,
+switching to Settings without stale task metadata, and opening/closing the Changes sheet with a diff error.
+The full frontend check passed; native titlebar geometry and sheet appearance were not visually checked.

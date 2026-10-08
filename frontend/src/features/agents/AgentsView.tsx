@@ -1,32 +1,40 @@
 import { Tooltip, TooltipPopup, TooltipTrigger } from "@/components/ui/tooltip";
-import { useEffect, useState } from "react";
-import { Plus, RefreshCw } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { Plus, RefreshCw, X } from "lucide-react";
 import { Agents, type Session, type Run } from "@/mygo";
-import { useAgents, useAgentColumns, useAgentCounts } from "@/stores/agents";
+import { useAgents } from "@/stores/agents";
+import { useProjects } from "@/stores/projects";
 import { useDaemon } from "@/stores/daemon";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { NeedsDesktop, NotConnected } from "@/features/shared/States";
 import { cn } from "@/lib/utils";
-import { COLUMN_SPECS } from "./columns";
+import { COLUMN_SPECS, groupColumns } from "./columns";
 import { AgentGlyph, StateGlyph, SessionMeta, SessionBadge, PermissionCard, ReplyBox, ErrorNote } from "./shared";
 import { isRemoteProcess, sessionTitle, useAction } from "./format";
 import { Orchestrate } from "./Orchestrate";
-import { SessionDetail } from "./SessionDetail";
-import { StartAgentDialog } from "./StartAgentDialog";
+import { TaskView } from "@/features/tasks/TaskView";
+import { belongsToProject } from "@/features/projects/tasks";
 
 export function AgentsView() {
-  const { available, sessions, loaded, loading, error, offline, refresh, detect, runs, startDialogOpen, setStartDialogOpen, openId } = useAgents();
+  const { available, sessions, loaded, loading, error, offline, refresh, detect, runs, projectFilter, setProjectFilter, openId } = useAgents();
   const link = useDaemon((s) => s.link);
-  const cols = useAgentColumns(); const counts = useAgentCounts();
+  const projects = useProjects((s) => s.projects);
+  const projectsLoaded = useProjects((s) => s.loaded);
+  const openNewTask = useProjects((s) => s.openNewTask);
+  const project = projectFilter ? projects.find((p) => p.id === projectFilter) : undefined;
+  const cols = useMemo(() => groupColumns(project ? Object.values(sessions).filter((s) => belongsToProject(s, project)) : Object.values(sessions)), [sessions, project]);
+  const total = COLUMN_SPECS.reduce((sum, c) => sum + cols[c.id].length, 0);
   useEffect(() => { void detect(false); }, [detect]);
-  if (!available) return <NeedsDesktop what="Agents" />;
-  if (offline || link === "offline") return <div className="flex h-full"><NotConnected app="Agent Dashboard" what={error || "The daemon is offline. Reconnect to manage agents."} action={{ label: "Retry", onClick: () => { void useDaemon.getState().refresh(); void refresh(); } }} /></div>;
-  return <div className="flex h-full min-h-0 flex-col">{openId && sessions[openId] ? <SessionDetail key={openId} session={sessions[openId]} /> : <>
-    <header className="flex min-h-12 shrink-0 flex-wrap items-center gap-3 border-b bg-sidebar/40 px-6 py-2"><p className="min-w-0 flex-1 text-xs text-muted-foreground">{counts.total} agents · {counts.needsYou} needs you · {counts.working} working</p><Button size="sm" variant="ghost" disabled={loading} onClick={() => void refresh()} aria-label="Refresh agents"><RefreshCw /></Button><Button size="sm" onClick={() => setStartDialogOpen(true)}><Plus />New agent</Button></header>
+  // A removed project must not leave the dashboard filtered to nothing.
+  useEffect(() => { if (projectFilter && projectsLoaded && !project) setProjectFilter(null); }, [projectFilter, projectsLoaded, project, setProjectFilter]);
+  if (!available) return <NeedsDesktop what="Tasks" />;
+  if (offline || link === "offline") return <div className="flex h-full"><NotConnected app="Tasks" what={error || "The daemon is offline. Reconnect to manage tasks."} action={{ label: "Retry", onClick: () => { void useDaemon.getState().refresh(); void refresh(); } }} /></div>;
+  return <div className="flex h-full min-h-0 flex-col">{openId && sessions[openId] ? <TaskView key={openId} session={sessions[openId]} /> : <>
+    <header className="flex min-h-12 shrink-0 flex-wrap items-center gap-3 border-b bg-sidebar/40 px-6 py-2"><p className="min-w-0 flex-1 text-xs text-muted-foreground">{total} {total === 1 ? "task" : "tasks"} · {cols["needs-you"].length} needs you · {cols.working.length} working</p>{project && <Badge variant="secondary" className="gap-1 pr-0.5">Project: {project.name}<Button size="icon-xs" variant="ghost" className="size-4" aria-label={`Show tasks of every project, not only ${project.name}`} onClick={() => setProjectFilter(null)}><X /></Button></Badge>}<Button size="sm" variant="ghost" disabled={loading} onClick={() => void refresh()} aria-label="Refresh tasks"><RefreshCw /></Button><Button size="sm" onClick={() => openNewTask(project?.id ?? null)}><Plus />New task</Button></header>
     {runs.length > 0 && <div aria-label="Orchestration runs" className="flex shrink-0 gap-2 overflow-x-auto border-b px-6 py-2">{runs.map((run) => <RunItem key={run.id} run={run} />)}</div>}
     {!loaded ? <p role="status" className="p-6 text-muted-foreground">Loading agents…</p> : <div className="min-h-0 flex-1 overflow-auto"><div className="grid grid-cols-[repeat(auto-fit,minmax(250px,1fr))] items-start gap-x-4 gap-y-6 px-6 pt-4 pb-6">{COLUMN_SPECS.map((c) => <section key={c.id} aria-label={c.title} className="min-w-0"><header className="mb-2 flex min-h-5 items-center gap-2 px-0.5"><StateGlyph status={c.id} /><h3 className="text-xs font-medium">{c.title}</h3><span className={cn("ml-auto font-mono text-[11px] tabular-nums", c.id === "needs-you" && cols[c.id].length ? "text-warning-foreground" : "text-muted-foreground")}>{cols[c.id].length}</span></header><div className="flex flex-col gap-row-gap">{cols[c.id].length ? cols[c.id].map((s) => <AgentCard key={s.id} session={s} />) : <p className="rounded-lg border border-dashed px-3 py-4 text-center text-xs text-muted-foreground">{c.empty}</p>}</div></section>)}</div></div>}
-  </>}{startDialogOpen && <StartAgentDialog />}</div>;
+  </>}</div>;
 }
 function AgentCard({ session: s }: { session: Session }) {
   const [reply, setReply] = useState(false);

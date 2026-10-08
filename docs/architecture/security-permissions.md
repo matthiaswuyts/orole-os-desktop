@@ -37,7 +37,11 @@ Single place that answers "may this actor do this?". Inputs: actor, action, reso
 
 - Match stored `policy_rules` (wildcards `*`; most specific wins; at equal specificity deny > ask > allow;
   `max_effect` limits a rule to requests not stronger than it) and `mcp_permissions`.
-- Defaults: read -> allow, write/destructive -> ask, unclassified -> deny. Annotations from servers never unlock more than ask.
+- Defaults: read -> allow, write/destructive -> ask, unclassified -> deny. User-requested `agent.start`,
+  `agent.prompt`, and `agent.restart` are allowed without a second confirmation: submitting the task
+  is the instruction to run it under the configured harness permissions. Stored ask/deny rules still win.
+  Automation/agent-originated launches, actual tool actions, and external hints do not receive this default.
+  Annotations from servers never unlock more than ask.
 - `ask` parks the request (max 100 pending, 5 min timeout) until the UI resolves it; destructive actions cannot be remembered.
 - Every decision is written to `audit_events`. Pending-approval text is sanitised with `internal/untrusted`.
 

@@ -140,8 +140,11 @@ func (m *worktreeManager) List(ctx context.Context, projectID string) ([]Worktre
 	if err != nil {
 		return nil, err
 	}
-	if p.Missing {
-		return nil, fmt.Errorf("%w: project directory %s is missing", ErrNotFound, p.Path)
+	if !p.IsGit {
+		if p.Missing {
+			return nil, fmt.Errorf("%w: project directory %s is missing", ErrNotFound, p.Path)
+		}
+		return []Worktree{}, nil
 	}
 	m.mu.Lock()
 	list, err := git.WorktreeList(ctx, p.Path)
@@ -201,8 +204,11 @@ func (m *worktreeManager) Create(ctx context.Context, projectID, name, baseRef s
 	if err != nil {
 		return Worktree{}, err
 	}
-	if p.Missing {
-		return Worktree{}, fmt.Errorf("%w: project directory %s is missing", ErrNotFound, p.Path)
+	if !p.IsGit {
+		if p.Missing {
+			return Worktree{}, fmt.Errorf("%w: project directory %s is missing", ErrNotFound, p.Path)
+		}
+		return Worktree{}, invalid("%s is not a git project", p.Name)
 	}
 	slug := Slug(name)
 	if slug == "" {

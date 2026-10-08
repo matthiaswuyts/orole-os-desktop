@@ -12,7 +12,6 @@ import (
 	"github.com/rayorole/orole-os-desktop/internal/agents"
 	"github.com/rayorole/orole-os-desktop/internal/daemon"
 	"github.com/rayorole/orole-os-desktop/internal/daemon/control"
-	"github.com/rayorole/orole-os-desktop/internal/policy"
 	"github.com/rayorole/orole-os-desktop/internal/terminals"
 )
 
@@ -50,24 +49,7 @@ func TestAgentsIPCRecoveryTerminalAndEvents(t *testing.T) {
 		}
 	}
 	eventCh := make(chan string, 64)
-	approvalCh := make(chan policy.Pending, 1)
 	c.OnEvent(func(name string, data json.RawMessage) {
-		if name == "policy.pending" {
-			var snapshot struct {
-				Items []policy.Pending `json:"items"`
-			}
-			if json.Unmarshal(data, &snapshot) == nil {
-				for _, p := range snapshot.Items {
-					if p.Action == "agent.start" {
-						select {
-						case approvalCh <- p:
-						default:
-						}
-					}
-				}
-			}
-			return
-		}
 		if !strings.HasPrefix(name, "agents.") {
 			return
 		}
@@ -88,27 +70,11 @@ func TestAgentsIPCRecoveryTerminalAndEvents(t *testing.T) {
 	}
 	var s agents.Session
 	agentDir := t.TempDir()
-	started := make(chan error, 1)
-	go func() {
-		started <- c.Call(ctx, "agents.start", agents.StartSpec{Kind: "custom", Dir: agentDir, Command: "ping -n 30 127.0.0.1", Key: "ipc-start-once"}, &s)
-	}()
-	select {
-	case p := <-approvalCh:
-		if p.Resource != "local:"+agentDir || p.CanRemember {
-			t.Fatalf("unexpected execution approval: %+v", p)
-		}
-		var before []agents.Session
-		if err := c.Call(ctx, "agents.list", nil, &before); err != nil || len(before) != 1 {
-			t.Fatalf("agent launched before approval: %+v %v", before, err)
-		}
-		if err := c.Call(ctx, "policy.resolve", map[string]any{"id": p.ID, "allow": true, "remember": false}, nil); err != nil {
-			t.Fatal(err)
-		}
-	case <-ctx.Done():
-		t.Fatal("execution approval not published")
-	}
-	if err = <-started; err != nil {
+	if err = c.Call(ctx, "agents.start", agents.StartSpec{Kind: "custom", Dir: agentDir, Command: "ping -n 30 127.0.0.1", Key: "ipc-start-once"}, &s); err != nil {
 		t.Fatal(err)
+	}
+	if pending := d.Policy.Pending(); len(pending) != 0 {
+		t.Fatalf("user task submission queued redundant approval: %+v", pending)
 	}
 	if s.TerminalID == "" || !s.Live {
 		t.Fatalf("start: %+v", s)

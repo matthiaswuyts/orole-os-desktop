@@ -1,81 +1,60 @@
-import { useEffect } from "react";
-import { Tabs } from "@base-ui/react/tabs";
-import { ArrowUpRight, RefreshCw } from "lucide-react";
-import type { Session } from "@/mygo";
+import { useId, useRef, useState, type FormEvent } from "react";
+import { ArrowUpIcon, PlusIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Frame, FramePanel } from "@/components/ui/frame";
-import { PreviewCard, PreviewCardPopup, PreviewCardTrigger } from "@/components/ui/preview-card";
-import { AgentLaunchForm } from "@/features/agents/AgentLaunchForm";
-import { AgentGlyph, ErrorNote, SessionBadge } from "@/features/agents/shared";
-import { sessionTitle } from "@/features/agents/format";
-import { useAgents } from "@/stores/agents";
-import { useBoxes } from "@/stores/boxes";
-import { useUI } from "@/stores/ui";
-
-const tabClass = "flex items-center gap-2 border-b-2 border-transparent px-1 py-2 text-sm text-muted-foreground outline-none data-active:border-primary data-active:text-foreground focus-visible:rounded-sm focus-visible:ring-2 focus-visible:ring-ring";
-
-function inspectSession(session: Session) {
-  useAgents.getState().setOpenId(session.id);
-  useUI.getState().setView("agents");
-}
+import { Field, FieldLabel } from "@/components/ui/field";
+import { InputGroup, InputGroupAddon, InputGroupTextarea } from "@/components/ui/input-group";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "@/components/ui/tooltip";
+import { ComposerAttachmentChip, ComposerAttachments } from "@/components/assistant-ui/elements/composer-attachments";
+import { cn } from "@/lib/utils";
+import { ProjectMenu, SystemMenu, WorktreeMenu } from "./HomeTaskMenus";
+import { AgentModelPicker } from "./AgentModelPicker";
+import { useHomeTaskLaunch } from "./useHomeTaskLaunch";
 
 export function HomeAgentComposer() {
-  const { sessions, init } = useAgents();
-  const liveCount = Object.values(sessions).filter((session) => session.live && session.review !== "discarded").length;
-  useEffect(() => init(), [init]);
-  return <Tabs.Root defaultValue="new" className="w-full min-w-0">
-    <Tabs.List aria-label="Agent tasks" className="mb-3 flex justify-center gap-5">
-      <Tabs.Tab value="new" className={tabClass}>New task</Tabs.Tab>
-      <Tabs.Tab value="running" className={tabClass}>Running agents<span className="text-xs tabular-nums">{liveCount}</span></Tabs.Tab>
-    </Tabs.List>
-    <Frame className="w-full shadow-lg/5"><FramePanel className="p-0">
-      <Tabs.Panel value="new" keepMounted className="outline-none [[hidden]]:hidden">
-        <AgentLaunchForm onStarted={(session) => { useAgents.getState().upsert(session); inspectSession(session); }} />
-      </Tabs.Panel>
-      <Tabs.Panel value="running" className="outline-none [[hidden]]:hidden"><RunningAgents /></Tabs.Panel>
-    </FramePanel></Frame>
-  </Tabs.Root>;
-}
-
-function RunningAgents() {
-  const { sessions, available, loaded, loading, offline, error, refresh } = useAgents();
-  const machines = useBoxes((state) => state.machines);
-  const items = Object.values(sessions).filter((session) => session.review !== "discarded")
-    .sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt));
-  const live = items.filter((session) => session.live);
-  const recent = items.filter((session) => !session.live).slice(0, 5);
-  const rows = (list: Session[]) => list.map((session) => {
-    const box = machines.find((item) => item.id === (session.machine || "local"));
-    return <div key={session.id} className="flex min-w-0 items-center gap-2 py-2">
-      <AgentGlyph kind={session.kind} />
-      <div className="min-w-0 flex-1">
-        <PreviewCard>
-          <PreviewCardTrigger render={<button type="button" onClick={() => inspectSession(session)} className="block max-w-full truncate rounded-sm text-left text-sm font-medium outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring" />}>
-            {sessionTitle(session)}
-          </PreviewCardTrigger>
-          <PreviewCardPopup align="start" className="w-80 max-w-[calc(100vw-2rem)]">
-            <dl className="flex min-w-0 flex-col gap-2 text-xs">
-              <div><dt className="font-medium">Box</dt><dd>{box?.name ?? "Box name unavailable"}</dd></div>
-              <div><dt className="font-medium">Working directory</dt><dd className="break-all text-muted-foreground">{session.dir}</dd></div>
-              <div><dt className="font-medium">Latest activity</dt><dd className="line-clamp-5 whitespace-pre-wrap break-words text-muted-foreground">{session.activity || session.lastMessage || session.error || session.status}</dd></div>
-            </dl>
-          </PreviewCardPopup>
-        </PreviewCard>
-        <p className="truncate text-xs text-muted-foreground">{session.activity || box?.name || session.dir}</p>
-      </div>
-      <SessionBadge session={session} />
-      <Button type="button" size="icon-xs" variant="ghost" aria-label={`Inspect ${sessionTitle(session)}`} onClick={() => inspectSession(session)}><ArrowUpRight /></Button>
-    </div>;
-  });
-  return <div className="flex min-h-52 flex-col gap-2 p-4">
-    <div className="flex items-center justify-between gap-2"><h2 className="text-sm font-medium">{offline ? "Last known sessions" : "Live sessions"}</h2><Button type="button" variant="ghost" size="xs" disabled={loading || !available} onClick={() => void refresh()}><RefreshCw />Refresh</Button></div>
-    <ErrorNote error={error} />
-    {!available ? <p className="text-sm text-muted-foreground">Open the desktop app to connect to your agents.</p>
-      : !loaded ? <p role="status" className="text-sm text-muted-foreground">Loading agent sessions…</p>
-      : <div className="max-h-80 overflow-y-auto">
-        {live.length ? rows(live) : <p className="py-3 text-sm text-muted-foreground">{offline ? "Reconnect the daemon to see which agents are running." : "No agents are running. Start a task in the New task tab."}</p>}
-        {recent.length > 0 && <><h3 className="pt-3 text-xs font-medium text-muted-foreground">Recent sessions · open to inspect or resume</h3>{rows(recent)}</>}
+  const id = useId();
+  const picker = useRef<HTMLInputElement>(null);
+  const [dragging, setDragging] = useState(false);
+  const task = useHomeTaskLaunch();
+  function submit(event: FormEvent) { event.preventDefault(); void task.start(); }
+  return <section aria-label="New AI task" className="mx-auto w-full min-w-0 max-w-[720px]">
+    <form onSubmit={submit}>
+      <input ref={picker} type="file" multiple hidden aria-label="Attach files" disabled={!task.attachments.canAdd}
+        onChange={(event) => { void task.attachments.add(Array.from(event.target.files ?? [])); event.target.value = ""; }} />
+      <Field>
+        <FieldLabel htmlFor={`${id}-prompt`} className="sr-only">Task for your agent</FieldLabel>
+        <InputGroup className={cn("rounded-2xl bg-card! has-[input:disabled,textarea:disabled]:opacity-100", dragging && "ring-2 ring-ring")}
+          onDragOver={(event) => { if (event.dataTransfer.types.includes("Files")) { event.preventDefault(); event.dataTransfer.dropEffect = task.attachments.canAdd ? "copy" : "none"; setDragging(task.attachments.canAdd); } }}
+          onDragLeave={(event) => { if (!(event.relatedTarget instanceof Node) || !event.currentTarget.contains(event.relatedTarget)) setDragging(false); }}
+          onDrop={(event) => { event.preventDefault(); setDragging(false); void task.attachments.add(Array.from(event.dataTransfer.files)); }}>
+          {task.attachments.files.length > 0 && <InputGroupAddon align="block-start"><ComposerAttachments>
+            {task.attachments.files.map((file) => <ComposerAttachmentChip key={file.key} attachment={file} onRemove={task.busy ? undefined : () => task.attachments.remove(file.key)} />)}
+          </ComposerAttachments></InputGroupAddon>}
+          <InputGroupTextarea id={`${id}-prompt`} disabled={task.busy} value={task.prompt} rows={3}
+            className="w-full [&_textarea]:max-h-64 [&_textarea]:min-h-28 [&_textarea]:resize-none [&_textarea]:px-4 [&_textarea]:py-4 [&_textarea]:text-base [&_textarea]:leading-relaxed"
+            placeholder="Describe a task, a bug to fix, an idea to try…"
+            onChange={(event) => task.setPrompt(event.target.value)}
+            onPaste={(event) => { const files = Array.from(event.clipboardData.files); if (files.length) { event.preventDefault(); void task.attachments.add(files); } }}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing && event.nativeEvent.keyCode !== 229 && !event.altKey) {
+                event.preventDefault(); if (!event.repeat) event.currentTarget.form?.requestSubmit();
+              }
+              if (event.key === "Escape") event.currentTarget.blur();
+            }} />
+          <InputGroupAddon align="block-end" className="flex-wrap gap-x-1 gap-y-2">
+            <Tooltip><TooltipTrigger render={<Button type="button" variant="ghost" size="icon-sm" className="rounded-full" aria-label="Add attachment" disabled={!task.attachments.canAdd} onClick={() => picker.current?.click()}><PlusIcon /></Button>} />
+              <TooltipPopup>Add photos &amp; files · up to 8 files, 2 MB each</TooltipPopup></Tooltip>
+            <ProjectMenu task={task} /><SystemMenu task={task} /><WorktreeMenu task={task} />
+            <div className="ml-auto flex min-w-0 items-center gap-2">
+              <AgentModelPicker task={task} />
+              <Button type="submit" disabled={!task.canStart} loading={task.busy} size="icon" className="shrink-0 rounded-full" aria-label="Start task"><ArrowUpIcon /></Button>
+            </div>
+          </InputGroupAddon>
+        </InputGroup>
+      </Field>
+      {(task.blocked || task.machine !== "local") && <div className="mt-2 flex flex-col gap-1 px-1 text-xs text-muted-foreground">
+        {task.blocked && <p role="status">{task.blocked}</p>}
+        {task.machine !== "local" && <p>Remote tasks use that system's skills and MCP configuration.</p>}
       </div>}
-    <Button type="button" variant="ghost" size="xs" className="mt-auto self-start" onClick={() => { useAgents.getState().setOpenId(null); useUI.getState().setView("agents"); }}>All agent sessions<ArrowUpRight /></Button>
-  </div>;
+    </form>
+  </section>;
 }

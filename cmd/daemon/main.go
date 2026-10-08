@@ -13,6 +13,7 @@ import (
 
 	"github.com/rayorole/orole-os-desktop/internal/agents/hook"
 	"github.com/rayorole/orole-os-desktop/internal/daemon"
+	gatewaystdio "github.com/rayorole/orole-os-desktop/internal/gateway/stdio"
 	"github.com/rayorole/orole-os-desktop/internal/paths"
 )
 
@@ -20,6 +21,10 @@ func main() {
 	// Claude Code hooks call back into this binary (see internal/agents/hook).
 	if len(os.Args) > 1 && os.Args[1] == "agent-hook" {
 		os.Exit(hook.Main(os.Args[2:], os.Stdin))
+	}
+	// Harnesses launch `orole-daemon mcp-gateway` as their stdio MCP server (see internal/gateway).
+	if len(os.Args) > 1 && os.Args[1] == "mcp-gateway" {
+		os.Exit(gatewaystdio.Main(os.Args[2:], os.Stdin, os.Stdout, os.Stderr))
 	}
 	var verbose bool
 	var stderr bool

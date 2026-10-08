@@ -4,7 +4,6 @@ import { Files, events } from "@/mygo";
 import type { Entry, FileProvider, Root } from "@/mygo";
 import { inDesktop } from "@/lib/backend";
 import { containsPath, fileError, joinPath, useFiles } from "@/stores/files";
-import { useUI } from "@/stores/ui";
 import { Button } from "@/components/ui/button";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { Breadcrumb, BreadcrumbItem, BreadcrumbLink, BreadcrumbList, BreadcrumbPage, BreadcrumbSeparator } from "@/components/ui/breadcrumb";
@@ -96,9 +95,7 @@ export function FilesView() {
               <EmptyTitle>{provider === "git" ? "No projects registered" : provider === "remote" ? "No remote folders configured" : "Choose a folder"}</EmptyTitle>
               <EmptyDescription>{provider === "git" ? "Add a project to browse its files and git status here." : provider === "remote" ? "Configure a remote machine and its approved folders in Machines to browse its files here." : "Approve a local folder using the native folder picker. Orole only accesses folders you approve."}</EmptyDescription>
             </EmptyHeader>
-            <EmptyContent>{source.managedRoots ? <Button disabled={adding} onClick={() => void addRoot()}><FolderPlus data-icon="inline-start" />Add folder…</Button>
-              : provider === "remote" ? <Button onClick={() => useUI.getState().setView("machines")}>Open Machines</Button>
-              : provider === "git" ? <Button onClick={() => useUI.getState().setView("projects")}>Open Projects</Button> : null}</EmptyContent>
+            <EmptyContent>{source.managedRoots ? <Button disabled={adding} onClick={() => void addRoot()}><FolderPlus data-icon="inline-start" />Add folder…</Button> : null}</EmptyContent>
           </Empty> : <>
           <div className="flex min-h-10 shrink-0 items-center gap-2 border-b px-3 py-1.5"><Breadcrumb className="min-w-0 flex-1"><BreadcrumbList>{crumbs.map((crumb, index) => <Fragment key={crumb.path}>{index > 0 && <BreadcrumbSeparator />}<BreadcrumbItem>{index === crumbs.length - 1 ? <BreadcrumbPage>{crumb.label}</BreadcrumbPage> : <BreadcrumbLink render={<button type="button" />} onClick={() => navigate(crumb.path)}>{crumb.label}</BreadcrumbLink>}</BreadcrumbItem></Fragment>)}</BreadcrumbList></Breadcrumb></div>
           <div className="flex min-h-0 flex-1">

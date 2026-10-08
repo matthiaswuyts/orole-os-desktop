@@ -46,6 +46,25 @@ External editors and remote branch updates cannot be transactionally locked with
 the local review. Exact commit pinning and base rechecks protect the reviewed
 snapshot; already-dispatched remote effects cannot be rolled back by cancellation.
 
+## Publishing an agent task (commit, push, pull request)
+
+Separate from the reviewed issue flow above, any agent task can be published from its Review view:
+`agents.publish {id, spec}` (`internal/agents/publish.go`, handler in `internal/daemon/svc_publish.go`).
+It commits the session worktree with the user's git identity, pushes the session branch to `origin` and
+opens a pull request (`internal/github` `OpenPull`, ready for review or draft per `spec.draft`), resolving
+`owner/repo` from the configured `origin` URL (`github.RepoFromRemote`; only github.com https/ssh URLs).
+See `windows-terminals.md` ("Task branches and publishing") for the step semantics and refusals.
+
+The write gates are the same as above and are never bypassed. The agent runtime receives the daemon's
+GitHub client, whose `Authorize` hook consults central policy (a stored Deny always wins) and requires
+`ctx` confirmation, audited per action. `spec.confirmed` (set from the user's dialog) supplies the
+confirmation. Before the first change `Publish` resolves `github.branch.push` and, when a pull request
+has to be created, `github.pull.create`, so a denial leaves nothing committed; a push to a non-GitHub origin
+or without a GitHub sign-in goes through the agent authorizer (`agent.publish.push`) instead. The method is
+refused for automation callers. Unlike the issue flow it pins no reviewed snapshot: the user's review of the
+session diff is the review, and the commit it publishes is whatever the worktree holds at that moment.
+Git credentials for the push come from the user's Git configuration, independent of API sign-in.
+
 ## Verification
 
 The Go race suite passed issue provenance/recovery, origin mismatch, cancellation,

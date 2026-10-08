@@ -18,7 +18,7 @@ export function HomeView() {
     <div className="absolute inset-0 overflow-y-auto bg-background">
       <div className="relative min-h-full">
         <AsciiBand />
-        <div className="relative mx-auto flex w-full max-w-[760px] flex-col items-center px-4 pb-10 sm:px-6" style={{ paddingTop: `calc(${BAND_HEIGHT} - 84px)` }}>
+        <div className="relative mx-auto flex w-full max-w-[1000px] flex-col items-center px-4 pb-10 sm:px-6" style={{ paddingTop: `calc(${BAND_HEIGHT} - 84px)` }}>
           <h1 className="mb-3 text-balance text-center font-heading font-semibold text-2xl tracking-tight [text-shadow:0_0_6px_var(--background),0_0_16px_var(--background)]">What should your agents work on?</h1>
           <HomeAgentComposer />
         </div>

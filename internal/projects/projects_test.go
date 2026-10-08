@@ -228,3 +228,56 @@ func TestSlug(t *testing.T) {
 		}
 	}
 }
+
+func TestCreateWithoutGitOrFolder(t *testing.T) {
+	ctx := context.Background()
+	s := newService(t)
+	tmp, _ := filepath.EvalSymlinks(t.TempDir())
+
+	if _, err := s.Create(ctx, "  ", ""); !errors.Is(err, projects.ErrInvalid) {
+		t.Fatalf("blank create: %v", err)
+	}
+	// Several folderless projects may coexist, even with the same name.
+	a, err := s.Create(ctx, "Notes", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := s.Create(ctx, "Notes", "")
+	if err != nil || a.ID == b.ID {
+		t.Fatalf("second folderless project: %+v %v", b, err)
+	}
+	if a.Path != "" || a.Missing || a.IsGit || a.WorktreeRoot != "" {
+		t.Fatalf("folderless project: %+v", a)
+	}
+	if wts, err := s.Worktrees.List(ctx, a.ID); err != nil || len(wts) != 0 {
+		t.Fatalf("folderless worktrees: %v %v", wts, err)
+	}
+	if _, err := s.Worktrees.Create(ctx, a.ID, "x", ""); !errors.Is(err, projects.ErrInvalid) {
+		t.Fatalf("folderless worktree create: %v", err)
+	}
+
+	plain := filepath.Join(tmp, "plain")
+	os.Mkdir(plain, 0o755)
+	p, err := s.Create(ctx, "", plain) // blank name defaults to the folder name
+	if err != nil || p.Name != "plain" || p.IsGit || p.Missing {
+		t.Fatalf("plain folder: %+v %v", p, err)
+	}
+	if again, err := s.Create(ctx, "Other", plain); err != nil || again.ID != p.ID {
+		t.Fatalf("same folder twice: %+v %v", again, err)
+	}
+
+	r, err := s.Create(ctx, "My Repo", repo(t, tmp, "gitrepo"))
+	if err != nil || r.Name != "My Repo" || !r.IsGit {
+		t.Fatalf("git folder: %+v %v", r, err)
+	}
+	if wts, err := s.Worktrees.List(ctx, r.ID); err != nil || len(wts) != 1 {
+		t.Fatalf("git worktrees: %v %v", wts, err)
+	}
+
+	if _, err := s.Create(ctx, "x", filepath.Join(tmp, "nope")); !errors.Is(err, projects.ErrInvalid) {
+		t.Fatalf("missing folder: %v", err)
+	}
+	if _, err := s.SetWorktreeRoot(ctx, a.ID, filepath.Join(tmp, "wt")); !errors.Is(err, projects.ErrInvalid) {
+		t.Fatalf("folderless worktree root: %v", err)
+	}
+}

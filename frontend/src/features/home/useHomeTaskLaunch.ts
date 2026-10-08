@@ -1,0 +1,95 @@
+import { useRef, useState } from "react";
+import { Agents, type Mode, type StartSpec } from "@/mygo";
+import { inDesktop } from "@/lib/backend";
+import { useAgents } from "@/stores/agents";
+import { useBoxes } from "@/stores/boxes";
+import { useProjects } from "@/stores/projects";
+import { useHarnessOptions } from "@/features/agents/useHarnessOptions";
+import { newKey } from "@/features/agents/format";
+import { toastError } from "@/features/projects/dialogs";
+import { openTask } from "@/features/projects/tasks";
+import { useTaskAttachments } from "./useTaskAttachments";
+
+export function useHomeTaskLaunch() {
+  const projects = useProjects((s) => s.projects);
+  const selectedId = useProjects((s) => s.selectedId);
+  const worktrees = useProjects((s) => s.worktrees);
+  const loaded = useProjects((s) => s.loaded);
+  const machines = useBoxes((s) => s.machines);
+  const observations = useBoxes((s) => s.observations);
+  const now = useBoxes((s) => s.now);
+  const [machine, setMachine] = useState("local");
+  const source = useHarnessOptions(machine);
+  const [savedProject] = useState(() => localStorage.getItem("orole.home.project"));
+  const [remoteProject, setRemoteProject] = useState("");
+  const registered = projects.filter((p) => p.machineId === machine).map((p) => ({ ...p, registered: true }));
+  const choices = [...registered, ...(source.options?.projects ?? []).filter((p) => p.machine === machine && !registered.some((r) => r.id === p.id || r.path === p.path)).map((p) => ({ id: p.id, name: p.name, path: p.path, machineId: p.machine, isGit: p.git, missing: false, registered: false }))];
+  const project = choices.find((p) => p.id === (remoteProject || selectedId || savedProject)) ?? choices.find((p) => !p.missing);
+  const [worktreeChoice, setWorktreeChoice] = useState<{ project: string; value: string } | null>(null);
+  const canIsolate = Boolean(project?.isGit && source.options?.worktree);
+  const trees = project ? worktrees[project.id] ?? [] : [];
+  const preferredTree = worktreeChoice?.project === project?.id ? worktreeChoice?.value : undefined;
+  const tree = preferredTree && trees.find((w) => w.id === preferredTree && !w.error);
+  const worktree = tree ? tree.id : preferredTree === "current" ? "current" : canIsolate ? "new" : "current";
+  const [kind, setKind] = useState(() => localStorage.getItem("orole.task.harness") ?? "");
+  const harnesses = (source.options?.harnesses ?? []).filter((h) => machine === "local" ? h.structured && h.modes.includes("structured") : h.modes.includes("process"));
+  const harness = harnesses.find((h) => h.id === kind && h.available) ?? harnesses.find((h) => h.available);
+  const [selection, setSelection] = useState<{ kind: string; model: string; reasoning: string }>({ kind: "", model: "", reasoning: "" });
+  const selected = selection.kind === harness?.id ? selection : { model: "", reasoning: "" };
+  const models = harness?.models ?? [];
+  const model = models.some((m) => m.id === selected.model) ? selected.model : models.find((m) => m.default)?.id || models[0]?.id || "";
+  const modelOption = models.find((m) => m.id === model);
+  const reasoningLevels = modelOption ? modelOption.reasoning : harness?.reasoning ?? [];
+  const reasoning = reasoningLevels.includes(selected.reasoning) ? selected.reasoning : "";
+  const [prompt, setPrompt] = useState("");
+  const [busy, setBusy] = useState(false);
+  const attachments = useTaskAttachments(inDesktop && !busy && !source.offline);
+  const inFlight = useRef(false);
+  const attempt = useRef<{ signature: string; key: string } | null>(null);
+  const blocked = !inDesktop ? "Open the desktop app to start a task."
+    : source.offline ? "The daemon is offline."
+    : !loaded ? "Loading projects…"
+    : source.loading ? "Discovering agents on this system…"
+    : source.error || source.options?.unavailableReason || (!project ? "Select or create a project on this system." : project.missing ? "This project's folder is missing." : !harness ? "No supported agent is installed on this system." : "");
+  const canStart = !blocked && (Boolean(prompt.trim()) || attachments.ids.length > 0) && attachments.ready && !busy;
+  function chooseProject(id: string) {
+    const p = choices.find((p) => p.id === id);
+    if (!p) return;
+    setRemoteProject(p.registered ? "" : id);
+    if (p.registered) useProjects.getState().select(id);
+    localStorage.setItem("orole.home.project", id);
+    setWorktreeChoice(null);
+  }
+  function chooseMachine(id: string) {
+    setMachine(id); setRemoteProject(""); setWorktreeChoice(null); setSelection({ kind: "", model: "", reasoning: "" });
+  }
+  function chooseAgent(id: string, nextModel = "", nextReasoning = "") {
+    setKind(id); setSelection({ kind: id, model: nextModel, reasoning: nextReasoning });
+  }
+  async function start() {
+    if (!canStart || !project || !harness || inFlight.current) return;
+    const spec: Omit<StartSpec, "key"> = {
+      kind: harness.id, machine, projectId: project.registered ? project.id : "", dir: tree ? tree.path : project.registered ? "" : project.path,
+      prompt: prompt.trim(), model, reasoning, mode: (machine === "local" ? "structured" : "process") as Mode,
+      attachmentIds: attachments.ids,
+      newWorktree: worktree === "new", branch: "", baseRef: "", permissionMode: "default", command: "", title: "", parentId: "", group: "",
+    };
+    const signature = JSON.stringify(spec);
+    if (attempt.current?.signature !== signature) attempt.current = { signature, key: newKey() };
+    inFlight.current = true; setBusy(true);
+    try {
+      const session = await Agents.start({ ...spec, key: attempt.current.key });
+      attempt.current = null;
+      localStorage.setItem("orole.task.harness", harness.id);
+      localStorage.setItem("orole.home.project", project.id);
+      useAgents.getState().upsert(session); setPrompt(""); attachments.clear(); openTask(session.id);
+    } catch (error) { toastError("Could not start task", error); }
+    finally { inFlight.current = false; setBusy(false); }
+  }
+  return { machine, machines, observations, now, choices, project, trees, worktree, canIsolate, harnesses, harness, model, reasoning, prompt, setPrompt, busy, blocked, canStart, chooseProject, chooseMachine, chooseAgent, start, attachments,
+    chooseWorktree: (value: string) => { if (project) setWorktreeChoice({ project: project.id, value }); },
+    createProject: () => { chooseMachine("local"); useProjects.getState().setNewProjectOpen(true); },
+  };
+}
+
+export type HomeTaskLaunch = ReturnType<typeof useHomeTaskLaunch>;

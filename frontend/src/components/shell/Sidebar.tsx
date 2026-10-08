@@ -1,5 +1,5 @@
-import { ChevronDown, EllipsisIcon, PanelLeftClose, Search } from "lucide-react";
-import { MORE, PRIMARY, SETTINGS, type NavItem } from "@/lib/nav";
+import { ChevronDown, PanelLeftClose, Search } from "lucide-react";
+import { PRIMARY, SETTINGS, type NavItem } from "@/lib/nav";
 import { cn } from "@/lib/utils";
 import { useUI } from "@/stores/ui";
 import { useWorkspaces } from "@/stores/workspaces";
@@ -26,9 +26,8 @@ export function Sidebar() {
       {n.id === "review" && agentCounts.reviewable > 0 && <Badge size="sm" variant="secondary" className="ml-auto">{agentCounts.reviewable}</Badge>}
     </button>
   );
-  const moreActive = MORE.some((m) => m.id === view);
   return (
-    <nav aria-label="Applications" className="titlebar-drag flex w-[190px] shrink-0 flex-col border-r bg-sidebar">
+    <nav aria-label="Applications" className="titlebar-drag flex w-64 max-w-[45vw] shrink-0 flex-col border-r bg-sidebar">
       <div className="titlebar-nodrag flex h-8 shrink-0 items-center gap-1 px-2">
         <Logo className="size-4 text-foreground" />
         <Menu>
@@ -49,14 +48,6 @@ export function Sidebar() {
         </button>
         <div className="flex flex-col gap-px">
           {PRIMARY.map(item)}
-          <Menu>
-            <MenuTrigger render={<button type="button" className={cn(row, moreActive && "bg-sidebar-accent text-sidebar-accent-foreground")} />}>
-              <EllipsisIcon className="size-3.5" />More
-            </MenuTrigger>
-            <MenuPopup align="start" side="right" className="min-w-44">
-              {MORE.map((m) => <MenuItem key={m.id} onClick={() => setView(m.id)}><m.icon className="size-3.5" />{m.label}</MenuItem>)}
-            </MenuPopup>
-          </Menu>
         </div>
         <SidebarProjects />
       </div>

@@ -36,7 +36,7 @@ export function MCPSettings({ adapter }: { adapter?: "mail" | "drive" }) {
     {!inDesktop && <NoResults title="Open the desktop app">MCP connections and credentials are managed by the local daemon, not this browser preview.</NoResults>}
     <div className="flex flex-wrap gap-2">
       {!adapter && <Button disabled={!inDesktop} onClick={() => { setPreset(undefined); setError(null); setAdding(true); }}>Add by URL</Button>}
-      {(["mail", "drive"] as const).filter((value) => !adapter || value === adapter).map((value) => <Button key={value} variant="outline" disabled={!inDesktop || (servers.data ?? []).some((server) => server.adapter === value)} onClick={() => { setPreset(value); setError(null); setAdding(true); }}>Add {value === "mail" ? "Mail" : "Drive"}</Button>)}
+      {adapter && <Button variant="outline" disabled={!inDesktop || (servers.data ?? []).some((server) => server.adapter === adapter)} onClick={() => { setPreset(adapter); setError(null); setAdding(true); }}>Add {adapter === "mail" ? "Mail" : "Drive"}</Button>}
       <Button variant="ghost" disabled={!inDesktop || servers.loading} onClick={servers.reload}>Refresh connections</Button>
     </div>
     <Failure error={servers.error} retry={servers.reload} />
@@ -45,8 +45,8 @@ export function MCPSettings({ adapter }: { adapter?: "mail" | "drive" }) {
     {selected.map((server) => <ServerSettings key={server.id} server={server} changed={servers.reload} />)}
     <Dialog open={adding} onOpenChange={(open) => { if (!busy) setAdding(open); }}>
       <DialogPopup anchored showCloseButton={!busy}>
-        <DialogHeader><DialogTitle>Add {preset ? QUICK_SERVERS[preset].name : "MCP server"}</DialogTitle><DialogDescription>Use an OAuth client registered for this server, or a supported client metadata URL. Mail and Drive disable dynamic client registration.</DialogDescription></DialogHeader>
-        <form onSubmit={(event) => { event.preventDefault(); void add(event.currentTarget); }}>
+        <DialogHeader><DialogTitle>Add {preset ? QUICK_SERVERS[preset].name : "MCP server"}</DialogTitle><DialogDescription>Use an OAuth client registered for this server, or a supported client metadata URL.{preset && " Mail and Drive disable dynamic client registration."}</DialogDescription></DialogHeader>
+        <form className="contents" onSubmit={(event) => { event.preventDefault(); void add(event.currentTarget); }}>
           <DialogPanel><Fieldset className="flex flex-col gap-4" disabled={busy}>
             <Field><FieldLabel htmlFor="mcp-name">Name</FieldLabel><Input id="mcp-name" name="name" required defaultValue={preset ? QUICK_SERVERS[preset].name : ""} /></Field>
             <Field><FieldLabel htmlFor="mcp-url">Server URL</FieldLabel><Input id="mcp-url" name="url" type="url" required defaultValue={preset ? QUICK_SERVERS[preset].url : ""} /></Field>
@@ -54,7 +54,7 @@ export function MCPSettings({ adapter }: { adapter?: "mail" | "drive" }) {
             <Field><FieldLabel htmlFor="mcp-scopes">Scopes (optional)</FieldLabel><Input id="mcp-scopes" name="scopes" /><FieldDescription>Space-separated. Blank uses the server’s requested scopes.</FieldDescription></Field>
             <Failure error={error} />
           </Fieldset></DialogPanel>
-          <DialogFooter><Button variant="outline" disabled={busy} onClick={() => setAdding(false)}>Cancel</Button><Button type="submit" disabled={busy}>{busy ? "Adding…" : "Add server"}</Button></DialogFooter>
+          <DialogFooter><Button type="button" variant="outline" disabled={busy} onClick={() => setAdding(false)}>Cancel</Button><Button type="submit" disabled={busy}>{busy ? "Adding…" : "Add server"}</Button></DialogFooter>
         </form>
       </DialogPopup>
     </Dialog>

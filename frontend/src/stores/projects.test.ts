@@ -1,17 +1,17 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Project, Worktree } from "@/mygo";
 
-const project = (id: string, over: Partial<Project> = {}): Project => ({ id, name: id, machineId: "local", path: `C:\\${id}`, remoteUrl: "", lastOpened: 0, createdAt: 0, worktreeRoot: "", worktreeRootCustom: false, missing: false, ...over });
+const project = (id: string, over: Partial<Project> = {}): Project => ({ id, name: id, machineId: "local", path: `C:\\${id}`, remoteUrl: "", lastOpened: 0, createdAt: 0, worktreeRoot: "", worktreeRootCustom: false, missing: false, isGit: true, ...over });
 const wt = (id: string, projectId: string, over: Partial<Worktree> = {}): Worktree => ({ id, projectId, name: id, path: `C:\\${id}`, branch: "main", head: "", baseRef: "", isMain: false, detached: false, locked: false, prunable: false, createdAt: 0, upstream: "", ahead: 0, behind: 0, staged: 0, unstaged: 0, untracked: 0, dirty: 0, ...over });
 
 const mocks = vi.hoisted(() => ({
-  list: vi.fn(), add: vi.fn(), remove: vi.fn(), pick: vi.fn(), wtList: vi.fn(), wtCreate: vi.fn(), wtRemove: vi.fn(),
+  list: vi.fn(), create: vi.fn(), remove: vi.fn(), wtList: vi.fn(), wtCreate: vi.fn(), wtRemove: vi.fn(),
   handlers: new Map<string, () => void>(),
 }));
 
 vi.mock("@/lib/backend", () => ({ inDesktop: true, previewKey: "x" }));
 vi.mock("@/mygo", () => ({
-  Projects: { list: mocks.list, add: mocks.add, remove: mocks.remove, pickFolder: mocks.pick, open: vi.fn(), setWorktreeRoot: vi.fn() },
+  Projects: { list: mocks.list, create: mocks.create, remove: mocks.remove, open: vi.fn(), setWorktreeRoot: vi.fn() },
   Worktrees: { list: mocks.wtList, create: mocks.wtCreate, remove: mocks.wtRemove },
   events: {
     projectsChanged: { on: (f: () => void) => { mocks.handlers.set("p", f); return () => mocks.handlers.delete("p"); } },
@@ -28,12 +28,12 @@ beforeEach(() => {
 });
 
 describe("projects store", () => {
-  it("loads projects and their worktrees, skipping missing directories", async () => {
-    mocks.list.mockResolvedValue([project("a"), project("gone", { missing: true })]);
+  it("loads worktrees only for existing git projects", async () => {
+    mocks.list.mockResolvedValue([project("a"), project("gone", { missing: true, isGit: false }), project("plain", { isGit: false }), project("named", { path: "", isGit: false })]);
     mocks.wtList.mockResolvedValue([wt("w1", "a", { isMain: true })]);
     await useProjects.getState().load();
     const s = useProjects.getState();
-    expect(s.projects.map((p) => p.id)).toEqual(["a", "gone"]);
+    expect(s.projects.map((p) => p.id)).toEqual(["a", "gone", "plain", "named"]);
     expect(Object.keys(s.worktrees)).toEqual(["a"]);
     expect(mocks.wtList).toHaveBeenCalledTimes(1);
     expect(s.loaded && s.error === null).toBe(true);
@@ -45,17 +45,19 @@ describe("projects store", () => {
     expect(useProjects.getState()).toMatchObject({ loaded: true, error: "daemon unavailable", projects: [] });
   });
 
-  it("pickAndAdd does nothing when the picker is cancelled and adds otherwise", async () => {
-    mocks.pick.mockResolvedValueOnce("");
-    expect(await useProjects.getState().pickAndAdd()).toBeNull();
-    expect(mocks.add).not.toHaveBeenCalled();
-    mocks.pick.mockResolvedValueOnce("C:\\repo");
-    mocks.add.mockResolvedValue(project("r"));
-    mocks.list.mockResolvedValue([project("r")]);
-    mocks.wtList.mockResolvedValue([]);
-    expect((await useProjects.getState().pickAndAdd())?.id).toBe("r");
-    expect(mocks.add).toHaveBeenCalledWith("C:\\repo");
+  it("create trims the name, passes the optional folder and reloads", async () => {
+    mocks.create.mockResolvedValue(project("n", { path: "", isGit: false }));
+    mocks.list.mockResolvedValue([project("n", { path: "", isGit: false })]);
+    expect((await useProjects.getState().create("  Notes ", "")).id).toBe("n");
+    expect(mocks.create).toHaveBeenCalledWith("Notes", "");
     expect(useProjects.getState().projects).toHaveLength(1);
+    expect(mocks.wtList).not.toHaveBeenCalled();
+  });
+
+  it("create rejects with the daemon error and leaves the list alone", async () => {
+    mocks.create.mockRejectedValue(new Error("bad_request: C:\\x is not a directory"));
+    await expect(useProjects.getState().create("x", "C:\\x")).rejects.toThrow("is not a directory");
+    expect(mocks.list).not.toHaveBeenCalled();
   });
 
   it("remove drops the project and its worktrees locally after the daemon confirms", async () => {
