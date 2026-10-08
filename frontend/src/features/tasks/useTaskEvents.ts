@@ -47,6 +47,18 @@ export function useTaskEvents(sessionId: string) {
     }
   }, [sessionId, update]);
 
+  /** Retries transcript retrieval only; it never replays agent prompts or tool actions. */
+  const reload = useCallback(async (): Promise<void> => {
+    const currentLimit = limit.current;
+    update((s) => ({ ...s, loading: true, error: null }));
+    try {
+      const history = await Agents.transcript(sessionId, currentLimit);
+      update((s) => ({ ...s, list: mergeHistory(history, s.list), hasMore: history.length >= currentLimit, loading: false }));
+    } catch (e) {
+      update((s) => ({ ...s, error: errText(e), loading: false }));
+    }
+  }, [sessionId, update]);
+
   const view = state.id === sessionId ? state : initial(sessionId);
-  return { events: view.list, loading: view.loading, loadingMore: view.loadingMore, error: view.error, hasMore: view.hasMore, loadMore };
+  return { events: view.list, loading: view.loading, loadingMore: view.loadingMore, error: view.error, hasMore: view.hasMore, loadMore, reload };
 }

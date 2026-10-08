@@ -57,6 +57,10 @@ type codexItem struct {
 
 	Prompt           *string  `json:"prompt"` // collabAgentToolCall
 	ReceiverThreadID []string `json:"receiverThreadIds"`
+	AgentsStates     map[string]struct {
+		Status  string `json:"status"`
+		Message string `json:"message"`
+	} `json:"agentsStates"`
 }
 
 type codexChange struct {
@@ -75,6 +79,22 @@ const (
 	codexItemsCache = 512
 )
 
+type codexTurnError struct {
+	Message string          `json:"message"`
+	Info    json.RawMessage `json:"codexErrorInfo"`
+}
+
+func (p *codexProc) policyError(id string, err *codexTurnError) {
+	if err == nil {
+		return
+	}
+	var kind string
+	if json.Unmarshal(err.Info, &kind) == nil && (kind == "cyberPolicy" || kind == "misalignmentPolicyViolation") {
+		p.emit(Event{Kind: EvGuardrail, Data: jraw(GuardrailData{ID: id, Kind: kind,
+			Message: niceCodexError(err.Message), Source: "codex:codexErrorInfo"})})
+	}
+}
+
 // notification maps one server notification to normalized events.
 func (p *codexProc) notification(method string, raw json.RawMessage) {
 	var n struct {
@@ -83,15 +103,13 @@ func (p *codexProc) notification(method string, raw json.RawMessage) {
 		ItemID   string          `json:"itemId"`
 		Delta    string          `json:"delta"`
 		Turn     struct {
-			ID     string `json:"id"`
-			Status string `json:"status"`
-			Error  *struct {
-				Message string `json:"message"`
-			} `json:"error"`
+			ID     string          `json:"id"`
+			Status string          `json:"status"`
+			Error  *codexTurnError `json:"error"`
 		} `json:"turn"`
-		Error struct {
-			Message string `json:"message"`
-		} `json:"error"`
+		Error     codexTurnError  `json:"error"`
+		Message   string          `json:"message"`
+		TurnID    string          `json:"turnId"`
 		WillRetry bool            `json:"willRetry"`
 		RequestID json.RawMessage `json:"requestId"`
 	}
@@ -102,6 +120,28 @@ func (p *codexProc) notification(method string, raw json.RawMessage) {
 	mine := n.ThreadID == "" || n.ThreadID == p.threadID
 	p.mu.Unlock()
 	switch method {
+	case "thread/tokenUsage/updated":
+		if mine {
+			var u struct {
+				TokenUsage struct {
+					Last struct {
+						Input  *int64 `json:"inputTokens"`
+						Output *int64 `json:"outputTokens"`
+						Cached *int64 `json:"cachedInputTokens"`
+						Total  *int64 `json:"totalTokens"`
+					} `json:"last"`
+					Window *int64 `json:"modelContextWindow"`
+				} `json:"tokenUsage"`
+			}
+			if json.Unmarshal(raw, &u) == nil {
+				for _, e := range usageEvent(ContextUsage{Source: "codex:thread/tokenUsage/updated:last",
+					InputTokens: u.TokenUsage.Last.Input, OutputTokens: u.TokenUsage.Last.Output,
+					CachedTokens: u.TokenUsage.Last.Cached, ContextTokens: u.TokenUsage.Last.Total,
+					ContextWindow: u.TokenUsage.Window}) {
+					p.emit(e)
+				}
+			}
+		}
 	case "item/started", "item/completed":
 		var it codexItem
 		if json.Unmarshal(n.Item, &it) != nil || it.ID == "" {
@@ -129,26 +169,31 @@ func (p *codexProc) notification(method string, raw json.RawMessage) {
 		p.emit(Event{Kind: EvWorking})
 	case "turn/completed":
 		if mine {
+			p.policyError(n.Turn.ID, n.Turn.Error)
 			p.turnCompleted(n.Turn.ID, n.Turn.Status, errorMessage(n.Turn.Error))
 		}
 	case "error":
 		if !mine {
 			return
 		}
+		p.policyError(n.TurnID, &n.Error)
 		msg := niceCodexError(n.Error.Message)
 		if n.WillRetry {
 			p.emit(Event{Kind: EvActivity, Text: truncate("Retrying after an error: "+msg, 160)})
 		} else {
 			p.emit(Event{Kind: EvError, Text: msg})
 		}
+	case "guardianWarning":
+		if mine && n.Message != "" {
+			p.emit(Event{Kind: EvGuardrail, Data: jraw(GuardrailData{ID: n.ThreadID, Kind: "warning",
+				Message: n.Message, Source: "codex:guardianWarning"})})
+		}
 	case "serverRequest/resolved":
 		p.requestResolved(n.RequestID)
 	}
 }
 
-func errorMessage(e *struct {
-	Message string `json:"message"`
-}) string {
+func errorMessage(e *codexTurnError) string {
 	if e == nil {
 		return ""
 	}
@@ -217,9 +262,17 @@ func (p *codexProc) turnCompleted(turnID, status, errMsg string) {
 		delete(p.pending, id)
 	}
 	clear(p.byRPC)
+	var questions []string
+	for id := range p.inputs {
+		questions = append(questions, id)
+		delete(p.inputs, id)
+	}
 	p.mu.Unlock()
 	for _, id := range cancel {
 		p.emit(Event{Kind: EvPermCancel, Data: jraw(map[string]string{"id": id})})
+	}
+	for _, id := range questions {
+		p.emit(Event{Kind: EvQuestionCancel, Data: jraw(map[string]string{"id": id})})
 	}
 	switch status {
 	case "completed":
@@ -258,6 +311,42 @@ func (p *codexProc) item(done bool, it codexItem, mine bool) {
 		return
 	}
 	switch it.Type {
+	case "fileChange":
+		if td, ok := codexToolData(it); ok {
+			p.toolEvent(done, it, td)
+		}
+		for i, change := range it.Changes {
+			p.emit(Event{Kind: EvFile, Data: jraw(FileData{ID: fmt.Sprintf("%s:%d", it.ID, i),
+				Path: change.Path, Name: filepath.Base(change.Path), Status: it.Status, Summary: change.Kind.Type})})
+		}
+	case "collabAgentToolCall":
+		if td, ok := codexToolData(it); ok {
+			p.toolEvent(done, it, td)
+		}
+		for id, state := range it.AgentsStates {
+			if id == "" || state.Status == "" {
+				continue
+			}
+			agent := SubagentData{ID: id, Status: state.Status, Message: state.Message, ToolCallID: it.ID}
+			if it.Prompt != nil {
+				agent.Task = *it.Prompt
+			}
+			p.emit(Event{Kind: EvSubagent, Data: jraw(agent)})
+		}
+	case "webSearch":
+		if td, ok := codexToolData(it); ok {
+			p.toolEvent(done, it, td)
+		}
+		if done {
+			var action struct {
+				Type string `json:"type"`
+				URL  string `json:"url"`
+			}
+			if json.Unmarshal(it.Action, &action) == nil && action.URL != "" && (action.Type == "openPage" || action.Type == "findInPage") {
+				p.emit(Event{Kind: EvSources, Data: jraw(SourcesData{ID: it.ID,
+					Items: []SourceReference{{ID: it.ID, URL: action.URL}}})})
+			}
+		}
 	case "agentMessage":
 		if !done {
 			return
@@ -296,7 +385,13 @@ func (p *codexProc) item(done bool, it codexItem, mine bool) {
 			p.emit(Event{Kind: EvSystem, Text: "Codex compacted the conversation context"})
 		}
 	case "imageGeneration":
-		if done {
+		prompt := ""
+		if it.RevisedPrompt != nil {
+			prompt = *it.RevisedPrompt
+		}
+		if !done {
+			p.emit(Event{Kind: EvImageStatus, Data: jraw(ImageStatusData{ID: it.ID, Status: "running", Prompt: prompt})})
+		} else {
 			p.imageGenerated(it)
 		}
 	default:
@@ -542,7 +637,11 @@ func (p *codexProc) imageGenerated(it codexItem) {
 			reason = "image generation hit a usage limit"
 		}
 		p.emit(Event{Kind: EvError, Text: "Codex: " + reason})
+		p.emit(Event{Kind: EvImageStatus, Data: jraw(ImageStatusData{ID: it.ID, Status: "failed", Prompt: prompt, Error: reason})})
 		return
+	}
+	if it.Status == "completed" {
+		p.emit(Event{Kind: EvImageStatus, Data: jraw(ImageStatusData{ID: it.ID, Status: "complete", Prompt: prompt})})
 	}
 	data, err := decodeCodexImage(it)
 	if err != nil {

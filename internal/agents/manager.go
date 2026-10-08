@@ -78,12 +78,16 @@ type Manager struct {
 }
 
 type liveSess struct {
-	id       string // immutable; s is guarded by Manager.mu
-	s        Session
-	proc     Process
-	stopping bool
-	shutdown bool
-	done     chan struct{}
+	// controlMu serializes process input, pending-request transitions and exits.
+	// Lock order: launchMu (when needed), controlMu, then Manager.mu.
+	controlMu         sync.Mutex
+	deliveryUncertain bool   // no further dispatch until this process is explicitly replaced
+	id                string // immutable; s is guarded by Manager.mu
+	s                 Session
+	proc              Process
+	stopping          bool
+	shutdown          bool
+	done              chan struct{}
 	// expectPrompt is the prompt we typed/passed ourselves, so the matching
 	// UserPromptSubmit hook doesn't record it twice.
 	expectPrompt string
@@ -134,6 +138,15 @@ func (m *Manager) Recover() (lost int, err error) {
 		return 0, err
 	}
 	for _, s := range sessions {
+		// Queues survive, authority to dispatch does not. Even a completed session
+		// may have a persisted sending entry from the previous daemon.
+		s.Pending, s.Questions = nil, nil
+		pauseQueue(&s, "The daemon restarted. Resume this queue explicitly.")
+		if len(s.Queue) > 0 {
+			if err := m.st.SaveSession(s, ""); err != nil {
+				return lost, err
+			}
+		}
 		switch s.Status {
 		case StatusIdle, StatusWorking, StatusNeedsYou:
 		default:
@@ -197,6 +210,12 @@ func (m *Manager) snapshotLocked(ls *liveSess) Session {
 	s := ls.s
 	s.Live = true
 	s.Pending = append([]PermissionRequest{}, s.Pending...)
+	for i := range s.Pending {
+		s.Pending[i].Input = append(json.RawMessage(nil), s.Pending[i].Input...)
+	}
+	s.Questions = cloneQuestions(s.Questions)
+	s.Queue = append([]QueuedPrompt(nil), s.Queue...)
+	s.Usage = cloneUsage(s.Usage)
 	return s
 }
 
@@ -237,7 +256,7 @@ func (m *Manager) Events(id string, after int64, limit int) ([]Event, error) {
 }
 
 // transcriptKinds are the events that make up the readable conversation.
-var transcriptKinds = []string{EvPrompt, EvMessage, EvReasoning, EvTool, EvToolResult, EvImage, EvPermission, EvDecision, EvTurnDone, EvError, EvSystem, EvNeedsInput}
+var transcriptKinds = []string{EvPrompt, EvMessage, EvReasoning, EvTool, EvToolResult, EvImage, EvPermission, EvDecision, EvTurnDone, EvError, EvSystem, EvNeedsInput, EvUsage, EvQuestion, EvQuestionCancel, EvAnswer, EvSources, EvFile, EvImageStatus, EvSubagent, EvGuardrail}
 
 // Transcript returns the newest `limit` conversation events, oldest first.
 func (m *Manager) Transcript(id string, limit int) ([]Event, error) {
@@ -583,6 +602,8 @@ func (m *Manager) launch(ctx context.Context, s *Session, prompt string, resume 
 	s.Pid, s.TerminalID, s.Live = proc.Pid(), proc.TerminalID(), true
 	s.Status, s.Error, s.Result, s.ExitCode, s.EndedAt = StatusIdle, "", "", nil, nil
 	s.Pending = []PermissionRequest{}
+	s.Questions = nil
+	pauseQueue(s, "The agent restarted. Resume this queue explicitly.")
 	s.Activity = "Starting " + a.Name()
 	if prompt != "" && (s.Mode == ModeTerminal || s.Mode == ModeProcess) {
 		s.Status, s.Activity = StatusWorking, "Working on the task"
@@ -612,7 +633,7 @@ func (m *Manager) launch(ctx context.Context, s *Session, prompt string, resume 
 	if prompt != "" {
 		if s.Mode == ModeTerminal || s.Mode == ModeProcess {
 			m.record(s.ID, Event{Kind: EvPrompt, Text: prompt})
-		} else if err := m.sendPrompt(ls, prompt); err != nil {
+		} else if err := m.sendInitialPrompt(ls, prompt); err != nil {
 			_ = proc.Stop()
 			return fmt.Errorf("send first prompt: %w", err)
 		}
@@ -620,22 +641,79 @@ func (m *Manager) launch(ctx context.Context, s *Session, prompt string, resume 
 	return nil
 }
 
-// sendPrompt flips the session to working, then delivers the prompt.
+// sendPrompt is also the final scoped-handoff gate: never queue or steer here.
 func (m *Manager) sendPrompt(ls *liveSess, prompt string) error {
+	ls.controlMu.Lock()
+	defer ls.controlMu.Unlock()
+	return m.sendPromptControlled(ls, prompt, "", false)
+}
+
+func (m *Manager) sendInitialPrompt(ls *liveSess, prompt string) error {
+	ls.controlMu.Lock()
+	defer ls.controlMu.Unlock()
+	return m.sendPromptControlled(ls, prompt, "", true)
+}
+
+// sendPromptControlled requires controlMu. A failed Send is delivery-uncertain,
+// not evidence that nothing reached the CLI; it must never trigger a replay.
+func (m *Manager) sendPromptControlled(ls *liveSess, prompt, queueID string, initial bool) error {
 	id := ls.id
 	m.mu.Lock()
-	ls.expectPrompt = prompt
-	m.mu.Unlock()
-	m.record(id, Event{Kind: EvPrompt, Text: prompt})
-	var prevStatus Status
-	_, _ = m.mutate(id, func(s *Session) {
-		prevStatus = s.Status
+	if m.live[id] != ls || ls.stopping || m.closing {
+		m.mu.Unlock()
+		return errors.New("agent is stopping")
+	}
+	if ls.deliveryUncertain {
+		m.mu.Unlock()
+		return errors.New("previous prompt delivery is uncertain; stop and restart the agent before sending again")
+	}
+	if len(ls.s.Pending) != 0 || len(ls.s.Questions) != 0 || ls.s.Status == StatusWorking || ls.s.Status == StatusNeedsYou {
+		m.mu.Unlock()
+		return errors.New("the agent is busy or waiting for a pending request")
+	}
+	if queueID == "" && len(ls.s.Queue) > 0 && !initial {
+		m.mu.Unlock()
+		return errors.New("the agent has queued follow-ups; send through its queue")
+	}
+	s, err := m.mutateLocked(id, func(s *Session) {
 		s.Prompts++
 		s.Status, s.Activity, s.Error, s.Result = StatusWorking, "Working", "", ""
 	})
-	if err := ls.proc.Send(prompt); err != nil {
-		_, _ = m.mutate(id, func(s *Session) { s.Status, s.Activity = prevStatus, "" })
+	if err == nil {
+		ls.expectPrompt = prompt
+	}
+	m.mu.Unlock()
+	if err != nil {
 		return err
+	}
+	m.cfg.Publish("agents.updated", s)
+	m.record(id, Event{Kind: EvPrompt, Text: prompt})
+	if err := ls.proc.Send(prompt); err != nil {
+		m.mu.Lock()
+		ls.deliveryUncertain = true
+		m.mu.Unlock()
+		_, persistErr := m.mutate(id, func(s *Session) {
+			pauseQueue(s, "Prompt delivery failed; resume the queue explicitly.")
+			s.Status, s.Activity, s.Error = StatusNeedsYou, "Prompt delivery is uncertain", "The prompt may have reached the agent. Stop or wait for its turn before sending again."
+		})
+		m.cfg.Audit("agent.prompt", id, "error", "Prompt delivery is uncertain")
+		return errors.Join(err, persistErr)
+	}
+	if queueID != "" {
+		_, err = m.mutate(id, func(s *Session) {
+			if len(s.Queue) > 0 && s.Queue[0].ID == queueID {
+				s.Queue = append([]QueuedPrompt(nil), s.Queue[1:]...)
+			}
+		})
+		if err != nil {
+			// The persisted sending marker remains. In-memory uncertainty blocks
+			// subsequent sends even if persistence itself is unavailable.
+			m.mu.Lock()
+			ls.deliveryUncertain = true
+			pauseQueue(&ls.s, "Delivery was accepted but could not be persisted.")
+			m.mu.Unlock()
+			return fmt.Errorf("prompt accepted but delivery receipt could not be saved: %w", err)
+		}
 	}
 	return nil
 }
@@ -646,11 +724,44 @@ func (m *Manager) sendPrompt(ls *liveSess, prompt string) error {
 // (through the CLI's session id where supported; otherwise restarted fresh).
 func (m *Manager) Prompt(ctx context.Context, id, text string) error {
 	text = strings.TrimSpace(text)
-	if text == "" || len(text) > 100<<10 {
-		return errors.New("prompt must be 1-100000 bytes")
+	if err := validPrompt(text); err != nil {
+		return err
 	}
 	if err := m.authorize(ctx, "agent.prompt", id, "Send a task to the agent; it may execute tools under its configured permissions."); err != nil {
 		return err
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	m.launchMu.Lock()
+	defer m.launchMu.Unlock()
+	ls := m.controlSession(id)
+	if ls == nil {
+		if chain := events.ChainFrom(ctx); len(chain) > 0 {
+			if _, err := m.mutate(id, func(s *Session) { s.Chain = chain }); err != nil {
+				return err
+			}
+		}
+		_, err := m.relaunchLocked(ctx, id, text, false)
+		return err
+	}
+	ls.controlMu.Lock()
+	defer ls.controlMu.Unlock()
+	m.mu.Lock()
+	s := m.snapshotLocked(ls)
+	stopping := m.live[id] != ls || ls.stopping || m.closing
+	m.mu.Unlock()
+	if stopping {
+		return errors.New("agent is stopping")
+	}
+	if s.Mode == ModeProcess {
+		return errors.New("remote process mode accepts one task per launch; wait for exit, then restart with a new task")
+	}
+	if s.Mode == ModeTerminal {
+		return errors.New("continue in the agent's attached terminal; programmatic PTY prompts are not supported")
+	}
+	if len(s.Pending) > 0 || len(s.Questions) > 0 {
+		return errors.New("the agent is waiting for a permission decision or question answer; resolve it first")
 	}
 	if err := ctx.Err(); err != nil {
 		return err
@@ -660,32 +771,11 @@ func (m *Manager) Prompt(ctx context.Context, id, text string) error {
 			return err
 		}
 	}
-	m.mu.Lock()
-	ls := m.live[id]
-	var pending int
-	var mode Mode
-	if ls != nil {
-		pending = len(ls.s.Pending)
-		mode = ls.s.Mode
-	}
-	m.mu.Unlock()
-	if ls == nil {
-		_, err := m.relaunch(ctx, id, text, false)
+	if localMachine(s.Machine) && (s.Status == StatusWorking || s.Status == StatusNeedsYou || len(s.Queue) > 0) {
+		_, err := m.enqueueControlled(id, ls, text)
 		return err
 	}
-	if mode == ModeProcess {
-		return errors.New("remote process mode accepts one task per launch; wait for exit, then restart with a new task")
-	}
-	if mode == ModeTerminal {
-		return errors.New("continue in the agent's attached terminal; programmatic PTY prompts are not supported")
-	}
-	if pending > 0 {
-		return errors.New("the agent is waiting for a permission decision; approve or deny it first")
-	}
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	return m.sendPrompt(ls, text)
+	return m.sendPromptControlled(ls, text, "", false)
 }
 
 // Approve answers a pending permission request. The decision is made here, in the daemon,
@@ -713,16 +803,31 @@ func (m *Manager) Approve(ctx context.Context, id, requestID string, allow bool,
 			allow, reason = false, policyErr.Error()
 		}
 	}
-	if err := ls.proc.Respond(requestID, allow, reason); err != nil {
-		m.cfg.Audit("agent.permission", id, "error", err.Error())
+	ls.controlMu.Lock()
+	defer ls.controlMu.Unlock()
+	if err := ctx.Err(); err != nil {
 		return err
+	}
+	m.mu.Lock()
+	current := false
+	if m.live[id] == ls && !ls.stopping && !m.closing {
+		for _, pending := range ls.s.Pending {
+			if pending.ID == req.ID && pending.Tool == req.Tool && pending.Summary == req.Summary &&
+				pending.At.Equal(req.At) && pending.InputJSON == req.InputJSON && string(pending.Input) == string(req.Input) {
+				current = true
+			}
+		}
+	}
+	m.mu.Unlock()
+	if !current {
+		return errors.New("permission request changed or was withdrawn before dispatch")
 	}
 	outcome := "allowed"
 	if !allow {
 		outcome = "denied"
 	}
-	m.cfg.Audit("agent.permission", id, outcome, req.Tool+": "+truncate(req.Summary, 300))
-	m.record(id, Event{Kind: EvDecision, Text: outcome + " " + req.Tool, Data: jraw(map[string]any{"id": requestID, "allow": allow, "reason": reason, "tool": req.Tool})})
+	// Claim exactly once before touching the process. On failure it is unsafe to
+	// assume a reply was not delivered and offer the same approval again.
 	_, err := m.mutate(id, func(s *Session) {
 		rest := s.Pending[:0:0]
 		for _, p := range s.Pending {
@@ -731,26 +836,49 @@ func (m *Manager) Approve(ctx context.Context, id, requestID string, allow bool,
 			}
 		}
 		s.Pending = rest
-		if len(rest) == 0 && s.Status == StatusNeedsYou {
+		if len(rest) == 0 && len(s.Questions) == 0 && s.Status == StatusNeedsYou {
 			s.Status, s.Activity = StatusWorking, "Continuing after "+outcome
 		}
 	})
 	if err != nil {
 		return err
 	}
+	if err := ls.proc.Respond(requestID, allow, reason); err != nil {
+		m.mu.Lock()
+		ls.deliveryUncertain = true
+		m.mu.Unlock()
+		m.cfg.Audit("agent.permission", id, "error", err.Error())
+		m.record(id, Event{Kind: EvPermCancel, Data: jraw(map[string]string{"id": requestID}), Text: "Permission response delivery is uncertain."})
+		_, _ = m.mutate(id, func(s *Session) { pauseQueue(s, "Permission response delivery is uncertain.") })
+		return err
+	}
+	m.cfg.Audit("agent.permission", id, outcome, req.Tool+": "+truncate(req.Summary, 300))
+	m.record(id, Event{Kind: EvDecision, Text: outcome + " " + req.Tool, Data: jraw(map[string]any{"id": requestID, "allow": allow, "reason": reason, "tool": req.Tool})})
 	return policyErr
 }
 
 // Stop ends a running session's process tree.
 func (m *Manager) Stop(ctx context.Context, id string) (Session, error) {
-	m.mu.Lock()
-	ls := m.live[id]
-	if ls != nil {
-		ls.stopping = true
-	}
-	m.mu.Unlock()
+	ls := m.controlSession(id)
 	if ls == nil {
 		return Session{}, errors.New("agent is not running")
+	}
+	ls.controlMu.Lock()
+	m.mu.Lock()
+	if m.live[id] != ls {
+		m.mu.Unlock()
+		ls.controlMu.Unlock()
+		return m.Get(id)
+	}
+	ls.stopping = true
+	s, persistErr := m.mutateLocked(id, func(s *Session) {
+		s.Pending, s.Questions = nil, nil
+		pauseQueue(s, "The agent was stopped. Resume the queue explicitly.")
+	})
+	m.mu.Unlock()
+	ls.controlMu.Unlock()
+	if persistErr == nil {
+		m.cfg.Publish("agents.updated", s)
 	}
 	m.cfg.Audit("agent.stop", id, "allowed", "")
 	if err := ls.proc.Stop(); err != nil {
@@ -966,7 +1094,27 @@ func lastLines(text string, n int) string {
 
 // apply folds one process event into the session record.
 func (m *Manager) apply(id string, e Event) {
+	ls := m.controlSession(id)
+	if ls == nil {
+		return
+	}
+	ls.controlMu.Lock()
+	defer ls.controlMu.Unlock()
+	m.mu.Lock()
+	current := m.live[id] == ls
+	stopping := ls.stopping || m.closing
+	m.mu.Unlock()
+	if !current {
+		return
+	}
+	// Late requests during stop cannot resurrect an actionable permission/form.
+	if stopping && (e.Kind == EvQuestion || e.Kind == EvPermission) {
+		return
+	}
 	e = m.record(id, e)
+	if m.applyChatEvent(id, e) {
+		return
+	}
 	var data map[string]json.RawMessage
 	_ = json.Unmarshal(e.Data, &data)
 	str := func(k string) string {
@@ -1003,7 +1151,7 @@ func (m *Manager) apply(id string, e Event) {
 		_, _ = m.mutate(id, func(s *Session) { s.Activity = truncate(e.Text, 160) })
 	case EvWorking:
 		_, _ = m.mutate(id, func(s *Session) {
-			if s.Status != StatusNeedsYou || len(s.Pending) == 0 {
+			if s.Status != StatusNeedsYou || (len(s.Pending) == 0 && len(s.Questions) == 0) {
 				s.Status = StatusWorking
 			}
 			if e.Text != "" {
@@ -1031,7 +1179,7 @@ func (m *Manager) apply(id string, e Event) {
 				}
 			}
 			s.Pending = rest
-			if len(rest) == 0 && s.Status == StatusNeedsYou {
+			if len(rest) == 0 && len(s.Questions) == 0 && s.Status == StatusNeedsYou {
 				s.Status, s.Activity = StatusWorking, "Working"
 			}
 		})
@@ -1040,6 +1188,9 @@ func (m *Manager) apply(id string, e Event) {
 			s.Status, s.Activity = StatusNeedsYou, truncate(e.Text, 160)
 		})
 	case EvTurnDone:
+		m.mu.Lock()
+		ls.deliveryUncertain = false // observed completion; paused entries still require explicit resume
+		m.mu.Unlock()
 		ok := true
 		_ = json.Unmarshal(data["ok"], &ok)
 		result := str("result")
@@ -1049,6 +1200,7 @@ func (m *Manager) apply(id string, e Event) {
 		s, err := m.mutate(id, func(s *Session) {
 			s.Turns++
 			s.Pending = []PermissionRequest{}
+			s.Questions = nil
 			s.Result = truncate(result, 32<<10)
 			if result != "" && s.LastMessage == "" {
 				s.LastMessage = truncate(result, 32<<10)
@@ -1063,6 +1215,7 @@ func (m *Manager) apply(id string, e Event) {
 				}
 			} else {
 				s.Status, s.Activity, s.Error = StatusFailed, "", truncate(result, 2000)
+				pauseQueue(s, "The previous turn failed. Resume the queue explicitly.")
 			}
 		})
 		if err == nil {
@@ -1070,6 +1223,15 @@ func (m *Manager) apply(id string, e Event) {
 				m.cfg.Finished(s)
 			}
 			m.background(func() { m.refreshDiffStat(s.ID) })
+			if ok {
+				m.background(func() {
+					ls.controlMu.Lock()
+					defer ls.controlMu.Unlock()
+					if err := m.dispatchQueueControlled(ls); err != nil {
+						m.cfg.Log.Warn("queued prompt dispatch failed", "session", id, "err", err)
+					}
+				})
+			}
 		}
 	}
 }
@@ -1082,6 +1244,8 @@ func wakeIdle(s *Session) {
 
 // finalize records the process exit and removes the session from the live set.
 func (m *Manager) finalize(ls *liveSess, e Event) {
+	ls.controlMu.Lock()
+	defer ls.controlMu.Unlock()
 	id := ls.id
 	var d struct {
 		Code      int    `json:"code"`
@@ -1097,12 +1261,18 @@ func (m *Manager) finalize(ls *liveSess, e Event) {
 	m.record(id, e)
 
 	m.mu.Lock()
+	if m.live[id] != ls {
+		m.mu.Unlock()
+		return
+	}
 	stopping, shutdown := ls.stopping || d.Stopped, ls.shutdown
 	completedTurn := ls.s.Status == StatusDone || ls.s.Status == StatusFailed
 	s, err := m.mutateLocked(id, func(s *Session) {
 		now := time.Now().UTC()
 		code := d.Code
 		s.ExitCode, s.EndedAt, s.Pending, s.Activity = &code, &now, []PermissionRequest{}, ""
+		s.Questions = nil
+		pauseQueue(s, "The agent process ended. Resume the queue explicitly.")
 		switch {
 		case d.Uncertain:
 			s.Status, s.Error, s.ExitCode = StatusLost, d.Stderr, nil

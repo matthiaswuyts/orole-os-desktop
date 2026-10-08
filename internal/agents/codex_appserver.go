@@ -185,6 +185,7 @@ type codexProc struct {
 	items    map[string]codexItem
 	pending  map[string]*codexPending // by Orole permission id
 	byRPC    map[string]string        // JSON-RPC request id -> permission id
+	inputs   map[string]codexInput    // by immutable Orole question id
 	live     map[string]string        // streamed text per item id, for the activity line
 	liveAt   time.Time
 }
@@ -285,7 +286,15 @@ func (p *codexProc) run(stdout io.Reader) {
 		ch <- rpcResp{err: errors.New("codex app-server exited")}
 		delete(p.calls, id)
 	}
+	var canceled []string
+	for id := range p.inputs {
+		delete(p.inputs, id)
+		canceled = append(canceled, id)
+	}
 	p.mu.Unlock()
+	for _, id := range canceled {
+		p.emit(Event{Kind: EvQuestionCancel, Data: jraw(map[string]string{"id": id})})
+	}
 	p.emit(Event{Kind: EvExit, Data: jraw(map[string]any{"code": code, "stopped": p.stopping.Load(), "stderr": p.stderr.String()})})
 	close(p.events)
 }
@@ -403,9 +412,9 @@ func (p *codexProc) dispatch(line []byte) {
 func (p *codexProc) handshake(spec LaunchSpec) error {
 	if _, err := p.call("initialize", map[string]any{
 		"clientInfo": map[string]any{"name": "orole", "title": "Orole OS", "version": "1"},
-		"capabilities": map[string]any{"experimentalApi": false, "optOutNotificationMethods": []string{
+		"capabilities": map[string]any{"experimentalApi": true, "optOutNotificationMethods": []string{
 			"item/commandExecution/outputDelta", "item/fileChange/outputDelta", "command/exec/outputDelta",
-			"process/outputDelta", "thread/tokenUsage/updated", "account/rateLimits/updated",
+			"process/outputDelta", "account/rateLimits/updated",
 			"mcpServer/startupStatus/updated", "turn/diff/updated", "thread/status/changed",
 		}},
 	}, codexCallTimeout); err != nil {

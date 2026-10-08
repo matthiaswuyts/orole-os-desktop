@@ -104,7 +104,7 @@ func (c Claude) Start(ctx context.Context, h *Host, spec LaunchSpec) (Process, e
 		return append(b, '\n')
 	}
 	p.encodeReply = encodeClaudeReply
-	return p, nil
+	return &claudeProc{pipeProc: p, decoder: &decoder}, nil
 }
 
 // Files keep arbitrary JSON, multiline prompts and large skill indexes out of command
@@ -221,10 +221,17 @@ type claudeMsg struct {
 	SessionID string `json:"session_id"`
 	Model     string `json:"model"`
 	Message   struct {
-		ID      string          `json:"id"`
-		Role    string          `json:"role"`
-		Content json.RawMessage `json:"content"`
+		ID         string          `json:"id"`
+		Role       string          `json:"role"`
+		Model      string          `json:"model"`
+		Usage      *claudeUsage    `json:"usage"`
+		StopReason string          `json:"stop_reason"`
+		Content    json.RawMessage `json:"content"`
 	} `json:"message"`
+	Usage      *claudeUsage `json:"usage"`
+	ModelUsage map[string]struct {
+		ContextWindow *int64 `json:"contextWindow"`
+	} `json:"modelUsage"`
 	IsError   bool   `json:"is_error"`
 	Result    string `json:"result"`
 	Terminal  string `json:"terminal_reason"`
@@ -236,6 +243,116 @@ type claudeMsg struct {
 		ToolUseID string          `json:"tool_use_id"`
 	} `json:"request"`
 	ParentToolUseID *string `json:"parent_tool_use_id"`
+	TaskID          string  `json:"task_id"`
+	TaskType        string  `json:"task_type"`
+	ToolUseID       string  `json:"tool_use_id"`
+	Description     string  `json:"description"`
+	Status          string  `json:"status"`
+	Summary         string  `json:"summary"`
+	OutputFile      string  `json:"output_file"`
+	Ambient         bool    `json:"ambient"`
+}
+
+type claudeUsage struct {
+	Input         *int64 `json:"input_tokens"`
+	Output        *int64 `json:"output_tokens"`
+	Cached        *int64 `json:"cache_read_input_tokens"`
+	CacheCreation *int64 `json:"cache_creation_input_tokens"`
+}
+
+type claudeInput struct {
+	wireID  string
+	input   json.RawMessage
+	request QuestionRequest
+}
+
+type claudeProc struct {
+	*pipeProc
+	decoder *claudeDecoder
+}
+
+func (p *claudeProc) AnswerInput(id string, answers []QuestionAnswer, cancel bool) error {
+	p.pmu.Lock()
+	defer p.pmu.Unlock()
+	pending, ok := p.decoder.inputs[id]
+	if !ok {
+		return fmt.Errorf("no pending question request %q", id)
+	}
+	if err := adapterValidateAnswers(pending.request, answers, cancel); err != nil {
+		return err
+	}
+	delete(p.decoder.inputs, id)
+	if cancel {
+		return p.write(encodeClaudeReply(pending.wireID, false, "The user cancelled the question.", nil))
+	}
+	// Preserve all original input fields and the exact questions array.
+	var input map[string]json.RawMessage
+	if err := json.Unmarshal(pending.input, &input); err != nil {
+		return err
+	}
+	values := make(map[string]any, len(answers))
+	for _, answer := range answers {
+		for _, q := range pending.request.Questions {
+			if q.ID == answer.QuestionID {
+				if q.Multiple {
+					values[q.Prompt] = answer.Values
+				} else {
+					values[q.Prompt] = answer.Values[0]
+				}
+			}
+		}
+	}
+	input["answers"] = jraw(values)
+	return p.write(encodeClaudeReply(pending.wireID, true, "", jraw(input)))
+}
+
+func (d *claudeDecoder) askInput(p *pipeProc, m claudeMsg) []Event {
+	var input struct {
+		Questions []struct {
+			Question    string `json:"question"`
+			Header      string `json:"header"`
+			MultiSelect bool   `json:"multiSelect"`
+			Options     []struct {
+				Label       string `json:"label"`
+				Description string `json:"description"`
+			} `json:"options"`
+		} `json:"questions"`
+	}
+	req := QuestionRequest{ID: uuid.NewString(), At: time.Now().UTC()}
+	valid := len(m.Request.Input) <= 64<<10 && json.Unmarshal(m.Request.Input, &input) == nil
+	prompts := make(map[string]bool, len(input.Questions))
+	for index, q := range input.Questions {
+		// Native answers are keyed by prompt; local IDs stay bounded even for
+		// long prompts. Duplicate native keys cannot be answered unambiguously.
+		valid = valid && !prompts[q.Question]
+		prompts[q.Question] = true
+		question := Question{ID: fmt.Sprintf("q-%d", index), Header: q.Header, Prompt: q.Question,
+			Multiple: q.MultiSelect, AllowText: true, Options: []QuestionOption{}}
+		for _, o := range q.Options {
+			question.Options = append(question.Options, QuestionOption{ID: o.Label, Label: o.Label, Description: o.Description})
+		}
+		req.Questions = append(req.Questions, question)
+	}
+	data := jraw(req)
+	p.pmu.Lock()
+	var canceled []Event
+	for id, pending := range p.pendingIn {
+		if pending.requestID == m.RequestID {
+			delete(p.pendingIn, id)
+			canceled = append(canceled, Event{Kind: EvPermCancel, Data: jraw(map[string]string{"id": id})})
+		}
+	}
+	if !valid || len(data) > 64<<10 || m.RequestID == "" || !adapterValidQuestions(req.Questions) || len(canceled) > 0 || len(d.inputs)+len(p.pendingIn) >= 64 {
+		p.pmu.Unlock()
+		_ = p.write(encodeClaudeReply(m.RequestID, false, "Question input is invalid, oversized, or reuses a pending request ID", nil))
+		return canceled
+	}
+	if d.inputs == nil {
+		d.inputs = make(map[string]claudeInput)
+	}
+	d.inputs[req.ID] = claudeInput{wireID: m.RequestID, input: append(json.RawMessage(nil), m.Request.Input...), request: req}
+	p.pmu.Unlock()
+	return []Event{{Kind: EvQuestion, Data: data}}
 }
 
 type claudeBlock struct {
@@ -248,16 +365,81 @@ type claudeBlock struct {
 	Input     json.RawMessage `json:"input"`
 	Content   json.RawMessage `json:"content"`
 	IsError   bool            `json:"is_error"`
+	Citations []struct {
+		Type          string `json:"type"`
+		Title         string `json:"title"`
+		DocumentTitle string `json:"document_title"`
+		URL           string `json:"url"`
+		Source        string `json:"source"`
+		CitedText     string `json:"cited_text"`
+	} `json:"citations"`
 }
 
 // The stdout reader calls decode serially. Keep call metadata only until its
 // result so result cards retain tool names even though Claude sends only an ID.
 type claudeDecoder struct {
-	tools map[string]ToolData
+	tools     map[string]ToolData
+	inputs    map[string]claudeInput // guarded by pipeProc.pmu
+	model     string
+	subagents map[string]SubagentData
 }
 
 func (d *claudeDecoder) decode(p *pipeProc, line []byte) []Event {
-	events := decodeClaude(p, line)
+	var m claudeMsg
+	if json.Unmarshal(line, &m) != nil {
+		return []Event{{Kind: EvActivity, Text: truncate(string(line), 200)}}
+	}
+	if m.Model != "" {
+		d.model = m.Model
+	}
+	if m.Type == "assistant" && m.ParentToolUseID == nil && m.Message.Model != "" {
+		d.model = m.Message.Model
+	}
+	if m.Type == "result" {
+		m.Model = d.model
+	}
+	var canceled []Event
+	if p != nil && (m.Type == "control_request" || m.Type == "control_cancel_request" || m.Type == "result") {
+		p.pmu.Lock()
+		for id, pending := range d.inputs {
+			if m.Type == "result" || pending.wireID == m.RequestID {
+				delete(d.inputs, id)
+				canceled = append(canceled, Event{Kind: EvQuestionCancel, Data: jraw(map[string]string{"id": id})})
+			}
+		}
+		p.pmu.Unlock()
+		if m.Type == "control_request" && len(canceled) > 0 {
+			_ = p.write(encodeClaudeReply(m.RequestID, false, "A pending request ID cannot be reused", nil))
+			return canceled
+		}
+	}
+	if m.Type == "control_request" && m.Request.Subtype == "can_use_tool" && m.Request.ToolName == "AskUserQuestion" {
+		return d.askInput(p, m)
+	}
+	events := append(canceled, decodeClaudeMessage(p, m)...)
+	if m.Type == "system" && m.TaskID != "" && !m.Ambient {
+		switch m.Subtype {
+		case "task_started":
+			if m.TaskType == "local_agent" || m.TaskType == "remote_agent" {
+				if d.subagents == nil {
+					d.subagents = make(map[string]SubagentData)
+				}
+				agent := SubagentData{ID: m.TaskID, Status: "started", Task: m.Description, ToolCallID: m.ToolUseID}
+				d.subagents[m.TaskID] = agent
+				events = append(events, Event{Kind: EvSubagent, Data: jraw(agent)})
+			}
+		case "task_notification":
+			if agent, ok := d.subagents[m.TaskID]; ok {
+				agent.Status, agent.Message = m.Status, m.Summary
+				delete(d.subagents, m.TaskID)
+				events = append(events, Event{Kind: EvSubagent, Data: jraw(agent)})
+			}
+			if m.OutputFile != "" {
+				events = append(events, Event{Kind: EvFile, Data: jraw(FileData{ID: m.TaskID, Path: m.OutputFile,
+					Name: filepath.Base(m.OutputFile), Status: m.Status, Summary: m.Summary})})
+			}
+		}
+	}
 	for i := range events {
 		ev := &events[i]
 		if ev.Kind != EvTool && ev.Kind != EvToolResult {
@@ -288,11 +470,7 @@ func claudeToolName(name string) (string, string) {
 	return name, ""
 }
 
-func decodeClaude(p *pipeProc, line []byte) []Event {
-	var m claudeMsg
-	if err := json.Unmarshal(line, &m); err != nil {
-		return []Event{{Kind: EvActivity, Text: truncate(string(line), 200)}}
-	}
+func decodeClaudeMessage(p *pipeProc, m claudeMsg) []Event {
 	switch m.Type {
 	case "system":
 		if m.Subtype == "init" {
@@ -308,6 +486,25 @@ func decodeClaude(p *pipeProc, line []byte) []Event {
 				if t := strings.TrimSpace(b.Text); t != "" {
 					out = append(out, Event{Kind: EvMessage, Text: t})
 				}
+				var sources []SourceReference
+				for citationIndex, citation := range b.Citations {
+					source := SourceReference{ID: fmt.Sprintf("%s-%d-%d", m.Message.ID, index, citationIndex),
+						Title: citation.Title, Snippet: citation.CitedText}
+					switch citation.Type {
+					case "web_search_result_location":
+						source.URL = citation.URL
+					case "search_result_location":
+						source.URL = citation.Source
+					case "char_location", "page_location", "content_block_location":
+						source.Title = citation.DocumentTitle
+					default:
+						continue
+					}
+					sources = append(sources, source)
+				}
+				if len(sources) > 0 {
+					out = append(out, Event{Kind: EvSources, Data: jraw(SourcesData{ID: fmt.Sprintf("%s-%d", m.Message.ID, index), Items: sources})})
+				}
 			case "thinking":
 				if strings.TrimSpace(b.Thinking) != "" {
 					out = append(out, Event{Kind: EvReasoning, Text: b.Thinking,
@@ -322,6 +519,24 @@ func decodeClaude(p *pipeProc, line []byte) []Event {
 				out = append(out, Event{Kind: EvTool, Text: label + ": " + summarizeTool(name, b.Input),
 					Data: jraw(ToolData{ID: b.ID, Name: name, Server: server, Status: "running", Input: b.Input})})
 			}
+		}
+		if m.ParentToolUseID == nil {
+			if u := m.Message.Usage; u != nil {
+				usage := ContextUsage{Source: "claude:assistant:usage", InputTokens: u.Input, CachedTokens: u.Cached}
+				// Output counts on assistant messages can be placeholders. Only
+				// result.usage reports reliable output counts.
+				if observedTokens(u.Input) != nil && observedTokens(u.Cached) != nil && observedTokens(u.CacheCreation) != nil {
+					context := *u.Input + *u.Cached + *u.CacheCreation
+					if context >= *u.Input && context >= *u.Cached && context >= *u.CacheCreation {
+						usage.ContextTokens = &context
+					}
+				}
+				out = append(out, usageEvent(usage)...)
+			}
+		}
+		if m.Message.StopReason == "refusal" {
+			out = append(out, Event{Kind: EvGuardrail, Data: jraw(GuardrailData{ID: m.Message.ID,
+				Kind: "refusal", Message: "The provider reported a refusal.", Source: "claude:message.stop_reason"})})
 		}
 		return out
 	case "user":
@@ -385,7 +600,20 @@ func decodeClaude(p *pipeProc, line []byte) []Event {
 		if !ok && res == "" {
 			res = strings.TrimSpace(m.Subtype + " " + m.Terminal)
 		}
-		return []Event{{Kind: EvTurnDone, Text: res, Data: jraw(map[string]any{"ok": ok, "result": res, "subtype": m.Subtype})}}
+		var out []Event
+		usage := ContextUsage{Source: "claude:result:usage"}
+		if m.Usage != nil {
+			usage.InputTokens, usage.OutputTokens, usage.CachedTokens = m.Usage.Input, m.Usage.Output, m.Usage.Cached
+		}
+		if model, ok := m.ModelUsage[m.Model]; ok {
+			usage.ContextWindow = model.ContextWindow
+		} else if m.Model == "" && len(m.ModelUsage) == 1 {
+			for _, model := range m.ModelUsage {
+				usage.ContextWindow = model.ContextWindow
+			}
+		}
+		out = append(out, usageEvent(usage)...)
+		return append(out, Event{Kind: EvTurnDone, Text: res, Data: jraw(map[string]any{"ok": ok, "result": res, "subtype": m.Subtype})})
 	}
 	return nil
 }

@@ -23,9 +23,58 @@ type codexPending struct {
 	deny   any
 }
 
+// RequestId is a string or integer. Canonical JSON prevents escaped spellings
+// of the same string ID from bypassing pending-snapshot identity checks.
+func codexRequestID(raw json.RawMessage) (json.RawMessage, bool) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil, false
+	}
+	var text *string
+	if json.Unmarshal(raw, &text) == nil && text != nil {
+		return jraw(*text), true
+	}
+	var number *int64
+	if json.Unmarshal(raw, &number) == nil && number != nil {
+		return jraw(*number), true
+	}
+	return nil, false
+}
+
 // serverRequest handles requests Codex sends to its client. Everything that blocks the agent is
 // either shown to the user (EvPermission) or answered immediately and visibly.
 func (p *codexProc) serverRequest(m rpcMsg) {
+	canonical, valid := codexRequestID(m.ID)
+	if !valid {
+		p.replyError(json.RawMessage("null"), -32600, "Invalid request ID")
+		return
+	}
+	m.ID = canonical
+	// A reused wire ID cannot replace a displayed snapshot (including crossing
+	// the permission/input boundary). Withdraw the old request and fail closed.
+	p.mu.Lock()
+	duplicate := false
+	var withdrawn []Event
+	if id, ok := p.byRPC[string(m.ID)]; ok {
+		delete(p.byRPC, string(m.ID))
+		delete(p.pending, id)
+		duplicate = true
+		withdrawn = append(withdrawn, Event{Kind: EvPermCancel, Data: jraw(map[string]string{"id": id})})
+	}
+	for id, pending := range p.inputs {
+		if string(pending.rpcID) == string(m.ID) {
+			delete(p.inputs, id)
+			duplicate = true
+			withdrawn = append(withdrawn, Event{Kind: EvQuestionCancel, Data: jraw(map[string]string{"id": id})})
+		}
+	}
+	p.mu.Unlock()
+	if duplicate {
+		for _, e := range withdrawn {
+			p.emit(e)
+		}
+		p.replyError(m.ID, -32600, "A pending request ID cannot be reused")
+		return
+	}
 	switch m.Method {
 	case "item/commandExecution/requestApproval":
 		p.commandApproval(m)
@@ -271,35 +320,104 @@ func (p *codexProc) elicitation(m rpcMsg) {
 	p.ask(m, "mcp:"+e.Server, e.Message, m.Params, map[string]any{"action": "accept", "content": nil}, declined)
 }
 
-// userInput refuses Codex's clarifying questions: Orole has no way to show answer fields yet, and
-// failing the call tells the model to continue on its own judgement.
+type codexInput struct {
+	rpcID   json.RawMessage
+	request QuestionRequest
+}
+
+// The installed 0.156.1 ToolRequestUserInput schemas define labels as wire
+// values, nullable options, isOther, isSecret, and an answers map.
 func (p *codexProc) userInput(m rpcMsg) {
 	var a struct {
+		ThreadID  string `json:"threadId"`
 		Questions []struct {
+			ID       string `json:"id"`
+			Header   string `json:"header"`
 			Question string `json:"question"`
+			IsOther  bool   `json:"isOther"`
+			IsSecret bool   `json:"isSecret"`
+			Options  []struct {
+				Label       string `json:"label"`
+				Description string `json:"description"`
+			} `json:"options"`
 		} `json:"questions"`
 	}
-	_ = json.Unmarshal(m.Params, &a)
-	var qs []string
-	for _, q := range a.Questions {
-		qs = append(qs, q.Question)
+	if len(m.Params) > codexPermInputCap || json.Unmarshal(m.Params, &a) != nil {
+		p.replyError(m.ID, -32602, "Invalid or oversized user input request")
+		return
 	}
-	p.replyError(m.ID, -32000, "The user cannot be asked questions in this session; continue with your best judgement and state your assumptions.")
-	p.emit(Event{Kind: EvSystem, Text: "Codex asked a question Orole cannot show yet: " + truncate(strings.Join(qs, " / "), 400)})
+	req := QuestionRequest{ID: uuid.NewString(), At: time.Now().UTC()}
+	for _, q := range a.Questions {
+		question := Question{ID: q.ID, Header: q.Header, Prompt: q.Question,
+			AllowText: q.IsOther || len(q.Options) == 0, Secret: q.IsSecret, Options: []QuestionOption{}}
+		for _, o := range q.Options {
+			question.Options = append(question.Options, QuestionOption{ID: o.Label, Label: o.Label, Description: o.Description})
+		}
+		req.Questions = append(req.Questions, question)
+	}
+	data := jraw(req)
+	p.mu.Lock()
+	if len(data) > 64<<10 || !adapterValidQuestions(req.Questions) || a.ThreadID != p.threadID || len(p.inputs) >= 64 || p.closed {
+		p.mu.Unlock()
+		p.replyError(m.ID, -32602, "Invalid, foreign, or excessive user input request")
+		return
+	}
+	if p.inputs == nil {
+		p.inputs = make(map[string]codexInput)
+	}
+	p.inputs[req.ID] = codexInput{rpcID: append(json.RawMessage(nil), m.ID...), request: req}
+	p.mu.Unlock()
+	p.emit(Event{Kind: EvQuestion, Data: data})
+}
+
+func (p *codexProc) AnswerInput(id string, answers []QuestionAnswer, cancel bool) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	pending, ok := p.inputs[id]
+	if !ok || p.closed {
+		return fmt.Errorf("no pending question request %q", id)
+	}
+	if err := adapterValidateAnswers(pending.request, answers, cancel); err != nil {
+		return err
+	}
+	// Consume even on write failure: delivery is uncertain, never replay a reply.
+	delete(p.inputs, id)
+	result := make(map[string]any, len(answers))
+	for _, answer := range answers {
+		result[answer.QuestionID] = map[string]any{"answers": answer.Values}
+	}
+	// The native response has no cancel flag. An empty answers map represents
+	// no answers, unlike an approval or a fabricated text answer.
+	return p.reply(pending.rpcID, map[string]any{"answers": result})
 }
 
 // requestResolved drops a pending request the server no longer waits for (turn interrupted,
 // answered elsewhere).
 func (p *codexProc) requestResolved(rpcID json.RawMessage) {
+	canonical, valid := codexRequestID(rpcID)
+	if !valid {
+		return
+	}
+	rpcID = canonical
 	p.mu.Lock()
 	id, ok := p.byRPC[string(rpcID)]
 	if ok {
 		delete(p.byRPC, string(rpcID))
 		delete(p.pending, id)
 	}
+	var questions []string
+	for questionID, pending := range p.inputs {
+		if string(pending.rpcID) == string(rpcID) {
+			delete(p.inputs, questionID)
+			questions = append(questions, questionID)
+		}
+	}
 	p.mu.Unlock()
 	if ok {
 		p.emit(Event{Kind: EvPermCancel, Data: jraw(map[string]string{"id": id})})
+	}
+	for _, questionID := range questions {
+		p.emit(Event{Kind: EvQuestionCancel, Data: jraw(map[string]string{"id": questionID})})
 	}
 }
 

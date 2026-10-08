@@ -289,18 +289,38 @@ The titlebar's command-palette plus button is removed; the keyboard shortcut rem
 terminal-mode sessions. Sheets retain accessible titles, close controls and focus handling.
 Review decisions stay in the Review view.
 
-- **Feed**: `lib/taskEvents.ts` parses `Event.data` per kind (the contract is `internal/agents/types.go`: `ToolData`,
-  `ImageData`, `PermissionRequest`, reasoning `{id}`, `turn_done {ok,result}`) and groups events into items: user prompt,
-  Markdown assistant message, reasoning (collapsed, one-line preview), tool card (call and result merged by `ToolData.id`;
-  data-less legacy events pair in order and settle to "No result recorded" at the turn end), generated image, permission
-  card (keeps the review-checkbox rule), notes, errors and turn separators with duration. History is the newest 500
-  events (`Agents.transcript`, "Load earlier messages" asks for more); live events merge by id; the feed follows the
-  newest event until the user scrolls up. "Thinking…" shows from `Session.activity` while a live session is working.
-- **Markdown** (`components/Markdown.tsx`, `react-markdown` + `remark-gfm`): agent text is untrusted. No raw HTML is parsed,
-  remote images are never fetched (generated images load through `Agents.artifact` into raster `data:` URLs), and links
-  open only http(s) through `Shell.openExternal` (`lib/openExternal.ts`).
-- **Composer**: sends with `Agents.prompt`; when the harness cannot take input (terminal mode live, SSH process) it is
-  disabled and says why.
+`features/tasks/TaskView.tsx` wraps the real conversation and composer in `TaskCanvas`; file, image,
+and diff selections open a responsive side canvas without removing chat or the titlebar Changes sheet.
+
+- **Feed/navigation** (`Feed.tsx`, `lib/taskEvents.ts`): `chat_types.go` defines structured provider
+  payloads; `taskChatTypes.ts` mirrors `Event.data` payloads not reachable through generated services.
+  Feed items normalize provider events without inferring unsupported hierarchy, progress, citations, or
+  context data. Search covers loaded transcript events only; loading older history remains available.
+  Day boundaries use local calendar time. Follow-scroll pauses when the reader leaves the end, retains
+  the anchor when older pages prepend, and offers a return-to-latest control.
+- **Activity/artifacts**: correlated tool call/results, policy decisions, questions/answers, provider
+  child-agent state, real sources, files and image-generation stages appear only where the harness reports
+  them. Questions and tool permissions have separate daemon APIs and lifecycles. Follow-up queue states
+  are daemon-owned and durable; restart never replays ambiguous sends. Queue dispatch never launches an
+  agent process.
+- **Canvas/files** (`TaskCanvas.tsx`, `TaskFileTree.tsx`): navigation is limited to reported/changed
+  files; `Agents.taskFile` reads through an OS-rooted local workspace boundary. Previews are bounded,
+  inert text/raster data; remote sessions do not receive local-file access. Diffs use the existing
+  daemon git operation and `DiffView`.
+- **Markdown** (`components/Markdown.tsx`, `react-markdown` + `remark-gfm`): agent text is untrusted.
+  No raw HTML is parsed; images are local daemon-returned raster `data:` URLs, and links open only http(s)
+  through `Shell.openExternal`. Code uses lazy CodeMirror/Lezer highlighting; unknown languages remain
+  inert text.
+- **Composer**: ordinary follow-up prompts use `Agents.prompt`; a live busy local structured session
+  queues through daemon-owned `queuePrompt`, with explicit cancellation/resume and uncertain-delivery
+  state. Context shows nullable provider-reported measurements only, never an inferred token breakdown.
+  Optional Web Speech dictation requires an explicit cloud-processing disclosure and consent; transcripts
+  remain editable and are never sent automatically. Unsupported desktop WebViews can use text input.
+- **Harness limits**: installed Claude Code 2.1.289, Codex CLI 0.156.1, and Oh My Pi 18.8.4 protocols
+  were inspected. Codex and OMP support typed question responses and authoritative context occupancy;
+  Claude contributes only fields its stream actually reports. Sources are structured harness output,
+  not URLs guessed from prose. Child-agent status and image-generation stages are provider-specific.
+  Terminal/process sessions do not advertise these structured capabilities.
 - **Publish** (Changes sheet, `PublishPanel`): commit message, Commit, Push branch, Open pull request (title, base, body,
   draft). Push and PR show a confirmation listing the branch, remote and PR title/base, then call `Agents.publish` with
   `confirmed: true`. The panel calls the daemon once per step (commit, push, PR) so progress and a failure are attributed

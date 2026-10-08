@@ -281,24 +281,23 @@ func TestCodexAppServer(t *testing.T) {
 		}
 	})
 
-	t.Run("follow-up steers the running turn", func(t *testing.T) {
+	t.Run("follow-up queues without steering the running turn", func(t *testing.T) {
 		e, log := newCodexEnv(t, fake)
 		s := e.start(t, agents.StartSpec{Kind: "codex", Prompt: "SLOW start"})
 		e.wait(t, s.ID, "working", func(s agents.Session) bool { return s.Status == agents.StatusWorking && s.AgentSessionID != "" })
 		if err := e.m.Prompt(ctx10(t), s.ID, "change course"); err != nil {
 			t.Fatal(err)
 		}
-		s = e.wait(t, s.ID, "done", status(agents.StatusDone))
-		if s.LastMessage != "steered: change course" {
-			t.Fatalf("steer text: %q", s.LastMessage)
+		s = e.wait(t, s.ID, "queued", func(s agents.Session) bool { return len(s.Queue) == 1 })
+		if s.Queue[0].Text != "change course" || s.Queue[0].State != "queued" {
+			t.Fatalf("follow-up queue: %+v", s.Queue)
 		}
-		rs := cxRequests(t, log)
-		steer := cxDecode[map[string]any](t, cxFind(t, rs, "turn/steer").Params)
-		if steer["expectedTurnId"] != "turn-1" {
-			t.Errorf("steer params: %v", steer)
+		methods := cxMethods(cxRequests(t, log))
+		if slices.Contains(methods, "turn/steer") {
+			t.Fatalf("a queued prompt must not steer: %v", methods)
 		}
-		if n := slices.Index(cxMethods(rs), "turn/start"); n < 0 || slices.Index(cxMethods(rs)[n+1:], "turn/start") >= 0 {
-			t.Errorf("a follow-up during a turn must steer, not start a second turn: %v", cxMethods(rs))
+		if _, err := e.m.Stop(ctx10(t), s.ID); err != nil {
+			t.Fatal(err)
 		}
 	})
 
@@ -413,16 +412,21 @@ func TestCodexAppServer(t *testing.T) {
 		}
 	})
 
-	t.Run("clarifying questions are refused visibly", func(t *testing.T) {
+	t.Run("clarifying questions use a native typed answer", func(t *testing.T) {
 		e, _ := newCodexEnv(t, fake)
 		s := e.start(t, agents.StartSpec{Kind: "codex", Prompt: "ASK"})
-		s = e.wait(t, s.ID, "done", status(agents.StatusDone))
-		var noted bool
-		for _, ev := range e.events(t, s.ID) {
-			noted = noted || (ev.Kind == agents.EvSystem && strings.Contains(ev.Text, "Which database?"))
+		s = e.wait(t, s.ID, "question", func(s agents.Session) bool { return len(s.Questions) == 1 })
+		if len(s.Pending) != 0 || s.Questions[0].Questions[0].Prompt != "Which database?" {
+			t.Fatalf("question must not become permission: %+v", s)
 		}
-		if !noted || len(s.Pending) != 0 {
-			t.Fatalf("question must be reported, not left pending: %+v", s)
+		_, err := e.m.AnswerInput(ctx10(t), s.ID, s.Questions[0].ID,
+			[]agents.QuestionAnswer{{QuestionID: "a", Values: []string{"Postgres"}}}, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		s = e.wait(t, s.ID, "done", status(agents.StatusDone))
+		if len(s.Questions) != 0 || s.LastMessage != "asked" {
+			t.Fatalf("question did not resolve: %+v", s)
 		}
 	})
 

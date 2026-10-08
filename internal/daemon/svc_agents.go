@@ -184,6 +184,7 @@ func (d *Daemon) registerAgents() {
 		}
 		return err
 	}
+	d.registerAgentsChat(mapErr)
 
 	handle(d, "agents.detect", func(ctx context.Context, p struct {
 		Refresh bool `json:"refresh"`

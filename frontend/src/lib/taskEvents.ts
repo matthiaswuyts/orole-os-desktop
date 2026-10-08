@@ -1,4 +1,5 @@
-import type { Event as AgentEvent, PermissionRequest, Session } from "@/mygo";
+import type { Event as AgentEvent, PermissionRequest, Question, QuestionAnswer, QuestionRequest, Session } from "@/mygo";
+import type { FileData, GuardrailData, ImageStatusData, SourceReference, SubagentData } from "./taskChatTypes";
 
 /**
  * Typed view of a session's event history. The Go side (internal/agents/types.go) stores one
@@ -8,7 +9,7 @@ import type { Event as AgentEvent, PermissionRequest, Session } from "@/mygo";
  */
 
 /** Event kinds that make up the readable conversation. Everything else (init, activity...) is ignored. */
-export const FEED_KINDS: readonly string[] = ["prompt", "message", "reasoning", "tool", "tool_result", "image", "permission", "decision", "turn_done", "error", "system", "needs_input"];
+export const FEED_KINDS: readonly string[] = ["prompt", "message", "reasoning", "tool", "tool_result", "image", "permission", "decision", "turn_done", "error", "system", "needs_input", "usage", "question", "question_cancel", "answer", "sources", "file", "image_status", "subagent", "guardrail"];
 
 export type ToolStatus = "running" | "ok" | "error" | "unknown";
 
@@ -37,7 +38,13 @@ export type FeedItem =
   | (Base & { type: "reasoning"; text: string; reasoningId: string })
   | (Base & { type: "tool"; call: ToolCall })
   | (Base & { type: "image"; image: ImageInfo })
-  | (Base & { type: "permission"; request: PermissionRequest })
+  | (Base & { type: "permission"; request: PermissionRequest; decision?: { allow: boolean; reason: string } })
+  | (Base & { type: "sources"; sources: SourceReference[] })
+  | (Base & { type: "file"; file: FileData })
+  | (Base & { type: "generation"; generation: ImageStatusData; image?: ImageInfo })
+  | (Base & { type: "subagent"; agent: SubagentData })
+  | (Base & { type: "guardrail"; notice: GuardrailData })
+  | (Base & { type: "question"; request: QuestionRequest; answers?: QuestionAnswer[]; cancelled?: boolean })
   | (Base & { type: "note"; kind: "system" | "decision" | "needs_input"; text: string })
   | (Base & { type: "error"; text: string })
   | (Base & { type: "turn"; ok: boolean; result: string; durationMs: number | null });
@@ -94,6 +101,23 @@ export function parsePermission(ev: AgentEvent): PermissionRequest {
   return { id: d.id ?? String(ev.id), tool: d.tool ?? ev.text, summary: d.summary ?? ev.text, at: d.at ?? ev.at, input: d.input, inputJSON: d.inputJSON ?? "" };
 }
 
+function parseQuestion(ev: AgentEvent): QuestionRequest | null {
+  const d = dataOf(ev);
+  if (!str(d.id) || !Array.isArray(d.questions)) return null;
+  const questions: Question[] = d.questions.filter(isRecord).filter((q) => str(q.id) && str(q.prompt)).map((q) => ({
+    id: str(q.id), header: str(q.header), prompt: str(q.prompt),
+    options: Array.isArray(q.options) ? q.options.filter(isRecord).filter((o) => str(o.id) && str(o.label)).map((o) => ({ id: str(o.id), label: str(o.label), description: str(o.description) })) : [],
+    multiple: q.multiple === true, allowText: q.allowText === true, secret: q.secret === true,
+  }));
+  return questions.length ? { id: str(d.id), questions, at: str(d.at) || ev.at, ...(str(d.expiresAt) ? { expiresAt: str(d.expiresAt) } : {}) } : null;
+}
+
+function parseAnswers(value: unknown): QuestionAnswer[] {
+  return Array.isArray(value) ? value.filter(isRecord).filter((a) => str(a.questionId) && Array.isArray(a.values)).map((a) => ({
+    questionId: str(a.questionId), values: (a.values as unknown[]).filter((v): v is string => typeof v === "string"),
+  })) : [];
+}
+
 export interface TurnDone { ok: boolean; result: string }
 export function parseTurnDone(ev: AgentEvent): TurnDone {
   const d = dataOf(ev);
@@ -128,6 +152,24 @@ export function groupEvents(events: AgentEvent[], options: GroupOptions = { live
   const items: FeedItem[] = [];
   const toolAt = new Map<string, number>(); // ToolData.id -> index in items
   const reasoningAt = new Map<string, number>();
+  const correlatedAt = new Map<string, number>();
+  const decisions = new Map<string, { allow: boolean; reason: string }>();
+  const answers = new Map<string, { answers?: QuestionAnswer[]; cancelled: boolean }>();
+  const permissionIds = new Set<string>();
+  // Resolving events can precede requests in a partial/replayed history.
+  for (const ev of events) {
+    const d = dataOf(ev), id = str(d.id);
+    if (ev.kind === "permission") permissionIds.add(parsePermission(ev).id);
+    if (!id) continue;
+    if (ev.kind === "decision" && typeof d.allow === "boolean") decisions.set(id, { allow: d.allow, reason: str(d.reason) });
+    if (ev.kind === "answer") answers.set(id, { answers: parseAnswers(d.answers), cancelled: d.cancelled === true });
+    if (ev.kind === "question_cancel") answers.set(id, { cancelled: true });
+  }
+  const upsert = (identity: string, item: FeedItem) => {
+    const index = correlatedAt.get(identity);
+    if (index === undefined) { correlatedAt.set(identity, items.length); items.push(item); }
+    else items[index] = { ...item, key: items[index]!.key, at: items[index]!.at };
+  };
   const legacyOpen: number[] = []; // legacy calls still waiting for a result, oldest first
   let turnStart: number | null = null;
 
@@ -149,7 +191,7 @@ export function groupEvents(events: AgentEvent[], options: GroupOptions = { live
       case "reasoning": {
         const reasoningId = str(dataOf(ev).id);
         const prior = reasoningId ? reasoningAt.get(reasoningId) : undefined;
-        const item: FeedItem = { type: "reasoning", key: prior === undefined ? key : items[prior]!.key, at: ev.at, text: ev.text, reasoningId };
+        const item: FeedItem = { type: "reasoning", key: prior === undefined ? key : items[prior]!.key, at: prior === undefined ? ev.at : items[prior]!.at, text: ev.text, reasoningId };
         if (prior !== undefined) items[prior] = item;
         else { if (reasoningId) reasoningAt.set(reasoningId, items.length); items.push(item); }
         break;
@@ -181,14 +223,65 @@ export function groupEvents(events: AgentEvent[], options: GroupOptions = { live
       }
       case "image": {
         const image = parseImage(ev);
-        if (image) items.push({ type: "image", key, at: ev.at, image });
-        else items.push({ type: "note", key, at: ev.at, kind: "system", text: ev.text || "An image was generated but its file is unavailable." });
+        if (image) {
+          const identity = `image:${image.id}`;
+          const index = correlatedAt.get(identity);
+          const prior = index === undefined ? undefined : items[index];
+          upsert(identity, prior?.type === "generation" ? { ...prior, image } : { type: "image", key, at: ev.at, image });
+        } else items.push({ type: "note", key, at: ev.at, kind: "system", text: ev.text || "An image was generated but its file is unavailable." });
         break;
       }
-      case "permission":
-        items.push({ type: "permission", key, at: ev.at, request: parsePermission(ev) });
+      case "image_status": {
+        const d = dataOf(ev), id = str(d.id);
+        if (!id || !["running", "complete", "failed"].includes(str(d.status))) break;
+        const identity = `image:${id}`, index = correlatedAt.get(identity);
+        const prior = index === undefined ? undefined : items[index];
+        const generation: ImageStatusData = { id, status: str(d.status), prompt: str(d.prompt), error: str(d.error) };
+        upsert(identity, { type: "generation", key, at: ev.at, generation, image: prior?.type === "image" || prior?.type === "generation" ? prior.image : undefined });
         break;
+      }
+      case "permission": {
+        const request = parsePermission(ev);
+        upsert(`permission:${request.id}`, { type: "permission", key, at: ev.at, request, decision: decisions.get(request.id) });
+        break;
+      }
+      case "question": {
+        const request = parseQuestion(ev);
+        if (request) upsert(`question:${request.id}`, { type: "question", key, at: ev.at, request, ...answers.get(request.id) });
+        break;
+      }
+      case "sources": {
+        const d = dataOf(ev);
+        const sources: SourceReference[] = Array.isArray(d.items) ? d.items.filter(isRecord).filter((s) => str(s.url)).map((s) => ({ id: str(s.id), title: str(s.title), url: str(s.url), snippet: str(s.snippet) })) : [];
+        if (sources.length) upsert(`sources:${str(d.id) || key}`, { type: "sources", key, at: ev.at, sources });
+        break;
+      }
+      case "file": {
+        const d = dataOf(ev);
+        if (!str(d.path)) break;
+        const file: FileData = { id: str(d.id), path: str(d.path), name: str(d.name), mime: str(d.mime), status: str(d.status), summary: str(d.summary) };
+        upsert(`file:${file.id || key}`, { type: "file", key, at: ev.at, file });
+        break;
+      }
+      case "subagent": {
+        const d = dataOf(ev);
+        if (!str(d.id)) break;
+        const agent: SubagentData = { id: str(d.id), name: str(d.name), status: str(d.status), task: str(d.task), message: str(d.message), toolCallId: str(d.toolCallId) };
+        upsert(`subagent:${agent.id}`, { type: "subagent", key, at: ev.at, agent });
+        break;
+      }
+      case "guardrail": {
+        const d = dataOf(ev);
+        if (!str(d.message) && !ev.text) break;
+        const notice: GuardrailData = { id: str(d.id), kind: str(d.kind), message: str(d.message) || ev.text, source: str(d.source) };
+        upsert(`guardrail:${notice.id || key}`, { type: "guardrail", key, at: ev.at, notice });
+        break;
+      }
       case "decision":
+        // Unmatched decisions remain readable when the request is outside the loaded page.
+        if (permissionIds.has(str(dataOf(ev).id)) && typeof dataOf(ev).allow === "boolean") break;
+        items.push({ type: "note", key, at: ev.at, kind: "decision", text: ev.text });
+        break;
       case "system":
       case "needs_input":
         items.push({ type: "note", key, at: ev.at, kind: ev.kind, text: ev.text || (ev.kind === "needs_input" ? "Waiting for you." : "") });

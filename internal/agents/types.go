@@ -122,6 +122,9 @@ type Session struct {
 	Prompts      int      `json:"prompts"` // prompts sent
 	// Pending are the permission requests awaiting a decision (runtime state).
 	Pending   []PermissionRequest `json:"pending"`
+	Usage     *ContextUsage       `json:"usage,omitempty"`
+	Questions []QuestionRequest   `json:"questions,omitempty"` // runtime requests; never replayed after restart
+	Queue     []QueuedPrompt      `json:"queue,omitempty"`     // durable follow-ups, paused after daemon restart
 	Result    string              `json:"result"`
 	Error     string              `json:"error"`
 	ExitCode  *int                `json:"exitCode,omitempty"`

@@ -109,6 +109,43 @@ rounded thumb and semantic color tokens fit the requested composer reference.
 Tick geometry, spring-driven fill/handle and reduced-motion support are retained.
 The full MIT notice, copyright (c) 2026 Saurabh Chauhan, is retained in the source.
 
+### BeUI image-generation presentation
+
+Source: [starc007/ui-components](https://github.com/starc007/ui-components/tree/cbc23255f962098a93a2c103d39e11f93b61d059),
+commit `cbc23255f962098a93a2c103d39e11f93b61d059`,
+[`components/agents/image-generation.tsx`](https://raw.githubusercontent.com/starc007/ui-components/cbc23255f962098a93a2c103d39e11f93b61d059/components/agents/image-generation.tsx).
+Adapted path: `frontend/src/features/tasks/TaskImages.tsx`. The image card keeps the
+stable status/media/footer composition; Orole connects it to actual provider events and
+daemon-verified raster artifacts. Demo timers, dithered synthetic pixels, unsupported
+resolution/refinement stages, and regeneration controls were not copied.
+
+The upstream repository's pinned [`LICENSE`](https://raw.githubusercontent.com/starc007/ui-components/cbc23255f962098a93a2c103d39e11f93b61d059/LICENSE)
+declares MIT, Copyright (c) 2026 Saurabh Chauhan. The full notice:
+
+```text
+MIT License
+
+Copyright (c) 2026 Saurabh Chauhan
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
 ## Dependencies used without copying source
 | Project | Version | Licence | Use |
 |---|---|---|---|

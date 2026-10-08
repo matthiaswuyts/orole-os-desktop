@@ -34,9 +34,9 @@ func nullTime(t *time.Time) any {
 	return t.Unix()
 }
 
-// SaveSession inserts or updates s. Runtime-only fields (Live, Pending) are not stored.
+// SaveSession inserts or updates s. Runtime-only fields are never stored.
 func (st *Store) SaveSession(s Session, key string) error {
-	s.Live, s.Pending = false, nil
+	s.Live, s.Pending, s.Questions = false, nil, nil
 	b, err := json.Marshal(s)
 	if err != nil {
 		return err
@@ -62,6 +62,8 @@ func scanSession(sc interface{ Scan(...any) error }) (Session, error) {
 	if err := json.Unmarshal([]byte(data), &s); err != nil {
 		return Session{}, err
 	}
+	// Never resurrect requests from legacy or externally restored JSON.
+	s.Live, s.Pending, s.Questions = false, nil, nil
 	if s.Machine == "" {
 		s.Machine = "local"
 	}

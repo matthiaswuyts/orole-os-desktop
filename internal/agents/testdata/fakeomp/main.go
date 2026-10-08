@@ -12,7 +12,7 @@
 //	MCP       call the orole MCP tool skill_list through the xd:// device
 //	PERM      ask Approve/Deny for a bash tool and run it only when approved
 //	CONFIRM   ask a confirm dialog and report the answer
-//	ASK       ask a free-form select dialog (the adapter must cancel it)
+//	ASK       ask a select dialog and report the native answer/cancellation
 //	SLOW      keep the turn open ~500ms and report steered messages
 //	HANG      never finish (only abort or EOF ends the process)
 //	FAIL      end the turn with a model error
@@ -139,6 +139,8 @@ func main() {
 				emit(msg{"id": id, "type": "response", "command": typ, "success": true, "data": msg{"protocolVersion": 2}})
 			case "set_event_filter":
 				emit(msg{"id": id, "type": "response", "command": typ, "success": true, "data": msg{"events": nil, "messageUpdates": "delta"}})
+			case "set_subagent_subscription":
+				emit(msg{"id": id, "type": "response", "command": typ, "success": true, "data": msg{"level": c["level"]}})
 			case "get_state":
 				emit(msg{"id": id, "type": "response", "command": typ, "success": true, "data": msg{
 					"sessionId": sid, "sessionFile": "/fake/" + sid + ".jsonl", "model": msg{"provider": "anthropic", "id": "claude-fable-5"}, "isStreaming": false}})

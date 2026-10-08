@@ -299,20 +299,28 @@ func TestOmpConfirmDialogIsAPermission(t *testing.T) {
 	}
 }
 
-func TestOmpCancelsQuestionsItCannotAnswer(t *testing.T) {
+func TestOmpQuestionsUseNativeInputResponse(t *testing.T) {
 	r := startedOmp(t)
 	if err := r.p.Send("ASK"); err != nil {
 		t.Fatal(err)
 	}
-	evs := untilKind(t, r.p, agents.EvTurnDone)
+	evs := untilKind(t, r.p, agents.EvQuestion)
 	if countOf(evs, agents.EvPermission) != 0 {
-		t.Fatalf("a free-form question must not become an approval: %v", eventKinds(evs))
+		t.Fatalf("a question must not become an approval: %v", eventKinds(evs))
 	}
-	if sys := firstOf(t, evs, agents.EvSystem).Text; !strings.Contains(sys, "cancelled") || !strings.Contains(sys, "Which database?") {
-		t.Fatalf("system note = %q", sys)
+	req := decodeData[agents.QuestionRequest](t, firstOf(t, evs, agents.EvQuestion))
+	responder, ok := r.p.(agents.InputResponder)
+	if !ok {
+		t.Fatal("OMP must expose native input responses")
 	}
-	if msg := firstOf(t, evs, agents.EvMessage).Text; msg != "question cancelled" {
+	if err := responder.AnswerInput(req.ID, nil, true); err != nil {
+		t.Fatal(err)
+	}
+	if msg := firstOf(t, untilKind(t, r.p, agents.EvTurnDone), agents.EvMessage).Text; msg != "question cancelled" {
 		t.Fatalf("omp must see a cancelled dialog, got %q", msg)
+	}
+	if err := responder.AnswerInput(req.ID, nil, true); err == nil {
+		t.Fatal("a resolved question must not be answered twice")
 	}
 }
 

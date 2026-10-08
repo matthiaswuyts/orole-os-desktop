@@ -28,11 +28,9 @@ import (
 // completed thinking blocks become EvReasoning, completed assistant text EvMessage,
 // tool_execution_start/end EvTool/EvToolResult, and one agent_end that yields EvTurnDone.
 //
-// Approvals: omp prompts through extension_ui_request dialogs when its approval mode asks
-// (`--approval-mode always-ask|write`). A confirm dialog, or an Approve/Deny select, becomes
-// EvPermission and Respond answers it with extension_ui_response. Any other dialog (omp
-// asking the user a free-form question) cannot be answered from the dashboard and is
-// cancelled, which omp treats as "no answer".
+// Approvals remain separate from questions: confirm and Approve/Deny selects use
+// Respond, while native input/select/editor dialogs use InputResponder and their
+// exact extension_ui_response value/cancelled wire shape.
 //
 // The central gateway ("orole" MCP server) reaches omp without touching the user's omp
 // config or the repository: a per-session extension package in the session directory carries
@@ -157,7 +155,7 @@ func (o Omp) Start(ctx context.Context, h *Host, spec LaunchSpec) (Process, erro
 		return nil, err
 	}
 	pp.encodeReply = encodeOmpReply
-	p := &ompProc{pipeProc: pp}
+	p := &ompProc{pipeProc: pp, state: st}
 	// Commands queue in the stdin pipe until omp has written its ready frame. Protocol v2
 	// first so later oversized frames arrive lossless, then the delta projection of
 	// message_update (the full snapshots resend the whole message on every token), then the
@@ -165,6 +163,7 @@ func (o Omp) Start(ctx context.Context, h *Host, spec LaunchSpec) (Process, erro
 	for _, c := range []map[string]any{
 		{"id": "orole-neg", "type": "negotiate_protocol", "protocolVersion": 2},
 		{"id": "orole-filter", "type": "set_event_filter", "events": nil, "messageUpdates": "delta"},
+		{"id": "orole-subagents", "type": "set_subagent_subscription", "level": "progress"},
 		{"id": "orole-state", "type": "get_state"},
 	} {
 		if err := p.command(c); err != nil {
@@ -248,7 +247,8 @@ func nonNilArgs(a []string) []string {
 // ompProc is a pipeProc whose prompts and shutdown follow omp's RPC protocol.
 type ompProc struct {
 	*pipeProc
-	seq atomic.Uint64
+	seq   atomic.Uint64
+	state *ompState
 }
 
 func (p *ompProc) command(c map[string]any) error {
@@ -265,6 +265,26 @@ func (p *ompProc) command(c map[string]any) error {
 func (p *ompProc) Send(prompt string) error {
 	return p.command(map[string]any{"id": fmt.Sprintf("orole-p-%d", p.seq.Add(1)), "type": "prompt",
 		"message": prompt, "streamingBehavior": "steer"})
+}
+
+func (p *ompProc) AnswerInput(id string, answers []QuestionAnswer, cancel bool) error {
+	p.pmu.Lock()
+	defer p.pmu.Unlock()
+	pending, ok := p.state.inputs[id]
+	if !ok {
+		return fmt.Errorf("no pending question request %q", id)
+	}
+	if err := adapterValidateAnswers(pending.request, answers, cancel); err != nil {
+		return err
+	}
+	delete(p.state.inputs, id)
+	response := map[string]any{"type": "extension_ui_response", "id": pending.wireID}
+	if cancel {
+		response["cancelled"] = true
+	} else {
+		response["value"] = answers[0].Values[0]
+	}
+	return p.command(response)
 }
 
 // Stop aborts the running turn, then ends omp the way its protocol defines (close stdin,
@@ -316,15 +336,18 @@ type ompToolMeta struct {
 // ompState is the decoder state of one omp process. It is only touched from that process's
 // stdout reader goroutine.
 type ompState struct {
-	images   string // directory generated images are written to
-	maxFrame int
-	asm      *ompChunks
-	tools    map[string]ompToolMeta // toolCallId -> the call, kept until its result arrives
-	failed   map[string]bool        // prompt ids whose failure response was already reported
-	lastText string                 // last assistant text of the current run
-	stop     string                 // stopReason of the last assistant message of the run
-	errMsg   string
-	imageSeq int
+	images          string // directory generated images are written to
+	maxFrame        int
+	asm             *ompChunks
+	tools           map[string]ompToolMeta // toolCallId -> the call, kept until its result arrives
+	failed          map[string]bool        // prompt ids whose failure response was already reported
+	lastText        string                 // last assistant text of the current run
+	stop            string                 // stopReason of the last assistant message of the run
+	errMsg          string
+	imageSeq        int
+	stateRequestSeq int
+	initialized     bool
+	inputs          map[string]ompInput // guarded by pipeProc.pmu, shared with AnswerInput
 }
 
 // ompChunks reassembles one rpc_chunk sequence.
@@ -340,6 +363,17 @@ type ompMessage struct {
 	Content      json.RawMessage `json:"content"`
 	StopReason   string          `json:"stopReason"`
 	ErrorMessage string          `json:"errorMessage"`
+	Usage        *struct {
+		Input   *int64 `json:"input"`
+		Output  *int64 `json:"output"`
+		Cached  *int64 `json:"cacheRead"`
+		Context *int64 `json:"contextTokens"`
+	} `json:"usage"`
+	StopDetails *struct {
+		Type        string `json:"type"`
+		Category    string `json:"category"`
+		Explanation string `json:"explanation"`
+	} `json:"stopDetails"`
 }
 
 type ompBlock struct {
@@ -474,6 +508,7 @@ func (s *ompState) frame(p *pipeProc, typ string, line []byte) []Event {
 	case "message_update":
 		return s.messageUpdate(line)
 	case "message_end":
+		s.requestState(p)
 		return s.messageEnd(line)
 	case "tool_execution_start":
 		return s.toolStart(line)
@@ -481,6 +516,22 @@ func (s *ompState) frame(p *pipeProc, typ string, line []byte) []Event {
 		return s.toolEnd(line)
 	case "extension_ui_request":
 		return s.dialog(p, line)
+	case "subagent_lifecycle":
+		var frame struct {
+			Payload struct {
+				ID               string `json:"id"`
+				Agent            string `json:"agent"`
+				Status           string `json:"status"`
+				Description      string `json:"description"`
+				ParentToolCallID string `json:"parentToolCallId"`
+			} `json:"payload"`
+		}
+		if json.Unmarshal(line, &frame) == nil && frame.Payload.ID != "" && frame.Payload.Status != "" {
+			a := frame.Payload
+			return []Event{{Kind: EvSubagent, Data: jraw(SubagentData{ID: a.ID, Name: a.Agent, Status: a.Status, Task: a.Description, ToolCallID: a.ParentToolCallID})}}
+		}
+	case "auto_compaction_end":
+		s.requestState(p)
 	case "auto_compaction_start":
 		return []Event{{Kind: EvActivity, Text: "Compacting context"}}
 	case "auto_retry_start":
@@ -515,6 +566,10 @@ func (s *ompState) response(line []byte) []Event {
 		Success bool   `json:"success"`
 		Error   string `json:"error"`
 		Data    struct {
+			ContextUsage *struct {
+				Tokens        *int64 `json:"tokens"`
+				ContextWindow *int64 `json:"contextWindow"`
+			} `json:"contextUsage"`
 			AgentInvoked *bool  `json:"agentInvoked"`
 			SessionID    string `json:"sessionId"`
 			SessionFile  string `json:"sessionFile"`
@@ -536,9 +591,17 @@ func (s *ompState) response(line []byte) []Event {
 		if r.Data.Model.Provider != "" && model != "" {
 			model = r.Data.Model.Provider + "/" + model
 		}
-		out := []Event{{Kind: EvInit, Data: jraw(map[string]string{"agentSessionId": r.Data.SessionID, "model": model})}}
-		if r.Data.SessionFile != "" {
-			out = append(out, Event{Kind: EvTranscript, Text: r.Data.SessionFile})
+		var out []Event
+		if !s.initialized {
+			s.initialized = true
+			out = append(out, Event{Kind: EvInit, Data: jraw(map[string]string{"agentSessionId": r.Data.SessionID, "model": model})})
+			if r.Data.SessionFile != "" {
+				out = append(out, Event{Kind: EvTranscript, Text: r.Data.SessionFile})
+			}
+		}
+		if u := r.Data.ContextUsage; u != nil {
+			out = append(out, usageEvent(ContextUsage{Source: "omp:get_state:contextUsage",
+				ContextTokens: u.Tokens, ContextWindow: u.ContextWindow})...)
 		}
 		return out
 	case "prompt":
@@ -603,6 +666,7 @@ func (s *ompState) agentEnd(p *pipeProc, line []byte) []Event {
 		return nil
 	}
 	out := s.dropPending(p)
+	s.requestState(p)
 	ok, result, sub := s.stop != "error" && s.stop != "aborted", s.lastText, s.stop
 	switch s.stop {
 	case "error":
@@ -624,6 +688,10 @@ func (s *ompState) dropPending(p *pipeProc) []Event {
 	for id := range p.pendingIn {
 		delete(p.pendingIn, id)
 		out = append(out, Event{Kind: EvPermCancel, Data: jraw(map[string]string{"id": id})})
+	}
+	for id := range s.inputs {
+		delete(s.inputs, id)
+		out = append(out, Event{Kind: EvQuestionCancel, Data: jraw(map[string]string{"id": id})})
 	}
 	return out
 }
@@ -648,6 +716,15 @@ func (s *ompState) messageUpdate(line []byte) []Event {
 	return nil
 }
 
+// requestState uses a distinct request ID so concurrent state refreshes are
+// correlated by OMP and cannot be mistaken for unsolicited protocol frames.
+func (s *ompState) requestState(p *pipeProc) {
+	s.stateRequestSeq++
+	request, err := json.Marshal(map[string]any{"id": fmt.Sprintf("orole-state-%d", s.stateRequestSeq), "type": "get_state"})
+	if err == nil {
+		_ = p.write(append(request, '\n'))
+	}
+}
 func (s *ompState) messageEnd(line []byte) []Event {
 	var m struct {
 		MessageID string     `json:"messageId"`
@@ -662,6 +739,14 @@ func (s *ompState) messageEnd(line []byte) []Event {
 		return nil
 	}
 	var out []Event
+	if u := m.Message.Usage; u != nil {
+		out = append(out, usageEvent(ContextUsage{Source: "omp:message_end:usage", InputTokens: u.Input,
+			OutputTokens: u.Output, CachedTokens: u.Cached, ContextTokens: u.Context})...)
+	}
+	if detail := m.Message.StopDetails; detail != nil && (detail.Type == "refusal" || detail.Type == "sensitive") {
+		out = append(out, Event{Kind: EvGuardrail, Data: jraw(GuardrailData{ID: m.MessageID, Kind: detail.Type,
+			Message: detail.Explanation, Source: "omp:message.stopDetails"})})
+	}
 	for i, b := range blocks {
 		switch b.Type {
 		case "thinking":
@@ -838,12 +923,57 @@ func (s *ompState) image(b ompBlock, prompt string) []Event {
 // ---- dialogs ----
 
 type ompUIRequest struct {
-	ID       string   `json:"id"`
-	Method   string   `json:"method"`
-	Title    string   `json:"title"`
-	Message  string   `json:"message"`
-	Options  []string `json:"options"`
-	TargetID string   `json:"targetId"`
+	ID            string   `json:"id"`
+	Method        string   `json:"method"`
+	Title         string   `json:"title"`
+	Message       string   `json:"message"`
+	Options       []string `json:"options"`
+	TargetID      string   `json:"targetId"`
+	Prefill       string   `json:"prefill"`
+	Timeout       *int64   `json:"timeout"`
+	OptionDetails []struct {
+		Description string `json:"description"`
+	} `json:"optionDetails"`
+}
+
+type ompInput struct {
+	wireID  string
+	request QuestionRequest
+}
+
+func (s *ompState) questionDialog(p *pipeProc, r ompUIRequest) []Event {
+	now := time.Now().UTC()
+	q := Question{ID: "value", Header: r.Title, Prompt: r.Title,
+		AllowText: r.Method != "select", Options: []QuestionOption{}}
+	if r.Prefill != "" {
+		q.Prompt += "\n\n" + r.Prefill
+	}
+	for i, label := range r.Options {
+		option := QuestionOption{ID: label, Label: label}
+		if i < len(r.OptionDetails) {
+			option.Description = r.OptionDetails[i].Description
+		}
+		q.Options = append(q.Options, option)
+	}
+	req := QuestionRequest{ID: uuid.NewString(), Questions: []Question{q}, At: now}
+	if r.Timeout != nil {
+		if *r.Timeout < 0 || *r.Timeout > 2147483647 {
+			return s.rejectDialog(p, r)
+		}
+		expires := now.Add(time.Duration(*r.Timeout) * time.Millisecond)
+		req.ExpiresAt = &expires
+	}
+	data := jraw(req)
+	if len(data) > 64<<10 || !adapterValidQuestions(req.Questions) {
+		return s.rejectDialog(p, r)
+	}
+	p.pmu.Lock()
+	if s.inputs == nil {
+		s.inputs = make(map[string]ompInput)
+	}
+	s.inputs[req.ID] = ompInput{wireID: r.ID, request: req}
+	p.pmu.Unlock()
+	return []Event{{Kind: EvQuestion, Data: data}}
 }
 
 // ompApprovalLabels finds the Approve/Deny pair of omp's tool approval select.
@@ -873,6 +1003,27 @@ func (s *ompState) dialog(p *pipeProc, line []byte) []Event {
 	if json.Unmarshal(line, &r) != nil {
 		return nil
 	}
+	if r.Method == "input" || r.Method == "editor" || r.Method == "select" || r.Method == "confirm" {
+		p.pmu.Lock()
+		var canceled []Event
+		for id, pending := range p.pendingIn {
+			if pending.requestID == r.ID {
+				delete(p.pendingIn, id)
+				canceled = append(canceled, Event{Kind: EvPermCancel, Data: jraw(map[string]string{"id": id})})
+			}
+		}
+		for id, pending := range s.inputs {
+			if pending.wireID == r.ID {
+				delete(s.inputs, id)
+				canceled = append(canceled, Event{Kind: EvQuestionCancel, Data: jraw(map[string]string{"id": id})})
+			}
+		}
+		reject := len(canceled) > 0 || r.ID == "" || len(line) > 64<<10 || len(p.pendingIn)+len(s.inputs) >= ompMaxPending
+		p.pmu.Unlock()
+		if reject {
+			return append(canceled, s.rejectDialog(p, r)...)
+		}
+	}
 	switch r.Method {
 	case "notify", "setStatus", "setWidget", "setTitle", "set_editor_text", "open_url":
 		return nil // presentation only; no reply expected
@@ -886,7 +1037,15 @@ func (s *ompState) dialog(p *pipeProc, line []byte) []Event {
 				out = append(out, Event{Kind: EvPermCancel, Data: jraw(map[string]string{"id": id})})
 			}
 		}
+		for id, pending := range s.inputs {
+			if pending.wireID == r.TargetID {
+				delete(s.inputs, id)
+				out = append(out, Event{Kind: EvQuestionCancel, Data: jraw(map[string]string{"id": id})})
+			}
+		}
 		return out
+	case "input", "editor":
+		return s.questionDialog(p, r)
 	case "confirm", "select":
 		if r.ID == "" {
 			return nil
@@ -895,7 +1054,7 @@ func (s *ompState) dialog(p *pipeProc, line []byte) []Event {
 		if r.Method == "select" {
 			approve, deny, ok := ompApprovalLabels(r.Options)
 			if !ok {
-				return s.rejectDialog(p, r)
+				return s.questionDialog(p, r)
 			}
 			snap = map[string]string{"kind": "select", "approve": approve, "deny": deny}
 		}

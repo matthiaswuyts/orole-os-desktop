@@ -48,8 +48,9 @@ export function DiffView({ files, truncated, className }: DiffViewProps) {
   const totalDel = files.reduce((n, f) => n + f.deletions, 0);
 
   return (
-    <div className={cn("flex min-h-0 overflow-hidden rounded-lg border bg-card", className)} data-testid="diff-view">
-      <nav aria-label="Changed files" className="flex w-56 shrink-0 flex-col border-r bg-sidebar">
+    <div className={cn("@container/diff flex min-h-0 min-w-0 overflow-hidden rounded-lg border bg-card", className)} data-testid="diff-view">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col @2xl/diff:flex-row">
+      <nav aria-label="Changed files" className="flex max-h-36 w-full shrink-0 flex-col border-b bg-sidebar @2xl/diff:max-h-none @2xl/diff:w-56 @2xl/diff:border-r @2xl/diff:border-b-0">
         <div className="flex h-7 shrink-0 items-center justify-between border-b px-2 text-muted-foreground text-xs">
           <span>{files.length} {files.length === 1 ? "file" : "files"}</span>
           <span className="font-mono"><span className="text-success">+{totalAdd}</span> <span className="text-destructive">-{totalDel}</span></span>
@@ -68,7 +69,7 @@ export function DiffView({ files, truncated, className }: DiffViewProps) {
           })}
         </ul>
       </nav>
-      <div className="flex min-w-0 flex-1 flex-col">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         {truncated && <div role="alert" className="shrink-0 border-b bg-warning/10 px-3 py-1 text-warning-foreground text-xs">Diff truncated: output exceeded the size limit. Narrow it to a path to see the rest.</div>}
         <div ref={scroller} role="region" aria-label="Diff" tabIndex={0} className="min-h-0 flex-1 overflow-auto font-mono text-xs leading-5 outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset">
           <div style={{ height: virt.getTotalSize(), minWidth: "max-content", position: "relative" }}>
@@ -92,6 +93,7 @@ export function DiffView({ files, truncated, className }: DiffViewProps) {
             })}
           </div>
         </div>
+      </div>
       </div>
     </div>
   );

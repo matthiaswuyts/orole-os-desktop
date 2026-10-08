@@ -1,8 +1,9 @@
-import { memo, type ComponentProps } from "react";
+import { isValidElement, memo, type ComponentProps } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { isWebURL, openExternal } from "@/lib/openExternal";
 import { cn } from "@/lib/utils";
+import { SyntaxHighlighter } from "@/components/SyntaxHighlighter";
 
 const remarkPlugins = [remarkGfm];
 
@@ -15,7 +16,13 @@ const components: Components = {
     return <a href={href} target="_blank" rel="noopener noreferrer" title={href} className="text-info-foreground underline underline-offset-2 hover:opacity-80" onClick={(e) => { e.preventDefault(); void openExternal(href); }}>{children}</a>;
   },
   img({ alt }) { return <span className="text-muted-foreground">[image{alt ? `: ${alt}` : ""}]</span>; },
-  pre({ children }) { return <pre className="selectable my-2 overflow-auto rounded-md border bg-muted/50 p-2 font-mono text-xs leading-relaxed">{children}</pre>; },
+  pre({ children }) {
+    if (isValidElement<{ className?: string; children?: string }>(children)) {
+      const language = /language-([^\s]+)/.exec(children.props.className ?? "")?.[1] ?? "";
+      return <SyntaxHighlighter language={language} code={String(children.props.children ?? "").replace(/\n$/, "")} />;
+    }
+    return <pre className="selectable my-2 overflow-auto rounded-md border bg-muted/50 p-2 font-mono text-xs leading-relaxed">{children}</pre>;
+  },
   code({ className, children }) {
     const block = /language-/.test(className ?? "");
     return <code className={cn(block ? "font-mono" : "rounded bg-muted px-1 py-0.5 font-mono text-[0.85em]", className)}>{children}</code>;

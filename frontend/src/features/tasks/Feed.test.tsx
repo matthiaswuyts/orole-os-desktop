@@ -84,8 +84,71 @@ describe("Feed", () => {
   it("keeps the review checkbox rule on permission cards in the feed", () => {
     const input = '{"command":"rm x"}';
     show([ev("permission", "Bash: rm x", { id: "p1", tool: "Bash", summary: "rm x", input: { command: "rm x" }, inputJSON: input, at: "2026-10-08T12:00:00Z" })], session({ pending: [{ id: "p1" } as Session["pending"][number]] }));
-    expect(screen.getByRole("button", { name: "Allow" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Allow once" })).toBeDisabled();
     fireEvent.click(screen.getByRole("checkbox", { name: "I reviewed the complete tool name and arguments." }));
-    expect(screen.getByRole("button", { name: "Allow" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Allow once" })).toBeEnabled();
+  });
+});
+
+describe("Feed navigation", () => {
+  it("steps through highlighted matches without filtering history or hiding paging", async () => {
+    const older = ev("message", "Older needle");
+    const loaded = [ev("prompt", "Find the needle"), ev("message", "Another needle, then needle.")];
+    const load = vi.fn().mockResolvedValue(true);
+    const props = { session: session(), loading: false, loadingMore: false, error: null, hasMore: true, onLoadMore: load };
+    const view = render(<Feed {...props} events={loaded} />);
+    const input = screen.getByRole("searchbox", { name: "Find in conversation" });
+    fireEvent.change(input, { target: { value: "needle" } });
+    expect(screen.getByRole("status")).toHaveTextContent("1/3");
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(screen.getByRole("status")).toHaveTextContent("2/3");
+    expect(view.container.querySelectorAll('[data-search-hit] mark')).toHaveLength(3);
+    const active = view.container.querySelector('[data-search-hit][aria-current="true"]')?.getAttribute("data-search-hit");
+    fireEvent.click(screen.getByRole("button", { name: "Load earlier messages" }));
+    expect(load).toHaveBeenCalledTimes(1);
+    view.rerender(<Feed {...props} events={[older, ...loaded]} />);
+    expect(screen.getByRole("status")).toHaveTextContent("3/4");
+    expect(view.container.querySelector('[data-search-hit][aria-current="true"]')).toHaveAttribute("data-search-hit", active);
+    expect(screen.getByText("Older needle")).toBeInTheDocument();
+    fireEvent.keyDown(input, { key: "Escape" });
+    expect(input).toHaveValue("");
+    expect(view.container.querySelectorAll("[data-search-hit]")).toHaveLength(0);
+    expect(screen.getByRole("button", { name: "Next match" })).toBeDisabled();
+  });
+
+  it("resets search on session switch and supports scoped keyboard find", () => {
+    const props = { loading: false, loadingMore: false, error: null, hasMore: false, onLoadMore: vi.fn().mockResolvedValue(false) };
+    const view = render(<Feed {...props} session={session()} events={[ev("message", "needle")]} />);
+    const log = screen.getByRole("log");
+    fireEvent.keyDown(log, { key: "f", ctrlKey: true });
+    const input = screen.getByRole("searchbox");
+    expect(input).toHaveFocus();
+    fireEvent.change(input, { target: { value: "needle" } });
+    view.rerender(<Feed {...props} session={session({ id: "s2" })} events={[]} />);
+    expect(screen.getByRole("searchbox")).toHaveValue("");
+  });
+
+  it("distinguishes failed loading from empty history and retries only the supplied operation", () => {
+    const retry = vi.fn();
+    render(<Feed session={session()} events={[]} loading={false} loadingMore={false} error="Transcript unavailable" hasMore={false} onLoadMore={vi.fn()} onRetry={retry} />);
+    expect(screen.getByRole("alert")).toHaveTextContent("Transcript unavailable");
+    expect(screen.queryByText("No output has been recorded yet.")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Retry loading conversation" }));
+    expect(retry).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("pending inputs outside the loaded page", () => {
+  it("keeps a real pending question reachable and deduplicates it when its event loads", () => {
+    const request = {
+      id: "outside-page", at: "2026-10-08T11:00:00Z",
+      questions: [{ id: "choice", header: "", prompt: "Choose the target", options: [{ id: "a", label: "Project A", description: "" }], multiple: false, allowText: false, secret: false }],
+    };
+    const s = session({ questions: [request] });
+    const props = { session: s, loading: false, loadingMore: false, error: null, hasMore: true, onLoadMore: vi.fn().mockResolvedValue(true) };
+    const view = render(<Feed {...props} events={[]} />);
+    expect(screen.getAllByText("Choose the target")).toHaveLength(1);
+    view.rerender(<Feed {...props} events={[ev("question", "", request)]} />);
+    expect(screen.getAllByText("Choose the target")).toHaveLength(1);
   });
 });

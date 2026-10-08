@@ -303,6 +303,20 @@ export interface ContentBlock {
   truncated?: boolean;
 }
 
+/**
+ * ContextUsage contains provider observations, never a guessed model capacity.
+ * ContextTokens is current occupancy, not the cumulative billed token count.
+ */
+export interface ContextUsage {
+  source: string;
+  inputTokens?: number;
+  outputTokens?: number;
+  cachedTokens?: number;
+  contextTokens?: number;
+  contextWindow?: number;
+  at: string;
+}
+
 /** DaemonLink is the link status shown in the status bar. */
 export interface DaemonLink {
   connected: boolean;
@@ -1419,6 +1433,46 @@ export interface Query {
   limit: number;
 }
 
+export interface Question {
+  id: string;
+  header: string;
+  prompt: string;
+  options: QuestionOption[];
+  multiple: boolean;
+  allowText: boolean;
+  secret: boolean;
+}
+
+export interface QuestionAnswer {
+  questionId: string;
+  values: string[];
+}
+
+export interface QuestionOption {
+  id: string;
+  label: string;
+  description: string;
+}
+
+export interface QuestionRequest {
+  id: string;
+  questions: Question[];
+  at: string;
+  expiresAt?: string;
+}
+
+/**
+ * QueuedPrompt is a durable follow-up, not a promise of delivery. A sending entry
+ * left behind by a crash becomes uncertain and requires removal, never replay.
+ */
+export interface QueuedPrompt {
+  id: string;
+  text: string;
+  state: string;
+  error: string;
+  createdAt: string;
+}
+
 /** RateLimit is the last observed limit for a resource bucket. */
 export interface RateLimit {
   resource: string;
@@ -1747,6 +1801,11 @@ export interface Session {
   prompts: number;
   /** Pending are the permission requests awaiting a decision (runtime state). */
   pending: PermissionRequest[];
+  usage?: ContextUsage;
+  /** runtime requests; never replayed after restart */
+  questions?: QuestionRequest[];
+  /** durable follow-ups, paused after daemon restart */
+  queue?: QueuedPrompt[];
   result: string;
   error: string;
   exitCode?: number;
@@ -1937,6 +1996,20 @@ export interface SyncState {
   /** "installed" | "outdated" | "missing" | "unsupported" (the "orole" MCP entry) */
   gateway: string;
   error: string;
+}
+
+/**
+ * TaskFilePreview contains inert bytes from a session's working directory. Data
+ * is omitted above the IPC budget; Text is a bounded UTF-8 preview, never HTML.
+ */
+export interface TaskFilePreview {
+  name: string;
+  path: string;
+  mime: string;
+  size: number;
+  text?: string;
+  data?: string;
+  truncated: boolean;
 }
 
 /** TerminalAttachment is scrollback to restore a screen after reconnect. */
@@ -2552,6 +2625,10 @@ export const Shell = {
  * process or its descendants stopped.
  */
 export const Agents = {
+  /** AnswerInput relays typed answers; only the daemon validates pending requests. */
+  answerInput(id: string, requestId: string, answers: QuestionAnswer[], cancel: boolean): Promise<Session> {
+    return call("Agents.AnswerInput", id, requestId, answers, cancel);
+  },
   /** Approve answers a pending permission request. The daemon decides and audits; this only relays. */
   approve(id: string, requestID: string, allow: boolean, reason: string): Promise<void> {
     return call("Agents.Approve", id, requestID, allow, reason);
@@ -2562,6 +2639,10 @@ export const Agents = {
    */
   artifact(id: string, path: string): Promise<Artifact> {
     return call("Agents.Artifact", id, path);
+  },
+  /** CancelQueuedPrompt removes an undelivered or uncertain queued follow-up. */
+  cancelQueuedPrompt(id: string, queueId: string): Promise<Session> {
+    return call("Agents.CancelQueuedPrompt", id, queueId);
   },
   /** CancelRun stops a running orchestration run. */
   cancelRun(id: string): Promise<void> {
@@ -2618,6 +2699,10 @@ export const Agents = {
   publish(id: string, spec: PublishSpec): Promise<Session> {
     return call("Agents.Publish", id, spec);
   },
+  /** QueuePrompt persists a follow-up in the daemon without steering a busy turn. */
+  queuePrompt(id: string, text: string): Promise<Session> {
+    return call("Agents.QueuePrompt", id, text);
+  },
   /** Remove deletes a session that is not running. */
   remove(id: string): Promise<void> {
     return call("Agents.Remove", id);
@@ -2628,6 +2713,10 @@ export const Agents = {
    */
   restart(id: string, fresh: boolean, prompt: string): Promise<Session> {
     return call("Agents.Restart", id, fresh, prompt);
+  },
+  /** ResumeQueue explicitly releases a paused queue; it never restarts a process. */
+  resumeQueue(id: string): Promise<Session> {
+    return call("Agents.ResumeQueue", id);
   },
   /** Review records a decision: "approve", "send-back" (note is the feedback) or "discard". */
   review(id: string, decision: string, note: string): Promise<Session> {
@@ -2648,6 +2737,10 @@ export const Agents = {
   /** Stop ends a running agent (its record stays). */
   stop(id: string): Promise<Session> {
     return call("Agents.Stop", id);
+  },
+  /** TaskFile returns a bounded, inert preview from the task's approved local workspace. */
+  taskFile(id: string, path: string): Promise<TaskFilePreview> {
+    return call("Agents.TaskFile", id, path);
   },
   /**
    * Transcript returns the newest `limit` conversation entries (prompts, messages, tool use,

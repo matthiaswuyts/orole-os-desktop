@@ -49,6 +49,18 @@ describe("useTaskEvents", () => {
     expect(result.current.events).toHaveLength(1);
   });
 
+  it("retries transcript retrieval without replaying a task action and preserves live events", async () => {
+    api.transcript.mockRejectedValueOnce(new Error("daemon offline")).mockResolvedValueOnce([ev(1)]);
+    const { result } = renderHook(() => useTaskEvents("s1"));
+    await waitFor(() => expect(result.current.error).toBe("daemon offline"));
+    emit(ev(2));
+    await act(async () => { await result.current.reload(); });
+    expect(result.current.error).toBeNull();
+    expect(result.current.events.map((e) => e.id)).toEqual([1, 2]);
+    expect(api.transcript).toHaveBeenCalledTimes(2);
+    expect(api.transcript).toHaveBeenLastCalledWith("s1", PAGE);
+  });
+
   it("does not show one session's events under another", async () => {
     api.transcript.mockResolvedValue([ev(1)]);
     const { result, rerender } = renderHook(({ id }) => useTaskEvents(id), { initialProps: { id: "s1" } });

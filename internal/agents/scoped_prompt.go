@@ -30,7 +30,7 @@ func PromptRevision(s Session) string {
 // CanPromptScoped limits sharing to idle structured sessions or true local
 // continuations. Terminal injection and fresh restarts are not content handoffs.
 func (m *Manager) CanPromptScoped(s Session) bool {
-	if !localMachine(s.Machine) || s.Mode != ModeStructured || len(s.Pending) != 0 || s.Status == StatusWorking || s.Status == StatusNeedsYou {
+	if !localMachine(s.Machine) || s.Mode != ModeStructured || len(s.Pending) != 0 || len(s.Questions) != 0 || len(s.Queue) != 0 || s.Status == StatusWorking || s.Status == StatusNeedsYou {
 		return false
 	}
 	if s.Live {

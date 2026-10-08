@@ -16,6 +16,10 @@ func permissionFixture() (*pipeProc, *permissionSink) {
 	return &pipeProc{stdin: sink, exited: make(chan struct{}), pendingIn: make(map[string]pendingPermission), encodeReply: encodeClaudeReply}, sink
 }
 
+func decodeClaude(p *pipeProc, line []byte) []Event {
+	return (&claudeDecoder{tools: make(map[string]ToolData)}).decode(p, line)
+}
+
 func permissionMessage(id, input string) []byte {
 	return []byte(`{"type":"control_request","request_id":` + string(jraw(id)) + `,"request":{"subtype":"can_use_tool","tool_name":"Bash","input":` + input + `}}`)
 }
