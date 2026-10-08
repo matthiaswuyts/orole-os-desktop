@@ -11,6 +11,8 @@ export function Slider({
   value,
   min = 0,
   max = 100,
+  "aria-label": ariaLabel,
+  "aria-valuetext": ariaValueText,
   ...props
 }: SliderPrimitive.Root.Props): React.ReactElement {
   const _values = React.useMemo(() => {
@@ -52,6 +54,8 @@ export function Slider({
               data-slot="slider-thumb"
               index={index}
               key={String(index)}
+              getAriaLabel={ariaLabel ? () => ariaLabel : undefined}
+              aria-valuetext={ariaValueText}
             />
           ))}
         </SliderPrimitive.Track>

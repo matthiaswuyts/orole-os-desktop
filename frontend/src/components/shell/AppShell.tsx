@@ -8,6 +8,7 @@ import { useUI } from "@/stores/ui";
 import { inDesktop } from "@/lib/backend";
 import { navItem } from "@/lib/nav";
 import { Kbd, KbdGroup } from "@/components/ui/kbd";
+import { NotificationCenter } from "@/features/notifications/NotificationCenter";
 
 export function AppShell({ children }: { children: ReactNode }) {
   const { setFocused, sidebarOpen, toggleSidebar, setPalette, view } = useUI();
@@ -34,6 +35,10 @@ export function AppShell({ children }: { children: ReactNode }) {
               <Tooltip><TooltipTrigger render={<button type="button" aria-label="Open command palette" onClick={() => setPalette(true)} className="titlebar-nodrag inline-flex size-6 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground" />}><Plus className="size-3.5" /></TooltipTrigger><TooltipPopup side="bottom"><span className="flex items-center gap-2">Search <KbdGroup aria-label="Ctrl+K"><Kbd>Ctrl</Kbd><Kbd>K</Kbd></KbdGroup></span></TooltipPopup></Tooltip>
               {view !== "home" && <h1 className="font-medium text-sm">{n.label}</h1>}
               {view !== "home" && n.blurb && <span className="truncate text-muted-foreground text-xs">{n.blurb}</span>}
+              <div className="titlebar-nodrag ml-auto flex h-full shrink-0 items-center gap-2 pl-2">
+                <NotificationCenter />
+                <span aria-hidden="true" className="mr-1 h-4 w-px bg-border" />
+              </div>
             </header>
             {!inDesktop && (
               <aside aria-label="Browser preview status" className="border-b bg-warning/10 px-3 py-1 text-warning-foreground text-xs">

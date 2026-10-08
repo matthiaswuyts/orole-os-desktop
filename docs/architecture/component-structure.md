@@ -124,6 +124,30 @@ Model IDs are explicit user input rather than an invented account catalog.
 Harness, reasoning, project, box, and worktree choices reach daemon authorization
 and actual agent launch; see `windows-terminals.md` for installed Codex evidence.
 
+The composer uses one control row beneath the recessed task field. Projects use
+coss menu radio items; an explicit menu action opens working-directory entry.
+One provider-logo trigger opens coss Harness, Model, and Reasoning submenus.
+The reasoning slider steps through the selected harness's advertised levels,
+with a separate default position; changing harness or box clears incompatible
+model/reasoning choices. Custom model IDs remain explicit input, not a fabricated
+model catalog. The refresh-boxes button is removed; discovery follows box and
+daemon connection changes.
+
+Notifications live at the right end of the window header, separated from native
+window controls by a vertical divider and MyGo's reserved caption-button inset.
+The sidebar toggle sits beside the workspace selector; Settings has no status dot.
+Daemon status remains available in the footer.
+
+The rebuilt NSIS-installed WebView2 UI exercised harness/model submenus,
+working-directory entry, pointer and keyboard reasoning selection, and the
+separate daemon approval. Codex launched with `gpt-6-astra` and `low` reasoning
+and returned the requested `4` in its terminal; the smoke session was then stopped.
+Keyboard activation of Adjust effort focuses the range input after the menu's
+own focus update. The coss slider forwards its accessible name and value text to
+that input. Header notifications opened with the sidebar hidden; the native
+caption inset measured 138 px. The final runtime error buffer was empty, and an
+860 px browser viewport had no document or composer overflow.
+
 `features/system/HostActivity.tsx` uses Dither Kit area/line charts only. Host CPU
 and physical memory come from daemon-owned OS sampling, separately from daemon
 heap. Histories contain at most 60 real samples, with accessible history tables;

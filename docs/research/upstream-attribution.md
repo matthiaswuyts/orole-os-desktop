@@ -43,6 +43,35 @@ upstream license notice was supplied. Retain supplied source notices.
 | MyGo (https://github.com/egoist/mygo) | v0.3.3 | see upstream `LICENSE` | desktop shell, bindings, packaging (`cmd/desktop`, `mygo.json`) |
 | Microsoft/go-winio, UserExistsError/conpty, danieljoos/wincred, modernc.org/sqlite, google/uuid | see `go.mod` | upstream licences | named pipes, ConPTY, Credential Manager, SQLite, ids |
 | @web-kits/audio (https://audio.raphaelsalaja.com/, https://github.com/raphaelsalaja/audio) | npm `0.2.0` | MIT, (c) 2026 Raphael Salaja | shared synthesized UI and in-app notification engine in `frontend/src/lib/audio.ts`; original cue definitions, no copied samples |
+| @lobehub/icons-static-svg (https://github.com/lobehub/lobe-icons) | npm `1.95.1` | MIT (package declaration), LobeHub | Four unmodified package SVG imports (Claude, OpenAI, Gemini, OpenCode) in `features/agents/ProviderLogo.tsx`; no additional UI framework or remotely loaded logos. Brand marks remain their owners' trademarks. |
+
+### Lobe Icons license notice
+
+Source: https://raw.githubusercontent.com/lobehub/lobe-icons/master/LICENSE
+
+```text
+MIT License
+
+Copyright (c) 2023 LobeHub
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
 
 ## Original work
 `resources/icon.png` and `cmd/desktop/window-icon.png` are drawn programmatically by `scripts/genicon` (original mark, no upstream artwork).
