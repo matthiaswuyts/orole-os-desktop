@@ -311,9 +311,11 @@ and diff selections open a responsive side canvas without removing chat or the t
   No raw HTML is parsed; images are local daemon-returned raster `data:` URLs, and links open only http(s)
   through `Shell.openExternal`. Code uses lazy CodeMirror/Lezer highlighting; unknown languages remain
   inert text.
-- **Composer**: ordinary follow-up prompts use `Agents.prompt`; a live busy local structured session
-  queues through daemon-owned `queuePrompt`, with explicit cancellation/resume and uncertain-delivery
-  state. Context shows nullable provider-reported measurements only, never an inferred token breakdown.
+- **Composer**: local structured follow-ups use `Agents.sendMessage`; the daemon selects immediate
+  delivery, same-session continuation, or its durable follow-up queue. Staged attachments are copied
+  before acceptance; queued messages retain their own model/effort selection until dispatch.
+  Cancellation/resume and uncertain-delivery state remain explicit. Context shows nullable
+  provider-reported measurements only, never an inferred token breakdown.
   Optional Web Speech dictation requires an explicit cloud-processing disclosure and consent; transcripts
   remain editable and are never sent automatically. Unsupported desktop WebViews can use text input.
 - **Harness limits**: installed Claude Code 2.1.289, Codex CLI 0.156.1, and Oh My Pi 18.8.4 protocols
@@ -378,14 +380,27 @@ and `features/projects/ProjectsView.tsx`.
 
 ## Task chat composer
 
-The task chat uses the coss input-group textarea with a bottom action row and a round up-arrow Send
-button. No sample usage percentage or unimplemented attachment/research controls are displayed.
-Enter sends; Shift+Enter inserts a newline;
-IME composition does not send. Failed sends retain the draft.
-Sending to a stopped local task uses `Agents.prompt`, which resumes the harness session where supported.
-There is no separate Resume button or daemon-lifetime footer in local task chat. Remote-process limitations
-remain explicit. Lifecycle guarantees remain documented: tasks survive GUI restarts, not daemon exit.
-Headless interaction smoke exercised send/retry and composition keys; no visual check ran.
+Task chat uses a compact coss InputGroup: a one-line-height textarea, attachment `+`, provider/model
+selector, effort label, and round up-arrow Send button share the input. Explicit newlines expand it
+up to six rows; ordinary wrapping does not grow the composer. Enter sends; Ctrl+Enter inserts a newline
+at the selection. IME composition never sends. Failed sends retain the draft and staged attachments.
+The footer shows checkout/branch information, opt-in dictation, and a compact context ring. The coss
+context popover uses the AI Elements context layout: measured occupancy, progress, compact token
+counts, and separate provider usage counters. Unknown occupancy is never shown as zero; no price or
+token-category estimates are invented.
+
+`useTaskMessage` and `TaskMessageControls` reuse homepage model labels, discovered catalogs, attachment
+staging, and coss popover/button/slider components. The provider stays fixed to the conversation.
+`Session.followup` supplies daemon-derived capabilities. Codex changes model/effort on its existing
+thread; OMP acknowledges `set_model`/`set_thinking_level` and verifies their actual state; Claude
+acknowledges `set_model`, but exposes effort changes only on ended-session continuation. Unsupported
+controls explain why. Empty API settings preserve the current value; explicit selected settings are
+captured per queued message. Local structured continuation requires the native session ID and never
+falls back to a new conversation. Resuming a stopped session does not release its paused queue.
+The existing explicitly labelled remote-process Start task flow still uses `Agents.prompt` without
+attachment/configuration controls. There is no separate Resume button or daemon-lifetime footer.
+Tasks survive GUI restarts, not daemon exit. Headless interaction coverage exercises sending, retry,
+Ctrl+Enter insertion, attachment retention, and model/queue settings; no visual check was run.
 
 Headless titlebar smoke exercised task selection, provider logo rendering, Stop, returning to the dashboard,
 switching to Settings without stale task metadata, and opening/closing the Changes sheet with a diff error.

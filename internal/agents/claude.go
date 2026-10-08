@@ -385,6 +385,9 @@ type claudeDecoder struct {
 }
 
 func (d *claudeDecoder) decode(p *pipeProc, line []byte) []Event {
+	if p != nil && p.acceptControlResponse(line, true) {
+		return nil
+	}
 	var m claudeMsg
 	if json.Unmarshal(line, &m) != nil {
 		return []Event{{Kind: EvActivity, Text: truncate(string(line), 200)}}

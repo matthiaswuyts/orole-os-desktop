@@ -37,6 +37,7 @@ func nullTime(t *time.Time) any {
 // SaveSession inserts or updates s. Runtime-only fields are never stored.
 func (st *Store) SaveSession(s Session, key string) error {
 	s.Live, s.Pending, s.Questions = false, nil, nil
+	s.Followup = FollowupCapabilities{}
 	b, err := json.Marshal(s)
 	if err != nil {
 		return err

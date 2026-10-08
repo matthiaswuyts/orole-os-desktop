@@ -2,54 +2,67 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Session } from "@/mygo";
 
-const api = vi.hoisted(() => ({ prompt: vi.fn(), queuePrompt: vi.fn(), cancelQueuedPrompt: vi.fn(), resumeQueue: vi.fn(), upsert: vi.fn() }));
+const api = vi.hoisted(() => ({ sendMessage: vi.fn(), options: vi.fn(), cancelQueuedPrompt: vi.fn(), resumeQueue: vi.fn(), upsert: vi.fn() }));
 vi.mock("@/mygo", () => ({ Agents: api }));
 vi.mock("@/stores/agents", () => ({ useAgents: { getState: () => ({ upsert: api.upsert }) } }));
 vi.mock("@/features/agents/shared", () => ({ ErrorNote: ({ error }: { error: string | null }) => error ? <p role="alert">{error}</p> : null }));
+vi.mock("@/lib/backend", () => ({ inDesktop: true }));
+vi.mock("@/stores/daemon", () => ({ useDaemon: (select: (state: { link: string }) => unknown) => select({ link: "connected" }) }));
 import { Composer } from "./Composer";
 import { composerState } from "./composerState";
 import { MessageQueue } from "./MessageQueue";
 
 const session = (patch: Partial<Session> = {}): Session => ({ id: "task-a", mode: "structured", machine: "local", live: true, status: "working", pending: [], questions: [], queue: [], ...patch }) as Session;
-beforeEach(() => { vi.clearAllMocks(); api.prompt.mockResolvedValue(session()); api.queuePrompt.mockResolvedValue(session()); });
+beforeEach(() => { vi.clearAllMocks(); api.sendMessage.mockResolvedValue(session()); api.options.mockResolvedValue({ harnesses: [] }); });
 afterEach(cleanup);
 
 describe("task composer delivery", () => {
-  it("queues busy structured follow-ups without steering and preserves drafts on rejection", async () => {
-    api.queuePrompt.mockRejectedValueOnce(new Error("Daemon disconnected"));
+  it("preserves a busy task's draft on rejection and clears it only after acceptance", async () => {
+    api.sendMessage.mockRejectedValueOnce(new Error("Daemon disconnected"));
     render(<Composer session={session()} />);
     fireEvent.change(screen.getByLabelText("Message the agent"), { target: { value: "  Keep this draft  " } });
     fireEvent.click(screen.getByRole("button", { name: "Queue message" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Daemon disconnected");
     expect(screen.getByLabelText("Message the agent")).toHaveValue("  Keep this draft  ");
-    expect(api.prompt).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Queue message" }));
     await waitFor(() => expect(screen.getByLabelText("Message the agent")).toHaveValue(""));
-    expect(api.queuePrompt).toHaveBeenLastCalledWith("task-a", "Keep this draft");
+    expect(api.sendMessage).toHaveBeenLastCalledWith("task-a", "Keep this draft", [], "", "");
   });
 
   it("does not submit composition Enter or Shift+Enter and deduplicates pending sends", async () => {
     const queued = Promise.withResolvers<Session>();
-    api.queuePrompt.mockReturnValue(queued.promise);
+    api.sendMessage.mockReturnValue(queued.promise);
     render(<Composer session={session()} />);
     const input = screen.getByLabelText("Message the agent");
     fireEvent.change(input, { target: { value: "next" } });
     fireEvent.keyDown(input, { key: "Enter", isComposing: true });
     fireEvent.keyDown(input, { key: "Enter", shiftKey: true });
-    expect(api.queuePrompt).not.toHaveBeenCalled();
+    expect(api.sendMessage).not.toHaveBeenCalled();
     fireEvent.keyDown(input, { key: "Enter" });
     fireEvent.keyDown(input, { key: "Enter" });
-    expect(api.queuePrompt).toHaveBeenCalledTimes(1);
+    expect(api.sendMessage).toHaveBeenCalledTimes(1);
     queued.resolve(session());
     await waitFor(() => expect(input).toHaveValue(""));
   });
 
-  it("uses ordinary prompt to resume stopped tasks with paused follow-ups", async () => {
+  it("inserts Ctrl+Enter at the selection without sending, then sends the multiline draft with Enter", async () => {
+    render(<Composer session={session()} />);
+    const input = screen.getByLabelText("Message the agent") as HTMLTextAreaElement;
+    fireEvent.change(input, { target: { value: "first replace last" } });
+    input.setSelectionRange(6, 13);
+    fireEvent.keyDown(input, { key: "Enter", ctrlKey: true });
+    expect(input).toHaveValue("first \n last");
+    expect(api.sendMessage).not.toHaveBeenCalled();
+    fireEvent.keyDown(input, { key: "Enter" });
+    await waitFor(() => expect(input).toHaveValue(""));
+    expect(api.sendMessage).toHaveBeenCalledWith("task-a", "first \n last", [], "", "");
+  });
+
+  it("allows a stopped task's follow-up without automatically releasing its paused queue", async () => {
     render(<Composer session={session({ live: false, status: "stopped", queue: [{ id: "q", text: "later", state: "paused", error: "Stopped", createdAt: "2026-10-09T00:00:00Z" }] })} />);
     fireEvent.change(screen.getByLabelText("Message the agent"), { target: { value: "resume now" } });
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
-    await waitFor(() => expect(api.prompt).toHaveBeenCalledWith("task-a", "resume now"));
-    expect(api.queuePrompt).not.toHaveBeenCalled();
+    await waitFor(() => expect(api.sendMessage).toHaveBeenCalledWith("task-a", "resume now", [], "", ""));
     expect(screen.getByRole("button", { name: "Resume queue" })).toBeDisabled();
   });
 
@@ -64,7 +77,7 @@ describe("task composer delivery", () => {
 
   it("cannot clear another task's draft when an old send resolves", async () => {
     const queued = Promise.withResolvers<Session>();
-    api.queuePrompt.mockReturnValue(queued.promise);
+    api.sendMessage.mockReturnValue(queued.promise);
     const view = render(<Composer session={session()} />);
     fireEvent.change(screen.getByLabelText("Message the agent"), { target: { value: "old draft" } });
     fireEvent.click(screen.getByRole("button", { name: "Queue message" }));

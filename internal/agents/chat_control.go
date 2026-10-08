@@ -17,6 +17,8 @@ import (
 type QueuedPrompt struct {
 	ID        string    `json:"id"`
 	Text      string    `json:"text"`
+	Model     string    `json:"model,omitempty"`
+	Reasoning string    `json:"reasoning,omitempty"`
 	State     string    `json:"state"`
 	Error     string    `json:"error"`
 	CreatedAt time.Time `json:"createdAt"`
@@ -84,11 +86,11 @@ func (m *Manager) QueuePrompt(ctx context.Context, id, text string) (Session, er
 	if err := ctx.Err(); err != nil {
 		return Session{}, err
 	}
-	return m.enqueueControlled(id, ls, text)
+	return m.enqueueControlled(id, ls, text, "", "")
 }
 
 // enqueueControlled requires launchMu and, for a live session, controlMu.
-func (m *Manager) enqueueControlled(id string, ls *liveSess, text string) (Session, error) {
+func (m *Manager) enqueueControlled(id string, ls *liveSess, text, model, reasoning string) (Session, error) {
 	m.mu.Lock()
 	var s Session
 	var err error
@@ -110,7 +112,7 @@ func (m *Manager) enqueueControlled(id string, ls *liveSess, text string) (Sessi
 		m.mu.Unlock()
 		return Session{}, err
 	}
-	q := QueuedPrompt{ID: uuid.NewString(), Text: text, State: queueQueued, CreatedAt: time.Now().UTC()}
+	q := QueuedPrompt{ID: uuid.NewString(), Text: text, Model: model, Reasoning: reasoning, State: queueQueued, CreatedAt: time.Now().UTC()}
 	if ls == nil || (ls != nil && ls.deliveryUncertain) || s.Status == StatusFailed || s.Status == StatusStopped || s.Status == StatusLost || queueBlocked(s) {
 		q.State, q.Error = queuePaused, "Queue is paused; resume it explicitly when the agent is ready."
 	}
@@ -257,7 +259,7 @@ func (m *Manager) dispatchQueueControlled(ls *liveSess) error {
 		return m.pauseUnsentQueueControlled(ls, q.ID, err)
 	}
 	m.cfg.Publish("agents.updated", s)
-	err = m.sendPromptControlled(ls, q.Text, q.ID, false)
+	err = m.sendPromptControlled(ls, q.Text, q.ID, false, q.Model, q.Reasoning)
 	if err != nil {
 		m.mu.Lock()
 		uncertain := ls.deliveryUncertain

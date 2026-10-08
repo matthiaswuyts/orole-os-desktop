@@ -195,7 +195,7 @@ func (l *Link) call(ctx context.Context, method string, params, out any) error {
 		"drive.list", "drive.search", "drive.stat", "drive.preview",
 		"plugins.trust", "plugins.run",
 		"github.issue.agent.start", "github.issue.pr.publish",
-		"agents.start", "agents.restart", "agents.prompt", "agents.check", "agents.review",
+		"agents.start", "agents.restart", "agents.prompt", "agents.sendMessage", "agents.check", "agents.review",
 		"agents.handoff", "agents.reviewWith", "agents.tryN", "applications.launch",
 		"machines.probe", "machines.pair", "machines.access", "machines.remove",
 		"machines.health", "machines.execute", "machines.files.list", "machines.files.stat",

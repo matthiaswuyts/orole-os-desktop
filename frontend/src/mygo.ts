@@ -701,6 +701,17 @@ export interface Folder {
   unreadCount: number;
 }
 
+/**
+ * FollowupCapabilities describe this conversation, not a provider's launch options.
+ * They are runtime-derived; clients must not infer live controls from CLI flags.
+ */
+export interface FollowupCapabilities {
+  attachments: boolean;
+  model: boolean;
+  reasoning: boolean;
+  reason: string;
+}
+
 /** GitHubChange says why GitHub data changed (login, logout, issue.create, ...). */
 export interface GitHubChange {
   reason: string;
@@ -1468,6 +1479,8 @@ export interface QuestionRequest {
 export interface QueuedPrompt {
   id: string;
   text: string;
+  model?: string;
+  reasoning?: string;
   state: string;
   error: string;
   createdAt: string;
@@ -1765,6 +1778,7 @@ export interface Session {
   status: AgentsStatus;
   /** Live is true while the agent process is running (runtime state, not persisted). */
   live: boolean;
+  followup: FollowupCapabilities;
   /** what the agent is doing right now */
   activity: string;
   /** last few lines of output, for the card */
@@ -2729,6 +2743,13 @@ export const Agents = {
   /** Runs lists recent orchestration runs. */
   runs(): Promise<Run[]> {
     return call("Agents.Runs");
+  },
+  /**
+   * SendMessage delivers or queues a follow-up with daemon-staged files and settings.
+   * Empty model/reasoning values retain the conversation's current configuration.
+   */
+  sendMessage(id: string, text: string, attachmentIds: string[], model: string, reasoning: string): Promise<Session> {
+    return call("Agents.SendMessage", id, text, attachmentIds, model, reasoning);
   },
   /** Start launches an agent. spec.Key makes the request idempotent. */
   start(spec: StartSpec): Promise<Session> {

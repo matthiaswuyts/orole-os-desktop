@@ -95,10 +95,11 @@ type Session struct {
 	Pid            int    `json:"pid"`
 	Status         Status `json:"status"`
 	// Live is true while the agent process is running (runtime state, not persisted).
-	Live        bool   `json:"live"`
-	Activity    string `json:"activity"`    // what the agent is doing right now
-	Tail        string `json:"tail"`        // last few lines of output, for the card
-	LastMessage string `json:"lastMessage"` // the agent's most recent message in full
+	Live        bool                 `json:"live"`
+	Followup    FollowupCapabilities `json:"followup"`
+	Activity    string               `json:"activity"`    // what the agent is doing right now
+	Tail        string               `json:"tail"`        // last few lines of output, for the card
+	LastMessage string               `json:"lastMessage"` // the agent's most recent message in full
 	// AgentSessionID is the CLI's own session id, used to resume.
 	AgentSessionID string `json:"agentSessionId"`
 	TerminalID     string `json:"terminalId"`    // ConPTY terminal id while the session has one

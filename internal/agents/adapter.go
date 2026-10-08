@@ -301,10 +301,12 @@ type pipeProc struct {
 	stopping atomic.Bool
 	exited   chan struct{}
 
-	encodePrompt func(prompt string) []byte
-	encodeReply  func(requestID string, allow bool, reason string, input json.RawMessage) []byte
-	pmu          sync.Mutex
-	pendingIn    map[string]pendingPermission
+	encodePrompt   func(prompt string) []byte
+	encodeReply    func(requestID string, allow bool, reason string, input json.RawMessage) []byte
+	pmu            sync.Mutex
+	pendingIn      map[string]pendingPermission
+	controlMu      sync.Mutex
+	controlPending map[string]chan controlReply
 }
 
 // startPipe launches bin and decodes each stdout line with decode.

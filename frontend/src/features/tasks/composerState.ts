@@ -12,6 +12,7 @@ export function composerState(session: Session): ComposerState {
   if (session.mode === "terminal" && session.live) return { canSend: false, reason: "This session runs in a terminal. Open Terminal in the titlebar to continue; its foreground process owns the input." };
   if (remote && session.live) return { canSend: false, reason: "This SSH process reports output and exit status only. It cannot receive messages while running." };
   if (remote) return { canSend: true, delivery: "prompt", placeholder: "New task on this box…", label: "Start task", note: "Starts a fresh task on the same box with this session's model and reasoning. It does not resume the previous conversation." };
+  if (session.mode === "structured" && session.followup && !session.followup.attachments) return { canSend: false, reason: session.followup.reason };
   if (session.mode === "structured" && session.live && (session.status === "working" || session.status === "needs-you" || !!session.queue?.length)) {
     return {
       canSend: true, delivery: "queue", placeholder: "Queue a follow-up…", label: "Queue message",

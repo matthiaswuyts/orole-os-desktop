@@ -10,6 +10,16 @@ import (
 // existing agent methods; no UI-owned queue or permission bypass is introduced.
 func (d *Daemon) registerAgentsChat(mapErr func(error) error) {
 	m := d.Agents
+	handle(d, "agents.sendMessage", func(ctx context.Context, p struct {
+		ID            string   `json:"id"`
+		Text          string   `json:"text"`
+		AttachmentIDs []string `json:"attachmentIds"`
+		Model         string   `json:"model"`
+		Reasoning     string   `json:"reasoning"`
+	}) (agents.Session, error) {
+		s, err := m.SendMessage(ctx, p.ID, p.Text, p.AttachmentIDs, p.Model, p.Reasoning)
+		return s, mapErr(err)
+	})
 	handle(d, "agents.queuePrompt", func(ctx context.Context, p struct {
 		ID   string `json:"id"`
 		Text string `json:"text"`

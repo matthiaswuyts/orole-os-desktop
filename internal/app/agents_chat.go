@@ -6,6 +6,16 @@ import (
 	"github.com/rayorole/orole-os-desktop/internal/agents"
 )
 
+// SendMessage delivers or queues a follow-up with daemon-staged files and settings.
+// Empty model/reasoning values retain the conversation's current configuration.
+func (a Agents) SendMessage(ctx context.Context, id, text string, attachmentIds []string, model, reasoning string) (agents.Session, error) {
+	var out agents.Session
+	err := a.L.call(ctx, "agents.sendMessage", map[string]any{
+		"id": id, "text": text, "attachmentIds": attachmentIds, "model": model, "reasoning": reasoning,
+	}, &out)
+	return out, err
+}
+
 // QueuePrompt persists a follow-up in the daemon without steering a busy turn.
 func (a Agents) QueuePrompt(ctx context.Context, id, text string) (agents.Session, error) {
 	var out agents.Session

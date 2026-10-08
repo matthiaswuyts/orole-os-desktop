@@ -497,6 +497,14 @@ func (p *codexProc) abort() {
 
 // Send starts a turn, or steers the running one.
 func (p *codexProc) Send(prompt string) error {
+	return p.SendConfigured(prompt, "", "")
+}
+
+func (*codexProc) FollowupOptions() (bool, bool) { return true, true }
+
+// SendConfigured uses the app-server TurnStartParams model/effort overrides,
+// which preserve the current thread. Never steer when changing configuration.
+func (p *codexProc) SendConfigured(prompt, model, reasoning string) error {
 	p.sendMu.Lock()
 	defer p.sendMu.Unlock()
 	p.mu.Lock()
@@ -504,6 +512,9 @@ func (p *codexProc) Send(prompt string) error {
 	p.mu.Unlock()
 	input := []map[string]any{{"type": "text", "text": prompt, "text_elements": []any{}}}
 	if turn != "" {
+		if model != "" || reasoning != "" {
+			return errors.New("cannot change Codex settings while a turn is running")
+		}
 		_, err := p.call("turn/steer", map[string]any{"threadId": thread, "expectedTurnId": turn, "input": input}, codexCallTimeout)
 		if err == nil {
 			return nil
@@ -515,8 +526,14 @@ func (p *codexProc) Send(prompt string) error {
 		// The turn ended between our check and the steer; start a new one.
 	}
 	params := map[string]any{"threadId": thread, "input": input, "summary": "auto"}
+	if model != "" {
+		params["model"] = model
+	}
 	if p.effort != "" {
 		params["effort"] = p.effort
+	}
+	if reasoning != "" {
+		params["effort"] = reasoning
 	}
 	raw, err := p.call("turn/start", params, codexCallTimeout)
 	if err != nil {
@@ -533,6 +550,9 @@ func (p *codexProc) Send(prompt string) error {
 			p.turn = resp.Turn.ID
 		}
 		p.mu.Unlock()
+	}
+	if reasoning != "" {
+		p.effort = reasoning
 	}
 	return nil
 }

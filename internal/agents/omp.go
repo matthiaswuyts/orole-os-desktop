@@ -497,6 +497,9 @@ func (s *ompState) frame(p *pipeProc, typ string, line []byte) []Event {
 		_ = json.Unmarshal(line, &r)
 		s.maxFrame = r.Max
 	case "response":
+		if p != nil && p.acceptControlResponse(line, false) {
+			return nil
+		}
 		return s.response(line)
 	case "prompt_result":
 		return s.promptResult(line)

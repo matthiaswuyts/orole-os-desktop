@@ -61,6 +61,12 @@ func TestAgentsChatIPCQueueNeverLaunches(t *testing.T) {
 	if err := c.Call(ctx, "agents.answerInput", map[string]any{"id": s.ID, "requestId": "forged", "answers": true, "cancel": false}, nil); err == nil {
 		t.Fatal("Boolean accepted by typed question IPC")
 	}
+	if err := c.Call(ctx, "agents.sendMessage", map[string]any{"id": "chat-ipc", "text": "Do not start a fresh task", "attachmentIds": []string{}, "model": "", "reasoning": ""}, nil); err == nil {
+		t.Fatal("sendMessage accepted a stopped session with no native continuation")
+	}
+	if err := c.Call(ctx, "agents.sendMessage", map[string]any{"id": "chat-ipc", "text": "Invalid attachment shape", "attachmentIds": true}, nil); err == nil {
+		t.Fatal("Boolean accepted by typed attachment IPC")
+	}
 	var fresh agents.Session
 	if err := c.Call(ctx, "agents.get", map[string]string{"id": "chat-ipc"}, &fresh); err != nil {
 		t.Fatal(err)

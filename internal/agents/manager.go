@@ -216,6 +216,7 @@ func (m *Manager) snapshotLocked(ls *liveSess) Session {
 	s.Questions = cloneQuestions(s.Questions)
 	s.Queue = append([]QueuedPrompt(nil), s.Queue...)
 	s.Usage = cloneUsage(s.Usage)
+	s.Followup = m.followupCapabilities(s, ls)
 	return s
 }
 
@@ -228,7 +229,9 @@ func (m *Manager) Get(id string) (Session, error) {
 		return s, nil
 	}
 	m.mu.Unlock()
-	return m.st.GetSession(id)
+	s, err := m.st.GetSession(id)
+	s.Followup = m.followupCapabilities(s, nil)
+	return s, err
 }
 
 // List returns every session, newest first.
@@ -242,6 +245,8 @@ func (m *Manager) List() ([]Session, error) {
 	for i := range all {
 		if ls, ok := m.live[all[i].ID]; ok {
 			all[i] = m.snapshotLocked(ls)
+		} else {
+			all[i].Followup = m.followupCapabilities(all[i], nil)
 		}
 	}
 	return all, nil
@@ -319,8 +324,11 @@ func (m *Manager) mutateLocked(id string, f func(s *Session)) (Session, error) {
 	if ls != nil {
 		ls.s = s
 		s = m.snapshotLocked(ls)
-	} else if s.Pending == nil {
-		s.Pending = []PermissionRequest{}
+	} else {
+		s.Followup = m.followupCapabilities(s, nil)
+		if s.Pending == nil {
+			s.Pending = []PermissionRequest{}
+		}
 	}
 	close(m.changed)
 	m.changed = make(chan struct{})
@@ -645,18 +653,18 @@ func (m *Manager) launch(ctx context.Context, s *Session, prompt string, resume 
 func (m *Manager) sendPrompt(ls *liveSess, prompt string) error {
 	ls.controlMu.Lock()
 	defer ls.controlMu.Unlock()
-	return m.sendPromptControlled(ls, prompt, "", false)
+	return m.sendPromptControlled(ls, prompt, "", false, "", "")
 }
 
 func (m *Manager) sendInitialPrompt(ls *liveSess, prompt string) error {
 	ls.controlMu.Lock()
 	defer ls.controlMu.Unlock()
-	return m.sendPromptControlled(ls, prompt, "", true)
+	return m.sendPromptControlled(ls, prompt, "", true, "", "")
 }
 
 // sendPromptControlled requires controlMu. A failed Send is delivery-uncertain,
 // not evidence that nothing reached the CLI; it must never trigger a replay.
-func (m *Manager) sendPromptControlled(ls *liveSess, prompt, queueID string, initial bool) error {
+func (m *Manager) sendPromptControlled(ls *liveSess, prompt, queueID string, initial bool, model, reasoning string) error {
 	id := ls.id
 	m.mu.Lock()
 	if m.live[id] != ls || ls.stopping || m.closing {
@@ -675,6 +683,20 @@ func (m *Manager) sendPromptControlled(ls *liveSess, prompt, queueID string, ini
 		m.mu.Unlock()
 		return errors.New("the agent has queued follow-ups; send through its queue")
 	}
+	capabilities := m.followupCapabilities(ls.s, ls)
+	if err := validateFollowupOptions(ls.s, capabilities, model, reasoning); err != nil {
+		m.mu.Unlock()
+		return err
+	}
+	if model == ls.s.Model {
+		model = ""
+	}
+	if reasoning == ls.s.Reasoning {
+		reasoning = ""
+	}
+	if ls.s.Kind == "omp" && model != "" && reasoning == "" {
+		reasoning = ls.s.Reasoning
+	}
 	s, err := m.mutateLocked(id, func(s *Session) {
 		s.Prompts++
 		s.Status, s.Activity, s.Error, s.Result = StatusWorking, "Working", "", ""
@@ -688,19 +710,35 @@ func (m *Manager) sendPromptControlled(ls *liveSess, prompt, queueID string, ini
 	}
 	m.cfg.Publish("agents.updated", s)
 	m.record(id, Event{Kind: EvPrompt, Text: prompt})
-	if err := ls.proc.Send(prompt); err != nil {
+	var sendErr error
+	if model != "" || reasoning != "" {
+		if p, ok := ls.proc.(configuredProcess); ok {
+			sendErr = p.SendConfigured(prompt, model, reasoning)
+		} else {
+			sendErr = errors.New("this live agent cannot change follow-up settings")
+		}
+	} else {
+		sendErr = ls.proc.Send(prompt)
+	}
+	if sendErr != nil {
 		m.mu.Lock()
 		ls.deliveryUncertain = true
 		m.mu.Unlock()
 		_, persistErr := m.mutate(id, func(s *Session) {
 			pauseQueue(s, "Prompt delivery failed; resume the queue explicitly.")
-			s.Status, s.Activity, s.Error = StatusNeedsYou, "Prompt delivery is uncertain", "The prompt may have reached the agent. Stop or wait for its turn before sending again."
+			s.Status, s.Activity, s.Error = StatusNeedsYou, "Follow-up delivery is uncertain", "The configuration or prompt may have reached the agent. Stop or wait for its turn before sending again."
 		})
 		m.cfg.Audit("agent.prompt", id, "error", "Prompt delivery is uncertain")
-		return errors.Join(err, persistErr)
+		return errors.Join(sendErr, persistErr)
 	}
-	if queueID != "" {
+	if queueID != "" || model != "" || reasoning != "" {
 		_, err = m.mutate(id, func(s *Session) {
+			if model != "" {
+				s.Model = model
+			}
+			if reasoning != "" {
+				s.Reasoning = reasoning
+			}
 			if len(s.Queue) > 0 && s.Queue[0].ID == queueID {
 				s.Queue = append([]QueuedPrompt(nil), s.Queue[1:]...)
 			}
@@ -772,10 +810,10 @@ func (m *Manager) Prompt(ctx context.Context, id, text string) error {
 		}
 	}
 	if localMachine(s.Machine) && (s.Status == StatusWorking || s.Status == StatusNeedsYou || len(s.Queue) > 0) {
-		_, err := m.enqueueControlled(id, ls, text)
+		_, err := m.enqueueControlled(id, ls, text, "", "")
 		return err
 	}
-	return m.sendPromptControlled(ls, text, "", false)
+	return m.sendPromptControlled(ls, text, "", false, "", "")
 }
 
 // Approve answers a pending permission request. The decision is made here, in the daemon,
@@ -1302,6 +1340,7 @@ func (m *Manager) finalize(ls *liveSess, e Event) {
 	delete(m.live, id)
 	if err == nil {
 		s.Live = false
+		s.Followup = m.followupCapabilities(s, nil)
 		close(m.changed)
 		m.changed = make(chan struct{})
 	}
