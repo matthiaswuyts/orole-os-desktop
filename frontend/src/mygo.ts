@@ -27,6 +27,15 @@ export interface Access {
   allowWrite: boolean;
 }
 
+/** Account is what Validate learned about the connection. Never contains the key. */
+export interface Account {
+  /** e.g. key label / org */
+  label?: string;
+  /** credits left (USD) when reported */
+  remaining?: number;
+  limit?: number;
+}
+
 /**
  * AddParams creates a server. BearerToken and ClientSecret go to the credential
  * store and are never persisted anywhere else.
@@ -81,6 +90,33 @@ export interface Attachment {
   name: string;
   size: number;
   mime: string;
+}
+
+/** AttachmentBegin starts a chunked upload (frames are capped at 4 MiB). */
+export interface AttachmentBegin {
+  name: string;
+  size: number;
+}
+
+/** AttachmentChunk appends the next sequential chunk (Seq starts at 0). */
+export interface AttachmentChunk {
+  id: string;
+  seq: number;
+  dataBase64: string;
+}
+
+/** AttachmentData is a size-capped read for UI previews. */
+export interface AttachmentData {
+  id: string;
+  name: string;
+  mime: string;
+  size: number;
+  dataBase64: string;
+}
+
+/** AttachmentUpload is the staged upload handle. */
+export interface AttachmentUpload {
+  id: string;
 }
 
 /** AuthDiag is the non-secret OAuth picture of a server. */
@@ -154,6 +190,88 @@ export interface AutostartStatus {
   detail: string;
 }
 
+/** Bot is a contact: identity, brain settings and live status. */
+export interface Bot {
+  id: string;
+  name: string;
+  /** emoji or initials; the UI renders colour + avatar */
+  avatar: string;
+  /** token name, e.g. "blue"; validated against a fixed list in the UI */
+  color: string;
+  description: string;
+  instructions: string;
+  /** empty = use defaults */
+  provider: string;
+  model: string;
+  reasoning: string;
+  config: BotConfig;
+  /** Unix milliseconds */
+  createdAt: number;
+  updatedAt: number;
+  /** Derived, not stored: */
+  running: boolean;
+  lastMessage?: MessagePreview;
+}
+
+/** BotChange is the chat.bot event payload. */
+export interface BotChange {
+  id: string;
+  /** "saved" | "archived" | "cleared" */
+  action: string;
+}
+
+/** BotConfig is stored as JSON in bots.config. It never contains secrets. */
+export interface BotConfig {
+  tools: BotTool[];
+  /** "<serverId>/<tool>" allow-list, default none */
+  mcpTools: string[];
+  /** enabled registry skill names */
+  skills: string[];
+  /** bot ids this bot may ask (ask_bot) */
+  delegateTo: string[];
+  /** grants beyond the private scope */
+  memory: ScopeAccess[];
+  limits: BotLimits;
+  /** MemoryApproval holds bot memory writes as pending until the user approves them. */
+  memoryApproval: boolean;
+}
+
+/** BotExport is portable: settings and instructions only, never memory, messages or secrets. */
+export interface BotExport {
+  /** 1 */
+  version: number;
+  /** ID is ignored on import */
+  bot: BotInput;
+}
+
+/** BotInput creates (empty ID) or updates a bot. Updates replace all fields. */
+export interface BotInput {
+  id: string;
+  name: string;
+  avatar: string;
+  color: string;
+  description: string;
+  instructions: string;
+  provider: string;
+  model: string;
+  reasoning: string;
+  config: BotConfig;
+}
+
+/** BotLimits bound a single turn. Zero values select engine defaults. */
+export interface BotLimits {
+  /** model calls per turn (default 8) */
+  maxSteps: number;
+  /** total tool calls per turn incl. hosted (default 20) */
+  maxToolCalls: number;
+}
+
+/** BotTool enables one built-in tool with optional parameters (e.g. allowed_domains). */
+export interface BotTool {
+  id: string;
+  params?: Record<string, unknown>;
+}
+
 /** Branch is a local or remote-tracking branch. */
 export interface Branch {
   name: string;
@@ -198,6 +316,20 @@ export interface Capabilities {
   canTrash: boolean;
 }
 
+/** Caps describe what a model can do. Values come from the provider's catalogue, never guesses. */
+export interface Caps {
+  tools: boolean;
+  vision: boolean;
+  pdf: boolean;
+  reasoning: boolean;
+  /** Hosted* identifiers the endpoint can run */
+  hostedTools: string[];
+  /** native background research model */
+  deepResearch: boolean;
+  /** 0 = unknown */
+  contextWindow: number;
+}
+
 /** Catalog is the discovery cache for one server. */
 export interface Catalog {
   serverId: string;
@@ -211,6 +343,19 @@ export interface Catalog {
   prompts: PromptInfo[];
   /** Skipped counts tools dropped because their name was unsafe. */
   skipped?: number;
+}
+
+/** Change is the llm.changed event payload. */
+export interface Change {
+  id?: string;
+}
+
+/** Attachment describes a stored file. Bytes are fetched with chat.attachments.read only for previews. */
+export interface ChatAttachment {
+  id: string;
+  name: string;
+  mime: string;
+  size: number;
 }
 
 /** Check is a pass/fail probe with detail. */
@@ -290,6 +435,12 @@ export interface Config {
   hasSecret: boolean;
 }
 
+/** ConnectRequest carries a pasted API key. The key is never echoed back or logged. */
+export interface ConnectRequest {
+  id: string;
+  apiKey: string;
+}
+
 /** ContentBlock is one part of a tool result. Text is sanitised and size-limited. */
 export interface ContentBlock {
   /** text | image | audio | resource | resource_link */
@@ -325,6 +476,14 @@ export interface DaemonLink {
 
 /** Decision is the outcome of a policy evaluation. */
 export type Decision = "allow" | "ask" | "deny";
+
+/** Defaults are the models Chat uses when a bot does not choose its own. */
+export interface Defaults {
+  /** ChatModel is "provider/model" (the model id may itself contain slashes). */
+  chatModel: string;
+  /** MemoryModel runs background work (summaries, memory consolidation). Cheap model preferred. */
+  memoryModel: string;
+}
 
 /** Definition is a versioned automation document. */
 export interface Definition {
@@ -502,6 +661,23 @@ export interface DiscoveryAttempt {
   url: string;
   /** ok | <reason> */
   result: string;
+}
+
+/**
+ * DraftRequest runs an unsaved bot configuration against one message (builder preview).
+ * The exchange is returned through chat.message events with BotID "draft:<DraftID>" and is never stored.
+ */
+export interface DraftRequest {
+  draftId: string;
+  bot: BotInput;
+  history: DraftTurn[];
+  text: string;
+}
+
+/** DraftTurn is prior preview context held by the UI. */
+export interface DraftTurn {
+  role: string;
+  text: string;
 }
 
 export interface DriveCapabilities {
@@ -979,6 +1155,31 @@ export interface Journal {
   finishedAt: number;
 }
 
+/** KnowledgeAdd attaches a committed upload as knowledge. */
+export interface KnowledgeAdd {
+  botId: string;
+  attachmentId: string;
+}
+
+/** KnowledgeFile is a document attached to a bot as searchable knowledge. */
+export interface KnowledgeFile {
+  id: string;
+  name: string;
+  mime: string;
+  size: number;
+  botId: string;
+  /** "indexing" | "ready" | "error" */
+  status: string;
+  error?: string;
+  chunks: number;
+}
+
+/** KnowledgeRef identifies a knowledge file of a bot. */
+export interface KnowledgeRef {
+  botId: string;
+  attachmentId: string;
+}
+
 /** Label is an issue label. */
 export interface Label {
   id: number;
@@ -1004,6 +1205,12 @@ export interface LaunchResult {
 
 /** Level is a notification's severity. */
 export type Level = "info" | "success" | "warning" | "error";
+
+/** AuthStart begins OpenRouter's OAuth PKCE headless flow. The verifier stays in the daemon. */
+export interface LlmAuthStart {
+  /** open in the browser; the page displays a code to paste */
+  url: string;
+}
 
 /** LogFile is one file of a run's log archive. */
 export interface LogFile {
@@ -1057,6 +1264,18 @@ export interface MachineHealth {
   metricError: string;
 }
 
+export interface MailMessage {
+  id: string;
+  threadId: string;
+  subject: string;
+  from: string;
+  to: string[];
+  date: string;
+  snippet: string;
+  body: string;
+  unread: boolean;
+}
+
 export interface MailStatus {
   configured: boolean;
   connected: boolean;
@@ -1070,16 +1289,114 @@ export interface MailStatus {
 /** Status is a connection's state. */
 export type McpStatus = "disabled" | "connecting" | "connected" | "auth_required" | "backoff";
 
+/** MemoryChange is the chat.memory event payload. */
+export interface MemoryChange {
+  scope: string;
+}
+
+/** MemoryEntry is one remembered item. */
+export interface MemoryEntry {
+  id: string;
+  scope: string;
+  kind: string;
+  text: string;
+  trust: string;
+  author: string;
+  sourceMsgId?: string;
+  pending: boolean;
+  createdAt: number;
+  updatedAt: number;
+  invalidatedAt?: number;
+}
+
+/** MemoryListRequest lists entries of a scope. IncludeInvalidated shows history. */
+export interface MemoryListRequest {
+  scope: string;
+  /** "" = both */
+  kind: string;
+  includePending: boolean;
+  includeInvalidated: boolean;
+  /** optional FTS filter */
+  query: string;
+  /** default 100, max 500 */
+  limit: number;
+}
+
+/** MemoryResolve approves or rejects a pending bot write. */
+export interface MemoryResolve {
+  id: string;
+  approve: boolean;
+}
+
+/** MemorySaveRequest adds (empty ID) or edits an entry as the user. */
+export interface MemorySaveRequest {
+  id: string;
+  scope: string;
+  kind: string;
+  text: string;
+}
+
+/** MemoryScope is a visible memory namespace. */
+export interface MemoryScope {
+  id: string;
+  name: string;
+  /** "bot" | "user" | "shared" */
+  kind: string;
+  /** active entries */
+  count: number;
+  /** core characters used */
+  used: number;
+  /** core character limit */
+  limit: number;
+  access?: ScopeAccess;
+}
+
+/** Message is one entry of a bot's conversation. */
 export interface Message {
   id: string;
-  threadId: string;
-  subject: string;
-  from: string;
-  to: string[];
-  date: string;
-  snippet: string;
-  body: string;
-  unread: boolean;
+  botId: string;
+  seq: number;
+  /** "user" | "assistant" | "system" */
+  role: string;
+  /** "user" | "bot:<id>" | "" */
+  author: string;
+  parts: MsgPart[];
+  status: string;
+  usage?: MessageUsage;
+  error?: string;
+  model?: string;
+  createdAt: number;
+}
+
+/** MessagePage returns messages in ascending seq order. */
+export interface MessagePage {
+  messages: Message[];
+  /** older messages exist */
+  hasMore: boolean;
+}
+
+/** MessagePreview feeds the bot rail. */
+export interface MessagePreview {
+  role: string;
+  /** <= 160 chars, single line */
+  text: string;
+  at: number;
+}
+
+/** MessageUsage is provider-reported only; never estimated. */
+export interface MessageUsage {
+  inputTokens?: number;
+  outputTokens?: number;
+  costUsd?: number;
+}
+
+/** MessagesRequest pages backwards through a conversation: newest first window. */
+export interface MessagesRequest {
+  botId: string;
+  /** 0 = latest page */
+  beforeSeq: number;
+  /** default 50, max 200 */
+  limit: number;
 }
 
 /** Milestone groups issues. */
@@ -1096,12 +1413,44 @@ export interface Milestone {
 /** Mode is how an agent is run. */
 export type Mode = "structured" | "terminal" | "process";
 
+/** Model is one selectable model. */
+export interface Model {
+  id: string;
+  name: string;
+  caps: Caps;
+  /** accepted Request.Reasoning levels, empty = none */
+  reasoning: string[];
+}
+
 /** ModelOption is one model a harness reports, with the reasoning levels that model supports. */
 export interface ModelOption {
   id: string;
   name: string;
   reasoning: string[];
   default: boolean;
+}
+
+/** MsgPart is one renderable piece of a message; fields are used per Type. */
+export interface MsgPart {
+  type: string;
+  /** text, reasoning, report (markdown), notice */
+  text?: string;
+  /** tool / delegation / research steps */
+  id?: string;
+  /** tool id ("web_search") or delegated bot name */
+  name?: string;
+  /** "running" | "done" | "error" */
+  status?: string;
+  summary?: string;
+  durationMs?: number;
+  /** citation */
+  url?: string;
+  title?: string;
+  snippet?: string;
+  /** attachment */
+  attachmentId?: string;
+  mime?: string;
+  size?: number;
 }
 
 export interface Mutation {
@@ -1160,7 +1509,7 @@ export interface NotificationsNotification {
 }
 
 export interface Page {
-  messages: Message[];
+  messages: MailMessage[];
   nextPageToken: string;
 }
 
@@ -1354,6 +1703,21 @@ export interface PromptInfo {
   arguments?: PromptArg[];
 }
 
+/** ProviderStatus is what the UI may know about a provider. Never contains the key. */
+export interface ProviderStatus {
+  id: string;
+  name: string;
+  /** "builtin" | "manifest" */
+  kind: string;
+  connected: boolean;
+  /** last 4 characters only */
+  keyHint?: string;
+  /** Valid is the outcome of the last Test: nil = not tested since daemon start. */
+  valid?: boolean;
+  error?: string;
+  account?: Account;
+}
+
 /**
  * PublishSpec turns a session's work into a commit, a pushed branch and optionally a pull request,
  * using git and the GitHub CLI/API credentials the daemon already holds. Steps run in order and stop
@@ -1520,6 +1884,13 @@ export interface Recipient {
   model: string;
   live: boolean;
   revision: string;
+}
+
+/** RegenerateRequest replaces the assistant reply to the last user message. */
+export interface RegenerateRequest {
+  botId: string;
+  /** must be the last assistant message */
+  messageId: string;
 }
 
 export interface Reply {
@@ -1689,6 +2060,14 @@ export interface RunQuery {
   limit: number;
 }
 
+/** RunState is the chat.run event payload. */
+export interface RunState {
+  botId: string;
+  running: boolean;
+  /** the assistant message being produced */
+  messageId?: string;
+}
+
 export interface SaveRequest {
   id: string;
   name: string;
@@ -1702,6 +2081,13 @@ export interface SaveResult {
   definition: Definition;
   issues: AutomationsIssue[];
   saved: boolean;
+}
+
+/** ScopeAccess grants a bot access to a shared memory scope ("user", "shared:<name>"). */
+export interface ScopeAccess {
+  scope: string;
+  read: boolean;
+  write: boolean;
 }
 
 /** SearchResult is a page of issue/PR search hits. */
@@ -1724,6 +2110,16 @@ export interface SearchResult2 {
   score: number;
   /** Action: {view:"files", provider:"local", path:"..."} etc. */
   action: Record<string, string>;
+}
+
+/** SendRequest sends a user message and starts a run. If a run is active the message is queued by the daemon. */
+export interface SendRequest {
+  botId: string;
+  text: string;
+  attachmentIds: string[];
+  mode: string;
+  /** idempotency key; a retried nonce returns the stored message */
+  clientNonce: string;
 }
 
 /** ServerState is a server plus live status for list views. */
@@ -1888,6 +2284,24 @@ export interface Skill {
   updatedAt: number;
 }
 
+/** SkillProposal is a skill a bot proposed; inert until approved. */
+export interface SkillProposal {
+  id: string;
+  botId: string;
+  name: string;
+  description: string;
+  body: string;
+  /** "pending" | "approved" | "rejected" */
+  status: string;
+  createdAt: number;
+}
+
+/** SkillResolve approves or rejects a proposal. */
+export interface SkillResolve {
+  id: string;
+  approve: boolean;
+}
+
 /** Sources lists sources that have visible notifications, with counts. */
 export interface SourceCount {
   source: string;
@@ -2048,7 +2462,7 @@ export interface TerminalRef {
 
 export interface Thread {
   id: string;
-  messages: Message[];
+  messages: MailMessage[];
 }
 
 /** ToolInfo is one discovered tool. All strings are sanitised. */
@@ -2971,6 +3385,131 @@ export const Plugins = {
   },
 } as const;
 
+/** Chat is a stateless bridge; bots, conversations, runs and memory live in the daemon. */
+export const Chat = {
+  addKnowledge(req: KnowledgeAdd): Promise<KnowledgeFile> {
+    return call("Chat.AddKnowledge", req);
+  },
+  archiveBot(id: string): Promise<void> {
+    return call("Chat.ArchiveBot", id);
+  },
+  attachmentChunk(req: AttachmentChunk): Promise<void> {
+    return call("Chat.AttachmentChunk", req);
+  },
+  beginAttachment(req: AttachmentBegin): Promise<AttachmentUpload> {
+    return call("Chat.BeginAttachment", req);
+  },
+  bot(id: string): Promise<Bot> {
+    return call("Chat.Bot", id);
+  },
+  bots(): Promise<Bot[]> {
+    return call("Chat.Bots");
+  },
+  cancel(botID: string): Promise<void> {
+    return call("Chat.Cancel", botID);
+  },
+  clear(botID: string): Promise<void> {
+    return call("Chat.Clear", botID);
+  },
+  commitAttachment(id: string): Promise<ChatAttachment> {
+    return call("Chat.CommitAttachment", id);
+  },
+  createMemoryScope(name: string): Promise<MemoryScope> {
+    return call("Chat.CreateMemoryScope", name);
+  },
+  deleteMemoryEntry(id: string): Promise<void> {
+    return call("Chat.DeleteMemoryEntry", id);
+  },
+  deleteMemoryScope(id: string): Promise<void> {
+    return call("Chat.DeleteMemoryScope", id);
+  },
+  discardAttachment(id: string): Promise<void> {
+    return call("Chat.DiscardAttachment", id);
+  },
+  draftSend(req: DraftRequest): Promise<Message> {
+    return call("Chat.DraftSend", req);
+  },
+  exportBot(id: string): Promise<BotExport> {
+    return call("Chat.ExportBot", id);
+  },
+  importBot(in_: BotExport): Promise<Bot> {
+    return call("Chat.ImportBot", in_);
+  },
+  knowledgeFiles(botID: string): Promise<KnowledgeFile[]> {
+    return call("Chat.KnowledgeFiles", botID);
+  },
+  memoryEntries(req: MemoryListRequest): Promise<MemoryEntry[]> {
+    return call("Chat.MemoryEntries", req);
+  },
+  memoryScopes(botID: string): Promise<MemoryScope[]> {
+    return call("Chat.MemoryScopes", botID);
+  },
+  messages(req: MessagesRequest): Promise<MessagePage> {
+    return call("Chat.Messages", req);
+  },
+  readAttachment(id: string): Promise<AttachmentData> {
+    return call("Chat.ReadAttachment", id);
+  },
+  regenerate(req: RegenerateRequest): Promise<void> {
+    return call("Chat.Regenerate", req);
+  },
+  removeKnowledge(req: KnowledgeRef): Promise<void> {
+    return call("Chat.RemoveKnowledge", req);
+  },
+  resolveMemory(req: MemoryResolve): Promise<void> {
+    return call("Chat.ResolveMemory", req);
+  },
+  resolveSkill(req: SkillResolve): Promise<void> {
+    return call("Chat.ResolveSkill", req);
+  },
+  saveBot(in_: BotInput): Promise<Bot> {
+    return call("Chat.SaveBot", in_);
+  },
+  saveMemoryEntry(req: MemorySaveRequest): Promise<MemoryEntry> {
+    return call("Chat.SaveMemoryEntry", req);
+  },
+  send(req: SendRequest): Promise<Message> {
+    return call("Chat.Send", req);
+  },
+  skillProposals(botID: string): Promise<SkillProposal[]> {
+    return call("Chat.SkillProposals", botID);
+  },
+} as const;
+
+/**
+ * LLM is a stateless bridge to the daemon's provider manager. API keys are sent once on connect
+ * and are never returned.
+ */
+export const LLM = {
+  connect(req: ConnectRequest): Promise<ProviderStatus> {
+    return call("LLM.Connect", req);
+  },
+  defaults(): Promise<Defaults> {
+    return call("LLM.Defaults");
+  },
+  disconnect(id: string): Promise<void> {
+    return call("LLM.Disconnect", id);
+  },
+  models(id: string): Promise<Model[]> {
+    return call("LLM.Models", id);
+  },
+  openRouterAuthFinish(code: string): Promise<ProviderStatus> {
+    return call("LLM.OpenRouterAuthFinish", code);
+  },
+  openRouterAuthStart(): Promise<LlmAuthStart> {
+    return call("LLM.OpenRouterAuthStart");
+  },
+  providers(): Promise<ProviderStatus[]> {
+    return call("LLM.Providers");
+  },
+  setDefaults(d: Defaults): Promise<Defaults> {
+    return call("LLM.SetDefaults", d);
+  },
+  test(id: string): Promise<ProviderStatus> {
+    return call("LLM.Test", id);
+  },
+} as const;
+
 /**
  * Mail forwards typed mail operations to the daemon. All returned content is
  * untrusted plain text; mutations wait for the daemon policy approval.
@@ -3124,6 +3663,11 @@ export const events = {
   settingsChanged: event<SettingChange>("settings:changed"),
   /** DaemonState reports connection state of the daemon link. */
   daemonState: event<DaemonLink>("daemon:state"),
+  chatMessage: event<Message>("chat:message"),
+  chatRun: event<RunState>("chat:run"),
+  chatBot: event<BotChange>("chat:bot"),
+  chatMemory: event<MemoryChange>("chat:memory"),
+  llmChanged: event<Change>("llm:changed"),
   /** GitHubChanged fires when the GitHub connection or cached data changed. */
   githubChanged: event<GitHubChange>("github:changed"),
   /** GitHubClone reports progress of a clone started with GitHub.Clone. */

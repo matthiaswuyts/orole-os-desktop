@@ -50,6 +50,8 @@ func main() {
 	mygo.Bind(app.MCP{L: link})
 	mygo.Bind(app.Policy{L: link})
 	mygo.Bind(app.Plugins{L: link})
+	mygo.Bind(app.Chat{L: link})
+	mygo.Bind(app.LLM{L: link})
 	mygo.Bind(app.Mail{L: link})
 	mygo.Bind(app.Drive{L: link})
 	mygo.Bind(app.Machines{L: link})

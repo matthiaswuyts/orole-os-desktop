@@ -87,7 +87,7 @@ func (l *Link) Start(ctx context.Context) error {
 		return err
 	}
 	c.OnEvent(forward)
-	if err := c.Subscribe(ctx, "terminal.*", "settings.*", "projects.*", "worktrees.*", "github.*", "files.*", "notifications.*", "agents.*", "mcp.*", "policy.*", "applications.*", "plugins.*"); err != nil {
+	if err := c.Subscribe(ctx, "terminal.*", "settings.*", "projects.*", "worktrees.*", "github.*", "files.*", "notifications.*", "agents.*", "mcp.*", "policy.*", "applications.*", "plugins.*", "chat.*", "llm.*"); err != nil {
 		c.Close()
 		return err
 	}
@@ -122,7 +122,7 @@ func (l *Link) endMaintenance() {
 
 func forward(event string, data json.RawMessage) {
 	forwardMCP(event, data)
-	if forwardPlugins(event, data) {
+	if forwardPlugins(event, data) || forwardChat(event, data) {
 		return
 	}
 	if forwardApplications(event, data) {
