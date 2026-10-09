@@ -358,6 +358,21 @@ export interface ChatAttachment {
   size: number;
 }
 
+/**
+ * ToolInfo describes a toggleable bot tool for the builder. Unavailable tools carry the reason
+ * (e.g. "This model cannot run hosted web search"); the UI must show it instead of hiding the tool silently.
+ */
+export interface ChatToolInfo {
+  /** Tool* constant */
+  id: string;
+  name: string;
+  description: string;
+  available: boolean;
+  reason?: string;
+  /** Egress says what leaves the machine when the tool runs ("Search queries are sent to OpenRouter"). */
+  egress?: string;
+}
+
 /** Check is a pass/fail probe with detail. */
 export interface Check {
   ok: boolean;
@@ -2483,6 +2498,14 @@ export interface ToolInfo {
   permission?: string;
 }
 
+/** ToolsRequest asks which toggleable tools a provider/model combination can run. */
+export interface ToolsRequest {
+  /** empty = default provider */
+  provider: string;
+  /** empty = default model */
+  model: string;
+}
+
 export interface Trigger {
   type: string;
   schedule: string;
@@ -3473,6 +3496,9 @@ export const Chat = {
   },
   skillProposals(botID: string): Promise<SkillProposal[]> {
     return call("Chat.SkillProposals", botID);
+  },
+  tools(req: ToolsRequest): Promise<ChatToolInfo[]> {
+    return call("Chat.Tools", req);
   },
 } as const;
 

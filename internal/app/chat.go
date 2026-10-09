@@ -226,3 +226,9 @@ func (l LLM) OpenRouterAuthFinish(ctx context.Context, code string) (llm.Provide
 	err := l.L.call(ctx, "llm.openrouter.auth.finish", llm.AuthFinish{Code: code}, &out)
 	return out, err
 }
+
+func (c Chat) Tools(ctx context.Context, req chat.ToolsRequest) ([]chat.ToolInfo, error) {
+	var out []chat.ToolInfo
+	err := c.L.call(ctx, "chat.tools.list", req, &out)
+	return out, err
+}

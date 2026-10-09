@@ -319,3 +319,23 @@ func RawParts(raw string) []MsgPart {
 	}
 	return out
 }
+
+// ToolsRequest asks which toggleable tools a provider/model combination can run.
+type ToolsRequest struct {
+	Provider string `json:"provider"` // empty = default provider
+	Model    string `json:"model"`    // empty = default model
+}
+
+// ToolInfo describes a toggleable bot tool for the builder. Unavailable tools carry the reason
+// (e.g. "This model cannot run hosted web search"); the UI must show it instead of hiding the tool silently.
+type ToolInfo struct {
+	ID          string `json:"id"` // Tool* constant
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Available   bool   `json:"available"`
+	Reason      string `json:"reason,omitempty"`
+	// Egress says what leaves the machine when the tool runs ("Search queries are sent to OpenRouter").
+	Egress string `json:"egress,omitempty"`
+}
+
+// IPC: chat.tools.list ToolsRequest -> []ToolInfo
