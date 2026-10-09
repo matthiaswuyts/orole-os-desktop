@@ -15,20 +15,19 @@ export interface Loaded<T> {
 export function useLoad<T>(loader: () => Promise<T>, key: string, enabled = true): Loaded<T> {
   const [state, setState] = useState<{ data: T | null; error: string | null; loading: boolean }>({ data: null, error: null, loading: enabled });
   const latest = useRef(loader);
-  latest.current = loader;
-  const token = useRef(0);
+  useEffect(() => { latest.current = loader; });
   const [tick, setTick] = useState(0);
   const reload = useCallback(() => setTick((t) => t + 1), []);
 
   useEffect(() => {
-    const mine = ++token.current;
     if (!enabled) { setState({ data: null, error: null, loading: false }); return; }
+    let current = true;
     setState((s) => ({ ...s, loading: true, error: null }));
     latest.current().then(
-      (data) => { if (mine === token.current) setState({ data, error: null, loading: false }); },
-      (cause: unknown) => { if (mine === token.current) setState((s) => ({ data: s.data, error: errText(cause), loading: false })); },
+      (data) => { if (current) setState({ data, error: null, loading: false }); },
+      (cause: unknown) => { if (current) setState((s) => ({ data: s.data, error: errText(cause), loading: false })); },
     );
-    return () => { token.current++; };
+    return () => { current = false; };
   }, [key, tick, enabled]);
 
   return { ...state, reload };

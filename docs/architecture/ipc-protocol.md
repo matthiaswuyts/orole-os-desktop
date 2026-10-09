@@ -73,3 +73,11 @@ Events published: `terminal.output`, `terminal.changed`, `terminal.removed`, `se
 
 Additive changes (new methods, new optional fields) keep version 1. An incompatible change bumps
 `ProtocolVersion`; the server accepts a client whose range contains the server's version.
+
+## Chat and LLM methods
+
+Typed contracts live in `internal/chat/api.go`, `internal/chat/memory_api.go` and `internal/llm/service.go`:
+`chat.bots.list|get|save|archive|export|import`, `chat.messages.list`, `chat.send|cancel|regenerate|clear`, `chat.draft.send`,
+`chat.attachments.begin|chunk|commit|discard|read`, `chat.tools.list`, `chat.memory.*`, `chat.knowledge.*`, `chat.skills.pending.*`,
+`llm.providers.list|connect|disconnect|test`, `llm.models`, `llm.defaults.get|set`, `llm.openrouter.auth.start|finish`,
+`llm.manifests.list|save|trust|remove`. Events: `chat.message`, `chat.run`, `chat.bot`, `chat.memory`, `llm.changed`.

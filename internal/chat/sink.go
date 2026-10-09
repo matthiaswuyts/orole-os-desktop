@@ -21,6 +21,7 @@ type sink struct {
 	lastPub time.Time
 	timer   *time.Timer
 	done    bool
+	gen     uint64 // bumped whenever the pending timer is cancelled or fires, so stale callbacks do nothing
 }
 
 func newSink(msg Message, persist func(Message) error, publish func(Message)) *sink {
@@ -51,6 +52,7 @@ func (s *sink) publishLocked() {
 	if s.publish == nil {
 		return
 	}
+	s.stopTimerLocked() // a snapshot just went out: any pending scheduled one is redundant
 	s.lastPub = time.Now()
 	s.publish(s.snapshotLocked())
 }
@@ -66,18 +68,20 @@ func (s *sink) touchLocked() {
 		return
 	}
 	if s.timer == nil {
+		gen := s.gen
 		s.timer = time.AfterFunc(publishInterval-since, func() {
 			s.mu.Lock()
 			defer s.mu.Unlock()
-			s.timer = nil
-			if !s.done {
-				s.publishLocked()
+			if s.gen != gen || s.done { // already stopped or superseded by a direct publish
+				return
 			}
+			s.publishLocked()
 		})
 	}
 }
 
 func (s *sink) stopTimerLocked() {
+	s.gen++
 	if s.timer != nil {
 		s.timer.Stop()
 		s.timer = nil

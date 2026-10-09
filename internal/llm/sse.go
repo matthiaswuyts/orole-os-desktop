@@ -34,7 +34,8 @@ func ReadSSE(ctx context.Context, body io.ReadCloser, maxLine int, fn func(SSEEv
 	defer stop()
 
 	sc := bufio.NewScanner(body)
-	sc.Buffer(make([]byte, 0, 32<<10), maxLine)
+	// The initial buffer must not exceed maxLine: Scanner only enforces the limit once the buffer is full.
+	sc.Buffer(make([]byte, 0, min(32<<10, maxLine)), maxLine)
 	var (
 		event   string
 		data    []byte

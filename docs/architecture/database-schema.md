@@ -42,3 +42,13 @@ Never stored here. OAuth tokens, bearer tokens and PATs live in Windows Credenti
 
 New file `migrations/NNNN_<slice>.sql` with a unique, higher prefix; never edit an applied file; test through
 `database.Open` on a temp dir (`internal/database/database_test.go` shows the pattern). Update this page.
+
+## Chat tables (migrations 0096-0098)
+
+| Table | Purpose |
+|---|---|
+| `bots`, `messages` (+ `messages_fts`), `chat_attachments`, `conversation_summaries` | 0096: bots as contacts, one continuous conversation each (`UNIQUE(bot_id, seq)`), FTS5 over message text, content-addressed attachment references, rolling summaries |
+| `memory_scopes`, `memory_entries` (+ `memory_fts`), `bot_memory_access`, `memory_consolidation`, `skill_proposals`, `knowledge_files`, `knowledge_chunks` (+ `knowledge_fts`) | 0097: scoped core/fact memory with validity windows, per-bot scope grants, consolidation cursor, inert skill proposals, knowledge indexing |
+| `llm_manifests` | 0098: declarative provider manifests with digest-based trust (same shape as `plugins`) |
+
+Provider API keys are never stored here (`llm/<provider>/key` in Credential Manager). See `chat.md`.

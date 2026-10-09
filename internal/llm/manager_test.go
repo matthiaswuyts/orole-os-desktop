@@ -65,7 +65,9 @@ func newFakeEnv(t *testing.T) *fakeEnv {
 			return &countingProvider{Fake: f, hit: func() { env.mu.Lock(); env.modelHit++; env.mu.Unlock() }}, nil
 		},
 		OAuth: &llm.OAuth{
-			AuthURL: func(ch string) string { return "https://example.test/auth?code_challenge=" + ch + "&code_challenge_method=S256" },
+			AuthURL: func(ch string) string {
+				return "https://example.test/auth?code_challenge=" + ch + "&code_challenge_method=S256"
+			},
 			Exchange: func(_ context.Context, _ llm.HTTPDoer, code, verifier string) (string, error) {
 				env.verifier = verifier
 				if code != "good-code" {

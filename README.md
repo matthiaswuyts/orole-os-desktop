@@ -39,6 +39,7 @@ State of this tree; the code is the source of truth (`docs/architecture/daemon.m
 | Packaging: NSIS installer, signed auto-update | Installer built and installed; **no signing keys configured** | Installed WebView2 app connected to its daemon; `docs/development/packaging.md`, `docs/development/updates.md` |
 | Linux / macOS | Not supported as complete desktop targets | Platform-independent packages have tests; no cross-platform desktop-release claim |
 | Declarative MCP plugins | Integrated; daemon and installed-UI smoke passed | Exact-manifest trust, independent MCP approval, real command/widget execution, persisted revocation; no arbitrary JavaScript plugin host |
+| Chat (bots, direct OpenRouter/OpenAI APIs, web search, research, uploads, memory, provider manifests) | Daemon and UI integrated; daemon IPC wiring covered by tests; **not yet exercised against live provider APIs** | `docs/architecture/chat.md`; opt-in live smokes `OROLE_OPENROUTER_LIVE=1`, `OROLE_OPENAI_LIVE=1` |
 
 ## Quickstart
 

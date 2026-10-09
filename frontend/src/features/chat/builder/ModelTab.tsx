@@ -29,7 +29,7 @@ const matches = (option: Option, query: string) => {
 };
 
 /** Provider-reported reasoning levels of the model a bot would use, or [] when unknown. */
-export function useModelOptions(selected: string) {
+function useModelOptions(selected: string) {
   const providers = useLLM((s) => s.providers);
   const defaults = useLLM((s) => s.defaults);
   const catalogs = useLLM((s) => s.models);

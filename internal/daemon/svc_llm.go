@@ -10,6 +10,7 @@ import (
 	"github.com/rayorole/orole-os-desktop/internal/database"
 	"github.com/rayorole/orole-os-desktop/internal/llm"
 	"github.com/rayorole/orole-os-desktop/internal/llm/builtin"
+	"github.com/rayorole/orole-os-desktop/internal/llm/openaicompat"
 )
 
 // Test seam: production uses the OS credential store.
@@ -33,13 +34,16 @@ func (s settingsKV) Set(ctx context.Context, key, value string) error {
 	return err
 }
 
-// registerLLM wires model providers (OpenRouter, OpenAI): credentials in the OS store,
-// defaults in settings. Connecting and disconnecting are user actions and audited without the key.
+// registerLLM wires model providers (OpenRouter, OpenAI and user-approved declarative manifests):
+// credentials in the OS store, defaults in settings. Connecting and disconnecting are user actions
+// and audited without the key.
 func (d *Daemon) registerLLM() {
+	reg, store := builtin.Registry(), llmCredentialStore()
 	mgr, err := llm.NewManager(llm.ManagerConfig{
-		Registry:    builtin.Registry(),
-		Credentials: llmCredentialStore(),
+		Registry:    reg,
+		Credentials: store,
 		Settings:    settingsKV{d.DB},
+		Dynamic:     &openaicompat.Source{Service: d.newLLMManifests(reg, store)},
 	})
 	if err != nil {
 		d.Log.Error("llm providers unavailable", "err", err)
@@ -47,6 +51,7 @@ func (d *Daemon) registerLLM() {
 	}
 	d.LLM = mgr
 	changed := func(id string) { d.IPC.Publish("llm.changed", llm.Change{ID: id}) }
+	d.registerLLMManifests(changed)
 
 	handle(d, "llm.providers.list", func(ctx context.Context, _ none) ([]llm.ProviderStatus, error) {
 		return mgr.Statuses(ctx)

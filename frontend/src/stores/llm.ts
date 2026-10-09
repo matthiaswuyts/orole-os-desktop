@@ -1,11 +1,11 @@
 import { useEffect } from "react";
 import { create } from "zustand";
-import { LLM, events, type Defaults, type Model, type ProviderStatus } from "@/mygo";
+import { LLM, events, type Defaults, type ManifestRecord, type Model, type ProviderManifest, type ProviderStatus } from "@/mygo";
 import { inDesktop } from "@/lib/backend";
 import { useDaemon } from "@/stores/daemon";
 
 /** A failed action carries a message the UI can show verbatim; a successful one carries its result. */
-export type Outcome<T = void> = { ok: true; value: T } | { ok: false; error: string };
+export type Outcome<T = void> = { ok: true; value: T } | { ok: false; error: string; /** the daemon's error code (conflict, denied, canceled, bad_request, …) when it sent one */ code?: string };
 
 /** What a provider offers, fetched lazily and kept until the daemon says the provider changed. */
 export interface ModelCatalog {
@@ -17,17 +17,30 @@ export interface ModelCatalog {
 /** The kind of action in flight for a provider id. */
 export type Busy = "connect" | "test" | "disconnect";
 
+/** The kind of action in flight for a manifest id. */
+export type ManifestBusy = "save" | "trust" | "revoke" | "remove";
+
 interface State {
   providers: ProviderStatus[];
   defaults: Defaults | null;
   models: Record<string, ModelCatalog>;
+  /** Stored provider manifests (never contains API keys), loaded independently of the provider list. */
+  manifests: ManifestRecord[];
+  manifestsReady: boolean;
+  manifestsError: string | null;
+  manifestBusy: Record<string, ManifestBusy>;
   busy: Record<string, Busy>;
   ready: boolean;
   loading: boolean;
   error: string | null;
   load: () => Promise<void>;
   loadModels: (id: string, force?: boolean) => Promise<void>;
-  /** The API key is only forwarded to the daemon; it is never written to the store. */
+  loadManifests: () => Promise<void>;
+  /** Empty `expectedDigest` creates (disabled); the current digest replaces and revokes trust if the manifest changed. */
+  saveManifest: (manifest: ProviderManifest, expectedDigest: string) => Promise<Outcome<ManifestRecord>>;
+  /** Enabling waits for the daemon's separate policy approval; denial or cancellation is an error outcome. */
+  trustManifest: (id: string, digest: string, enabled: boolean) => Promise<Outcome<ManifestRecord>>;
+  removeManifest: (id: string, digest: string) => Promise<Outcome>;
   connect: (id: string, apiKey: string) => Promise<Outcome<ProviderStatus>>;
   disconnect: (id: string) => Promise<Outcome>;
   test: (id: string) => Promise<Outcome<ProviderStatus>>;
@@ -39,6 +52,7 @@ interface State {
 }
 
 let sequence = 0;
+let manifestSequence = 0;
 let subscribers = 0;
 let stop: (() => void) | undefined;
 let modelCounter = 0;
@@ -46,9 +60,33 @@ let modelCounter = 0;
 const modelRequests = new Map<string, number>();
 
 const OFFLINE = "The daemon is offline. Reconnect to manage AI providers.";
-const message = (cause: unknown) => (cause instanceof Error ? cause.message : String(cause)).replace(/^(bad_request|not_found|canceled|timeout|internal|denied): /, "");
+const CODE = /^(bad_request|not_found|conflict|canceled|timeout|internal|denied): /;
+const message = (cause: unknown) => (cause instanceof Error ? cause.message : String(cause)).replace(CODE, "");
+const codeOf = (cause: unknown) => (cause instanceof Error ? cause.message : String(cause)).match(CODE)?.[1];
 /** Defensive: a secret must not reach the UI even if an error text were to quote it. */
 const redact = (text: string, secret: string) => secret.length >= 4 ? text.split(secret).join("…") : text;
+
+function withManifest(records: ManifestRecord[], record: ManifestRecord): ManifestRecord[] {
+  const next = records.some((r) => r.manifest.id === record.manifest.id)
+    ? records.map((r) => r.manifest.id === record.manifest.id ? record : r)
+    : [...records, record];
+  return next.sort((a, b) => a.manifest.id.localeCompare(b.manifest.id));
+}
+
+async function actManifest<T>(id: string, kind: ManifestBusy, run: () => Promise<T>): Promise<Outcome<T>> {
+  useLLM.setState((state) => ({ manifestBusy: { ...state.manifestBusy, [id]: kind } }));
+  try {
+    return { ok: true, value: await run() };
+  } catch (cause) {
+    return { ok: false, error: message(cause), code: codeOf(cause) };
+  } finally {
+    useLLM.setState((state) => {
+      const manifestBusy = { ...state.manifestBusy };
+      delete manifestBusy[id];
+      return { manifestBusy };
+    });
+  }
+}
 
 function withStatus(providers: ProviderStatus[], status: ProviderStatus): ProviderStatus[] {
   return providers.some((p) => p.id === status.id)
@@ -84,6 +122,7 @@ async function act<T>(id: string, kind: Busy | null, run: () => Promise<T>, secr
 /** Only the daemon owns provider state and credentials. This is a disposable, event-synchronized snapshot. */
 export const useLLM = create<State>((set, get) => ({
   providers: [], defaults: null, models: {}, busy: {}, ready: false, loading: false, error: null,
+  manifests: [], manifestsReady: false, manifestsError: null, manifestBusy: {},
 
   async load() {
     if (!inDesktop) return;
@@ -95,6 +134,51 @@ export const useLLM = create<State>((set, get) => ({
     } catch (cause) {
       if (request === sequence) set({ ready: false, loading: false, error: message(cause) });
     }
+  },
+
+  async loadManifests() {
+    if (!inDesktop) return;
+    const request = ++manifestSequence;
+    try {
+      const manifests = await LLM.manifests();
+      if (request === manifestSequence) set({ manifests: manifests ?? [], manifestsReady: true, manifestsError: null });
+    } catch (cause) {
+      if (request === manifestSequence) set({ manifestsReady: false, manifestsError: message(cause) });
+    }
+  },
+
+  async saveManifest(manifest, expectedDigest) {
+    const outcome = await actManifest(manifest.id, "save", () => LLM.saveManifest({ manifest, expectedDigest }));
+    if (outcome.ok) {
+      // Newer than any list request still in flight.
+      ++manifestSequence;
+      set((state) => ({ manifests: withManifest(state.manifests, outcome.value), manifestsReady: true, manifestsError: null }));
+      dropModels([manifest.id]);
+      void get().load();
+    }
+    return outcome;
+  },
+
+  async trustManifest(id, digest, enabled) {
+    const outcome = await actManifest(id, enabled ? "trust" : "revoke", () => LLM.trustManifest({ id, digest, enabled }));
+    if (outcome.ok) {
+      ++manifestSequence;
+      set((state) => ({ manifests: withManifest(state.manifests, outcome.value), manifestsReady: true, manifestsError: null }));
+      dropModels([id]);
+      void get().load();
+    }
+    return outcome;
+  },
+
+  async removeManifest(id, digest) {
+    const outcome = await actManifest(id, "remove", () => LLM.removeManifest({ id, digest }));
+    if (outcome.ok) {
+      ++manifestSequence;
+      set((state) => ({ manifests: state.manifests.filter((r) => r.manifest.id !== id) }));
+      dropModels([id]);
+      void get().load();
+    }
+    return outcome;
   },
 
   async loadModels(id, force = false) {
@@ -154,7 +238,7 @@ export const useLLM = create<State>((set, get) => ({
   startSync() {
     if (!inDesktop) return () => {};
     if (++subscribers === 1) {
-      const refresh = () => { void get().load(); };
+      const refresh = () => { void get().load(); void get().loadManifests(); };
       // Subscribe first; each notification invalidates older in-flight responses.
       const offChanged = events.llmChanged.on(({ id }) => {
         // A change that names a provider (connect, disconnect) makes its catalogue and account suspect;
@@ -166,8 +250,9 @@ export const useLLM = create<State>((set, get) => ({
         if (state.link === "connected" && previous.link !== "connected") refresh();
         if (state.link === "offline" && previous.link !== "offline") {
           ++sequence;
+          ++manifestSequence;
           dropModels("all");
-          set({ ready: false, loading: false, error: OFFLINE });
+          set({ ready: false, loading: false, error: OFFLINE, manifestsReady: false, manifestsError: OFFLINE });
         }
       });
       window.addEventListener("focus", refresh);
@@ -180,10 +265,11 @@ export const useLLM = create<State>((set, get) => ({
       stopped = true;
       if (--subscribers === 0) {
         ++sequence;
+        ++manifestSequence;
         dropModels("all");
         stop?.();
         stop = undefined;
-        set({ ready: false, loading: false });
+        set({ ready: false, loading: false, manifestsReady: false });
       }
     };
   },

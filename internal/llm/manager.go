@@ -41,13 +41,16 @@ type ManagerConfig struct {
 	Registry    *Registry
 	Credentials credentials.Store
 	Settings    Settings
-	// HTTP is shared by every provider and the OAuth exchange; nil = NewHTTPClient().
+	// HTTP is shared by every built-in provider and the OAuth exchange; nil = NewHTTPClient().
 	HTTP HTTPDoer
+	// Dynamic is optional: trusted manifest providers, resolved afresh on every lookup.
+	Dynamic DynamicSource
 	// Now is injectable for tests; nil = time.Now.
 	Now func() time.Time
 }
 
 type testResult struct {
+	rev     string
 	valid   bool
 	err     string
 	account *Account
@@ -55,6 +58,7 @@ type testResult struct {
 
 type modelsEntry struct {
 	mu     sync.Mutex // held while fetching so concurrent callers share one request
+	rev    string
 	at     time.Time
 	models []Model
 }
@@ -69,6 +73,7 @@ type pendingAuth struct {
 // credential store for every Provider call.
 type Manager struct {
 	reg      *Registry
+	dyn      DynamicSource
 	creds    credentials.Store
 	settings Settings
 	http     HTTPDoer
@@ -88,7 +93,7 @@ func NewManager(cfg ManagerConfig) (*Manager, error) {
 		return nil, errors.New("llm: manager needs a registry, a credential store and settings")
 	}
 	m := &Manager{
-		reg: cfg.Registry, creds: cfg.Credentials, settings: cfg.Settings, http: cfg.HTTP, now: cfg.Now,
+		reg: cfg.Registry, dyn: cfg.Dynamic, creds: cfg.Credentials, settings: cfg.Settings, http: cfg.HTTP, now: cfg.Now,
 		tests: map[string]testResult{}, models: map[string]*modelsEntry{},
 	}
 	if m.http == nil {
@@ -100,12 +105,44 @@ func NewManager(cfg ManagerConfig) (*Manager, error) {
 	return m, nil
 }
 
+// descriptor resolves a built-in provider, then a trusted dynamic one.
 func (m *Manager) descriptor(id string) (Descriptor, error) {
-	d, ok := m.reg.Get(id)
-	if !ok {
-		return Descriptor{}, fmt.Errorf("unknown provider %q", id)
+	if d, ok := m.lookup(id); ok {
+		return d, nil
 	}
-	return d, nil
+	return Descriptor{}, fmt.Errorf("unknown provider %q", id)
+}
+
+func (m *Manager) lookup(id string) (Descriptor, bool) {
+	if d, ok := m.reg.Get(id); ok {
+		return d, true
+	}
+	if m.dyn != nil {
+		for _, d := range m.dyn.Descriptors() {
+			if d.ID == id && d.New != nil {
+				return d, true
+			}
+		}
+	}
+	return Descriptor{}, false
+}
+
+// all lists built-in providers followed by the trusted dynamic ones (built-in ids win).
+func (m *Manager) all() []Descriptor {
+	out := m.reg.List()
+	if m.dyn == nil {
+		return out
+	}
+	for _, d := range m.dyn.Descriptors() {
+		if d.ID == "" || d.New == nil || slices.ContainsFunc(out, func(x Descriptor) bool { return x.ID == d.ID }) {
+			continue
+		}
+		if d.Kind == "" {
+			d.Kind = "manifest"
+		}
+		out = append(out, d)
+	}
+	return out
 }
 
 // readKey fetches the stored key; ErrNotConfigured when absent.
@@ -126,23 +163,27 @@ func (m *Manager) readKey(id string) (string, error) {
 
 func (m *Manager) status(d Descriptor) ProviderStatus {
 	st := ProviderStatus{ID: d.ID, Name: d.Name, Kind: d.Kind}
-	key, err := m.readKey(d.ID)
-	switch {
-	case err == nil:
+	if d.NoKey {
 		st.Connected = true
-		if len(key) >= minHintable {
-			st.KeyHint = key[len(key)-keyHintLen:]
+	} else {
+		key, err := m.readKey(d.ID)
+		switch {
+		case err == nil:
+			st.Connected = true
+			if len(key) >= minHintable {
+				st.KeyHint = key[len(key)-keyHintLen:]
+			}
+		case !errors.Is(err, ErrNotConfigured):
+			st.Error = err.Error()
+			return st
+		default:
+			return st
 		}
-	case !errors.Is(err, ErrNotConfigured):
-		st.Error = err.Error()
-		return st
-	default:
-		return st
 	}
 	m.mu.Lock()
 	t, ok := m.tests[d.ID]
 	m.mu.Unlock()
-	if ok {
+	if ok && t.rev == d.Revision {
 		st.Valid = new(t.valid)
 		st.Error = t.err
 		if t.account != nil {
@@ -152,9 +193,9 @@ func (m *Manager) status(d Descriptor) ProviderStatus {
 	return st
 }
 
-// Statuses lists every registered provider.
+// Statuses lists every registered provider, built-in first, then trusted manifests.
 func (m *Manager) Statuses(context.Context) ([]ProviderStatus, error) {
-	ds := m.reg.List()
+	ds := m.all()
 	out := make([]ProviderStatus, len(ds))
 	for i, d := range ds {
 		out[i] = m.status(d)
@@ -186,7 +227,11 @@ func (m *Manager) Connect(ctx context.Context, id, apiKey string) (ProviderStatu
 }
 
 func (m *Manager) connect(ctx context.Context, d Descriptor, key string) (ProviderStatus, error) {
-	if key == "" {
+	if d.NoKey {
+		if key != "" {
+			return ProviderStatus{}, errors.New("this provider does not use an API key")
+		}
+	} else if key == "" {
 		return ProviderStatus{}, errors.New("an API key is required")
 	}
 	p, err := d.New(Config{APIKey: key, HTTP: m.http})
@@ -197,11 +242,13 @@ func (m *Manager) connect(ctx context.Context, d Descriptor, key string) (Provid
 	if err != nil {
 		return ProviderStatus{}, safeError(err, key)
 	}
-	if err := m.creds.Set(CredentialKey(d.ID), []byte(key)); err != nil {
-		return ProviderStatus{}, errors.New("could not store the key in the OS credential store")
+	if !d.NoKey {
+		if err := m.creds.Set(CredentialKey(d.ID), []byte(key)); err != nil {
+			return ProviderStatus{}, errors.New("could not store the key in the OS credential store")
+		}
 	}
 	m.mu.Lock()
-	m.tests[d.ID] = testResult{valid: true, account: &acct}
+	m.tests[d.ID] = testResult{rev: d.Revision, valid: true, account: &acct}
 	delete(m.models, d.ID)
 	m.mu.Unlock()
 	return m.status(d), nil
@@ -212,6 +259,9 @@ func (m *Manager) Disconnect(_ context.Context, id string) error {
 	d, err := m.descriptor(id)
 	if err != nil {
 		return err
+	}
+	if d.NoKey {
+		return errors.New("this provider does not use an API key; revoke its trust to stop using it")
 	}
 	if err := m.creds.Delete(CredentialKey(d.ID)); err != nil {
 		return errors.New("could not remove the key from the OS credential store")
@@ -230,7 +280,7 @@ func (m *Manager) Test(ctx context.Context, id string) (ProviderStatus, error) {
 	if err != nil {
 		return ProviderStatus{}, err
 	}
-	p, err := m.Provider(ctx, id)
+	p, err := m.provider(d)
 	if err != nil {
 		return ProviderStatus{}, err
 	}
@@ -238,7 +288,7 @@ func (m *Manager) Test(ctx context.Context, id string) (ProviderStatus, error) {
 	if verr != nil && ctx.Err() != nil {
 		return ProviderStatus{}, ctx.Err()
 	}
-	res := testResult{valid: verr == nil}
+	res := testResult{rev: d.Revision, valid: verr == nil}
 	if verr != nil {
 		res.err = AsError(safeError(verr)).Message
 	} else {
@@ -256,9 +306,16 @@ func (m *Manager) Provider(_ context.Context, id string) (Provider, error) {
 	if err != nil {
 		return nil, err
 	}
-	key, err := m.readKey(id)
-	if err != nil {
-		return nil, err
+	return m.provider(d)
+}
+
+func (m *Manager) provider(d Descriptor) (Provider, error) {
+	var key string
+	if !d.NoKey {
+		var err error
+		if key, err = m.readKey(d.ID); err != nil {
+			return nil, err
+		}
 	}
 	p, err := d.New(Config{APIKey: key, HTTP: m.http})
 	if err != nil {
@@ -269,7 +326,11 @@ func (m *Manager) Provider(_ context.Context, id string) (Provider, error) {
 
 // Models lists a provider's models, cached for five minutes.
 func (m *Manager) Models(ctx context.Context, id string) ([]Model, error) {
-	p, err := m.Provider(ctx, id)
+	d, err := m.descriptor(id)
+	if err != nil {
+		return nil, err
+	}
+	p, err := m.provider(d)
 	if err != nil {
 		return nil, err
 	}
@@ -283,7 +344,7 @@ func (m *Manager) Models(ctx context.Context, id string) ([]Model, error) {
 
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	if e.models != nil && m.now().Sub(e.at) < modelsTTL {
+	if e.models != nil && e.rev == d.Revision && m.now().Sub(e.at) < modelsTTL {
 		return slices.Clone(e.models), nil
 	}
 	models, err := p.Models(ctx)
@@ -293,7 +354,7 @@ func (m *Manager) Models(ctx context.Context, id string) ([]Model, error) {
 	if models == nil {
 		models = []Model{}
 	}
-	e.models, e.at = models, m.now()
+	e.models, e.rev, e.at = models, d.Revision, m.now()
 	return slices.Clone(models), nil
 }
 
@@ -330,7 +391,7 @@ func (m *Manager) checkSelection(label, sel string) error {
 	if !ok {
 		return fmt.Errorf("%s must look like provider/model", label)
 	}
-	if _, found := m.reg.Get(p); !found {
+	if _, found := m.lookup(p); !found {
 		return fmt.Errorf("%s uses unknown provider %q", label, p)
 	}
 	return nil

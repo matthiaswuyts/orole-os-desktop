@@ -18,6 +18,12 @@ const TOOLS: Record<string, ToolWords> = {
 
 const humanize = (name: string) => name.replace(/[_-]+/g, " ").trim() || "tool";
 
+/** A tool's short name for chips ("Web search"); unknown ids are humanized. */
+export function toolNoun(name: string): string {
+  const noun = TOOLS[name]?.noun ?? humanize(name);
+  return `${noun[0]!.toUpperCase()}${noun.slice(1)}`;
+}
+
 /** The row label for a tool id and state ("Searched the web", "Web search failed"). */
 export function toolLabel(name: string | undefined, state: StepState): string {
   const words = TOOLS[name ?? ""];

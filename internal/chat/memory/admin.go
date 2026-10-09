@@ -2,7 +2,6 @@ package memory
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"strings"
 
@@ -467,5 +466,3 @@ func (s *Store) ResolvePending(ctx context.Context, id string, approve bool) err
 	s.publish(e.Scope)
 	return nil
 }
-
-var _ = sql.ErrNoRows

@@ -7,6 +7,7 @@ import (
 	"github.com/egoist/mygo"
 	"github.com/rayorole/orole-os-desktop/internal/chat"
 	"github.com/rayorole/orole-os-desktop/internal/llm"
+	"github.com/rayorole/orole-os-desktop/internal/llm/manifest"
 )
 
 var (
@@ -231,4 +232,23 @@ func (c Chat) Tools(ctx context.Context, req chat.ToolsRequest) ([]chat.ToolInfo
 	var out []chat.ToolInfo
 	err := c.L.call(ctx, "chat.tools.list", req, &out)
 	return out, err
+}
+
+func (l LLM) Manifests(ctx context.Context) ([]manifest.ManifestRecord, error) {
+	var out []manifest.ManifestRecord
+	err := l.L.call(ctx, "llm.manifests.list", struct{}{}, &out)
+	return out, err
+}
+func (l LLM) SaveManifest(ctx context.Context, req manifest.ManifestSaveRequest) (manifest.ManifestRecord, error) {
+	var out manifest.ManifestRecord
+	err := l.L.call(ctx, "llm.manifests.save", req, &out)
+	return out, err
+}
+func (l LLM) TrustManifest(ctx context.Context, req manifest.ManifestTrustRequest) (manifest.ManifestRecord, error) {
+	var out manifest.ManifestRecord
+	err := l.L.call(ctx, "llm.manifests.trust", req, &out)
+	return out, err
+}
+func (l LLM) RemoveManifest(ctx context.Context, req manifest.ManifestRef) error {
+	return l.L.call(ctx, "llm.manifests.remove", req, nil)
 }

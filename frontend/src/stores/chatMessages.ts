@@ -69,7 +69,6 @@ export function upsert(list: readonly Message[], message: Message): Message[] {
   return !last || bySeq(last, message) <= 0 ? [...list, message] : [...list, message].sort(bySeq);
 }
 
-let sequence = 0;
 let subscribers = 0;
 let stop: (() => void) | undefined;
 /** Latest request token per bot, for both pages: a response only lands while its token is still current. */
@@ -207,7 +206,7 @@ export const useChatMessages = create<State>((set, get) => ({
     return () => {
       if (stopped) return;
       stopped = true;
-      if (--subscribers === 0) { ++sequence; stop?.(); stop = undefined; }
+      if (--subscribers === 0) { stop?.(); stop = undefined; }
     };
   },
 }));

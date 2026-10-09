@@ -85,7 +85,7 @@ var families = []family{
 // excluded marks ids that match a family prefix but are not text chat models on the
 // Responses API (audio, realtime, image generation, search-only Chat Completions models...).
 var excluded = []string{
-	"audio", "realtime", "transcribe", "tts", "image", "search", "live", "diarize", "moderation",
+	"audio", "realtime", "transcribe", "tts", "image", "-search", "live", "diarize", "moderation",
 	"embedding", "instruct", "computer-use", "-preview", "cyber", "daybreak", "rosalind", "whisper",
 }
 

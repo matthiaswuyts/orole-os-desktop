@@ -422,3 +422,38 @@ Ctrl+Enter insertion, attachment retention, and model/queue settings; no visual 
 Headless titlebar smoke exercised task selection, provider logo rendering, Stop, returning to the dashboard,
 switching to Settings without stale task metadata, and opening/closing the Changes sheet with a diff error.
 The full frontend check passed; native titlebar geometry and sheet appearance were not visually checked.
+
+## Bot chat view
+
+`features/chat/ChatView.tsx` hosts the `chat` view. It shows, in order: "needs the desktop app" in the browser
+preview; the bot builder (`builder/BotBuilder`, lazy) while `useChat().builder.open`; a setup card linking to
+Settings → AI when no provider is connected; load states for the bot list; "Create your first bot" /
+"Pick a bot"; otherwise `Conversation` for the selected bot (keyed by bot id, so each bot gets its own runtime
+and composer).
+
+The daemon owns every conversation. `stores/chatMessages.ts` is a disposable, event-synchronised window per bot:
+the latest page on `load`, older pages on `loadOlder` (`beforeSeq`), `chat.message` events upsert by id (a
+streaming snapshot replaces its message in place; `draft:` ids and bots never opened are ignored), reconnect and
+window focus refetch the latest page and merge it with what events delivered meanwhile, and stale responses are
+dropped by request token. About 300 messages per bot stay in memory unless the reader has paged back. `send`
+stores nothing optimistically: it upserts the user message the daemon returns and the reply arrives by event; a
+failed send keeps its exact request (same `clientNonce`) so Retry is idempotent. Composer drafts and the
+research toggle are kept per bot.
+
+`features/chat/runtime/` adapts that store to assistant-ui (`useExternalStoreRuntime`, no thread list, branching
+or editing, because the daemon supports none). `convert.ts` maps daemon messages to `ThreadMessageLike`
+(text/reasoning native, tool rows to `tool-call`, citations to `source`, report/delegation/memory/notice to
+`data-*` parts; the daemon record rides in `metadata.custom` and is what the renderer draws, so nothing is
+lost). `attachments.ts` is the `AttachmentAdapter`: files are validated client-side for UX only (daemon rules
+are authoritative; the model's `vision`/`pdf` caps come from the LLM store when known), staged as soon as they
+are added via `beginAttachment`/`attachmentChunk` (1 MiB base64 chunks)/`commitAttachment`, shown as
+uploading/done/error chips, and discarded on remove. Research mode (offered only with the `research` tool) and
+attachments are mutually exclusive, as in the daemon.
+
+`Conversation.tsx` is a `ThreadPrimitive` view: it scrolls back (older pages load near the top without moving
+the reader), sticks to the bottom while following a stream, announces "Responding"/"Done" in a polite live
+region, and dims queued user messages ("Queued"). `Composer.tsx`: Enter sends, Shift+Enter inserts a newline, IME
+composition never sends; Send stays available while a reply runs (the daemon queues the message) next to Stop;
+the `+` menu holds Attach files, Research mode, read-only tool chips and Edit bot. There is no @mention picker
+(the daemon has no routing for it). `parts/` holds the pure message renderers shared with the bot builder's live
+preview (`ChatMessageView`, `MessageParts`), so a preview draws exactly what the conversation draws.

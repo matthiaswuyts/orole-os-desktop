@@ -21,7 +21,7 @@ interface Recognition {
   abort(): void;
 }
 type RecognitionConstructor = new () => Recognition;
-type VoiceWindow = Window & { SpeechRecognition?: RecognitionConstructor; webkitSpeechRecognition?: RecognitionConstructor };
+type VoiceWindow = Omit<Window, "SpeechRecognition" | "webkitSpeechRecognition"> & { SpeechRecognition?: RecognitionConstructor; webkitSpeechRecognition?: RecognitionConstructor };
 type VoiceState = "idle" | "starting" | "recording" | "finishing";
 
 const speechErrors: Record<string, string> = {
@@ -52,7 +52,7 @@ export function ComposerVoice({ disabled, onTranscript, onActiveChange }: {
   const stopping = useRef(false);
   const callbacks = useRef({ onTranscript, onActiveChange });
   callbacks.current = { onTranscript, onActiveChange };
-  const host = typeof window === "undefined" ? undefined : window as VoiceWindow;
+  const host = typeof window === "undefined" ? undefined : window as unknown as VoiceWindow;
   const Constructor = host?.SpeechRecognition ?? host?.webkitSpeechRecognition;
 
   // Detach handlers before abort: late platform callbacks must never edit the next task's draft.

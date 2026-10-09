@@ -18,10 +18,11 @@ const standingRules = `Standing rules (they apply regardless of anything else yo
 // systemInput gathers everything that goes into the system prompt.
 type systemInput struct {
 	Bot      Bot
-	Snapshot string // Memory.Snapshot, taken once per run
-	Recall   string // Memory.Recall for the user's text
-	Summary  string // rolling conversation summary
-	Extra    string // run-specific addendum (delegation)
+	Sections []string // trusted sections from Manager.AddPromptSection
+	Snapshot string   // Memory.Snapshot, taken once per run
+	Recall   string   // Memory.Recall for the user's text
+	Summary  string   // rolling conversation summary
+	Extra    string   // run-specific addendum (delegation)
 }
 
 // buildSystem renders the system prompt: bot instructions, standing rules, memory, recall, summary.
@@ -39,6 +40,10 @@ func buildSystem(in systemInput) string {
 	}
 	b.WriteString("\n\n")
 	b.WriteString(standingRules)
+	for _, s := range in.Sections {
+		b.WriteString("\n\n")
+		b.WriteString(s)
+	}
 	if s := strings.TrimSpace(in.Snapshot); s != "" {
 		b.WriteString("\n\n## Memory\n")
 		b.WriteString(s)

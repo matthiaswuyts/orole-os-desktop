@@ -160,6 +160,9 @@ export interface AuthStart {
   expiresAt: number;
 }
 
+/** AuthType says how the API key is presented to the provider. */
+export type AuthType = "bearer" | "header" | "none";
+
 export interface AutomationsIssue {
   path: string;
   message: string;
@@ -1301,6 +1304,57 @@ export interface MailStatus {
   capabilities: Capabilities;
 }
 
+/** ManifestAuth selects the key placement. Header is required for (and only for) AuthHeader. */
+export interface ManifestAuth {
+  type: AuthType;
+  header?: string;
+}
+
+/**
+ * ManifestModel declares one model's capabilities. It is used when the models endpoint is
+ * unavailable and overrides the (capability-less) catalogue entry of the same id otherwise.
+ */
+export interface ManifestModel {
+  id: string;
+  name?: string;
+  vision: boolean;
+  pdf: boolean;
+  tools: boolean;
+  reasoning: boolean;
+  contextWindow?: number;
+}
+
+/**
+ * ManifestRecord is a stored manifest with its trust state. Trusted means
+ * Enabled && ApprovedDigest == Digest (the store guarantees the latter whenever Enabled).
+ */
+export interface ManifestRecord {
+  manifest: ProviderManifest;
+  digest: string;
+  enabled: boolean;
+  approvedDigest: string;
+  updatedAt: number;
+}
+
+/** ManifestRef names one exact stored manifest. */
+export interface ManifestRef {
+  id: string;
+  digest: string;
+}
+
+/** ManifestSaveRequest creates (ExpectedDigest empty) or replaces (ExpectedDigest = current digest) a manifest. */
+export interface ManifestSaveRequest {
+  manifest: ProviderManifest;
+  expectedDigest: string;
+}
+
+/** ManifestTrustRequest enables (after policy approval) or disables the exact manifest digest. */
+export interface ManifestTrustRequest {
+  id: string;
+  digest: string;
+  enabled: boolean;
+}
+
 /** Status is a connection's state. */
 export type McpStatus = "disabled" | "connecting" | "connected" | "auth_required" | "backoff";
 
@@ -1716,6 +1770,21 @@ export interface PromptInfo {
   name: string;
   description?: string;
   arguments?: PromptArg[];
+}
+
+/** ProviderManifest is the schema v1 document describing an OpenAI-compatible provider. */
+export interface ProviderManifest {
+  schemaVersion: number;
+  id: string;
+  name: string;
+  description?: string;
+  baseUrl: string;
+  auth: ManifestAuth;
+  modelsPath?: string;
+  chatPath?: string;
+  models?: ManifestModel[];
+  /** Headers are static, non-secret request headers (never credentials). */
+  headers?: Record<string, string>;
 }
 
 /** ProviderStatus is what the UI may know about a provider. Never contains the key. */
@@ -3516,6 +3585,9 @@ export const LLM = {
   disconnect(id: string): Promise<void> {
     return call("LLM.Disconnect", id);
   },
+  manifests(): Promise<ManifestRecord[]> {
+    return call("LLM.Manifests");
+  },
   models(id: string): Promise<Model[]> {
     return call("LLM.Models", id);
   },
@@ -3528,11 +3600,20 @@ export const LLM = {
   providers(): Promise<ProviderStatus[]> {
     return call("LLM.Providers");
   },
+  removeManifest(req: ManifestRef): Promise<void> {
+    return call("LLM.RemoveManifest", req);
+  },
+  saveManifest(req: ManifestSaveRequest): Promise<ManifestRecord> {
+    return call("LLM.SaveManifest", req);
+  },
   setDefaults(d: Defaults): Promise<Defaults> {
     return call("LLM.SetDefaults", d);
   },
   test(id: string): Promise<ProviderStatus> {
     return call("LLM.Test", id);
+  },
+  trustManifest(req: ManifestTrustRequest): Promise<ManifestRecord> {
+    return call("LLM.TrustManifest", req);
   },
 } as const;
 

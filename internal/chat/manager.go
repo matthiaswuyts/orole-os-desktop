@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -76,13 +77,14 @@ type Manager struct {
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
 
-	mu     sync.Mutex
-	memory Memory
-	tools  []Tool
-	runs   map[string]*runState // active runs by bot id or "draft:<id>"
-	idle   map[string]*idleJob
-	nonces nonceCache
-	closed bool
+	mu       sync.Mutex
+	memory   Memory
+	tools    []Tool
+	sections []func(Bot) string
+	runs     map[string]*runState // active runs by bot id or "draft:<id>"
+	idle     map[string]*idleJob
+	nonces   nonceCache
+	closed   bool
 
 	catMu   sync.Mutex
 	catalog map[string]catalogEntry
@@ -152,6 +154,31 @@ func (m *Manager) AddTools(tools ...Tool) {
 	m.mu.Lock()
 	m.tools = append(m.tools, tools...)
 	m.mu.Unlock()
+}
+
+// AddPromptSection registers a function whose non-empty result is appended, as plain text, to every
+// bot's system prompt after the standing rules. Sections appear in registration order. The text must
+// be trusted (for example the user-approved skill index): it is not fenced.
+func (m *Manager) AddPromptSection(fn func(bot Bot) string) {
+	if fn == nil {
+		return
+	}
+	m.mu.Lock()
+	m.sections = append(m.sections, fn)
+	m.mu.Unlock()
+}
+
+func (m *Manager) promptSections(bot Bot) []string {
+	m.mu.Lock()
+	fns := slices.Clone(m.sections)
+	m.mu.Unlock()
+	var out []string
+	for _, fn := range fns {
+		if s := strings.TrimSpace(fn(bot)); s != "" {
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 // Tools returns every registered tool, including the memory tools.

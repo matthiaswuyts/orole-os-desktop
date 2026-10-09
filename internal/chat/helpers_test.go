@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"image"
 	"image/png"
 	"path/filepath"
@@ -17,11 +18,11 @@ import (
 	"github.com/rayorole/orole-os-desktop/migrations"
 )
 
-
 type (
 	llmRequest = llm.Request
 	llmDelta   = llm.Delta
 )
+
 // fakeLLM is an llm.Service that serves one provider; unrelated methods panic via the nil embed.
 type fakeLLM struct {
 	llm.Service
@@ -226,7 +227,7 @@ func pngBytes(t *testing.T) []byte {
 type fakeTool struct {
 	id    string
 	specs func(Bot, llm.Caps) []llm.ToolSpec
-	call  func(ctx context.Context, rc RunContext, name string, args []byte) (ToolResult, error)
+	call  func(ctx context.Context, rc RunContext, name string, args json.RawMessage) (ToolResult, error)
 	mu    sync.Mutex
 	calls []string
 }
@@ -238,7 +239,7 @@ func (f *fakeTool) Specs(b Bot, c llm.Caps) []llm.ToolSpec {
 	}
 	return []llm.ToolSpec{{Name: f.id, Description: f.id, Schema: []byte(`{"type":"object"}`)}}
 }
-func (f *fakeTool) Call(ctx context.Context, rc RunContext, name string, args []byte) (ToolResult, error) {
+func (f *fakeTool) Call(ctx context.Context, rc RunContext, name string, args json.RawMessage) (ToolResult, error) {
 	f.mu.Lock()
 	f.calls = append(f.calls, string(args))
 	f.mu.Unlock()

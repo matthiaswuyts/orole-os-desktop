@@ -1,0 +1,251 @@
+import { renderHook } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { BotChange, Message, MessagesRequest, RunState, SendRequest } from "@/mygo";
+
+const bridge = vi.hoisted(() => ({
+  messages: vi.fn(), send: vi.fn(), cancel: vi.fn(), regenerate: vi.fn(), clear: vi.fn(),
+  run: null as ((s: RunState) => void) | null,
+  message: null as ((m: Message) => void) | null,
+  bot: null as ((c: BotChange) => void) | null,
+}));
+
+vi.mock("@/lib/backend", () => ({ inDesktop: true }));
+vi.mock("@/mygo", () => ({
+  Chat: { messages: bridge.messages, send: bridge.send, cancel: bridge.cancel, regenerate: bridge.regenerate, clear: bridge.clear },
+  Daemon: { health: vi.fn() },
+  events: {
+    chatRun: { on: (f: (s: RunState) => void) => { bridge.run = f; return () => { bridge.run = null; }; } },
+    chatMessage: { on: (f: (m: Message) => void) => { bridge.message = f; return () => { bridge.message = null; }; } },
+    chatBot: { on: (f: (c: BotChange) => void) => { bridge.bot = f; return () => { bridge.bot = null; }; } },
+  },
+}));
+
+import { MAX_IN_MEMORY, mergeLatest, upsert, useBotRunning, useChatMessages } from "@/stores/chatMessages";
+import { useChat } from "@/stores/chat";
+import { useDaemon } from "@/stores/daemon";
+
+const msg = (seq: number, over: Partial<Message> = {}): Message => ({
+  id: `m${seq}`, botId: "a", seq, role: seq % 2 ? "user" : "assistant", author: seq % 2 ? "user" : "bot:a",
+  parts: [{ type: "text", text: `t${seq}` }], status: "complete", createdAt: seq * 10, ...over,
+});
+const page = (from: number, to: number) => Array.from({ length: to - from + 1 }, (_, i) => msg(from + i));
+const deferred = <T,>() => {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((r) => { resolve = r; });
+  return { promise, resolve };
+};
+const settle = async () => { for (let i = 0; i < 8; i++) await Promise.resolve(); };
+
+let stop: (() => void) | undefined;
+const reset = () => useChatMessages.setState({ byBot: {}, runs: {}, drafts: {}, problems: {} });
+
+beforeEach(() => {
+  Object.values(bridge).forEach((v) => { if (typeof v === "function" && "mockReset" in v) v.mockReset(); });
+  useDaemon.setState({ link: "connected" });
+  reset();
+  stop = useChatMessages.getState().startSync();
+});
+afterEach(() => { stop?.(); stop = undefined; });
+
+describe("loading and paging", () => {
+  it("loads the latest page and records whether older messages exist", async () => {
+    bridge.messages.mockResolvedValue({ messages: page(51, 100), hasMore: true });
+    await useChatMessages.getState().load("a");
+    expect(bridge.messages).toHaveBeenCalledWith({ botId: "a", beforeSeq: 0, limit: 50 } satisfies MessagesRequest);
+    const state = useChatMessages.getState().byBot.a!;
+    expect(state.loaded).toBe(true);
+    expect(state.hasMore).toBe(true);
+    expect(state.messages).toHaveLength(50);
+  });
+
+  it("pages older messages before the first seq, de-duplicating, and keeps the window", async () => {
+    bridge.messages.mockResolvedValueOnce({ messages: page(51, 100), hasMore: true });
+    await useChatMessages.getState().load("a");
+    bridge.messages.mockResolvedValueOnce({ messages: page(1, 51), hasMore: false });
+    await useChatMessages.getState().loadOlder("a");
+    expect(bridge.messages).toHaveBeenLastCalledWith({ botId: "a", beforeSeq: 51, limit: 50 });
+    const state = useChatMessages.getState().byBot.a!;
+    expect(state.messages.map((m) => m.seq)).toEqual(Array.from({ length: 100 }, (_, i) => i + 1));
+    expect(state.hasMore).toBe(false);
+    expect(state.browsing).toBe(true);
+  });
+
+  it("does not page when nothing older exists or a page is already loading", async () => {
+    bridge.messages.mockResolvedValue({ messages: page(1, 3), hasMore: false });
+    await useChatMessages.getState().load("a");
+    await useChatMessages.getState().loadOlder("a");
+    expect(bridge.messages).toHaveBeenCalledTimes(1);
+  });
+
+  it("reports a load failure without the daemon's machine prefix", async () => {
+    bridge.messages.mockRejectedValue(new Error("internal: boom"));
+    await useChatMessages.getState().load("a");
+    expect(useChatMessages.getState().byBot.a).toMatchObject({ loaded: false, loading: false, error: "boom" });
+  });
+
+  it("drops a stale response: only the newest request lands", async () => {
+    const first = deferred<{ messages: Message[]; hasMore: boolean }>();
+    const second = deferred<{ messages: Message[]; hasMore: boolean }>();
+    bridge.messages.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
+    const a = useChatMessages.getState().load("a");
+    const b = useChatMessages.getState().load("a");
+    second.resolve({ messages: [msg(2)], hasMore: false });
+    await b;
+    first.resolve({ messages: [msg(1)], hasMore: false });
+    await a;
+    expect(useChatMessages.getState().byBot.a!.messages.map((m) => m.id)).toEqual(["m2"]);
+  });
+
+  it("never loads a draft: conversation", async () => {
+    await useChatMessages.getState().load("draft:preview");
+    expect(bridge.messages).not.toHaveBeenCalled();
+  });
+});
+
+describe("event sync", () => {
+  beforeEach(async () => {
+    bridge.messages.mockResolvedValue({ messages: [msg(1), msg(2)], hasMore: false });
+    await useChatMessages.getState().load("a");
+  });
+
+  it("appends a new message once and replaces a streaming snapshot in place", () => {
+    bridge.message!(msg(3, { status: "running", parts: [{ type: "text", text: "Hel" }] }));
+    bridge.message!(msg(3, { status: "running", parts: [{ type: "text", text: "Hello" }] }));
+    bridge.message!(msg(3, { status: "complete", parts: [{ type: "text", text: "Hello there" }] }));
+    const list = useChatMessages.getState().byBot.a!.messages;
+    expect(list.map((m) => m.id)).toEqual(["m1", "m2", "m3"]);
+    expect(list[2]).toMatchObject({ status: "complete", parts: [{ text: "Hello there" }] });
+  });
+
+  it("ignores events for bots never loaded and for draft: conversations", () => {
+    bridge.message!(msg(1, { id: "x", botId: "never" }));
+    bridge.message!(msg(1, { id: "d", botId: "draft:1" }));
+    expect(Object.keys(useChatMessages.getState().byBot)).toEqual(["a"]);
+  });
+
+  it("tracks run state from chat.run events", () => {
+    bridge.run!({ botId: "a", running: true });
+    expect(useChatMessages.getState().runs.a).toBe(true);
+    bridge.run!({ botId: "a", running: false });
+    expect(useChatMessages.getState().runs.a).toBe(false);
+  });
+
+  it("empties the window when the conversation is cleared and forgets an archived bot", () => {
+    bridge.bot!({ id: "a", action: "cleared" });
+    expect(useChatMessages.getState().byBot.a).toMatchObject({ messages: [], loaded: true });
+    bridge.bot!({ id: "a", action: "archived" });
+    expect(useChatMessages.getState().byBot.a).toBeUndefined();
+  });
+
+  it("keeps at most MAX_IN_MEMORY messages while following the live end", () => {
+    for (let seq = 3; seq < MAX_IN_MEMORY + 20; seq++) bridge.message!(msg(seq));
+    const state = useChatMessages.getState().byBot.a!;
+    expect(state.messages).toHaveLength(MAX_IN_MEMORY);
+    expect(state.messages.at(-1)!.seq).toBe(MAX_IN_MEMORY + 19);
+    expect(state.hasMore).toBe(true);
+  });
+});
+
+describe("reconnect and focus refresh", () => {
+  it("refetches the latest page when the daemon reconnects and keeps what events delivered meanwhile", async () => {
+    bridge.messages.mockResolvedValueOnce({ messages: [msg(1), msg(2)], hasMore: false });
+    await useChatMessages.getState().load("a");
+    useDaemon.setState({ link: "offline" });
+    const refetch = deferred<{ messages: Message[]; hasMore: boolean }>();
+    bridge.messages.mockReturnValueOnce(refetch.promise);
+    useDaemon.setState({ link: "connected" });
+    // An event arrives while the (older) snapshot is still in flight.
+    bridge.message!(msg(4, { parts: [{ type: "text", text: "live" }] }));
+    refetch.resolve({ messages: [msg(1), msg(2), msg(3), msg(4, { parts: [{ type: "text", text: "old snapshot" }] })], hasMore: false });
+    await settle();
+    const list = useChatMessages.getState().byBot.a!.messages;
+    expect(list.map((m) => m.id)).toEqual(["m1", "m2", "m3", "m4"]);
+    expect(list[3]!.parts[0]!.text).toBe("live");
+  });
+
+  it("refetches on window focus", async () => {
+    bridge.messages.mockResolvedValue({ messages: [msg(1)], hasMore: false });
+    await useChatMessages.getState().load("a");
+    bridge.messages.mockClear();
+    window.dispatchEvent(new Event("focus"));
+    await settle();
+    expect(bridge.messages).toHaveBeenCalledTimes(1);
+  });
+
+  it("mergeLatest keeps older history the page does not cover", () => {
+    const current = { messages: [msg(1), msg(2), msg(3)], hasMore: true, loaded: true, loading: false, loadingOlder: false, error: null, browsing: true };
+    const merged = mergeLatest(current, [msg(3), msg(4)], true, new Map());
+    expect(merged.messages.map((m) => m.seq)).toEqual([1, 2, 3, 4]);
+  });
+});
+
+describe("sending, cancelling, regenerating", () => {
+  beforeEach(async () => {
+    bridge.messages.mockResolvedValue({ messages: [msg(1), msg(2)], hasMore: false });
+    await useChatMessages.getState().load("a");
+  });
+
+  it("sends once with an idempotency nonce and upserts the stored user message, inventing nothing", async () => {
+    bridge.send.mockImplementation(async (request: SendRequest) => msg(3, { parts: [{ type: "text", text: request.text }] }));
+    expect(await useChatMessages.getState().send("a", { text: "hi", attachmentIds: ["f1"], mode: "research" })).toBe(true);
+    const request: SendRequest = bridge.send.mock.calls[0]![0];
+    expect(request).toMatchObject({ botId: "a", text: "hi", attachmentIds: ["f1"], mode: "research" });
+    expect(request.clientNonce).toMatch(/\S/);
+    expect(useChatMessages.getState().byBot.a!.messages.map((m) => m.id)).toEqual(["m1", "m2", "m3"]);
+  });
+
+  it("keeps a failed send's exact request for an idempotent retry", async () => {
+    bridge.send.mockRejectedValueOnce(new Error("bad_request: nope")).mockResolvedValueOnce(msg(3));
+    expect(await useChatMessages.getState().send("a", { text: "hi" })).toBe(false);
+    const problem = useChatMessages.getState().problems.a!;
+    expect(problem.message).toBe("Message not sent: nope");
+    expect(await useChatMessages.getState().retrySend("a")).toBe(true);
+    expect(bridge.send.mock.calls[1]![0].clientNonce).toBe(problem.request!.clientNonce);
+    expect(useChatMessages.getState().problems.a).toBeUndefined();
+  });
+
+  it("cancels and regenerates through the daemon and reports failures", async () => {
+    await useChatMessages.getState().cancel("a");
+    expect(bridge.cancel).toHaveBeenCalledWith("a");
+    await useChatMessages.getState().regenerate("a", "m2");
+    expect(bridge.regenerate).toHaveBeenCalledWith({ botId: "a", messageId: "m2" });
+    bridge.regenerate.mockRejectedValueOnce(new Error("bad_request: not the last"));
+    await useChatMessages.getState().regenerate("a", "m1");
+    expect(useChatMessages.getState().problems.a!.message).toBe("Could not regenerate the reply: not the last");
+  });
+
+  it("clears the window after the daemon clears the conversation", async () => {
+    bridge.clear.mockResolvedValue(undefined);
+    expect(await useChatMessages.getState().clear("a")).toBe(true);
+    expect(useChatMessages.getState().byBot.a).toMatchObject({ messages: [], loaded: true });
+  });
+
+  it("keeps drafts per bot", () => {
+    useChatMessages.getState().setDraft("a", { text: "one" });
+    useChatMessages.getState().setDraft("b", { text: "two", research: true });
+    expect(useChatMessages.getState().drafts).toEqual({ a: { text: "one", research: false }, b: { text: "two", research: true } });
+  });
+});
+
+describe("upsert", () => {
+  it("re-sorts only when a replacement moves", () => {
+    const list = [msg(1), msg(2), msg(3)];
+    expect(upsert(list, msg(2, { status: "running" })).map((m) => m.id)).toEqual(["m1", "m2", "m3"]);
+    expect(upsert(list, msg(0, { id: "m9" })).map((m) => m.id)).toEqual(["m9", "m1", "m2", "m3"]);
+  });
+});
+
+describe("useBotRunning", () => {
+  it("prefers the daemon's run event, then the rail snapshot, then a streaming message", () => {
+    useChat.setState({ running: { a: true } });
+    const { result, rerender } = renderHook(() => useBotRunning("a"));
+    expect(result.current).toBe(true);
+    useChatMessages.setState({ runs: { a: false } });
+    rerender();
+    expect(result.current).toBe(false);
+    useChatMessages.setState({ runs: {}, byBot: { a: { messages: [msg(2, { status: "running" })], hasMore: false, loaded: true, loading: false, loadingOlder: false, error: null, browsing: false } } });
+    useChat.setState({ running: {} });
+    rerender();
+    expect(result.current).toBe(true);
+  });
+});

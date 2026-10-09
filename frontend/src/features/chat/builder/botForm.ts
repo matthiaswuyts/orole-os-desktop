@@ -260,8 +260,10 @@ export function tabOfProblem(key: string): TabId {
 
 /* ------------------------------------------------------------------ import */
 
+export type ParsedExport = { ok: true; value: BotExport } | { ok: false; error: string };
+
 /** Parses a pasted or selected bot export. Only version 1 is understood; the daemon validates the content again. */
-export function parseBotExport(text: string): { ok: true; value: BotExport } | { ok: false; error: string } {
+export function parseBotExport(text: string): ParsedExport {
   let raw: unknown;
   try { raw = JSON.parse(text); } catch { return { ok: false, error: "This is not valid JSON." }; }
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return { ok: false, error: "Expected a bot export object." };

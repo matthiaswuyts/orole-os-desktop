@@ -21,7 +21,7 @@ func (p *Provider) Stream(ctx context.Context, req llm.Request) (<-chan llm.Delt
 	}
 	resp, err := p.open(ctx, req, true)
 	var le *llm.Error
-	if errors.As(err, &le) && le.Code == llm.ErrBadRequest && strings.Contains(strings.ToLower(le.Message), "summary") {
+	if errors.As(err, &le) && le.Code == llm.ErrBadRequest && strings.Contains(strings.ToLower(le.Message), "summar") {
 		// The organization may not be allowed reasoning summaries; retry without them.
 		resp, err = p.open(ctx, req, false)
 	}

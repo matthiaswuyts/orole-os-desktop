@@ -193,7 +193,7 @@ func (l *Link) call(ctx context.Context, method string, params, out any) error {
 	case "mcp.call", "mail.send", "mail.reply", "mail.trash", "drive.trash",
 		"mail.folders", "mail.list", "mail.search", "mail.thread",
 		"drive.list", "drive.search", "drive.stat", "drive.preview",
-		"plugins.trust", "plugins.run",
+		"plugins.trust", "plugins.run", "llm.manifests.trust",
 		"github.issue.agent.start", "github.issue.pr.publish",
 		"agents.start", "agents.restart", "agents.prompt", "agents.sendMessage", "agents.check", "agents.review",
 		"agents.handoff", "agents.reviewWith", "agents.tryN", "applications.launch",

@@ -95,9 +95,29 @@ the [requested attachment element](https://www.assistant-ui.com/elements/compose
 
 Changes: coss buttons and semantic theme tokens replace catalog surface helpers;
 pending/failed chips can be removed; indeterminate IPC uploads show a spinner rather
-than fabricated percentage progress. No assistant-ui runtime, cloud storage or sample
-files were introduced. The full MIT notice, copyright (c) 2026 AgentbaseAI Inc., is
+than fabricated percentage progress. The element itself imports no assistant-ui runtime; no cloud
+storage or sample files were introduced. The full MIT notice, copyright (c) 2026 AgentbaseAI Inc., is
 retained in the source header.
+
+### assistant-ui message pair
+
+Source: [assistant-ui/assistant-ui](https://github.com/assistant-ui/assistant-ui/tree/9201447608271c64a8a9ca66c69e81d27a1d9fab),
+commit `9201447608271c64a8a9ca66c69e81d27a1d9fab`, the runtime composition of the
+[message pair element](https://www.assistant-ui.com/elements/message-pair)
+(`MessagePrimitive.Root` per message plus an `ActionBarPrimitive` row with
+`autohide="not-last"`, so the newest reply keeps its actions visible).
+Adapted at `frontend/src/components/assistant-ui/elements/message-pair.tsx`.
+
+Changes: coss buttons and semantic theme tokens replace the catalog `paper` and `ghostButton`
+surface helpers; keyboard focus inside a message counts as hover so older replies' actions are
+reachable without a pointer; Regenerate is only rendered for the last reply (the only one the
+daemon can regenerate) and Copy is supplied by the caller so reports copy too. The standalone
+word-reveal simulation is not shipped: replies only ever stream from the daemon. The full MIT
+notice, copyright (c) 2026 AgentbaseAI Inc., is retained in the source header.
+
+The chat view also depends on the MIT-licensed [`@assistant-ui/react`](https://github.com/assistant-ui/assistant-ui)
+package (`useExternalStoreRuntime`, thread, composer, message and action bar primitives) as an
+unmodified npm dependency; nothing from it is copied.
 
 ### beui reasoning range slider
 

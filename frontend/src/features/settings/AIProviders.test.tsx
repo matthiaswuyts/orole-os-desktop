@@ -206,10 +206,10 @@ describe("AI providers settings", () => {
     expect(await screen.findByRole("listitem", { name: "OpenRouter" })).toBeInTheDocument();
   });
 
-  it("lists manifest providers read-only with the reason", async () => {
+  it("lists manifest providers with the normal Connect flow", async () => {
     seed([{ id: "custom", name: "Custom", kind: "manifest", connected: false }]);
     render(<AIProviders />);
     expect(within(row("Custom")).getByText("Manifest")).toBeInTheDocument();
-    expect(within(row("Custom")).getByRole("button", { name: "Connect" })).toBeDisabled();
+    expect(within(row("Custom")).getByRole("button", { name: "Connect" })).toBeEnabled();
   });
 });

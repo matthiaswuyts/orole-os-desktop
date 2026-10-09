@@ -206,7 +206,7 @@ func (m *Manager) prepare(ctx context.Context, p prep) (*turnEnv, error) {
 		}
 	}
 
-	in := systemInput{Bot: p.bot, Snapshot: snapshot, Recall: recall, Extra: p.extra}
+	in := systemInput{Bot: p.bot, Sections: m.promptSections(p.bot), Snapshot: snapshot, Recall: recall, Extra: p.extra}
 	cur := llm.Message{Role: llm.RoleUser, Parts: userParts(p.text, atts)}
 	history := p.history
 	if p.userSeq > 0 {

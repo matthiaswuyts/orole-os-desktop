@@ -15,4 +15,5 @@ export const views: Partial<Record<ViewId, ComponentType>> = {
   "new-task": lazy(() => import("@/features/projects/NewTaskView").then((m) => ({ default: m.NewTaskView }))),
   automations: lazy(() => import("@/features/automations/AutomationsView").then((m) => ({ default: m.AutomationsView }))),
   settings: lazy(() => import("@/features/settings/SettingsView").then((m) => ({ default: m.SettingsView }))),
+  chat: lazy(() => import("./chat/ChatView").then((m) => ({ default: m.ChatView }))),
 };

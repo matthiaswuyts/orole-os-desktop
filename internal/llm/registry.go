@@ -26,6 +26,18 @@ type Descriptor struct {
 	New func(Config) (Provider, error)
 	// OAuth is optional.
 	OAuth *OAuth
+	// NoKey marks a provider that needs no API key (manifest auth "none"): it counts as
+	// connected while registered, nothing is stored, and Connect only validates.
+	NoKey bool
+	// Revision changes whenever the provider's configuration does (manifest digest). Cached
+	// model lists and test results from another revision are discarded.
+	Revision string
+}
+
+// DynamicSource supplies providers that appear and disappear at runtime (trusted
+// declarative manifests). It is consulted on every lookup; built-in ids always win.
+type DynamicSource interface {
+	Descriptors() []Descriptor
 }
 
 // Registry is an ordered set of provider descriptors. Safe for concurrent use.

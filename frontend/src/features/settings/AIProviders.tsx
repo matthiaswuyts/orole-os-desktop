@@ -3,7 +3,7 @@ import type { Account, ProviderStatus } from "@/mygo";
 import { AlertDialog, AlertDialogClose, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogPopup, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "@/components/ui/tooltip";
+import { ProviderManifests } from "@/features/settings/ProviderManifests";
 import { Failure, Loading } from "@/features/mcp/shared";
 import { ConnectProviderDialog } from "@/features/settings/ConnectProviderDialog";
 import { ModelDefaults } from "@/features/settings/ModelDefaults";
@@ -34,7 +34,7 @@ function ProviderRow({ provider, onConnect }: { provider: ProviderStatus; onConn
   const busy = useLLM((state) => state.busy[provider.id]);
   const [error, setError] = useState<string | null>(null);
   const [confirming, setConfirming] = useState(false);
-  const readOnly = provider.kind !== "builtin";
+  const authNone = useLLM((state) => provider.kind === "manifest" && state.manifests.find((r) => r.manifest.id === provider.id)?.manifest.auth.type === "none");
   const account = accountText(provider.account);
 
   async function test() {
@@ -50,7 +50,7 @@ function ProviderRow({ provider, onConnect }: { provider: ProviderStatus; onConn
     else setError(result.error);
   }
 
-  const connect = <Button size="sm" disabled={readOnly || !!busy} onClick={onConnect}>{provider.connected ? "Update key" : "Connect"}</Button>;
+  const connect = <Button size="sm" disabled={!!busy} onClick={onConnect}>{provider.connected ? "Update key" : "Connect"}</Button>;
   return (
     <li aria-label={provider.name} className="flex min-w-0 flex-col gap-1.5 p-3">
       <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2">
@@ -59,16 +59,14 @@ function ProviderRow({ provider, onConnect }: { provider: ProviderStatus; onConn
           <div className="flex min-w-0 flex-wrap items-center gap-2">
             <h3 className="font-medium">{provider.name}</h3>
             <StatusBadge provider={provider} busy={busy} />
-            {readOnly && <Badge variant="secondary">Manifest</Badge>}
+            {provider.kind === "manifest" && <Badge variant="secondary">Manifest</Badge>}
           </div>
           {account && <p className="truncate text-xs text-muted-foreground">{account}</p>}
         </div>
         <div className="flex shrink-0 items-center gap-1.5">
-          {readOnly ? (
-            <Tooltip>
-              <TooltipTrigger render={<span tabIndex={0} className="inline-flex" aria-label={`${provider.name} is read-only`} />}>{connect}</TooltipTrigger>
-              <TooltipPopup>Providers defined by a manifest are shown read-only for now</TooltipPopup>
-            </Tooltip>
+          {authNone ? (
+            // No key exists for auth "none": the daemon connects it automatically, so there is nothing to connect or disconnect.
+            <Button size="sm" variant="outline" loading={busy === "test"} disabled={!!busy} onClick={() => void test()}>Test</Button>
           ) : provider.connected ? (
             <>
               {provider.valid === false && connect}
@@ -125,6 +123,7 @@ export function AIProviders() {
               ? <p role="status" className="rounded-lg border bg-card p-3 text-muted-foreground">The daemon reports no providers.</p>
               : <ul className="divide-y rounded-lg border bg-card">{providers.map((p) => <ProviderRow key={p.id} provider={p} onConnect={() => setConnecting(p.id)} />)}</ul>}
           </section>
+          <ProviderManifests />
           <ModelDefaults />
         </>
       )}
