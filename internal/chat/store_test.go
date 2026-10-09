@@ -30,7 +30,7 @@ func TestBotCRUDAndNormalisation(t *testing.T) {
 	if !b.Config.Memory[0].Read {
 		t.Fatal("write access must imply read")
 	}
-	if b.Config.Skills == nil || b.Config.DelegateTo == nil {
+	if b.Config.Skills == nil {
 		t.Fatal("lists must be non-nil so the UI receives arrays")
 	}
 	var n int
@@ -73,7 +73,6 @@ func TestBotCRUDAndNormalisation(t *testing.T) {
 func TestBotValidation(t *testing.T) {
 	e := newEnv(t, nil)
 	ctx := context.Background()
-	other := e.bot("Other")
 	long := strings.Repeat("a", MaxInstructionsLen+1)
 	cases := []struct {
 		name string
@@ -87,7 +86,6 @@ func TestBotValidation(t *testing.T) {
 		{"provider without model", BotInput{Name: "x", Provider: "fake"}},
 		{"unknown tool", BotInput{Name: "x", Config: BotConfig{Tools: []BotTool{{ID: "shell"}}}}},
 		{"bad mcp id", BotInput{Name: "x", Config: BotConfig{MCPTools: []string{"noslash"}}}},
-		{"unknown delegate", BotInput{Name: "x", Config: BotConfig{DelegateTo: []string{"ghost"}}}},
 		{"unknown scope", BotInput{Name: "x", Config: BotConfig{Memory: []ScopeAccess{{Scope: "shared:ghost", Read: true}}}}},
 		{"private scope grant", BotInput{Name: "x", Config: BotConfig{Memory: []ScopeAccess{{Scope: "bot:abc", Read: true}}}}},
 		{"negative steps", BotInput{Name: "x", Config: BotConfig{Limits: BotLimits{MaxSteps: -1}}}},
@@ -97,13 +95,6 @@ func TestBotValidation(t *testing.T) {
 		if _, err := e.m.SaveBot(ctx, c.in); !errors.Is(err, ErrInvalid) {
 			t.Errorf("%s: want ErrInvalid, got %v", c.name, err)
 		}
-	}
-	if _, err := e.m.SaveBot(ctx, BotInput{Name: "ok", Config: BotConfig{DelegateTo: []string{other.ID, other.ID}}}); err != nil {
-		t.Fatalf("valid delegate rejected: %v", err)
-	}
-	self, _ := e.m.SaveBot(ctx, BotInput{Name: "self"})
-	if _, err := e.m.SaveBot(ctx, BotInput{ID: self.ID, Name: "self", Config: BotConfig{DelegateTo: []string{self.ID}}}); !errors.Is(err, ErrInvalid) {
-		t.Fatalf("self delegation: %v", err)
 	}
 }
 
@@ -123,15 +114,14 @@ func TestBotLimit(t *testing.T) {
 func TestImportExportIsPortable(t *testing.T) {
 	e := newEnv(t, nil)
 	ctx := context.Background()
-	helper := e.bot("Helper")
 	src := e.bot("Src", func(in *BotInput) {
 		in.Config = BotConfig{
-			Tools:      []BotTool{{ID: ToolWebSearch, Params: map[string]any{"allowed_domains": []string{"go.dev"}}}},
-			MCPTools:   []string{"srv/danger"},
-			Skills:     []string{"deploy"},
-			DelegateTo: []string{helper.ID},
-			Memory:     []ScopeAccess{{Scope: ScopeUser, Read: true}},
-			Limits:     BotLimits{MaxSteps: 3},
+			Tools:     []BotTool{{ID: ToolWebSearch, Params: map[string]any{"allowed_domains": []string{"go.dev"}}}},
+			MCPTools:  []string{"srv/danger"},
+			Skills:    []string{"deploy"},
+			Executive: true,
+			Memory:    []ScopeAccess{{Scope: ScopeUser, Read: true}},
+			Limits:    BotLimits{MaxSteps: 3},
 		}
 	})
 	e.send(src.ID, "secret conversation")
@@ -144,19 +134,19 @@ func TestImportExportIsPortable(t *testing.T) {
 	if exp.Version != 1 || exp.Bot.ID != "" || exp.Bot.Name != "Src" || len(exp.Bot.Config.Tools) != 1 || exp.Bot.Config.Limits.MaxSteps != 3 {
 		t.Fatalf("export: %+v", exp)
 	}
-	if len(exp.Bot.Config.MCPTools)+len(exp.Bot.Config.Skills)+len(exp.Bot.Config.DelegateTo)+len(exp.Bot.Config.Memory) != 0 {
+	if len(exp.Bot.Config.MCPTools)+len(exp.Bot.Config.Skills)+len(exp.Bot.Config.Memory) != 0 || exp.Bot.Config.Executive {
 		t.Fatalf("export leaks local grants: %+v", exp.Bot.Config)
 	}
 
 	// A hostile file cannot grant itself access.
 	exp.Bot.ID = src.ID
 	exp.Bot.Config.MCPTools = []string{"srv/danger"}
-	exp.Bot.Config.DelegateTo = []string{helper.ID}
+	exp.Bot.Config.Executive = true
 	imp, err := e.m.ImportBot(ctx, exp)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if imp.ID == src.ID || len(imp.Config.MCPTools) != 0 || len(imp.Config.DelegateTo) != 0 {
+	if imp.ID == src.ID || len(imp.Config.MCPTools) != 0 || imp.Config.Executive {
 		t.Fatalf("import: %+v", imp)
 	}
 	if h := e.history(imp.ID); len(h) != 0 {

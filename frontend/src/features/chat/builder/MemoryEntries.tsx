@@ -78,7 +78,7 @@ function Entry({ entry, scope, author }: { entry: MemoryEntry; scope: string; au
 
   const { saveEntry, resolve, deleteEntry } = useChatMemory.getState();
   return (
-    <li className="flex min-w-0 flex-col gap-1.5 rounded-md border bg-background/40 p-2.5" data-invalidated={invalidated || undefined}>
+    <li className="flex min-w-0 flex-col gap-1.5 border-b py-2" data-invalidated={invalidated || undefined}>
       <div className="flex flex-wrap items-center gap-1.5 text-xs">
         <Badge size="sm" variant="outline">{kindLabel(entry.kind)}</Badge>
         <Badge size="sm" variant={trust.variant} title={trust.hint}>{trust.label}</Badge>
@@ -162,7 +162,7 @@ export function MemoryEntries({ scope }: { scope: MemoryScope }) {
         <Button size="xs" variant="outline" onClick={() => { setAdding(true); setAddError(null); }} disabled={adding}><Plus />Add memory</Button>
       </div>
       {adding && (
-        <div className="rounded-md border bg-background/40 p-2.5">
+        <div className="border-b py-2">
           <EntryEditor initial={{ kind: "fact", text: "" }} label="New memory" submitLabel="Add" busy={addBusy} error={addError} onSubmit={(d) => void add(d)} onCancel={() => setAdding(false)} />
         </div>
       )}

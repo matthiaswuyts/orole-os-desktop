@@ -7,8 +7,9 @@ import { useChat, useSelectedBot } from "@/stores/chat";
 import { useHasProvider } from "@/stores/llm";
 import { useUI } from "@/stores/ui";
 import { Conversation } from "./Conversation";
+import { BotPanel } from "./BotPanel";
 
-const BotBuilder = lazy(() => import("./builder/BotBuilder").then((m) => ({ default: m.BotBuilder })));
+const NewBot = lazy(() => import("./builder/NewBot").then((m) => ({ default: m.NewBot })));
 
 function CenteredCard({ icon, title, children, action }: { icon?: React.ReactNode; title: string; children?: React.ReactNode; action?: React.ReactNode }) {
   return <div className="flex h-full items-center justify-center p-6">
@@ -30,13 +31,14 @@ export function ChatView() {
   const error = useChat((s) => s.error);
   const botCount = useChat((s) => s.bots.length);
   const bot = useSelectedBot();
+  const settingsOpen = useChat((s) => s.settingsOpen);
 
   useEffect(() => useChat.getState().startSync(), []);
 
   if (!inDesktop) return <NeedsDesktop what="Chat" />;
   if (builder.open) {
     return <Suspense fallback={<p role="status" className="p-6 text-sm text-muted-foreground">Loading the bot builder…</p>}>
-      <BotBuilder botId={builder.botId} />
+      <NewBot />
     </Suspense>;
   }
   if (hasProvider === false) {
@@ -57,5 +59,8 @@ export function ChatView() {
       </CenteredCard>
       : <CenteredCard title="Pick a bot"><p>Choose a bot from the list to open its conversation.</p></CenteredCard>;
   }
-  return <Conversation key={bot.id} bot={bot} />;
+  return <div className="flex h-full min-w-0">
+    <div className="min-w-0 flex-1"><Conversation key={bot.id} bot={bot} /></div>
+    {settingsOpen && <BotPanel bot={bot} />}
+  </div>;
 }

@@ -45,7 +45,7 @@ export function registerCoreCommands() {
     offBots();
     offBots = registerCommands(bots.map((bot): Command => ({
       id: `chat.bot.${bot.id}`, title: `Chat: ${bot.name}`, category: "Chat", keywords: [bot.name, bot.description, "bot", "chat"],
-      icon: createElement(BotAvatar, { name: bot.name, avatar: bot.avatar, color: bot.color }),
+      icon: createElement(BotAvatar, { name: bot.name, avatar: bot.avatar }),
       run: () => useChat.getState().open(bot.id),
     })));
   };

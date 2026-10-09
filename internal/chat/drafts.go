@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
-	"slices"
 	"strings"
 	"unicode/utf8"
 )
@@ -115,8 +114,8 @@ func (m *Manager) runDraft(ctx context.Context, bot Bot, rc RunContext, history 
 
 // Ask implements Delegator: it runs callee on question in its own context (own instructions,
 // memory and tools; the caller's conversation is not shared) and returns its final text. The
-// exchange is not stored in the callee's conversation. Delegation needs an explicit grant: the
-// caller's stored configuration must list the callee in DelegateTo, and chains are depth-limited.
+// exchange is not stored in the callee's conversation. Only executive assistants may delegate: the
+// caller must be flagged Executive in its stored configuration, and chains are depth-limited.
 func (m *Manager) Ask(ctx context.Context, from RunContext, calleeID, question string) (string, error) {
 	if from.BotID == "" {
 		return "", errors.New("delegation is not available in previews")
@@ -131,7 +130,7 @@ func (m *Manager) Ask(ctx context.Context, from RunContext, calleeID, question s
 	if err != nil {
 		return "", err
 	}
-	if calleeID == caller.ID || !slices.Contains(caller.Config.DelegateTo, calleeID) {
+	if calleeID == caller.ID || !caller.Config.Executive {
 		return "", fmt.Errorf("%s is not allowed to ask that bot", caller.Name)
 	}
 	callee, err := m.store.getBot(ctx, calleeID, false)

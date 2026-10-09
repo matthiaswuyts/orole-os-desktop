@@ -69,7 +69,7 @@ export function convertMessage(message: Message): ThreadMessageLike {
     converted = {
       ...base,
       role: "user",
-      content: message.parts.filter((p) => p.type === "text" && p.text).map((p): Part => ({ type: "text", text: p.text! })),
+      content: message.parts.filter((p) => p.type === "text" && p.text && !p.hidden).map((p): Part => ({ type: "text", text: p.text! })),
       attachments: message.parts.filter((p) => p.type === "attachment").map((p, i) => ({
         id: p.attachmentId || `attachment-${i}`,
         type: p.mime?.startsWith("image/") ? "image" : "file",

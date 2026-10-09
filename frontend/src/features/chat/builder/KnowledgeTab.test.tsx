@@ -15,7 +15,7 @@ const file = (id: string, over: Partial<KnowledgeFile> = {}): KnowledgeFile => (
 const withSearch = (): FormState => ({ ...initialForm(), tools: { [TOOL_IDS.knowledge]: emptyToolSettings() } });
 
 function renderTab(form: FormState = withSearch(), dispatch = vi.fn(), botId: string | null = "b1") {
-  render(<KnowledgeTab botId={botId} form={form} dispatch={dispatch} onTab={vi.fn()} />);
+  render(<KnowledgeTab botId={botId} form={form} dispatch={dispatch} />);
   return dispatch;
 }
 
@@ -98,8 +98,8 @@ describe("knowledge files", () => {
 
   it("points at the Knowledge search tool when it is off", async () => {
     const dispatch = renderTab(initialForm());
-    expect(await screen.findByText(/only reads these files when the Knowledge search tool is on/)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Turn it on" }));
+    expect(await screen.findByText(/Needs the Knowledge search tool/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Turn on" }));
     expect(dispatch).toHaveBeenCalledWith({ type: "tool", id: "knowledge_search", settings: emptyToolSettings() });
   });
 });

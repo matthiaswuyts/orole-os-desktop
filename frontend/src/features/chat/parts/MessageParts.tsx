@@ -6,20 +6,20 @@ import type { Message, MsgPart } from "@/mygo";
 import { isActive, sourcesOf } from "./format";
 import { DelegationRow, MemoryChip, NoticeLine, ReasoningBlock, StepList, ToolRow } from "./Steps";
 import { AttachmentPill, ReportCard, SourcesButton } from "./Sources";
+import { QuestionCard } from "./Question";
+import { TypingIndicator } from "@/components/assistant-ui/elements/typing-indicator";
+
+export { TypingIndicator };
 
 const STEP_TYPES = new Set(["tool", "delegation"]);
 
-/** Three quiet dots while a reply has produced nothing yet. */
-export function TypingIndicator() {
-  return <span aria-hidden data-slot="chat-typing" className="inline-flex items-center gap-1 py-1.5">
-    {[0, 1, 2].map((i) => <span key={i} className="size-1.5 animate-pulse rounded-full bg-muted-foreground/60 motion-reduce:animate-none" style={{ animationDelay: `${i * 160}ms` }} />)}
-  </span>;
-}
+/** Whether a user message has anything to draw (the setup kickoff is text the user never sees). */
+export const hasVisibleParts = (parts: readonly MsgPart[]): boolean => parts.some((p) => p.type === "attachment" || (p.type === "text" && !p.hidden));
 
 /** The sent text and files of a user message; plain text, never markdown. */
 export function UserParts({ parts }: { parts: readonly MsgPart[] }) {
   const files = parts.filter((p) => p.type === "attachment");
-  const text = parts.filter((p) => p.type === "text").map((p) => p.text ?? "").join("\n\n");
+  const text = parts.filter((p) => p.type === "text" && !p.hidden).map((p) => p.text ?? "").join("\n\n");
   return <>
     {files.length > 0 && <div className="mb-1 flex flex-wrap gap-1.5">{files.map((p, i) => <AttachmentPill key={p.attachmentId || i} name={p.name || p.title} mime={p.mime} size={p.size} />)}</div>}
     {text && <p className="selectable whitespace-pre-wrap break-words">{text}</p>}
@@ -31,12 +31,12 @@ export function UserParts({ parts }: { parts: readonly MsgPart[] }) {
  * writes, notices; citations are gathered into one "N sources" popover at the end (or into the report).
  * Pure over its props, so the builder preview can use it without a runtime.
  */
-export function MessageParts({ message }: { message: Pick<Message, "parts" | "status"> }) {
+export function MessageParts({ message, onAnswer }: { message: Pick<Message, "parts" | "status">; /** Sends the user's answer to a question; absent = questions are read-only. */ onAnswer?: (answer: string) => void }) {
   const active = isActive(message.status);
   const hasReport = message.parts.some((p) => p.type === "report");
   const sources = sourcesOf(message.parts);
   const blocks: ReactNode[] = [];
-  const parts = message.parts;
+  const parts = message.parts.filter((p) => !(p.type === "tool" && p.name === "ask_user"));
   for (let i = 0; i < parts.length; i++) {
     const part = parts[i]!;
     const last = i === parts.length - 1;
@@ -62,6 +62,9 @@ export function MessageParts({ message }: { message: Pick<Message, "parts" | "st
         break;
       case "memory":
         blocks.push(<MemoryChip key={i} text={part.text} />);
+        break;
+      case "question":
+        if (part.text && part.choices?.length) blocks.push(<QuestionCard key={i} text={part.text} choices={part.choices} onAnswer={onAnswer} />);
         break;
       case "notice":
         if (part.text) blocks.push(<NoticeLine key={i} text={part.text} />);

@@ -350,20 +350,10 @@ func TestListEntriesFilters(t *testing.T) {
 func TestDeleteEntry(t *testing.T) {
 	e := newEnv(t)
 	ctx := context.Background()
-	bot := e.bot("a", "Alpha", withApproval)
+	bot := e.bot("a", "Alpha")
 	r := newRun(bot)
-	e.setConfig("a", func(c *chat.BotConfig) { c.MemoryApproval = false })
-	e.addNote(r, "to be replaced")
-	e.setConfig("a", withApproval)
-	e.mem(r, map[string]any{"action": "replace", "old_text": "to be replaced", "content": "replacement"})
-	var old, repl chat.MemoryEntry
-	for _, x := range e.entries("bot:a") {
-		if x.Pending {
-			repl = x
-		} else {
-			old = x
-		}
-	}
+	e.addNote(r, "to be removed")
+	old := e.entries("bot:a")[0]
 	ch := len(e.published())
 	if err := e.s.DeleteEntry(ctx, old.ID); err != nil {
 		t.Fatal(err)
@@ -374,12 +364,6 @@ func TestDeleteEntry(t *testing.T) {
 	if len(e.published()) != ch+1 {
 		t.Error("delete not published")
 	}
-	// The orphaned replacement becomes a plain pending note and can still be approved.
-	if err := e.s.ResolvePending(ctx, repl.ID, true); err != nil {
-		t.Fatal(err)
-	}
-	snap, _ := e.s.Snapshot(ctx, e.loadBot("a"))
-	contains(t, snap, "replacement")
 	if err := e.s.DeleteEntry(ctx, old.ID); !errors.Is(err, chat.ErrNotFound) {
 		t.Errorf("second delete = %v", err)
 	}

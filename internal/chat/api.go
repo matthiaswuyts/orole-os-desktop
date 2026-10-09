@@ -76,14 +76,15 @@ type BotLimits struct {
 
 // BotConfig is stored as JSON in bots.config. It never contains secrets.
 type BotConfig struct {
-	Tools      []BotTool     `json:"tools"`
-	MCPTools   []string      `json:"mcpTools"`   // "<serverId>/<tool>" allow-list, default none
-	Skills     []string      `json:"skills"`     // enabled registry skill names
-	DelegateTo []string      `json:"delegateTo"` // bot ids this bot may ask (ask_bot)
-	Memory     []ScopeAccess `json:"memory"`     // grants beyond the private scope
-	Limits     BotLimits     `json:"limits"`
-	// MemoryApproval holds bot memory writes as pending until the user approves them.
-	MemoryApproval bool `json:"memoryApproval"`
+	Tools     []BotTool     `json:"tools"`
+	MCPTools  []string      `json:"mcpTools"`            // "<serverId>/<tool>" allow-list, default none
+	Skills    []string      `json:"skills"`              // enabled registry skill names
+	Executive bool          `json:"executive,omitempty"` // an executive assistant may ask every other bot (ask_bot)
+	Memory    []ScopeAccess `json:"memory"`              // grants beyond the private scope
+	Limits    BotLimits     `json:"limits"`
+	// Setup marks a freshly created bot that still has to learn its purpose: it is offered the setup
+	// tools (ask_user, save_profile) until it saves its own instructions.
+	Setup bool `json:"setup,omitempty"`
 }
 
 // Bot is a contact: identity, brain settings and live status.
@@ -110,6 +111,8 @@ type MessagePreview struct {
 	Role string `json:"role"`
 	Text string `json:"text"` // <= 160 chars, single line
 	At   int64  `json:"at"`
+	// Awaiting is true when the bot's last message is a question the user has not answered yet.
+	Awaiting bool `json:"awaiting,omitempty"`
 }
 
 // BotInput creates (empty ID) or updates a bot. Updates replace all fields.
@@ -161,6 +164,7 @@ const (
 	PartDelegation = "delegation" // ask_bot step
 	PartMemory     = "memory"     // verified memory write ("Memory updated")
 	PartNotice     = "notice"     // engine notices (compaction, budget stop)
+	PartQuestion   = "question"   // a question with suggested answers (ask_user)
 )
 
 // MsgPart is one renderable piece of a message; fields are used per Type.
@@ -183,6 +187,16 @@ type MsgPart struct {
 	MIME         string `json:"mime,omitempty"`
 	Size         int64  `json:"size,omitempty"`
 	// report: sources are carried as citation parts; Title is the report title.
+	// question: Text is the question, Choices the suggested answers (the user may also type their own).
+	Choices []Choice `json:"choices,omitempty"`
+	// Hidden marks a text part the model reads but the UI never shows (the setup kickoff).
+	Hidden bool `json:"hidden,omitempty"`
+}
+
+// Choice is one suggested answer to a question part.
+type Choice struct {
+	Label       string `json:"label"`
+	Description string `json:"description,omitempty"`
 }
 
 // MessageUsage is provider-reported only; never estimated.

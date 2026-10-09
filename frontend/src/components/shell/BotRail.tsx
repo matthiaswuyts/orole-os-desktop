@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
-import { MoreHorizontal, Pencil, Plus, Plug, TriangleAlert } from "lucide-react";
+import { Pencil, Plus, Plug, TriangleAlert } from "lucide-react";
 import { Chat, type Bot } from "@/mygo";
 import { cn } from "@/lib/utils";
 import { ago } from "@/features/agents/format";
@@ -13,7 +13,6 @@ import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "@/compone
 import { Skeleton } from "@/components/ui/skeleton";
 import { BotAvatar } from "./BotAvatar";
 
-const iconButton = "inline-flex size-5 shrink-0 items-center justify-center rounded text-muted-foreground opacity-0 outline-none hover:text-foreground focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-sidebar-ring group-hover/row:opacity-100 group-focus-within/row:opacity-100 data-popup-open:opacity-100";
 const note = "px-2 py-1 text-muted-foreground text-xs";
 
 /** Relative time from a unix-ms stamp: "just now", "5m", "3h", "2d". */
@@ -93,18 +92,20 @@ export function BotRail() {
   return (
     <section aria-label="Bots" className="flex min-h-0 flex-1 flex-col gap-1.5 overflow-auto">
       {available && (
-        <Button size="xs" variant="outline" onClick={newBot} disabled={noProvider} title={noProvider ? "Connect a provider before creating a bot" : undefined} className="w-full justify-start">
-          <Plus />New bot
-        </Button>
+        <div className="flex items-center gap-1">
+          {ready && bots.length > 0
+            ? <Input nativeInput size="sm" type="search" aria-label="Search bots" placeholder="Search bots" value={filter} onChange={(e) => setFilter(e.target.value)} className="min-w-0 flex-1" />
+            : <span className="flex-1" />}
+          <Button size="icon-sm" variant="outline" onClick={newBot} disabled={noProvider} aria-label="New bot" title={noProvider ? "Connect a provider before creating a bot" : "New bot"}>
+            <Plus />
+          </Button>
+        </div>
       )}
       {available && noProvider && (
         <div role="note" className="mx-1 flex flex-col items-start gap-2 rounded-md border bg-background/40 p-2">
           <p className="text-muted-foreground text-xs">Bots call a model provider directly. Connect OpenRouter or OpenAI to start chatting.</p>
           <Button size="xs" onClick={() => useUI.getState().openSettings("ai")}><Plug />Connect a provider</Button>
         </div>
-      )}
-      {available && ready && bots.length > 0 && (
-        <Input nativeInput size="sm" type="search" aria-label="Filter bots" placeholder="Filter bots" value={filter} onChange={(e) => setFilter(e.target.value)} />
       )}
       {body}
     </section>
@@ -116,6 +117,7 @@ function BotRow({ bot, selected, tabStop, onFocus }: { bot: Bot; selected: boole
   const menu = useRef<HTMLButtonElement>(null);
   const [confirm, setConfirm] = useState<"clear" | "archive" | null>(null);
   const preview = bot.lastMessage;
+  const awaiting = !running && (preview?.awaiting ?? false);
   const openMenu = () => menu.current?.click();
   return (
     <li
@@ -128,22 +130,27 @@ function BotRow({ bot, selected, tabStop, onFocus }: { bot: Bot; selected: boole
         onFocus={onFocus} onClick={() => useChat.getState().open(bot.id)}
         className="flex min-h-side-row min-w-0 flex-1 items-center gap-2 rounded-md py-1 pl-2 text-left outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring"
       >
-        <BotAvatar name={bot.name} avatar={bot.avatar} color={bot.color} className="size-6 text-xs" />
+        <span className="relative shrink-0">
+          <BotAvatar name={bot.name} avatar={bot.avatar} className="size-6" />
+          {running
+            ? <span aria-hidden="true" data-status="responding" className="absolute -right-0.5 -bottom-0.5 size-2.5 animate-pulse rounded-full bg-info ring-2 ring-sidebar motion-reduce:animate-none" />
+            : awaiting && <span aria-hidden="true" data-status="waiting" className="absolute -right-0.5 -bottom-0.5 size-2.5 rounded-full bg-warning ring-2 ring-sidebar" />}
+        </span>
         <span className="flex min-w-0 flex-1 flex-col">
           <span className="flex items-center gap-1.5">
             <span className="min-w-0 flex-1 truncate font-medium text-[13px]">{bot.name}</span>
-            {running && <span role="img" aria-label="Responding" className="size-1.5 shrink-0 animate-pulse rounded-full bg-info motion-reduce:animate-none" />}
             {preview && <time dateTime={new Date(preview.at).toISOString()} className="shrink-0 text-[11px] text-muted-foreground">{since(preview.at)}</time>}
           </span>
           <span className="truncate text-muted-foreground text-xs">
-            {preview ? `${preview.role === "user" ? "You: " : ""}${preview.text}` : "No messages yet"}
+            {preview ? (preview.text ? `${preview.role === "user" ? "You: " : ""}${preview.text}` : "Starting…") : "No messages yet"}
           </span>
         </span>
+        {(running || awaiting) && <span className="sr-only">{running ? "Responding" : "Waiting for your answer"}</span>}
       </button>
       <Menu>
-        <MenuTrigger ref={menu} render={<button type="button" tabIndex={-1} aria-label={`Actions for ${bot.name}`} className={cn(iconButton, "absolute top-1 right-1 bg-sidebar-accent")} />}><MoreHorizontal className="size-3.5" /></MenuTrigger>
+        <MenuTrigger ref={menu} render={<button type="button" tabIndex={-1} aria-hidden="true" aria-label={`Actions for ${bot.name}`} className="pointer-events-none absolute top-1 right-1 size-5 opacity-0" />} />
         <MenuPopup align="start" side="right" className="min-w-44">
-          <MenuItem onClick={() => useChat.getState().openBuilder(bot.id)}><Pencil className="size-3.5" />Edit bot</MenuItem>
+          <MenuItem onClick={() => { useChat.getState().open(bot.id); useChat.getState().setSettingsOpen(true); }}><Pencil className="size-3.5" />Bot settings</MenuItem>
           <MenuSeparator />
           <MenuItem onClick={() => setConfirm("clear")}>Clear conversation…</MenuItem>
           <MenuItem variant="destructive" onClick={() => setConfirm("archive")}>Archive…</MenuItem>

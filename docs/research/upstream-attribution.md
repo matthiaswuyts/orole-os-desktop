@@ -18,6 +18,13 @@ Keyboard and tooltip compositions follow the [coss Kbd](https://coss.com/ui/docs
 and [coss Tooltip](https://coss.com/ui/docs/components/tooltip) contracts using the
 already attributed local primitives. The custom `components/tip.tsx` layer was removed.
 
+### DiceBear bot avatars
+
+`@dicebear/core` and `@dicebear/styles` (npm, MIT) generate the bot avatars in `frontend/src/lib/botAvatar.ts`
+from the `gaze` style. Gaze by DiceBear is licensed under CC0 1.0
+([license](https://creativecommons.org/publicdomain/zero/1.0/)). Nothing is copied into the repository; avatars
+are generated locally and no avatar is fetched from the network.
+
 ### Dither Kit charts
 
 Only the official `area-chart` registry component and its shared chart core were

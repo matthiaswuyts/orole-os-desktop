@@ -45,7 +45,7 @@ function Proposal({ proposal, onResolved }: { proposal: SkillProposal; onResolve
   }
 
   return (
-    <li className="flex min-w-0 flex-col gap-2 rounded-md border bg-background/40 p-2.5">
+    <li className="flex min-w-0 flex-col gap-2 border-b py-2">
       <div className="flex flex-col gap-0.5">
         <span className="selectable break-words font-medium text-sm">{proposal.name}</span>
         {proposal.description && <span className="selectable break-words text-muted-foreground text-xs">{proposal.description}</span>}
@@ -68,11 +68,11 @@ export function SkillProposals({ botId }: { botId: string }) {
   useEffect(() => events.chatMemory.on(() => reload()), [reload]);
   const pending = (proposals.data ?? []).filter((p) => p.status === "pending");
   return (
-    <Section title="Proposed skills" description="A bot can suggest a skill it wants to keep using. Nothing is active until you approve it; approving adds it to your skills library.">
+    <Section title="Proposed skills">
       {proposals.error && (
         <Alert variant="error"><AlertDescription className="flex items-center justify-between gap-2"><span className="selectable break-words">Could not load proposals: {proposals.error}</span><Button size="xs" variant="outline" onClick={reload}>Try again</Button></AlertDescription></Alert>
       )}
-      {!proposals.error && pending.length === 0 && <p className="text-muted-foreground text-xs">{proposals.loading ? "Loading…" : "No skills are waiting for your approval."}</p>}
+      {!proposals.error && pending.length === 0 && <p className="text-muted-foreground text-xs">{proposals.loading ? "Loading…" : "No proposed skills."}</p>}
       {pending.length > 0 && <ul className="flex flex-col gap-2">{pending.map((p) => <Proposal key={p.id} proposal={p} onResolved={reload} />)}</ul>}
     </Section>
   );

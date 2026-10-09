@@ -42,12 +42,10 @@ describe("scopes", () => {
     expect(bridge.chat.memoryEntries).not.toHaveBeenCalled();
   });
 
-  it("shows usage and says memory is local and sent to the provider", async () => {
+  it("shows usage for each scope", async () => {
     renderTab();
-    expect(await screen.findByText(/100 of 2,200 core characters · 2 entries/)).toBeInTheDocument();
+    expect(await screen.findByText(/2 entries/)).toBeInTheDocument();
     expect(screen.getByText(/1 entry/)).toBeInTheDocument();
-    expect(screen.getByText(/stored on this computer/)).toBeInTheDocument();
-    expect(screen.getByText(/included in its prompts/)).toBeInTheDocument();
     expect(screen.getByRole("meter", { name: "Core memory used in Travel notes" })).toBeInTheDocument();
   });
 

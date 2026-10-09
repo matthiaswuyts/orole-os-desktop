@@ -31,6 +31,9 @@ export interface ChatState {
   open: (botId: string) => void;
   openBuilder: (botId: string | "new") => void;
   closeBuilder: () => void;
+  /** The slim settings panel beside the conversation (name, description, instructions, model). */
+  settingsOpen: boolean;
+  setSettingsOpen: (open: boolean) => void;
 }
 
 const readSelected = (): string | null => {
@@ -69,7 +72,7 @@ const touched = new Set<string>();
 
 /** The daemon owns bots and conversations. This is a disposable, event-synchronized snapshot for the rail. */
 export const useChat = create<ChatState>((set, get) => ({
-  bots: [], selectedBotId: readSelected(), running: {}, builder: { open: false, botId: null },
+  bots: [], selectedBotId: readSelected(), running: {}, builder: { open: false, botId: null }, settingsOpen: false,
   available: inDesktop, ready: false, loading: false, error: null,
   async load() {
     if (!get().available) return;
@@ -165,6 +168,7 @@ export const useChat = create<ChatState>((set, get) => ({
   },
   openBuilder: (botId) => set({ builder: { open: true, botId: botId === "new" ? null : botId } }),
   closeBuilder: () => set({ builder: { open: false, botId: null } }),
+  setSettingsOpen: (settingsOpen) => set({ settingsOpen }),
 }));
 
 /** The bot whose conversation is open, if it still exists. */

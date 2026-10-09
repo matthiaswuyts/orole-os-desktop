@@ -25,7 +25,6 @@ const (
 	maxModelIDLen      = 200
 	maxMCPTools        = 100
 	maxSkills          = 50
-	maxDelegates       = 20
 	maxToolParamsBytes = 4 << 10
 	maxStepsLimit      = 25
 	maxToolCallsLimit  = 100
@@ -69,9 +68,6 @@ func normalizeConfig(c BotConfig) BotConfig {
 	}
 	if c.Skills == nil {
 		c.Skills = []string{}
-	}
-	if c.DelegateTo == nil {
-		c.DelegateTo = []string{}
 	}
 	if c.Memory == nil {
 		c.Memory = []ScopeAccess{}
@@ -140,7 +136,7 @@ func (s *store) previews(ctx context.Context) (map[string]MessagePreview, error)
 		if err := rows.Scan(&id, &role, &text, &parts, &at); err != nil {
 			return nil, err
 		}
-		out[id] = MessagePreview{Role: role, Text: previewText(text, parts), At: at}
+		out[id] = MessagePreview{Role: role, Text: previewText(text, parts), At: at, Awaiting: awaitingAnswer(role, parts)}
 	}
 	return out, rows.Err()
 }
@@ -155,7 +151,20 @@ func (s *store) preview(ctx context.Context, botID string) (*MessagePreview, err
 	if err != nil {
 		return nil, err
 	}
-	return &MessagePreview{Role: role, Text: previewText(text, parts), At: at}, nil
+	return &MessagePreview{Role: role, Text: previewText(text, parts), At: at, Awaiting: awaitingAnswer(role, parts)}, nil
+}
+
+// awaitingAnswer reports whether a stored message is a bot question that has not been answered (it is still the last message).
+func awaitingAnswer(role, parts string) bool {
+	if role != "assistant" {
+		return false
+	}
+	for _, p := range RawParts(parts) {
+		if p.Type == PartQuestion {
+			return true
+		}
+	}
+	return false
 }
 
 // previewText is a single line of at most previewRunes characters.
@@ -283,28 +292,6 @@ func (s *store) validateConfig(ctx context.Context, selfID string, c BotConfig) 
 	}
 	c.Skills = skills
 
-	del := make([]string, 0, len(c.DelegateTo))
-	for _, id := range c.DelegateTo {
-		if id == selfID && id != "" {
-			return c, invalidf("A bot cannot delegate to itself.")
-		}
-		if slices.Contains(del, id) {
-			continue
-		}
-		var n int
-		if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM bots WHERE id=? AND archived_at IS NULL`, id).Scan(&n); err != nil {
-			return c, err
-		}
-		if n == 0 {
-			return c, invalidf("Delegate bot %q does not exist.", id)
-		}
-		del = append(del, id)
-	}
-	if len(del) > maxDelegates {
-		return c, invalidf("A bot can delegate to at most %d other bots.", maxDelegates)
-	}
-	c.DelegateTo = del
-
 	mem := make([]ScopeAccess, 0, len(c.Memory))
 	for _, a := range c.Memory {
 		if a.Scope != ScopeUser && !scopeRe.MatchString(a.Scope) {
@@ -429,7 +416,7 @@ func scanMessage(r scanner) (Message, error) {
 func textProjection(parts []MsgPart) string {
 	var b strings.Builder
 	for _, p := range parts {
-		if p.Type != PartText && p.Type != PartReport {
+		if p.Hidden || (p.Type != PartText && p.Type != PartReport && p.Type != PartQuestion) {
 			continue
 		}
 		if p.Text == "" {

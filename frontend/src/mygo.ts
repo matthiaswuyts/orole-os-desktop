@@ -230,13 +230,16 @@ export interface BotConfig {
   mcpTools: string[];
   /** enabled registry skill names */
   skills: string[];
-  /** bot ids this bot may ask (ask_bot) */
-  delegateTo: string[];
+  /** an executive assistant may ask every other bot (ask_bot) */
+  executive?: boolean;
   /** grants beyond the private scope */
   memory: ScopeAccess[];
   limits: BotLimits;
-  /** MemoryApproval holds bot memory writes as pending until the user approves them. */
-  memoryApproval: boolean;
+  /**
+   * Setup marks a freshly created bot that still has to learn its purpose: it is offered the setup
+   * tools (ask_user, save_profile) until it saves its own instructions.
+   */
+  setup?: boolean;
 }
 
 /** BotExport is portable: settings and instructions only, never memory, messages or secrets. */
@@ -400,6 +403,12 @@ export interface ChecksSummary {
   passed: number;
   failed: number;
   pending: number;
+}
+
+/** Choice is one suggested answer to a question part. */
+export interface Choice {
+  label: string;
+  description?: string;
 }
 
 export interface Command {
@@ -1450,6 +1459,8 @@ export interface MessagePreview {
   /** <= 160 chars, single line */
   text: string;
   at: number;
+  /** Awaiting is true when the bot's last message is a question the user has not answered yet. */
+  awaiting?: boolean;
 }
 
 /** MessageUsage is provider-reported only; never estimated. */
@@ -1520,6 +1531,13 @@ export interface MsgPart {
   attachmentId?: string;
   mime?: string;
   size?: number;
+  /**
+   * report: sources are carried as citation parts; Title is the report title.
+   * question: Text is the question, Choices the suggested answers (the user may also type their own).
+   */
+  choices?: Choice[];
+  /** Hidden marks a text part the model reads but the UI never shows (the setup kickoff). */
+  hidden?: boolean;
 }
 
 export interface Mutation {

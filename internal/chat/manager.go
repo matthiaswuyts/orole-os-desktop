@@ -261,12 +261,43 @@ func (m *Manager) Bot(ctx context.Context, id string) (Bot, error) {
 
 // SaveBot creates (empty ID) or replaces a bot.
 func (m *Manager) SaveBot(ctx context.Context, in BotInput) (Bot, error) {
+	creating := in.ID == ""
 	b, err := m.store.saveBot(ctx, in)
 	if err != nil {
 		return Bot{}, err
 	}
 	m.publishBot(b.ID, "saved")
+	if creating && b.Config.Setup {
+		if err := m.greet(ctx, b.ID); err != nil {
+			m.log.Warn("chat: cannot start the setup conversation", "bot", b.ID, "err", err)
+		}
+	}
 	return m.Bot(ctx, b.ID)
+}
+
+// setupKickoff is the hidden first message of a new bot: the model reads it, the user never sees it.
+const setupKickoff = "(The user just created you. Start the setup now: greet them and ask your first question.)"
+
+// greet makes a new bot speak first: it stores a hidden user message and runs a turn on it.
+func (m *Manager) greet(ctx context.Context, botID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.closed {
+		return ErrClosed
+	}
+	if m.runs[botID] != nil {
+		return nil
+	}
+	msg := Message{
+		ID: newID(), BotID: botID, Role: "user", Author: "user", Status: StatusComplete, CreatedAt: m.nowMs(),
+		Parts: []MsgPart{{Type: PartText, Text: setupKickoff, Hidden: true}},
+	}
+	if err := m.store.insertMessage(ctx, &msg); err != nil {
+		return err
+	}
+	m.publishMessage(msg)
+	m.startLocked(botID, turn{userMsgID: msg.ID})
+	return nil
 }
 
 // ArchiveBot stops the bot's run, then hides it. The conversation and memory are kept.
@@ -307,7 +338,7 @@ func portableInput(in BotInput) BotInput {
 	in.ID = ""
 	in.Config.MCPTools = nil
 	in.Config.Skills = nil
-	in.Config.DelegateTo = nil
+	in.Config.Executive = false
 	in.Config.Memory = nil
 	return in
 }

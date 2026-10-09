@@ -7,7 +7,7 @@ const env = vi.hoisted(() => ({ desktop: true, provider: true as boolean | null 
 vi.mock("@/lib/backend", () => ({ get inDesktop() { return env.desktop; } }));
 vi.mock("@/stores/llm", () => ({ useHasProvider: () => env.provider }));
 vi.mock("@/features/chat/Conversation", () => ({ Conversation: ({ bot }: { bot: Bot }) => <div data-testid="conversation">{bot.name}</div> }));
-vi.mock("@/features/chat/builder/BotBuilder", () => ({ BotBuilder: ({ botId }: { botId: string | null }) => <div data-testid="builder">{botId ?? "new"}</div> }));
+vi.mock("@/features/chat/builder/NewBot", () => ({ NewBot: () => <div data-testid="builder">new</div> }));
 
 import { ChatView } from "@/features/chat/ChatView";
 import { useChat } from "@/stores/chat";
@@ -15,7 +15,7 @@ import { useUI } from "@/stores/ui";
 
 const bot = (id: string, name = id): Bot => ({
   id, name, avatar: "", color: "blue", description: "", instructions: "", provider: "", model: "", reasoning: "",
-  config: { tools: [], mcpTools: [], skills: [], delegateTo: [], memory: [], limits: { maxSteps: 0, maxToolCalls: 0 }, memoryApproval: false },
+  config: { tools: [], mcpTools: [], skills: [], memory: [], limits: { maxSteps: 0, maxToolCalls: 0 } },
   createdAt: 1, updatedAt: 1, running: false,
 });
 const state = (over: Partial<ReturnType<typeof useChat.getState>> = {}) =>
@@ -76,10 +76,10 @@ describe("ChatView states", () => {
     expect(screen.getByTestId("conversation")).toHaveTextContent("Beta");
   });
 
-  it("shows the builder, lazily, while it is open", async () => {
-    state({ bots: [bot("a")], selectedBotId: "a", builder: { open: true, botId: "a" } });
+  it("shows the new-bot page, lazily, while the builder is open", async () => {
+    state({ bots: [bot("a")], selectedBotId: "a", builder: { open: true, botId: null } });
     render(<ChatView />);
-    expect(await screen.findByTestId("builder")).toHaveTextContent("a");
+    expect(await screen.findByTestId("builder")).toHaveTextContent("new");
     expect(screen.queryByTestId("conversation")).toBeNull();
   });
 

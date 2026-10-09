@@ -31,24 +31,37 @@ type askTool struct{ s *Store }
 
 func (askTool) ID() string { return "ask_bot" }
 
-// delegates loads the active bots in bot.Config.DelegateTo, in config order.
+// maxCallees bounds how many bots an executive assistant is told about.
+const maxCallees = 20
+
+// delegates lists the other active bots an executive assistant may ask; every other bot gets none.
 func (s *Store) delegates(ctx context.Context, bot chat.Bot) []chat.Bot {
+	if !bot.Config.Executive {
+		return nil
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT id FROM bots WHERE archived_at IS NULL AND id <> ? ORDER BY name COLLATE NOCASE LIMIT ?`, bot.ID, maxCallees)
+	if err != nil {
+		return nil
+	}
+	var ids []string
+	for rows.Next() {
+		var id string
+		if rows.Scan(&id) == nil {
+			ids = append(ids, id)
+		}
+	}
+	rows.Close()
 	var out []chat.Bot
-	for _, id := range bot.Config.DelegateTo {
-		if id == bot.ID || slices.ContainsFunc(out, func(b chat.Bot) bool { return b.ID == id }) {
-			continue
+	for _, id := range ids {
+		if b, err := s.loadBot(ctx, s.db, id); err == nil {
+			out = append(out, b)
 		}
-		b, err := s.loadBot(ctx, s.db, id)
-		if err != nil {
-			continue
-		}
-		out = append(out, b)
 	}
 	return out
 }
 
 func (t askTool) Specs(bot chat.Bot, caps llm.Caps) []llm.ToolSpec {
-	if !caps.Tools || len(bot.Config.DelegateTo) == 0 || t.s.getDelegator() == nil {
+	if !caps.Tools || !bot.Config.Executive || t.s.getDelegator() == nil {
 		return nil
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)

@@ -26,7 +26,7 @@ export function emit(name: "chatMessage" | "chatRun" | "chatMemory" | "chatBot" 
 
 export const bridge = {
   chat: {
-    bot: vi.fn(), bots: vi.fn(), saveBot: vi.fn(), archiveBot: vi.fn(), exportBot: vi.fn(), importBot: vi.fn(), draftSend: vi.fn(), cancel: vi.fn(),
+    bot: vi.fn(), bots: vi.fn(), saveBot: vi.fn(), archiveBot: vi.fn(), exportBot: vi.fn(), importBot: vi.fn(), draftSend: vi.fn(), cancel: vi.fn(), send: vi.fn(),
     beginAttachment: vi.fn(), attachmentChunk: vi.fn(), commitAttachment: vi.fn(), discardAttachment: vi.fn(),
     memoryScopes: vi.fn(), createMemoryScope: vi.fn(), deleteMemoryScope: vi.fn(), memoryEntries: vi.fn(), saveMemoryEntry: vi.fn(), deleteMemoryEntry: vi.fn(), resolveMemory: vi.fn(),
     knowledgeFiles: vi.fn(), addKnowledge: vi.fn(), removeKnowledge: vi.fn(), skillProposals: vi.fn(), resolveSkill: vi.fn(), tools: vi.fn(),
@@ -55,7 +55,7 @@ export const provider = (over: Partial<ProviderStatus> = {}): ProviderStatus => 
 export const model = (id: string, over: Partial<Model> = {}): Model => ({ id, name: id, caps: caps(), reasoning: [], ...over });
 
 export const config = (over: Partial<BotConfig> = {}): BotConfig => ({
-  tools: [], mcpTools: [], skills: [], delegateTo: [], memory: [], limits: { maxSteps: 0, maxToolCalls: 0 }, memoryApproval: false, ...over,
+  tools: [], mcpTools: [], skills: [], memory: [], limits: { maxSteps: 0, maxToolCalls: 0 }, ...over,
 });
 
 export const bot = (id: string, over: Partial<Bot> = {}): Bot => ({

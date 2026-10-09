@@ -31,8 +31,8 @@ describe("sidebar mode tabs", () => {
     expect(screen.getByRole("region", { name: "Bot rail" })).toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "Projects" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Tasks" })).toBeNull();
-    // The global palette button and Settings stay.
-    expect(screen.getByRole("button", { name: /Search/ })).toBeInTheDocument();
+    // The palette button is a Code-mode control; Settings stays.
+    expect(screen.queryByRole("button", { name: /Ctrl\+K/ })).toBeNull();
     expect(screen.getByRole("button", { name: "Settings" })).toBeInTheDocument();
   });
 

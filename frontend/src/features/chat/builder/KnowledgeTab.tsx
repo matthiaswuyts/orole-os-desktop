@@ -6,7 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog, errText } from "@/features/projects/dialogs";
 import { formatSize } from "../parts/format";
-import { TOOL_IDS, emptyToolSettings, type Action, type FormState, type TabId } from "./botForm";
+import { TOOL_IDS, emptyToolSettings, type Action, type FormState } from "./botForm";
 import { Section } from "./controls";
 import { uploadKnowledge } from "./upload";
 import { useLoad } from "./useLoad";
@@ -28,7 +28,7 @@ const STATUS: Record<string, { label: string; variant: "success" | "warning" | "
 };
 
 /** Documents the bot can search. Stored and indexed on this computer by the daemon. */
-export function KnowledgeTab({ botId, form, dispatch, onTab }: { botId: string | null; form: FormState; dispatch: Dispatch<Action>; onTab: (tab: TabId) => void }) {
+export function KnowledgeTab({ botId, form, dispatch }: { botId: string | null; form: FormState; dispatch: Dispatch<Action> }) {
   const files = useLoad(() => Chat.knowledgeFiles(botId ?? ""), botId ?? "", botId !== null);
   const [transfers, setTransfers] = useState<Transfer[]>([]);
   const [removing, setRemoving] = useState<KnowledgeFile | null>(null);
@@ -47,7 +47,7 @@ export function KnowledgeTab({ botId, form, dispatch, onTab }: { botId: string |
 
   if (!botId) {
     return (
-      <Section title="Knowledge" description="Documents the bot can look things up in.">
+      <Section title="Knowledge">
         <p role="status" className="text-muted-foreground text-sm">Save the bot first. Then you can attach documents to it here.</p>
       </Section>
     );
@@ -75,22 +75,17 @@ export function KnowledgeTab({ botId, form, dispatch, onTab }: { botId: string |
   const searchOn = TOOL_IDS.knowledge in form.tools;
   return (
     <div className="flex flex-col gap-3">
-      <Section title="Knowledge files" description="Text documents the bot can search. They are stored and indexed on this computer. Passages the bot finds are sent to the model provider as part of the conversation.">
+      <Section title="Knowledge files">
         {!searchOn && (
-          <Alert variant="warning">
-            <AlertDescription className="flex flex-wrap items-center justify-between gap-2">
-              <span>The bot only reads these files when the Knowledge search tool is on.</span>
-              <span className="flex gap-1.5">
-                <Button size="xs" variant="outline" onClick={() => dispatch({ type: "tool", id: TOOL_IDS.knowledge, settings: emptyToolSettings() })}>Turn it on</Button>
-                <Button size="xs" variant="ghost" onClick={() => onTab("tools")}>Open Tools</Button>
-              </span>
-            </AlertDescription>
-          </Alert>
+          <div className="flex items-center justify-between gap-2 text-muted-foreground text-xs">
+            <span>Needs the Knowledge search tool.</span>
+            <Button size="xs" variant="outline" onClick={() => dispatch({ type: "tool", id: TOOL_IDS.knowledge, settings: emptyToolSettings() })}>Turn on</Button>
+          </div>
         )}
         <div className="flex flex-wrap items-center gap-2">
           <input ref={input} type="file" multiple hidden aria-label="Choose knowledge files" onChange={(e) => void add(e.target.files)} />
           <Button size="sm" variant="outline" onClick={() => input.current?.click()}><Upload />Add files</Button>
-          <span className="text-muted-foreground text-xs">Text files only, up to 20 MiB each and 10 per bot. PDFs and images cannot be indexed yet.</span>
+          <span className="text-muted-foreground text-xs">Text files, up to 20 MiB.</span>
         </div>
         {files.error && (
           <Alert variant="error"><AlertDescription className="flex items-center justify-between gap-2"><span className="selectable break-words">Could not load the files: {files.error}</span><Button size="xs" variant="outline" onClick={reload}>Try again</Button></AlertDescription></Alert>
@@ -98,7 +93,7 @@ export function KnowledgeTab({ botId, form, dispatch, onTab }: { botId: string |
         {transfers.length > 0 && (
           <ul aria-label="Uploads" className="flex flex-col gap-1.5">
             {transfers.map((t) => (
-              <li key={t.key} className="flex min-w-0 flex-col gap-0.5 rounded-md border bg-background/40 p-2 text-xs">
+              <li key={t.key} className="flex min-w-0 flex-col gap-0.5 border-b py-2 text-xs">
                 <span className="flex items-center justify-between gap-2">
                   <span className="min-w-0 break-words font-medium">{t.name}</span>
                   {t.error ? <Button size="xs" variant="ghost" onClick={() => setTransfers((all) => all.filter((x) => x.key !== t.key))}>Dismiss</Button> : <span className="text-muted-foreground tabular-nums" role="status">Uploading {t.size ? Math.round((t.sent / t.size) * 100) : 0}%</span>}
@@ -115,7 +110,7 @@ export function KnowledgeTab({ botId, form, dispatch, onTab }: { botId: string |
             {list.map((file) => {
               const status = STATUS[file.status] ?? { label: file.status, variant: "secondary" as const };
               return (
-                <li key={file.id} className="flex min-w-0 items-start justify-between gap-2 rounded-md border bg-background/40 p-2.5">
+                <li key={file.id} className="flex min-w-0 items-start justify-between gap-2 border-b py-2">
                   <div className="flex min-w-0 flex-col gap-1">
                     <span className="flex items-center gap-1.5 text-sm"><FileText className="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" /><span className="selectable min-w-0 break-words font-medium">{file.name}</span></span>
                     <span className="flex flex-wrap items-center gap-1.5 text-muted-foreground text-xs">

@@ -1,12 +1,8 @@
 import type { Bot, BotConfig, BotExport, BotInput, BotTool, ScopeAccess } from "@/mygo";
-import { BOT_COLORS } from "@/lib/botColors";
 
 /** Limits mirrored from the daemon (internal/chat/api.go, store.go). The daemon validates again. */
 export const LIMITS = {
   name: 80,
-  /** Avatars show at most two graphemes; the daemon accepts up to 16 characters. */
-  avatarGraphemes: 2,
-  avatarChars: 16,
   description: 500,
   instructions: 32 * 1024,
   steps: { min: 1, max: 30, default: 8 },
@@ -16,7 +12,6 @@ export const LIMITS = {
   domains: 20,
   mcpTools: 100,
   skills: 50,
-  delegates: 20,
 } as const;
 
 export const TOOL_IDS = { webSearch: "web_search", webFetch: "web_fetch", datetime: "datetime", research: "research", knowledge: "knowledge_search" } as const;
@@ -44,19 +39,19 @@ export interface FormState {
   tools: Record<string, ToolSettings>;
   mcpTools: string[];
   skills: string[];
-  delegateTo: string[];
   /** Grants beyond the private scope. */
   memory: ScopeAccess[];
   maxSteps: string;
   maxToolCalls: string;
-  memoryApproval: boolean;
+  /** An executive assistant may ask every other bot. */
+  executive: boolean;
 }
 
 export const emptyToolSettings = (): ToolSettings => ({ maxResults: "", maxContentTokens: "", allowed: [], blocked: [], rest: {} });
 
 export const initialForm = (): FormState => ({
-  name: "", avatar: "", color: BOT_COLORS[0], description: "", instructions: "", model: "", reasoning: "",
-  tools: {}, mcpTools: [], skills: [], delegateTo: [], memory: [], maxSteps: "", maxToolCalls: "", memoryApproval: false,
+  name: "", avatar: "", color: "", description: "", instructions: "", model: "", reasoning: "",
+  tools: {}, mcpTools: [], skills: [], memory: [], maxSteps: "", maxToolCalls: "", executive: false,
 });
 
 export type Action =
@@ -135,14 +130,14 @@ export function formFromInput(bot: Pick<BotInput, "name" | "avatar" | "color" | 
   const config = bot.config ?? {};
   const limit = (n: number | undefined) => (n && n > 0 ? String(n) : "");
   return {
-    name: bot.name, avatar: bot.avatar, color: bot.color || BOT_COLORS[0], description: bot.description, instructions: bot.instructions,
+    name: bot.name, avatar: bot.avatar, color: bot.color, description: bot.description, instructions: bot.instructions,
     model: bot.provider && bot.model ? `${bot.provider}/${bot.model}` : "",
     reasoning: bot.reasoning,
     tools: Object.fromEntries((config.tools ?? []).map((t) => [t.id, toolSettings(t)])),
-    mcpTools: [...(config.mcpTools ?? [])], skills: [...(config.skills ?? [])], delegateTo: [...(config.delegateTo ?? [])],
+    mcpTools: [...(config.mcpTools ?? [])], skills: [...(config.skills ?? [])],
     memory: (config.memory ?? []).map((a) => ({ ...a })),
     maxSteps: limit(config.limits?.maxSteps), maxToolCalls: limit(config.limits?.maxToolCalls),
-    memoryApproval: config.memoryApproval ?? false,
+    executive: config.executive ?? false,
   };
 }
 
@@ -187,10 +182,9 @@ export function toInput(form: FormState, id: string): BotInput {
       }),
       mcpTools: form.mcpTools,
       skills: form.skills,
-      delegateTo: form.delegateTo,
       memory: form.memory,
       limits: { maxSteps: integer(form.maxSteps), maxToolCalls: integer(form.maxToolCalls) },
-      memoryApproval: form.memoryApproval,
+      ...(form.executive ? { executive: true } : {}),
     },
   };
 }
@@ -201,18 +195,17 @@ export function fingerprint(form: FormState): string {
     ...form,
     tools: Object.entries(form.tools).sort(([a], [b]) => a.localeCompare(b)),
     memory: form.memory.toSorted((a, b) => a.scope.localeCompare(b.scope)),
-    mcpTools: form.mcpTools.toSorted(), skills: form.skills.toSorted(), delegateTo: form.delegateTo.toSorted(),
+    mcpTools: form.mcpTools.toSorted(), skills: form.skills.toSorted(),
   });
 }
 
 /* ------------------------------------------------------------------ validation */
 
-export type TabId = "persona" | "model" | "tools" | "memory" | "knowledge";
+export type TabId = "persona" | "tools" | "knowledge";
 
 /** Problems by field key. Tool fields are "tool:<id>:<field>". */
 export type Problems = Partial<Record<string, string>>;
 
-export const graphemeCount = (text: string): number => Array.from(new Intl.Segmenter().segment(text)).length;
 const charCount = (text: string): number => Array.from(text).length;
 
 function limit(text: string, label: string, range: { min: number; max: number }): string | undefined {
@@ -229,8 +222,6 @@ export function validate(form: FormState): Problems {
   else if (charCount(name) > LIMITS.name) problems.name = `Names are limited to ${LIMITS.name} characters.`;
   // eslint-disable-next-line no-control-regex
   else if (/[\u0000-\u001f\u007f]/.test(name)) problems.name = "The name contains invalid characters.";
-  const avatar = form.avatar.trim();
-  if (avatar && (graphemeCount(avatar) > LIMITS.avatarGraphemes || charCount(avatar) > LIMITS.avatarChars)) problems.avatar = `Use one emoji or up to ${LIMITS.avatarGraphemes} letters.`;
   if (charCount(form.description.trim()) > LIMITS.description) problems.description = `The description is limited to ${LIMITS.description} characters.`;
   if (charCount(form.instructions) > LIMITS.instructions) problems.instructions = `Instructions are limited to ${LIMITS.instructions.toLocaleString("en-US")} characters.`;
   const steps = limit(form.maxSteps, "Max steps", LIMITS.steps);
@@ -247,14 +238,12 @@ export function validate(form: FormState): Problems {
   }
   if (form.mcpTools.length > LIMITS.mcpTools) problems.mcpTools = `At most ${LIMITS.mcpTools} MCP tools can be enabled.`;
   if (form.skills.length > LIMITS.skills) problems.skills = `At most ${LIMITS.skills} skills can be enabled.`;
-  if (form.delegateTo.length > LIMITS.delegates) problems.delegateTo = `A bot can ask at most ${LIMITS.delegates} other bots.`;
   return problems;
 }
 
 /** The tab that holds the field a problem key refers to. */
 export function tabOfProblem(key: string): TabId {
-  if (key.startsWith("tool:") || key === "mcpTools" || key === "skills" || key === "delegateTo") return "tools";
-  if (key === "maxSteps" || key === "maxToolCalls") return "model";
+  if (key.startsWith("tool:") || key === "mcpTools" || key === "skills") return "tools";
   return "persona";
 }
 
@@ -294,12 +283,11 @@ export function parseBotExport(text: string): ParsedExport {
     value: {
       version: 1,
       bot: {
-        id: "", name: b.name, avatar: text_("avatar"), color: text_("color") || BOT_COLORS[0], description: text_("description"), instructions: text_("instructions"),
+        id: "", name: b.name, avatar: text_("avatar"), color: text_("color"), description: text_("description"), instructions: text_("instructions"),
         provider: text_("provider"), model: text_("model"), reasoning: text_("reasoning"),
         config: {
-          tools, mcpTools: stringList(config.mcpTools), skills: stringList(config.skills), delegateTo: stringList(config.delegateTo), memory,
+          tools, mcpTools: stringList(config.mcpTools), skills: stringList(config.skills), memory,
           limits: { maxSteps: typeof limits.maxSteps === "number" ? limits.maxSteps : 0, maxToolCalls: typeof limits.maxToolCalls === "number" ? limits.maxToolCalls : 0 },
-          memoryApproval: config.memoryApproval === true,
         },
       },
     },

@@ -10,7 +10,6 @@ import type { Bot } from "@/mygo";
 import { useChat } from "@/stores/chat";
 import { useBotRunning, useChatMessages } from "@/stores/chatMessages";
 import { chipOf, useCanSend } from "./composerState";
-import { ModelChip } from "./ConversationHeader";
 import { toolNoun } from "./parts/format";
 import { MAX_ATTACHMENTS } from "./runtime/attachments";
 
@@ -73,14 +72,13 @@ export function Composer({ bot }: { bot: Bot }) {
               {bot.config.tools.map((tool) => <MenuItem key={tool.id} disabled>{toolNoun(tool.id)}</MenuItem>)}
             </MenuGroup>
             <MenuSeparator />
-            <MenuItem onClick={() => useChat.getState().openBuilder(bot.id)}>Edit bot</MenuItem>
+            <MenuItem onClick={() => useChat.getState().setSettingsOpen(true)}>Bot settings</MenuItem>
           </MenuPopup>
         </Menu>
         {research && <Badge variant="info" size="lg" render={<button type="button" aria-label="Research mode on. Turn off" onClick={() => setResearch(false)} />}>
           <FlaskConicalIcon aria-hidden />Research<XIcon aria-hidden />
         </Badge>}
         <span className="min-w-0 flex-1" />
-        <ModelChip bot={bot} />
         {running && <Button type="button" variant="outline" size="icon-sm" aria-label="Stop" onClick={() => void useChatMessages.getState().cancel(bot.id)}><SquareIcon aria-hidden className="fill-current" /></Button>}
         <Button type="button" size="icon-sm" aria-label={running ? "Queue message" : "Send message"} disabled={!canSend} onClick={send}><ArrowUpIcon aria-hidden /></Button>
       </div>

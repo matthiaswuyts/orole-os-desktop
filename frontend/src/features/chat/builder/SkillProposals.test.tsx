@@ -22,7 +22,6 @@ describe("skill proposals", () => {
     expect(await screen.findByText("skill-a")).toBeInTheDocument();
     expect(bridge.chat.skillProposals).toHaveBeenCalledWith("b1");
     expect(screen.queryByText("skill-old")).toBeNull();
-    expect(screen.getByText(/Nothing is active until you approve it/)).toBeInTheDocument();
     expect(screen.getByLabelText("Proposed skill text")).toHaveTextContent("Step one");
   });
 
@@ -32,7 +31,7 @@ describe("skill proposals", () => {
     render(<SkillProposals botId="b1" />);
     fireEvent.click(await screen.findByRole("button", { name: "Approve skill skill-a" }));
     await waitFor(() => expect(bridge.chat.resolveSkill).toHaveBeenCalledWith({ id: "a", approve: true }));
-    expect(await screen.findByText("No skills are waiting for your approval.")).toBeInTheDocument();
+    expect(await screen.findByText("No proposed skills.")).toBeInTheDocument();
   });
 
   it("rejects with approve=false", async () => {
@@ -65,7 +64,7 @@ describe("skill proposals", () => {
   it("refreshes on memory events", async () => {
     bridge.chat.skillProposals.mockResolvedValueOnce([]).mockResolvedValue([proposal("fresh")]);
     render(<SkillProposals botId="b1" />);
-    await screen.findByText("No skills are waiting for your approval.");
+    await screen.findByText("No proposed skills.");
     emit("chatMemory", { scope: "" });
     expect(await screen.findByText("skill-fresh")).toBeInTheDocument();
   });

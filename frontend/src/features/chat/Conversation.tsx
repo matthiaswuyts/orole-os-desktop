@@ -7,8 +7,8 @@ import { Button } from "@/components/ui/button";
 import type { Bot, Message } from "@/mygo";
 import { selectConversation, useBotRunning, useChatMessages } from "@/stores/chatMessages";
 import { Composer } from "./Composer";
-import { ConversationHeader } from "./ConversationHeader";
 import { ChatMessageView } from "./parts/MessageBubble";
+import { hasVisibleParts } from "./parts/MessageParts";
 import { messageText } from "./parts/format";
 import { CopyButton } from "./parts/Sources";
 import { SOURCE_KEY } from "./runtime/convert";
@@ -26,20 +26,21 @@ function Turn({ bot }: { bot: Bot }) {
   const raw: unknown = useAuiState((s) => s.message.metadata.custom?.[SOURCE_KEY]);
   const isLast = useAuiState((s) => s.message.isLast);
   const running = useBotRunning(bot.id);
-  if (!isDaemonMessage(raw)) return null;
+  if (!isDaemonMessage(raw) || (raw.role === "user" && !hasVisibleParts(raw.parts))) return null;
   const assistant = raw.role !== "user";
   const settled = raw.status !== "running" && raw.status !== "pending";
   const canRegenerate = assistant && isLast && !running;
   return <MessagePair>
-    <ChatMessageView message={raw} botName={bot.name} botAvatar={bot.avatar} botColor={bot.color}
+    <ChatMessageView message={raw} botName={bot.name} botAvatar={bot.avatar}
       onRetry={canRegenerate ? () => void useChatMessages.getState().regenerate(bot.id, raw.id) : undefined}
+      onAnswer={canRegenerate && raw.status === "complete" ? (text) => void useChatMessages.getState().send(bot.id, { text }) : undefined}
       actions={assistant && settled && <MessageActions regenerate={canRegenerate}><CopyButton text={messageText(raw)} label="Copy response" /></MessageActions>} />
   </MessagePair>;
 }
 
 function EmptyConversation({ bot }: { bot: Bot }) {
   return <div data-slot="conversation-empty" className="mx-auto my-auto flex max-w-md flex-col items-center gap-2 py-12 text-center">
-    <BotAvatar name={bot.name} avatar={bot.avatar} color={bot.color} className="size-14 text-xl" />
+    <BotAvatar name={bot.name} avatar={bot.avatar} className="size-14 text-xl" />
     <h3 className="text-base font-semibold">{bot.name}</h3>
     {bot.description && <p className="selectable text-sm text-muted-foreground">{bot.description}</p>}
     <p className="text-sm text-muted-foreground">Say hello to start the conversation.</p>
@@ -91,7 +92,7 @@ function Thread({ bot }: { bot: Bot }) {
       <ThreadPrimitive.Viewport ref={viewport} role="region" aria-label={`Conversation with ${bot.name}`} tabIndex={0}
         onScroll={(event) => { if (event.currentTarget.scrollTop < LOAD_OLDER_AT) loadOlder(); }}
         className="flex min-h-0 flex-1 flex-col overflow-y-auto outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring">
-        <div className="mx-auto flex min-h-full w-full max-w-3xl flex-col gap-5 px-4 py-6">
+        <div className="mx-auto flex min-h-full w-full max-w-3xl flex-col gap-5 px-4 pt-6 pb-16">
           {!conversation.loaded && !conversation.error && <p role="status" className="m-auto text-sm text-muted-foreground">Loading conversation…</p>}
           {!conversation.loaded && conversation.error && <div role="alert" className="m-auto flex flex-col items-center gap-2 text-center text-sm">
             <p className="selectable text-destructive-foreground">Could not load this conversation: {conversation.error}</p>
@@ -101,6 +102,9 @@ function Thread({ bot }: { bot: Bot }) {
             {conversation.loadingOlder ? "Loading earlier messages…" : "Load earlier messages"}
           </Button>}
           {showEmpty && <EmptyConversation bot={bot} />}
+          {conversation.loaded && !conversation.hasMore && conversation.messages[0] && (
+            <time dateTime={new Date(conversation.messages[0].createdAt).toISOString()} className="self-center text-muted-foreground text-xs">{startedAt(conversation.messages[0].createdAt)}</time>
+          )}
           <ThreadPrimitive.Messages>{() => <Turn bot={bot} />}</ThreadPrimitive.Messages>
         </div>
       </ThreadPrimitive.Viewport>
@@ -118,13 +122,22 @@ function Thread({ bot }: { bot: Bot }) {
   </>;
 }
 
-/** One bot's conversation: header, scrolling thread backed by the daemon, composer. Mount it keyed by bot id. */
+/** One bot's conversation: scrolling thread backed by the daemon, composer. Mount it keyed by bot id. */
 export function Conversation({ bot }: { bot: Bot }) {
   const runtime = useChatRuntime(bot);
   return <AssistantRuntimeProvider runtime={runtime}>
     <div data-slot="conversation" className="flex h-full min-h-0 flex-col">
-      <ConversationHeader bot={bot} />
       <Thread bot={bot} />
     </div>
   </AssistantRuntimeProvider>;
+}
+
+/** "Today 11:44 AM", "Yesterday 9:02 PM" or "Oct 3, 9:02 PM": when the conversation began. */
+function startedAt(ms: number): string {
+  const at = new Date(ms);
+  const time = at.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  const days = Math.round((new Date().setHours(0, 0, 0, 0) - new Date(ms).setHours(0, 0, 0, 0)) / 86_400_000);
+  if (days === 0) return `Today ${time}`;
+  if (days === 1) return `Yesterday ${time}`;
+  return `${at.toLocaleDateString([], { month: "short", day: "numeric", year: at.getFullYear() === new Date().getFullYear() ? undefined : "numeric" })}, ${time}`;
 }

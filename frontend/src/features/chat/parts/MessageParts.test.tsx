@@ -9,7 +9,7 @@ import { ChatMessageView } from "./MessageBubble";
 const message = (parts: Message["parts"], over: Partial<Message> = {}): Message => ({
   id: "m", botId: "a", seq: 2, role: "assistant", author: "bot:a", parts, status: "complete", createdAt: 1, ...over,
 });
-const view = (m: Message, onRetry?: () => void) => render(<ChatMessageView message={m} botName="Atlas" botAvatar="" botColor="blue" onRetry={onRetry} />);
+const view = (m: Message, onRetry?: () => void) => render(<ChatMessageView message={m} botName="Atlas" botAvatar="" onRetry={onRetry} />);
 afterEach(cleanup);
 
 describe("message parts", () => {
@@ -81,6 +81,6 @@ describe("message parts", () => {
 
   it("shows typing dots for a running reply that has produced nothing", () => {
     view(message([], { status: "running" }));
-    expect(document.querySelector("[data-slot=chat-typing]")).not.toBeNull();
+    expect(document.querySelector("[data-slot=typing-indicator]")).not.toBeNull();
   });
 });

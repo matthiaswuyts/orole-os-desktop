@@ -1,23 +1,12 @@
-import { DownloadIcon, EraserIcon, MoreHorizontalIcon, PencilIcon } from "lucide-react";
+import { DownloadIcon, EraserIcon, MoreHorizontalIcon, PanelRightIcon, PencilIcon } from "lucide-react";
 import { useState } from "react";
 import { BotAvatar } from "@/components/shell/BotAvatar";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "@/components/ui/menu";
 import { ConfirmDialog, toastError } from "@/features/projects/dialogs";
 import { Chat, type Bot } from "@/mygo";
 import { useChat } from "@/stores/chat";
 import { useChatMessages } from "@/stores/chatMessages";
-import { toolNoun } from "./parts/format";
-import { useBotModel } from "./runtime/useBotModel";
-
-/** The model chip's text: the bot's own model, the default marked as such, or a plain "No model". */
-export function ModelChip({ bot }: { bot: Pick<Bot, "provider" | "model"> }) {
-  const { label, isDefault } = useBotModel(bot);
-  return <Badge variant="outline" size="lg" title="Model" data-slot="model-chip">
-    {label ? `${label}${isDefault ? " (default)" : ""}` : "No model chosen"}
-  </Badge>;
-}
 
 /** Hands the bot's portable settings to the user as a JSON file (never memory, messages or secrets: the daemon decides). */
 async function exportBot(bot: Bot) {
@@ -34,22 +23,24 @@ async function exportBot(bot: Bot) {
   }
 }
 
-export function ConversationHeader({ bot }: { bot: Bot }) {
+/** The title bar's content in Chat: the selected bot's avatar and name, nothing else. */
+export function BotTitle({ bot }: { bot: Bot }) {
+  return <div data-slot="bot-title" className="flex min-w-0 items-center gap-2">
+    <BotAvatar name={bot.name} avatar={bot.avatar} className="size-5" />
+    <h1 className="truncate font-medium text-sm">{bot.name}</h1>
+  </div>;
+}
+
+/** The bot's overflow menu: edit, export, clear the conversation. */
+export function BotActions({ bot }: { bot: Bot }) {
   const [confirming, setConfirming] = useState(false);
-  const tools = bot.config.tools.map((tool) => tool.id);
-  return <header data-slot="conversation-header" className="flex min-w-0 shrink-0 items-center gap-3 border-b px-4 py-2">
-    <BotAvatar name={bot.name} avatar={bot.avatar} color={bot.color} className="size-8 text-sm" />
-    <div className="flex min-w-0 flex-1 flex-col gap-1">
-      <h2 className="truncate text-sm font-semibold">{bot.name}</h2>
-      <ul aria-label="Model and tools" className="flex min-w-0 flex-wrap items-center gap-1">
-        <li><ModelChip bot={bot} /></li>
-        {tools.map((id) => <li key={id}><Badge variant="secondary" size="lg">{toolNoun(id)}</Badge></li>)}
-      </ul>
-    </div>
+  const open = useChat((s) => s.settingsOpen);
+  return <>
+    <Button type="button" variant="ghost" size="icon-xs" aria-label={open ? "Hide bot settings" : "Show bot settings"} aria-pressed={open} onClick={() => useChat.getState().setSettingsOpen(!open)}><PanelRightIcon aria-hidden /></Button>
     <Menu>
-      <MenuTrigger render={<Button type="button" variant="ghost" size="icon-sm" aria-label={`More actions for ${bot.name}`} />}><MoreHorizontalIcon aria-hidden /></MenuTrigger>
+      <MenuTrigger render={<Button type="button" variant="ghost" size="icon-xs" aria-label={`More actions for ${bot.name}`} />}><MoreHorizontalIcon aria-hidden /></MenuTrigger>
       <MenuPopup align="end" className="min-w-48">
-        <MenuItem onClick={() => useChat.getState().openBuilder(bot.id)}><PencilIcon />Edit bot</MenuItem>
+        <MenuItem onClick={() => useChat.getState().setSettingsOpen(true)}><PencilIcon />Bot settings</MenuItem>
         <MenuItem onClick={() => void exportBot(bot)}><DownloadIcon />Export bot</MenuItem>
         <MenuSeparator />
         <MenuItem variant="destructive" onClick={() => setConfirming(true)}><EraserIcon />Clear conversation…</MenuItem>
@@ -61,5 +52,5 @@ export function ConversationHeader({ bot }: { bot: Bot }) {
       }}>
       <p>This deletes every message in this conversation. The bot’s memory is kept.</p>
     </ConfirmDialog>
-  </header>;
+  </>;
 }

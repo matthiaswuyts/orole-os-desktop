@@ -15,12 +15,6 @@ describe("validate", () => {
     expect(validate(valid({ name: "x".repeat(LIMITS.name + 1) })).name).toMatch(/80/);
   });
 
-  it("limits the avatar to two graphemes", () => {
-    expect(validate(valid({ avatar: "🧭" })).avatar).toBeUndefined();
-    expect(validate(valid({ avatar: "AB" })).avatar).toBeUndefined();
-    expect(validate(valid({ avatar: "ABC" })).avatar).toBeDefined();
-  });
-
   it("limits description to 500 and instructions to 32 KiB characters", () => {
     expect(validate(valid({ description: "d".repeat(501) })).description).toMatch(/500/);
     expect(validate(valid({ instructions: "i".repeat(32 * 1024) })).instructions).toBeUndefined();
@@ -48,7 +42,7 @@ describe("validate", () => {
 
   it("maps problems to the tab that holds the field", () => {
     expect(tabOfProblem("name")).toBe("persona");
-    expect(tabOfProblem("maxSteps")).toBe("model");
+    expect(tabOfProblem("maxSteps")).toBe("persona");
     expect(tabOfProblem("tool:web_search:allowed")).toBe("tools");
     expect(tabOfProblem("skills")).toBe("tools");
   });
@@ -96,8 +90,8 @@ describe("toInput", () => {
     const saved = bot("b1", {
       name: "Researcher", provider: "openrouter", model: "gpt-x", reasoning: "low",
       config: config({
-        tools: [{ id: "web_search", params: { max_results: 3, allowed_domains: ["a.com"] } }], mcpTools: ["srv/tool"], skills: ["s"], delegateTo: ["b2"],
-        memory: [{ scope: "user", read: true, write: false }], limits: { maxSteps: 5, maxToolCalls: 12 }, memoryApproval: true,
+        tools: [{ id: "web_search", params: { max_results: 3, allowed_domains: ["a.com"] } }], mcpTools: ["srv/tool"], skills: ["s"],
+        memory: [{ scope: "user", read: true, write: false }], limits: { maxSteps: 5, maxToolCalls: 12 }, executive: true,
       }),
     });
     const input = toInput(formFromBot(saved), "b1");

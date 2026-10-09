@@ -425,7 +425,7 @@ type reconcileInput struct {
 // added unless they duplicate an active one; a fact that names an existing one replaces it
 // (invalidate + add); contradictions the model flags are invalidated. Facts from tainted
 // conversations are stored untrusted and may only replace or invalidate other untrusted facts.
-// Bots that require approval get pending facts and no invalidations. Progress is committed with it.
+// Progress is committed with it.
 func (s *Store) reconcile(ctx context.Context, in reconcileInput) (bool, error) {
 	tx, err := s.writeTx(ctx)
 	if err != nil {
@@ -443,7 +443,6 @@ func (s *Store) reconcile(ctx context.Context, in reconcileInput) (bool, error) 
 		byID[e.ID] = e
 		seen[normText(e.Text)] = e.ID
 	}
-	approval := in.bot.Config.MemoryApproval
 	trust := chat.TrustBot
 	if in.tainted {
 		trust = chat.TrustUntrusted
@@ -485,23 +484,18 @@ func (s *Store) reconcile(ctx context.Context, in reconcileInput) (bool, error) 
 		if len(byID) >= maxFactsPerScope {
 			break
 		}
-		marker := ""
 		if id, ok := in.shown[f.Supersedes]; ok && f.Supersedes != "" {
 			if target, ok := touchable(id); ok {
-				if approval {
-					marker = supersedesPrefix + target.ID
-				} else {
-					if err := invalidateEntry(ctx, tx, target.ID, "consolidation", now); err != nil {
-						return false, err
-					}
-					drop(target)
+				if err := invalidateEntry(ctx, tx, target.ID, "consolidation", now); err != nil {
+					return false, err
 				}
+				drop(target)
 			}
 		}
 		e, err := insertEntry(ctx, tx, chat.MemoryEntry{
 			Scope: in.scope, Kind: chat.KindFact, Text: text, Trust: trust, Author: author,
-			SourceMsgID: in.srcMsg, Pending: approval, CreatedAt: now, UpdatedAt: now,
-		}, marker)
+			SourceMsgID: in.srcMsg, CreatedAt: now, UpdatedAt: now,
+		}, "")
 		if err != nil {
 			return false, err
 		}
@@ -509,19 +503,17 @@ func (s *Store) reconcile(ctx context.Context, in reconcileInput) (bool, error) 
 		seen[key] = e.ID
 		changed = true
 	}
-	if !approval {
-		for _, label := range in.res.Invalidate {
-			id, ok := in.shown[label]
-			if !ok {
-				continue
+	for _, label := range in.res.Invalidate {
+		id, ok := in.shown[label]
+		if !ok {
+			continue
+		}
+		if target, ok := touchable(id); ok {
+			if err := invalidateEntry(ctx, tx, target.ID, "consolidation", now); err != nil {
+				return false, err
 			}
-			if target, ok := touchable(id); ok {
-				if err := invalidateEntry(ctx, tx, target.ID, "consolidation", now); err != nil {
-					return false, err
-				}
-				drop(target)
-				changed = true
-			}
+			drop(target)
+			changed = true
 		}
 	}
 	if err := writeProgress(ctx, tx, in.bot.ID, in.upto, now); err != nil {

@@ -192,7 +192,7 @@ func (t memoryTool) Call(ctx context.Context, rc chat.RunContext, _ string, raw 
 		return chat.ToolResult{}, err
 	}
 	defer tx.Rollback()
-	r := &opRunner{s: s, ctx: ctx, tx: tx, bot: bot, acc: acc, rc: rc, approval: bot.Config.MemoryApproval}
+	r := &opRunner{s: s, ctx: ctx, tx: tx, bot: bot, acc: acc, rc: rc}
 	var lines []string
 	for i, op := range ops {
 		msg, err := r.apply(op)
@@ -253,15 +253,14 @@ func userToolResult(err error) (chat.ToolResult, error) {
 type opChange struct{ scope, summary string }
 
 type opRunner struct {
-	s        *Store
-	ctx      context.Context
-	tx       *sql.Tx
-	bot      chat.Bot
-	acc      access
-	rc       chat.RunContext
-	approval bool
-	changes  []opChange
-	touched  []string
+	s       *Store
+	ctx     context.Context
+	tx      *sql.Tx
+	bot     chat.Bot
+	acc     access
+	rc      chat.RunContext
+	changes []opChange
+	touched []string
 }
 
 func (r *opRunner) touch(scope string) {
@@ -338,13 +337,9 @@ func (r *opRunner) add(scope string, rows []coreRow, content string) (string, er
 	if err := checkBudget(scope, rows, coreTexts(rows), text, limit); err != nil {
 		return "", err
 	}
-	e := r.newRow(scope, text, r.approval)
+	e := r.newRow(scope, text, false)
 	if _, err := insertEntry(r.ctx, r.tx, e, ""); err != nil {
 		return "", err
-	}
-	if r.approval {
-		r.changes = append(r.changes, opChange{scope, "Proposed a memory note (waiting for your approval): " + runeTrunc(text, 80)})
-		return "Saved as pending: the user must approve this note before it becomes active.", nil
 	}
 	r.changes = append(r.changes, opChange{scope, "Remembered: " + runeTrunc(text, 80)})
 	return "Added to " + scope + ".", nil
@@ -399,13 +394,6 @@ func (r *opRunner) replace(scope string, rows []coreRow, old, content string) (s
 	case target.Pending:
 		_, err = r.tx.ExecContext(r.ctx, `UPDATE memory_entries SET text = ?, author = ?, source_msg_id = ?, updated_at = ? WHERE id = ?`,
 			text, r.author(), r.rc.MessageID, now, target.ID)
-	case r.approval:
-		e := r.newRow(scope, text, true)
-		_, err = insertEntry(r.ctx, r.tx, e, supersedesPrefix+target.ID)
-		if err == nil {
-			r.changes = append(r.changes, opChange{scope, "Proposed a memory change (waiting for your approval): " + runeTrunc(text, 80)})
-			return "Saved the replacement as pending: the user must approve it; the old note stays active until then.", nil
-		}
 	default:
 		_, err = r.tx.ExecContext(r.ctx, `UPDATE memory_entries SET text = ?, trust = ?, author = ?, source_msg_id = ?, updated_at = ? WHERE id = ?`,
 			text, chat.TrustBot, r.author(), r.rc.MessageID, now, target.ID)
@@ -428,8 +416,6 @@ func (r *opRunner) remove(scope string, rows []coreRow, old string) (string, err
 		if _, err := r.tx.ExecContext(r.ctx, `DELETE FROM memory_entries WHERE id = ?`, target.ID); err != nil {
 			return "", err
 		}
-	case r.approval:
-		return "", invalidf("this bot's memory changes need the user's approval and removals cannot be proposed; ask the user to remove the note in Memory settings, or replace it with a corrected note")
 	default:
 		if err := invalidateEntry(r.ctx, r.tx, target.ID, r.author(), r.s.nowMs()); err != nil {
 			return "", err

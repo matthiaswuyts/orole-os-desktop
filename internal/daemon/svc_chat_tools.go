@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"slices"
+	"time"
 
 	"github.com/rayorole/orole-os-desktop/internal/chat"
 	"github.com/rayorole/orole-os-desktop/internal/chat/tools"
@@ -35,6 +36,16 @@ func (d *Daemon) registerChatTools() {
 		list = append(list, &tools.SkillsTool{Store: d.Skills})
 		m.AddPromptSection(func(b chat.Bot) string { return tools.SkillsPrompt(d.Skills, b) })
 	}
+	list = append(list, &tools.Setup{Bots: m})
+	m.AddPromptSection(func(b chat.Bot) string {
+		if !b.Config.Setup {
+			return tools.SelfEditPrompt
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		others, _ := m.Bots(ctx) // a failed list only means no suggestions are tailored
+		return tools.SetupPrompt(b, others)
+	})
 	m.AddTools(list...)
 
 	info := tools.InfoSource{

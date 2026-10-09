@@ -89,7 +89,7 @@ func historyText(m Message) string {
 	}
 	for _, p := range m.Parts {
 		switch p.Type {
-		case PartText:
+		case PartText, PartQuestion:
 			sep("\n\n")
 			b.WriteString(p.Text)
 		case PartReport:

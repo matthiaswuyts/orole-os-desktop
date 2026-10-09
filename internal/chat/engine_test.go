@@ -912,7 +912,7 @@ func TestAskRunsTheCalleeInItsOwnContext(t *testing.T) {
 	})
 	callee := e.bot("Callee")
 	stranger := e.bot("Stranger")
-	caller := e.bot("Caller", func(in *BotInput) { in.Config.DelegateTo = []string{callee.ID} })
+	caller := e.bot("Caller", func(in *BotInput) { in.Config.Executive = true })
 	ctx := context.Background()
 	rc := RunContext{BotID: caller.ID, Bot: caller}
 
@@ -927,8 +927,8 @@ func TestAskRunsTheCalleeInItsOwnContext(t *testing.T) {
 	if len(e.history(callee.ID))+len(e.history(caller.ID)) != 0 {
 		t.Fatal("a delegated exchange must not be stored in either conversation")
 	}
-	if _, err := e.m.Ask(ctx, rc, stranger.ID, "hi"); err == nil {
-		t.Fatal("delegation needs a grant in the caller's stored configuration")
+	if _, err := e.m.Ask(ctx, RunContext{BotID: stranger.ID, Bot: stranger}, callee.ID, "hi"); err == nil {
+		t.Fatal("only executive assistants may delegate")
 	}
 	if _, err := e.m.Ask(ctx, RunContext{BotID: caller.ID, Bot: caller, Depth: maxDelegationDepth}, callee.ID, "hi"); err == nil {
 		t.Fatal("delegation depth must be limited")
@@ -969,5 +969,27 @@ func TestSinkCoalescesPublishesAndAlwaysSendsTheFinalOne(t *testing.T) {
 		if len(snaps[i].Parts[0].Text) < len(snaps[i-1].Parts[0].Text) {
 			t.Fatal("snapshots must never go backwards")
 		}
+	}
+}
+
+func TestNewSetupBotSpeaksFirstFromAHiddenKickoff(t *testing.T) {
+	e := newEnv(t, func(call int, req llm.Request) []llm.Delta { return []llm.Delta{llmtest.Text("Hello, what am I for?")} })
+	b := e.bot("Muse", func(in *BotInput) { in.Config.Setup = true })
+	e.idle(b.ID)
+
+	page, err := e.m.Messages(context.Background(), MessagesRequest{BotID: b.ID})
+	if err != nil || len(page.Messages) != 2 {
+		t.Fatalf("messages = %+v, err %v", page.Messages, err)
+	}
+	user, reply := page.Messages[0], page.Messages[1]
+	if user.Role != "user" || len(user.Parts) != 1 || !user.Parts[0].Hidden || user.Parts[0].Text != setupKickoff {
+		t.Fatalf("kickoff = %+v", user)
+	}
+	if reply.Role != "assistant" || replyText(reply) != "Hello, what am I for?" {
+		t.Fatalf("reply = %+v", reply)
+	}
+	bots, _ := e.m.Bots(context.Background())
+	if len(bots) != 1 || bots[0].LastMessage == nil || bots[0].LastMessage.Role != "assistant" {
+		t.Fatalf("preview = %+v", bots)
 	}
 }

@@ -7,9 +7,10 @@ export interface ChatMessageViewProps {
   message: Message;
   botName: string;
   botAvatar: string;
-  botColor: string;
   /** Shown on failed/stopped replies when the caller can retry. */
   onRetry?: () => void;
+  /** Sends the user's answer to a question the bot asked; absent = questions are read-only. */
+  onAnswer?: (answer: string) => void;
   /** Rendered under a bot message (the conversation's copy/regenerate row). */
   actions?: React.ReactNode;
   className?: string;
@@ -27,7 +28,7 @@ export function UserBubble({ children, queued }: { children: React.ReactNode; qu
  * One message exactly as the conversation draws it, without a runtime or any store: used by the bot
  * builder's live preview. User messages are a bubble on the right; bot messages carry the bot's avatar.
  */
-export function ChatMessageView({ message, botName, botAvatar, botColor, onRetry, actions, className }: ChatMessageViewProps) {
+export function ChatMessageView({ message, botName, botAvatar, onRetry, onAnswer, actions, className }: ChatMessageViewProps) {
   if (message.role === "user") {
     return <div className={cn("flex w-full flex-col", className)}>
       <span className="sr-only">You said:</span>
@@ -35,10 +36,10 @@ export function ChatMessageView({ message, botName, botAvatar, botColor, onRetry
     </div>;
   }
   return <div className={cn("flex w-full min-w-0 gap-2", className)}>
-    <BotAvatar name={botName} avatar={botAvatar} color={botColor} className="mt-0.5 size-6 text-xs" />
+    <BotAvatar name={botName} avatar={botAvatar} className="mt-0.5 size-6 text-xs" />
     <div className="flex min-w-0 flex-1 flex-col gap-1.5">
       <span className="sr-only">{botName} said:</span>
-      <MessageParts message={message} />
+      <MessageParts message={message} onAnswer={onAnswer} />
       <MessageStatusNote status={message.status} error={message.error} onRetry={onRetry} />
       {actions}
     </div>

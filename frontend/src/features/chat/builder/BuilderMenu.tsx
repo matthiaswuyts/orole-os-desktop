@@ -1,10 +1,10 @@
 import { useRef, useState } from "react";
-import { Copy, Download, MoreHorizontal, Trash2, Upload } from "lucide-react";
+import { MoreHorizontal, Upload } from "lucide-react";
 import { Chat, type BotExport } from "@/mygo";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogDescription, DialogFooter, DialogHeader, DialogPanel, DialogPopup, DialogTitle } from "@/components/ui/dialog";
-import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "@/components/ui/menu";
-import { errText, toastError } from "@/features/projects/dialogs";
+import { Menu, MenuItem, MenuPopup, MenuTrigger } from "@/components/ui/menu";
+import { errText } from "@/features/projects/dialogs";
 import { useChat } from "@/stores/chat";
 import { parseBotExport, type ParsedExport } from "./botForm";
 
@@ -12,23 +12,6 @@ import { parseBotExport, type ParsedExport } from "./botForm";
 const MAX_IMPORT_BYTES = 1 << 20;
 
 type Picked = { file: string; result: ParsedExport };
-
-const slug = (name: string) => name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "bot";
-
-/** Saves the saved bot's settings as a file. Memory, messages and secrets are never part of it. */
-async function exportBot(id: string) {
-  try {
-    const doc = await Chat.exportBot(id);
-    const url = URL.createObjectURL(new Blob([JSON.stringify(doc, null, 2)], { type: "application/json" }));
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `${slug(doc.bot.name)}.orole-bot.json`;
-    link.click();
-    setTimeout(() => URL.revokeObjectURL(url), 0);
-  } catch (cause) {
-    toastError("Could not export the bot", cause);
-  }
-}
 
 function ImportDialog({ picked, dirty, onClose }: { picked: Picked | null; dirty: boolean; onClose: () => void }) {
   const [busy, setBusy] = useState(false);
@@ -72,10 +55,8 @@ function ImportDialog({ picked, dirty, onClose }: { picked: Picked | null; dirty
   );
 }
 
-/** Duplicate, export, import and archive: the actions that are not part of editing one bot's settings. */
-export function BuilderMenu({ botId, dirty, disabled, onDuplicate, onArchive }: {
-  botId: string | null; dirty: boolean; disabled: boolean; onDuplicate: () => void; onArchive: () => void;
-}) {
+/** The New bot page's overflow menu: import a bot from an export file. */
+export function BuilderMenu({ dirty, disabled }: { dirty: boolean; disabled: boolean }) {
   const input = useRef<HTMLInputElement>(null);
   const [picked, setPicked] = useState<Picked | null>(null);
 
@@ -92,11 +73,7 @@ export function BuilderMenu({ botId, dirty, disabled, onDuplicate, onArchive }: 
       <Menu>
         <MenuTrigger render={<Button size="icon-sm" variant="ghost" aria-label="More actions" disabled={disabled} />}><MoreHorizontal /></MenuTrigger>
         <MenuPopup align="end">
-          {botId && <MenuItem onClick={onDuplicate}><Copy />Duplicate{dirty ? " (with unsaved changes)" : ""}</MenuItem>}
-          {botId && <MenuItem onClick={() => void exportBot(botId)}><Download />Export{dirty ? " (saved version)" : ""}</MenuItem>}
           <MenuItem onClick={() => input.current?.click()}><Upload />Import from file…</MenuItem>
-          {botId && <MenuSeparator />}
-          {botId && <MenuItem variant="destructive" onClick={onArchive}><Trash2 />Archive…</MenuItem>}
         </MenuPopup>
       </Menu>
       <ImportDialog picked={picked} dirty={dirty} onClose={() => setPicked(null)} />

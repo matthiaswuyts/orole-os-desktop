@@ -201,11 +201,7 @@ func grantTo(scope string, read, write bool) func(*chat.BotConfig) {
 	}
 }
 
-func withApproval(c *chat.BotConfig) { c.MemoryApproval = true }
-
-func delegateTo(ids ...string) func(*chat.BotConfig) {
-	return func(c *chat.BotConfig) { c.DelegateTo = append(c.DelegateTo, ids...) }
-}
+func executive(c *chat.BotConfig) { c.Executive = true }
 
 // shared creates a shared scope and returns its id.
 func (e *env) shared(name string) string {

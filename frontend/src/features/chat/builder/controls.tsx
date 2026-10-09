@@ -30,7 +30,7 @@ export function Block({ label, hint, error, children, className, aside }: {
 export function Section({ title, description, children, id }: { title: string; description?: ReactNode; children: ReactNode; id?: string }) {
   const heading = useId();
   return (
-    <section id={id} aria-labelledby={heading} className="flex min-w-0 flex-col gap-3 rounded-lg border bg-card p-3">
+    <section id={id} aria-labelledby={heading} className="flex min-w-0 flex-col gap-2">
       <div className="flex flex-col gap-0.5">
         <h3 id={heading} className="font-medium text-sm">{title}</h3>
         {description && <p className="text-muted-foreground text-xs">{description}</p>}
@@ -99,7 +99,7 @@ export function MultiSelect({ id, label, items, value, onChange, placeholder, em
 }
 
 /** A list of host names edited as chips. Entries are validated before they are added. */
-export function DomainList({ label, value, onChange, max, hint }: { label: string; value: string[]; onChange: (value: string[]) => void; max: number; hint: string }) {
+export function DomainList({ label, value, onChange, max, hint }: { label: string; value: string[]; onChange: (value: string[]) => void; max: number; hint?: string }) {
   const id = useId();
   const [draft, setDraft] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -137,7 +137,7 @@ export function DomainList({ label, value, onChange, max, hint }: { label: strin
           ))}
         </ul>
       )}
-      <p id={`${id}-hint`} className="text-muted-foreground text-xs">{hint} ({value.length}/{max})</p>
+      <p id={`${id}-hint`} className="text-muted-foreground text-xs">{hint ? `${hint} ` : ""}({value.length}/{max})</p>
     </div>
   );
 }

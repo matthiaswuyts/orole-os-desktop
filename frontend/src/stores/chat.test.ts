@@ -26,7 +26,7 @@ import { renderHook } from "@testing-library/react";
 
 const bot = (id: string, over: Partial<Bot> = {}): Bot => ({
   id, name: id, avatar: "", color: "blue", description: "", instructions: "", provider: "", model: "", reasoning: "",
-  config: { tools: [], mcpTools: [], skills: [], delegateTo: [], memory: [], limits: { maxSteps: 0, maxToolCalls: 0 }, memoryApproval: false },
+  config: { tools: [], mcpTools: [], skills: [], memory: [], limits: { maxSteps: 0, maxToolCalls: 0 } },
   createdAt: 1, updatedAt: 1, running: false, ...over,
 });
 const message = (botId: string, text: string, over: Partial<Message> = {}): Message => ({

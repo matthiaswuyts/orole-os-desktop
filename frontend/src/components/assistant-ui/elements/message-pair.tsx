@@ -20,7 +20,7 @@
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
  * SOFTWARE.
  */
-import { ActionBarPrimitive, MessagePrimitive, useAui } from "@assistant-ui/react";
+import { ActionBarPrimitive, MessagePrimitive, useAui, useAuiState } from "@assistant-ui/react";
 import { RefreshCwIcon } from "lucide-react";
 import type { ComponentProps, ReactNode } from "react";
 import { Button } from "@/components/ui/button";
@@ -42,11 +42,16 @@ export function MessagePair({ className, onFocus, onBlur, ...props }: ComponentP
 }
 
 /**
- * The hover actions under a reply. `autohide="not-last"` keeps the newest reply's actions visible and hides the
- * others until hover or focus. Regenerate is only offered when the caller can honour it (the last reply).
+ * The actions under a reply. The row is always laid out (so showing it never moves the content) and fades in on
+ * hover or keyboard focus; the newest reply keeps it visible. Regenerate is only offered when the caller can honour it.
  */
 export function MessageActions({ regenerate, children, className }: { regenerate?: boolean; children?: ReactNode; className?: string }) {
-  return <ActionBarPrimitive.Root autohide="not-last" data-slot="message-actions" className={cn("flex items-center gap-0.5 text-muted-foreground", className)}>
+  const isLast = useAuiState((s) => s.message.isLast);
+  return <ActionBarPrimitive.Root data-slot="message-actions" className={cn(
+    "flex h-6 items-center gap-0.5 text-muted-foreground transition-opacity focus-within:opacity-100 group-hover/message:opacity-100",
+    isLast ? "opacity-100" : "opacity-0",
+    className,
+  )}>
     {children}
     {regenerate && <ActionBarPrimitive.Reload asChild>
       <Button type="button" variant="ghost" size="icon-xs" aria-label="Regenerate response"><RefreshCwIcon aria-hidden /></Button>

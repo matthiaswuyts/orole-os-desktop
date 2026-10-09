@@ -25,6 +25,7 @@ vi.mock("@/mygo", () => ({
   },
 }));
 
+import { BotActions } from "@/features/chat/BotHeader";
 import { Conversation } from "@/features/chat/Conversation";
 import { useChat } from "@/stores/chat";
 import { useChatMessages } from "@/stores/chatMessages";
@@ -33,7 +34,7 @@ import { useLLM } from "@/stores/llm";
 
 const bot = (over: Partial<Bot> = {}): Bot => ({
   id: "a", name: "Atlas", avatar: "", color: "blue", description: "Plans trips", instructions: "", provider: "openrouter", model: "claude", reasoning: "",
-  config: { tools: [], mcpTools: [], skills: [], delegateTo: [], memory: [], limits: { maxSteps: 0, maxToolCalls: 0 }, memoryApproval: false },
+  config: { tools: [], mcpTools: [], skills: [], memory: [], limits: { maxSteps: 0, maxToolCalls: 0 } },
   createdAt: 1, updatedAt: 1, running: false, ...over,
 });
 const withTools = (...ids: string[]) => bot({ config: { ...bot().config, tools: ids.map((id) => ({ id })) } });
@@ -49,7 +50,7 @@ beforeEach(() => {
   stubs.push(() => vi.unstubAllGlobals());
   vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
   useDaemon.setState({ link: "connected" });
-  useChat.setState({ bots: [bot()], selectedBotId: "a", running: {}, builder: { open: false, botId: null }, available: true, ready: true, loading: false, error: null });
+  useChat.setState({ bots: [bot()], selectedBotId: "a", running: {}, builder: { open: false, botId: null }, settingsOpen: false, available: true, ready: true, loading: false, error: null });
   useChatMessages.setState({ byBot: {}, runs: {}, drafts: {}, problems: {} });
   Element.prototype.scrollTo = () => {};
   useLLM.setState({
@@ -64,7 +65,7 @@ afterEach(() => { cleanup(); stubs.forEach((f) => f()); stubs = []; });
 
 const open = async (messages: Message[] = [], b: Bot = bot(), hasMore = false) => {
   bridge.messages.mockResolvedValue({ messages, hasMore });
-  const view = render(<Conversation key={b.id} bot={b} />);
+  const view = render(<><BotActions bot={b} /><Conversation key={b.id} bot={b} /></>);
   if (messages.length) await screen.findAllByText(/answer|question/);
   else await screen.findByText(/Say hello/);
   return view;
@@ -240,11 +241,11 @@ describe("composer", () => {
     await waitFor(() => expect(screen.queryByRole("button", { name: /Research mode on/ })).toBeNull());
   });
 
-  it("links Edit bot from the + menu to the builder", async () => {
+  it("opens bot settings from the + menu", async () => {
     await open([msg(1), msg(2)]);
     fireEvent.click(screen.getByRole("button", { name: "Add files, research and tools" }));
-    fireEvent.click(await screen.findByRole("menuitem", { name: "Edit bot" }));
-    expect(useChat.getState().builder).toEqual({ open: true, botId: "a" });
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Bot settings" }));
+    expect(useChat.getState().settingsOpen).toBe(true);
   });
 
   describe("attachments", () => {
@@ -303,19 +304,11 @@ describe("composer", () => {
   });
 });
 
-describe("header", () => {
-  it("shows the bot, its model and its tools", async () => {
-    await open([msg(1), msg(2)], withTools("web_search", "datetime"));
-    const header = document.querySelector("[data-slot=conversation-header]") as HTMLElement;
-    expect(within(header).getByRole("heading", { name: "Atlas" })).toBeInTheDocument();
-    expect(within(header).getByText("Claude Sonnet")).toBeInTheDocument();
-    expect(within(header).getByText("Web search")).toBeInTheDocument();
-    expect(within(header).getByText("Date lookup")).toBeInTheDocument();
-  });
-
-  it("marks the default model as such", async () => {
-    await open([msg(1), msg(2)], bot({ provider: "", model: "" }));
-    expect(screen.getAllByText("Claude Sonnet (default)").length).toBeGreaterThan(0);
+describe("bot title bar actions", () => {
+  it("never shows the model in the conversation or the composer", async () => {
+    await open([msg(1), msg(2)], withTools("web_search"));
+    expect(screen.queryByText(/Claude Sonnet/)).toBeNull();
+    expect(screen.queryByText("claude")).toBeNull();
   });
 
   it("clears the conversation only after confirmation", async () => {
@@ -329,7 +322,7 @@ describe("header", () => {
     await waitFor(() => expect(screen.getByText(/Say hello/)).toBeInTheDocument());
   });
 
-  it("opens the builder and exports the bot as a download", async () => {
+  it("opens the settings panel and exports the bot as a download", async () => {
     bridge.exportBot.mockResolvedValue({ version: 1, bot: { name: "Atlas" } });
     const create = vi.fn(() => "blob:x");
     vi.stubGlobal("URL", Object.assign(URL, { createObjectURL: create, revokeObjectURL: vi.fn() }));
@@ -341,7 +334,35 @@ describe("header", () => {
     await waitFor(() => expect(click).toHaveBeenCalled());
     click.mockRestore();
     fireEvent.click(screen.getByRole("button", { name: "More actions for Atlas" }));
-    fireEvent.click(await screen.findByRole("menuitem", { name: "Edit bot" }));
-    expect(useChat.getState().builder).toEqual({ open: true, botId: "a" });
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Bot settings" }));
+    expect(useChat.getState().settingsOpen).toBe(true);
+  });
+});
+
+describe("questions from the bot", () => {
+  const asked = () => msg(2, { parts: [{ type: "question", text: "What will I be used for?", choices: [{ label: "Writing", description: "Prose and editing" }, { label: "Coding" }] }] });
+
+  it("sends a chosen suggestion as the user's next message", async () => {
+    bridge.send.mockResolvedValue(msg(3));
+    await open([msg(1), asked()]);
+    expect(screen.getByText("What will I be used for?")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Coding" }));
+    await waitFor(() => expect(bridge.send).toHaveBeenCalledTimes(1));
+    expect(bridge.send.mock.calls[0]![0]).toMatchObject({ botId: "a", text: "Coding" });
+  });
+
+  it("sends the user's own answer", async () => {
+    bridge.send.mockResolvedValue(msg(3));
+    await open([msg(1), asked()]);
+    fireEvent.change(screen.getByRole("textbox", { name: "Type your own answer" }), { target: { value: "  Legal research " } });
+    fireEvent.submit(screen.getByRole("textbox", { name: "Type your own answer" }));
+    await waitFor(() => expect(bridge.send).toHaveBeenCalledTimes(1));
+    expect(bridge.send.mock.calls[0]![0]).toMatchObject({ text: "Legal research" });
+  });
+
+  it("is read-only once the conversation has moved on", async () => {
+    await open([msg(1), asked(), msg(3)]);
+    expect(screen.getByRole("button", { name: "Coding" })).toBeDisabled();
+    expect(screen.getByRole("textbox", { name: "Type your own answer" })).toBeDisabled();
   });
 });

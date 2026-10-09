@@ -13,14 +13,14 @@ import type { Action, FormState } from "./botForm";
 import { Section } from "./controls";
 import { MemoryEntries } from "./MemoryEntries";
 
-const KIND_LABEL: Record<string, string> = { bot: "Private to this bot", user: "About you, shared by your bots", shared: "Shared scope" };
+const KIND_LABEL: Record<string, string> = { bot: "Private", user: "About you", shared: "Shared" };
 
 function Usage({ scope }: { scope: MemoryScope }) {
   const full = scope.limit > 0 && scope.used / scope.limit >= 0.9;
   return (
     <Meter value={Math.min(scope.used, Math.max(scope.limit, 1))} min={0} max={Math.max(scope.limit, 1)} aria-label={`Core memory used in ${scope.name}`} className="gap-1">
       <MeterTrack className="h-1.5 rounded-full"><MeterIndicator className={cn("rounded-full", full && "bg-warning")} /></MeterTrack>
-      <span className="text-muted-foreground text-xs tabular-nums">{scope.used.toLocaleString("en-US")} of {scope.limit.toLocaleString("en-US")} core characters · {scope.count} {scope.count === 1 ? "entry" : "entries"}</span>
+      <span className="text-muted-foreground text-xs tabular-nums">{scope.count} {scope.count === 1 ? "entry" : "entries"}</span>
     </Meter>
   );
 }
@@ -33,7 +33,7 @@ function ScopeCard({ scope, selected, form, dispatch, onSelect, onDelete }: {
   const readId = useId();
   const writeId = useId();
   return (
-    <li className={cn("flex min-w-0 flex-col gap-2 rounded-md border bg-background/40 p-2.5", selected && "border-ring/60 bg-accent/30")}>
+    <li className={cn("flex min-w-0 flex-col gap-2 border-b py-2", selected && "border-l-2 border-l-ring pl-2")}>
       <div className="flex items-start justify-between gap-2">
         <button type="button" aria-pressed={selected} onClick={onSelect} className="flex min-w-0 flex-1 flex-col items-start gap-0.5 rounded text-start outline-none focus-visible:ring-2 focus-visible:ring-ring">
           <span className="selectable break-words font-medium text-sm">{scope.name}</span>
@@ -46,7 +46,6 @@ function ScopeCard({ scope, selected, form, dispatch, onSelect, onDelete }: {
         <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
           <span className="flex items-center gap-1.5"><span id={readId}>{"Read "}<span className="sr-only">{scope.name}</span></span><Switch aria-labelledby={readId} checked={grant?.read ?? false} onCheckedChange={(read) => dispatch({ type: "access", scope: scope.id, read, write: read && (grant?.write ?? false) })} /></span>
           <span className="flex items-center gap-1.5"><span id={writeId}>{"Write "}<span className="sr-only">{scope.name}</span></span><Switch aria-labelledby={writeId} checked={grant?.write ?? false} onCheckedChange={(write) => dispatch({ type: "access", scope: scope.id, read: grant?.read ?? false, write })} /></span>
-          <span className="text-muted-foreground">Applies when you save the bot.</span>
         </div>
       )}
     </li>
@@ -71,7 +70,7 @@ export function MemoryTab({ botId, form, dispatch }: { botId: string | null; for
 
   if (!botId) {
     return (
-      <Section title="Memory" description="Memory belongs to a saved bot.">
+      <Section title="Memory">
         <p role="status" className="flex items-center gap-2 text-muted-foreground text-sm"><Brain className="size-4" aria-hidden="true" />Save the bot first. Then you can see, edit and approve what it remembers here.</p>
       </Section>
     );
@@ -92,7 +91,7 @@ export function MemoryTab({ botId, form, dispatch }: { botId: string | null; for
 
   return (
     <div className="flex flex-col gap-3">
-      <Section title="What the bot remembers" description="Memory is stored on this computer. What a bot remembers is included in its prompts, so it is sent to the model provider along with your message.">
+      <Section title="Memory">
         {listing?.error && (
           <Alert variant="error"><AlertDescription className="flex items-center justify-between gap-2"><span className="selectable break-words">Could not load memory: {listing.error}</span><Button size="xs" variant="outline" onClick={() => void useChatMemory.getState().loadScopes(botId)}>Try again</Button></AlertDescription></Alert>
         )}
@@ -106,16 +105,15 @@ export function MemoryTab({ botId, form, dispatch }: { botId: string | null; for
         )}
         <form className="flex flex-col gap-1.5" onSubmit={(e) => { e.preventDefault(); void create(); }}>
           <div className="flex gap-1.5">
-            <Input nativeInput size="sm" aria-label="New shared scope name" placeholder="New shared scope, e.g. Household" value={name} onChange={(e) => { setName(e.target.value); setCreateError(null); }} />
+            <Input nativeInput size="sm" aria-label="New shared scope name" placeholder="New shared scope" value={name} onChange={(e) => { setName(e.target.value); setCreateError(null); }} />
             <Button type="submit" size="sm" variant="outline" disabled={creating || !name.trim()}><Plus />Create</Button>
           </div>
-          <p className="text-muted-foreground text-xs">A shared scope lets several bots read and write the same notes. Grant access per bot above.</p>
           {createError && <p role="alert" className="selectable break-words text-destructive-foreground text-xs">{createError}</p>}
         </form>
       </Section>
 
       {selected && (
-        <Section title={`Entries · ${selected.name}`} description="You can add, edit and delete anything here. Bot writes may wait for your approval if you turned that on in the Model tab.">
+        <Section title="Entries">
           <MemoryEntries key={selected.id} scope={selected} />
         </Section>
       )}

@@ -14,6 +14,8 @@ const TOOLS: Record<string, ToolWords> = {
   memory: { running: "Updating memory", done: "Updated memory", noun: "Memory update" },
   memory_search: { running: "Searching memory", done: "Searched memory", noun: "Memory search" },
   search_history: { running: "Searching this conversation", done: "Searched this conversation", noun: "History search" },
+  save_profile: { running: "Writing my instructions", done: "Wrote my instructions", noun: "Instructions" },
+  update_instructions: { running: "Updating my instructions", done: "Updated my instructions", noun: "Instructions" },
 };
 
 const humanize = (name: string) => name.replace(/[_-]+/g, " ").trim() || "tool";

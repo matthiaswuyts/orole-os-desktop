@@ -426,7 +426,7 @@ The full frontend check passed; native titlebar geometry and sheet appearance we
 ## Bot chat view
 
 `features/chat/ChatView.tsx` hosts the `chat` view. It shows, in order: "needs the desktop app" in the browser
-preview; the bot builder (`builder/BotBuilder`, lazy) while `useChat().builder.open`; a setup card linking to
+preview; the New bot page (`builder/NewBot`, lazy) while `useChat().builder.open`; a setup card linking to
 Settings → AI when no provider is connected; load states for the bot list; "Create your first bot" /
 "Pick a bot"; otherwise `Conversation` for the selected bot (keyed by bot id, so each bot gets its own runtime
 and composer).
@@ -454,6 +454,44 @@ attachments are mutually exclusive, as in the daemon.
 the reader), sticks to the bottom while following a stream, announces "Responding"/"Done" in a polite live
 region, and dims queued user messages ("Queued"). `Composer.tsx`: Enter sends, Shift+Enter inserts a newline, IME
 composition never sends; Send stays available while a reply runs (the daemon queues the message) next to Stop;
-the `+` menu holds Attach files, Research mode, read-only tool chips and Edit bot. There is no @mention picker
+the `+` menu holds Attach files, Research mode, read-only tool chips and Bot settings. There is no @mention picker
 (the daemon has no routing for it). `parts/` holds the pure message renderers shared with the bot builder's live
 preview (`ChatMessageView`, `MessageParts`), so a preview draws exactly what the conversation draws.
+
+**Title bar, avatars, creation.** In Chat the app title bar (`AppShell`) shows only the selected bot's avatar and
+name plus its overflow menu (`features/chat/BotHeader`: Edit, Export, Clear). There is no per-conversation header
+and the model slug is not shown in the header or the composer. The bot rail (`components/shell/BotRail`) has one
+"Search bots" field with a `+` button beside it; the palette's Ctrl+K button is a Code-mode control and is not
+drawn in Chat (the shortcut still works).
+
+Avatars are generated, never chosen: `lib/botAvatar.ts` renders DiceBear's `gaze` style (CC0 1.0, packages
+`@dicebear/core` and `@dicebear/styles`) from the seed in `Bot.avatar`, shown through `<img>` so it cannot run
+script. A new bot's seed is a short hash of its name (`avatarSeed`), so it fits the daemon's 16-character limit
+and stays stable when the bot is renamed. Bots saved before this change keep their old `avatar` text, which is now
+just another seed. `Bot.color` is no longer used by the UI (the field is carried through unchanged).
+
+New bot (`builder/NewBot`) asks for a name and a model only and creates the bot with `config.setup = true`; it
+then opens the conversation. The daemon makes the bot speak first: `Manager.SaveBot` stores a hidden user message
+(a text part with `hidden: true`, read by the model, never drawn or indexed) and runs a turn on it. While `setup`
+is set the bot gets two tools (`internal/chat/tools/setup.go`) and a setup section in its system prompt that lists
+the user's other bots (fenced data) so it proposes roles nobody fills yet: `ask_user` (a question with 2-6
+suggested answers, each a label plus optional description, stored as a `question` part) and `save_profile`
+(writes its own description and instructions and clears `setup`). The `question` part renders as
+`parts/QuestionCard`: lettered suggestions plus a free-text field, either of which is sent as the user's next
+message; it is read-only once the conversation moves on. The rail shows an orange dot on the avatar while the
+last message is an unanswered question (`MessagePreview.awaiting`) and a pulsing blue one while a reply runs;
+row actions are reached by right-click. Reply placeholders use the assistant-ui typing indicator, and the hover
+action row under a reply is always laid out (it fades, never mounts) so showing it cannot shift content.
+Everything else lives in the bot settings panel below. There is no separate bot editor page.
+
+**Bot settings panel.** `BotPanel` is a right-hand panel (toggle in the title bar, "Bot settings" in menus) with the
+avatar, an editable name and description, and three flat tabs (no cards, little text): Persona (model, reasoning,
+Executive assistant switch), Tools (built-in tools, MCP tools, skills, skill proposals) and Knowledge (memory scopes
+and grants, uploaded documents). One form drives all tabs with a shared Save/Discard bar. Instructions have no
+editor: the bot writes them in its setup interview (`save_profile`) and rewrites them with `update_instructions`
+(offered to every finished bot, only on the user's request; Persona shows them read-only). Saving keeps `setup`.
+
+Memory writes are always automatic (there is no approval setting; `BotConfig.memoryApproval` is gone, and only
+already-pending legacy entries still show an approve/reject list). Only executive assistants (`config.executive`,
+ticked on New bot or switched in Persona) get `ask_bot`; they may ask every other active bot, so there is no
+per-bot allow-list. Exports never carry the flag, so an imported file cannot grant itself delegation.

@@ -33,7 +33,7 @@ import { BotRail } from "./BotRail";
 
 const bot = (id: string, over: Partial<Bot> = {}): Bot => ({
   id, name: id, avatar: "", color: "blue", description: "", instructions: "", provider: "", model: "", reasoning: "",
-  config: { tools: [], mcpTools: [], skills: [], delegateTo: [], memory: [], limits: { maxSteps: 0, maxToolCalls: 0 }, memoryApproval: false },
+  config: { tools: [], mcpTools: [], skills: [], memory: [], limits: { maxSteps: 0, maxToolCalls: 0 } },
   createdAt: 1, updatedAt: 1, running: false, ...over,
 });
 const NOW = Date.parse("2026-10-09T12:00:00Z");
@@ -43,7 +43,7 @@ const bots = [
   bot("quiet", { name: "Quiet" }),
 ];
 const loaded = (over: Partial<ChatState> = {}) =>
-  useChat.setState({ bots, selectedBotId: null, running: {}, available: true, ready: true, loading: false, error: null, builder: { open: false, botId: null }, startSync: vi.fn(() => () => {}), ...over });
+  useChat.setState({ bots, selectedBotId: null, running: {}, available: true, ready: true, loading: false, error: null, builder: { open: false, botId: null }, settingsOpen: false, startSync: vi.fn(() => () => {}), ...over });
 
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ["Date"] });
@@ -114,20 +114,26 @@ describe("BotRail rows", () => {
     expect(within(rows[0]!).getByText("Travel")).toBeInTheDocument();
     expect(within(rows[0]!).getByText("You: Find flights to Oslo")).toBeInTheDocument();
     expect(within(rows[0]!).getByText("5m")).toBeInTheDocument();
-    expect(within(rows[0]!).getByText("✈️")).toBeInTheDocument();
     expect(within(rows[1]!).getByText("Refactor done")).toBeInTheDocument();
     expect(within(rows[1]!).getByText("3h")).toBeInTheDocument();
     expect(within(rows[2]!).getByText("No messages yet")).toBeInTheDocument();
-    expect(within(rows[1]!).getByText("CO")).toBeInTheDocument();
+  });
+
+  it("marks a bot whose last message is an unanswered question as waiting, on its avatar", () => {
+    loaded({ bots: [bot("coder", { name: "Coder", lastMessage: { role: "assistant", text: "What for?", at: NOW, awaiting: true } }), bot("quiet", { name: "Quiet" })] });
+    render(<BotRail />);
+    const row = screen.getByRole("button", { name: /^Coder/ });
+    expect(within(row).getByText("Waiting for your answer")).toBeInTheDocument();
+    expect(within(screen.getByRole("button", { name: /^Quiet/ })).queryByText(/Responding|Waiting/)).toBeNull();
   });
 
   it("marks only a running bot with a Responding indicator, updated live", () => {
     loaded({ running: { coder: true } });
     render(<BotRail />);
-    expect(screen.getAllByRole("img", { name: "Responding" })).toHaveLength(1);
-    expect(within(screen.getByRole("button", { name: /^Coder/ })).getByRole("img", { name: "Responding" })).toBeInTheDocument();
+    expect(screen.getAllByText("Responding")).toHaveLength(1);
+    expect(within(screen.getByRole("button", { name: /^Coder/ })).getByText("Responding")).toBeInTheDocument();
     act(() => useChat.setState({ running: {} }));
-    expect(screen.queryByRole("img", { name: "Responding" })).toBeNull();
+    expect(screen.queryByText("Responding")).toBeNull();
   });
 
   it("selecting a row opens the chat view and marks it current", () => {
@@ -142,7 +148,7 @@ describe("BotRail rows", () => {
 
   it("filters bots by name or description", () => {
     render(<BotRail />);
-    const filter = screen.getByRole("searchbox", { name: "Filter bots" });
+    const filter = screen.getByRole("searchbox", { name: "Search bots" });
     fireEvent.change(filter, { target: { value: "writes" } });
     expect(screen.getAllByRole("button", { name: /^(Travel|Coder|Quiet)/ })).toHaveLength(1);
     expect(screen.getByRole("button", { name: /^Coder/ })).toBeInTheDocument();
@@ -157,7 +163,7 @@ describe("BotRail rows", () => {
     render(<BotRail />);
     expect(await screen.findByRole("button", { name: /^Travel/ })).toBeInTheDocument();
     act(() => { bridge.run!({ botId: "quiet", running: true }); });
-    expect(within(screen.getByRole("button", { name: /^Quiet/ })).getByRole("img", { name: "Responding" })).toBeInTheDocument();
+    expect(within(screen.getByRole("button", { name: /^Quiet/ })).getByText("Responding")).toBeInTheDocument();
     act(() => { bridge.message!({ id: "m1", botId: "quiet", seq: 1, role: "assistant", author: "bot:quiet", parts: [{ type: "text", text: "Hello from Quiet" }], status: "running", createdAt: NOW - 1000 }); });
     const rows = screen.getAllByRole("button", { name: /^(Travel|Coder|Quiet)/ });
     expect(rows[0]).toHaveAccessibleName(/^Quiet/);
@@ -199,17 +205,18 @@ describe("BotRail keyboard", () => {
 });
 
 describe("BotRail actions", () => {
-  it("edits a bot in the builder", async () => {
+  it("opens a bot's settings panel", async () => {
     render(<BotRail />);
-    fireEvent.click(screen.getByRole("button", { name: "Actions for Coder" }));
-    fireEvent.click(await screen.findByRole("menuitem", { name: "Edit bot" }));
-    expect(useChat.getState().builder).toEqual({ open: true, botId: "coder" });
+    fireEvent.contextMenu(screen.getByRole("button", { name: /^Coder/ }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Bot settings" }));
+    expect(useChat.getState().settingsOpen).toBe(true);
+    expect(useChat.getState().selectedBotId).toBe("coder");
   });
 
   it("clears a conversation only after confirmation", async () => {
     bridge.clear.mockResolvedValue(undefined);
     render(<BotRail />);
-    fireEvent.click(screen.getByRole("button", { name: "Actions for Coder" }));
+    fireEvent.contextMenu(screen.getByRole("button", { name: /^Coder/ }));
     fireEvent.click(await screen.findByRole("menuitem", { name: /Clear conversation/ }));
     expect(bridge.clear).not.toHaveBeenCalled();
     fireEvent.click(await screen.findByRole("button", { name: "Clear conversation" }));
@@ -219,11 +226,11 @@ describe("BotRail actions", () => {
   it("archives only after confirmation and can be cancelled", async () => {
     bridge.archiveBot.mockResolvedValue(undefined);
     render(<BotRail />);
-    fireEvent.click(screen.getByRole("button", { name: "Actions for Travel" }));
+    fireEvent.contextMenu(screen.getByRole("button", { name: /^Travel/ }));
     fireEvent.click(await screen.findByRole("menuitem", { name: /Archive/ }));
     fireEvent.click(await screen.findByRole("button", { name: "Cancel" }));
     expect(bridge.archiveBot).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole("button", { name: "Actions for Travel" }));
+    fireEvent.contextMenu(screen.getByRole("button", { name: /^Travel/ }));
     fireEvent.click(await screen.findByRole("menuitem", { name: /Archive/ }));
     fireEvent.click(await screen.findByRole("button", { name: "Archive bot" }));
     await waitFor(() => expect(bridge.archiveBot).toHaveBeenCalledWith("travel"));
@@ -232,6 +239,6 @@ describe("BotRail actions", () => {
   it("opens the same menu from the context-menu gesture", async () => {
     render(<BotRail />);
     fireEvent.contextMenu(screen.getByRole("button", { name: /^Coder/ }));
-    expect(await screen.findByRole("menuitem", { name: "Edit bot" })).toBeInTheDocument();
+    expect(await screen.findByRole("menuitem", { name: "Bot settings" })).toBeInTheDocument();
   });
 });

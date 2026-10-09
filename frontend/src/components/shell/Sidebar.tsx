@@ -59,9 +59,9 @@ export function Sidebar() {
             ))}
           </TabsList>
         </Tabs>
-        <button type="button" onClick={() => setPalette(true)} aria-label="Search (Ctrl+K)" className="flex h-7 items-center gap-2 rounded-md border bg-background/40 px-2 text-muted-foreground text-sm outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring">
+        {mode !== "chat" && <button type="button" onClick={() => setPalette(true)} aria-label="Search (Ctrl+K)" className="flex h-7 items-center gap-2 rounded-md border bg-background/40 px-2 text-muted-foreground text-sm outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring">
           <Search className="size-3.5" /><span className="flex-1 text-left">Search</span><KbdGroup aria-label="Ctrl+K"><Kbd>Ctrl</Kbd><Kbd>K</Kbd></KbdGroup>
-        </button>
+        </button>}
         {mode === "chat" ? <BotRail /> : <>
           <div className="flex flex-col gap-px">
             {PRIMARY.map(item)}
