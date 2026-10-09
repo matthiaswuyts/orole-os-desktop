@@ -2,7 +2,7 @@ import { inDesktop } from "@/lib/backend";
 import { NeedsDesktop } from "@/features/shared/States";
 import { MCPSettings } from "./MCPSettings";
 
-/** Top-level MCP servers view: one list for every harness, served through the Orole gateway. */
+/** MCP settings: one server list for every harness, served through the Orole gateway. */
 export function McpView() {
   if (!inDesktop) return <NeedsDesktop what="MCP servers" />;
   return <div className="flex h-full min-h-0 flex-col" data-testid="mcp-view">

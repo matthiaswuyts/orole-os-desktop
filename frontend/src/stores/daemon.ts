@@ -9,6 +9,8 @@ interface DaemonState {
   health: Health | null;
   error: string | null;
   refreshedAt: number;
+  /** Increments each time the daemon becomes reachable again, so caches can drop data from an earlier process. */
+  connectEpoch: number;
   refresh: () => Promise<void>;
 }
 
@@ -17,11 +19,12 @@ export const useDaemon = create<DaemonState>((set) => ({
   health: null,
   error: null,
   refreshedAt: 0,
+  connectEpoch: 0,
   async refresh() {
     if (!inDesktop) return;
     try {
       const health = await Daemon.health();
-      set({ link: "connected", health, error: null, refreshedAt: Date.now() });
+      set((state) => ({ link: "connected", health, error: null, refreshedAt: Date.now(), connectEpoch: state.link === "connected" ? state.connectEpoch : state.connectEpoch + 1 }));
     } catch (e) {
       set({ link: "offline", error: e instanceof Error ? e.message : String(e), refreshedAt: Date.now() });
     }

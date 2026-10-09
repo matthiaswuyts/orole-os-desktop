@@ -2,8 +2,9 @@ import { useEffect, useRef, useState } from "react";
 import { load, mount } from "ascii.rest";
 import { useSettings } from "@/stores/settings";
 import { useUI } from "@/stores/ui";
+import { customBackgroundPiece } from "./custom-background";
 
-function useMedia(q: string) {
+export function useMedia(q: string) {
   const [m, setM] = useState(() => matchMedia(q).matches);
   useEffect(() => {
     const mq = matchMedia(q);
@@ -15,7 +16,7 @@ function useMedia(q: string) {
 }
 
 /** Low-power heuristic: few cores, or a discharging battery under 20%. */
-function useLowPower() {
+export function useLowPower() {
   const [low, setLow] = useState(() => (navigator.hardwareConcurrency ?? 8) <= 2);
   useEffect(() => {
     type Bat = { level: number; charging: boolean; addEventListener: (e: string, f: () => void) => void; removeEventListener: (e: string, f: () => void) => void };
@@ -91,6 +92,9 @@ export function AsciiBand({ position = 0.42, fade = 0.45 }: { position?: number;
   useEffect(() => {
     const el = ref.current;
     if (!el || !s.enabled || !loaded) return;
+    if (s.customBackground) {
+      return mount(el, customBackgroundPiece(s.customBackground), { fps: 0 });
+    }
     let stop: (() => void) | undefined;
     let live = true;
     const loader = (load as Record<string, () => Promise<Parameters<typeof mount>[1]>>)[scene];
@@ -102,7 +106,7 @@ export function AsciiBand({ position = 0.42, fade = 0.45 }: { position?: number;
       live = false;
       stop?.();
     };
-  }, [scene, s.enabled, loaded, m.fps]);
+  }, [scene, s.customBackground, s.enabled, loaded, m.fps]);
 
   if (!s.enabled || !loaded) return null;
   // Scenes are 2:1; cover the band, crop vertically at `position`.
@@ -110,7 +114,7 @@ export function AsciiBand({ position = 0.42, fade = 0.45 }: { position?: number;
   const top = (box.h - width / 2) * position;
   const mask = `linear-gradient(to bottom, #000 ${Math.round((1 - fade) * 100)}%, transparent 100%)`;
   return (
-    <div ref={wrap} aria-hidden="true" data-testid="ascii-bg" data-motion={m.reason} className="pointer-events-none absolute inset-x-0 top-0 overflow-hidden"
+    <div ref={wrap} aria-hidden="true" data-testid="ascii-bg" data-motion={s.customBackground ? "static" : m.reason} className="pointer-events-none absolute inset-x-0 top-0 overflow-hidden"
       style={{ height: BAND_HEIGHT, maskImage: mask, WebkitMaskImage: mask }}>
       <canvas ref={ref} className="absolute" style={{ width, left: (box.w - width) / 2, top, opacity: s.opacity * (0.35 + 0.65 * s.intensity) }} />
     </div>

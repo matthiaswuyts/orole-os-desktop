@@ -7,6 +7,9 @@ Source: https://github.com/cosscom/shipyard @ c809c5eccfc31a386be6bb82b8b0839eaf
 | app/src/lib/utils.ts | frontend/src/lib/utils.ts | none |
 | app/src/index.css (tokens, density, base layer) | frontend/src/index.css | removed plugin @source, Tauri/sidebar-resize/worktree-tone rules; Orole additions appended |
 | app/src/themes/builtin.ts (colours) | frontend/src/themes/builtin.ts | renamed Orole Midnight/Obsidian/Light; expanded to a shared UI/terminal registry with Solarized and Catppuccin palettes |
+| shadcn/ui registry `message`, `bubble` (base-mira, installed with `shadcn@latest add`, MIT, Copyright (c) shadcn) | frontend/src/components/ui/message.tsx, bubble.tsx | `cn` import rewritten to `@/lib/utils` (the registry emitted a bare `cn` specifier) |
+| `@lobehub/icons-static-svg` 1.x `icons/github.svg`, `icons/apple.svg` (MIT) | frontend/src/assets/logos/github.svg, apple.svg | removed fixed `width`/`height`/`<title>` so CSS sizes them |
+| `@ant-design/icons-svg` 4.6.0 `inline-svg/filled/windows.svg`, `inline-svg/outlined/linux.svg` (MIT) | frontend/src/assets/logos/windows.svg, linux.svg | added `fill="currentColor"`. Used for the New task page's repository and host badges; GitHub, Apple, Windows and Linux are trademarks of their owners and appear only to identify them |
 
 Theme palette references: [Solarized](https://ethanschoonover.com/solarized/) and
 [Catppuccin palette v1.8.0](https://github.com/catppuccin/palette/tree/v1.8.0).

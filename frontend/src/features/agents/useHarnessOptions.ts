@@ -1,23 +1,15 @@
-import { useEffect, useState } from "react";
-import { Agents, type LaunchOptions } from "@/mygo";
+import { useEffect } from "react";
 import { inDesktop } from "@/lib/backend";
 import { useDaemon } from "@/stores/daemon";
-import { errText } from "./format";
+import { useHarnessOptionsCache } from "@/stores/harnessOptions";
 
-/** Machine-scoped discovery; late replies never replace another box's choices. */
+/** Reuse machine discovery immediately; stale results refresh without clearing choices. */
 export function useHarnessOptions(machine: string) {
   const link = useDaemon((state) => state.link);
-  const [result, setResult] = useState<{ machine: string; link: typeof link; options?: LaunchOptions; error?: string } | null>(null);
+  const epoch = useDaemon((state) => state.connectEpoch);
+  const current = useHarnessOptionsCache((state) => state.machines[machine]);
   useEffect(() => {
-    if (!inDesktop) return;
-    let active = true;
-    setResult(null);
-    void Agents.options(machine).then(
-      (options) => { if (active) setResult({ machine, link, options }); },
-      (error: unknown) => { if (active) setResult({ machine, link, error: errText(error) }); },
-    );
-    return () => { active = false; };
-  }, [machine, link]);
-  const current = result?.machine === machine && result.link === link ? result : null;
-  return { options: current?.options, error: current?.error, loading: inDesktop && current === null, offline: link === "offline" };
+    useHarnessOptionsCache.getState().load(machine, link, epoch);
+  }, [machine, link, epoch]);
+  return { options: current?.options, error: current?.error, loading: inDesktop && !current?.options && !current?.error, offline: link === "offline" };
 }

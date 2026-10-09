@@ -14,6 +14,8 @@ export function registerCoreCommands() {
   }));
   const s = () => useSettings.getState();
   const cmds: Command[] = [
+    { id: "settings.skills", title: "Open Skills settings", category: "Settings", keywords: ["skills", "harness"], run: () => useUI.getState().openSettings("skills") },
+    { id: "settings.mcp", title: "Open MCP settings", category: "Settings", keywords: ["mcp", "servers", "tools"], run: () => useUI.getState().openSettings("mcp") },
     ...BUILTIN_THEMES.map((theme): Command => ({
       id: `theme.${theme.id}`, title: `Theme: ${theme.label}`, category: "Appearance", keywords: [theme.id],
       run: () => s().set("appearance", { theme: theme.id }),

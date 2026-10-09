@@ -11,6 +11,11 @@ export function connectNativeNavigation() {
   let latest = 0;
   const navigate = (request: DesktopNavigation) => {
     if (!active || !Number.isSafeInteger(request.sequence) || request.sequence <= latest) return;
+    if (request.view === "settings/skills" || request.view === "settings/mcp") {
+      latest = request.sequence;
+      useUI.getState().openSettings(request.view.slice("settings/".length));
+      return;
+    }
     const target = NAV.find((item) => item.id === request.view);
     if (!target || !views[target.id]) return;
     latest = request.sequence;

@@ -4,7 +4,8 @@ import type { HarnessOption, LaunchOptions, Machine, Project, Worktree } from "@
 const api = vi.hoisted(() => ({ options: vi.fn(), start: vi.fn(), upload: vi.fn(), discard: vi.fn(), toast: vi.fn(), open: vi.fn() }));
 vi.mock("@/lib/backend", () => ({ inDesktop: true }));
 vi.mock("@/mygo", () => ({ Agents: { options: api.options, start: api.start, uploadAttachment: api.upload, discardAttachment: api.discard }, events: {} }));
-vi.mock("@/stores/daemon", () => ({ useDaemon: (select: (s: { link: string }) => unknown) => select({ link: "connected" }) }));
+import { useDaemon } from "@/stores/daemon";
+import { useHarnessOptionsCache } from "@/stores/harnessOptions";
 vi.mock("@/features/projects/dialogs", () => ({ toastError: api.toast }));
 vi.mock("@/features/projects/tasks", () => ({ openTask: api.open }));
 import { useProjects } from "@/stores/projects";
@@ -14,6 +15,7 @@ const project: Project = { id: "notes", name: "Research", machineId: "local", pa
 const harness: HarnessOption = { id: "codex", name: "Codex", available: true, executable: "codex", version: "1", reasoning: ["low", "high"], customModel: true, modes: ["structured"], structured: true, interactive: false, unavailableReason: "", models: [{ id: "model-a", name: "Model A", reasoning: ["low", "high"], default: true }, { id: "model-b", name: "Model B", reasoning: [], default: false }] };
 const options: LaunchOptions = { machine: "local", harnesses: [harness], projects: [], directories: [], worktree: true, unavailableReason: "" };
 beforeEach(() => {
+ useDaemon.setState({ link: "connected", connectEpoch: 0 }); useHarnessOptionsCache.setState({ machines: {} });
  vi.clearAllMocks(); localStorage.clear(); api.options.mockResolvedValue(options); api.start.mockResolvedValue({ id: "task", updatedAt: "2026-10-08T00:00:00Z" });
  api.upload.mockResolvedValue({ id: "upload-one", name: "notes.txt", size: 8, mime: "text/plain" }); api.discard.mockResolvedValue(undefined);
  useBoxes.setState({ machines: [{ id: "local", name: "devl" }, { id: "remote", name: "gpu" }] as Machine[], observations: {} });

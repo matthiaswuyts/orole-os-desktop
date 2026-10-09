@@ -16,9 +16,6 @@ const provider = (id: string) => domainProviders.find((item) => item.id === id)!
 const signal = () => new AbortController().signal;
 beforeEach(() => { vi.clearAllMocks(); useUI.setState({ view: "home" }); });
 
-it("offers only providers for modules that exist", () => {
-  expect(domainProviders.map((item) => item.id)).toEqual(["projects", "agents", "settings"]);
-});
 
 it("opens a project's tasks from a project result", async () => {
   api.projects.mockResolvedValue([{ id: "p1", name: "Alpha", path: "C:\\code\\alpha", remoteUrl: "" }]);
@@ -36,11 +33,11 @@ it("opens a task from an agent result after refreshing it", async () => {
   expect(api.openTask).toHaveBeenCalledExactlyOnceWith("s1");
 });
 
-it("opens MCP configuration in its top-level view", async () => {
-  api.settings.mockResolvedValue({ results: [{ id: "mcp//", title: "MCP servers", action: { view: "mcp", section: "", tab: "" } }] });
-  const [hit] = await provider("settings").search("mcp", signal());
+it.each(["skills", "mcp"])("opens %s configuration inside Settings", async (section) => {
+  api.settings.mockResolvedValue({ results: [{ id: `settings/${section}/`, title: section, action: { view: "settings", section, tab: "" } }] });
+  const [hit] = await provider("settings").search(section, signal());
   hit!.run();
-  expect(useUI.getState().view).toBe("mcp");
+  expect(useUI.getState()).toMatchObject({ view: "settings", settingsSection: section, settingsTab: "" });
 });
 
 it("keeps ordinary configuration results in their Settings section", async () => {

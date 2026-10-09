@@ -5,6 +5,38 @@ are stateless typed bridges. React uses generated MyGo bindings. Authentication
 uses the existing GitHub CLI login or a PAT stored in Windows Credential Manager;
 tokens are not returned to the frontend or persisted in SQLite.
 
+## Issues view
+
+The sidebar's **Issues** view (`frontend/src/features/issues/`) is a read/comment/launch surface over the same
+daemon-owned GitHub client; it adds no Go API. Scope is derived in the UI from registered projects: a project is
+included when `internal/github.RepoFromRemote` (mirrored by `repoFromRemote`) accepts its `origin`, so only
+github.com HTTPS/SSH remotes without ports or queries appear. "All projects" fans out one `github.issues`
+call per repository (four at a time); one failing repository is reported in a banner and does not hide the rest.
+Pull requests are filtered out.
+
+Filters: *Mine* sends `assignee=<login>`, *Unassigned* sends `assignee=none`, label chips send `labels` (all
+selected labels must match), state is open/closed/any. Free-text search matches title, repository, number,
+author, assignees and labels **within the issues already loaded** (50 per repository, *Load more* extends it);
+it does not call GitHub's search API, which is rate-limited separately.
+
+The thread uses `Message`/`Bubble`. Comment text is untrusted Markdown rendered as React elements; `@login`
+and `#123` references are linked, never executed. The composer completes `@` from the issue's participants and
+`#` from the loaded issues of the same repository. Posting a comment still requires the confirmation dialog
+and `confirmed: true`; typing a mention posts nothing.
+
+"Start an agent" (`S`) opens the same reviewed launch as before, now as a side sheet: project and agent are
+preselected when there is one sensible choice, the suggested prompt refers to the issue instead of quoting its
+untrusted title, and the review checkbox plus the issue-version check still gate `github.issue.agent.start`.
+Avatars are initials only; no remote avatar images are requested.
+
+Multi-select: each row has a checkbox (shown on hover, focus, or once anything is selected; `X` toggles the open issue),
+up to 10 issues across projects. The footer's "Start N agents" opens one sheet with a shared agent and prompt
+(`{issue}` expands to `owner/repo#n`). Each issue is its own reviewed, idempotent `github.issue.agent.start` request
+with its own key, saved to local storage before dispatch and checked against the version of the issue as listed
+(an issue edited since is refused for that issue only). Launches run one after another; a failure does not stop the
+rest, and "Retry" resends the same keys. Issues with a saved single-launch retry are not overwritten. Without a
+matching registered local clone, an issue is skipped.
+
 ## Reviewed issue launch
 
 Issue details expose the agent workflow. The user selects an installed built-in

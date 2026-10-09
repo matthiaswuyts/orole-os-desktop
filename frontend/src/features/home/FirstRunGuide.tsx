@@ -8,17 +8,14 @@ import { useSettings } from "@/stores/settings";
 import type { ThemeId } from "@/stores/settings";
 import { BUILTIN_THEMES } from "@/themes/builtin";
 import { useUI } from "@/stores/ui";
-import type { ViewId } from "@/stores/ui";
-
-const go = (view: ViewId) => () => useUI.getState().setView(view);
 const steps: { title: string; description: string; open?: () => void; action?: string }[] = [
   { title: "Welcome to Orole OS", description: "Set up your workspace, then connect only what you want. No Orole account is required." },
   { title: "Make this workspace yours", description: "Choose a theme and scene. You can change motion, density and contrast in Settings." },
   { title: "Check your local daemon", description: "The daemon keeps supported tasks running when the desktop closes. Terminal processes end when the daemon exits or Windows restarts." },
   { title: "Connect GitHub", description: "Use your existing GitHub CLI sign-in so tasks can push branches and open pull requests.", open: () => useUI.getState().openSettings("integrations", "github"), action: "Open GitHub setup" },
-  { title: "Add skills", description: "Configure skills once; every harness and model can use the ones you enable.", open: go("skills"), action: "Open Skills" },
-  { title: "Add MCP servers", description: "Configure MCP servers once; every harness receives them through Orole's gateway, and Orole decides what each tool call may do.", open: go("mcp"), action: "Open MCP" },
-  { title: "Start a task", description: "Add a project, then start a task on it from the sidebar. A task runs an installed harness on its own branch; a worktree separates edits but is not a security sandbox.", open: go("agents"), action: "Open Tasks" },
+  { title: "Add skills", description: "Configure skills once; every harness and model can use the ones you enable.", open: () => useUI.getState().openSettings("skills"), action: "Open Skills" },
+  { title: "Add MCP servers", description: "Configure MCP servers once; every harness receives them through Orole's gateway, and Orole decides what each tool call may do.", open: () => useUI.getState().openSettings("mcp"), action: "Open MCP" },
+  { title: "Start a task", description: "Add a project, then start a task on it from the sidebar. A task runs an installed harness on its own branch; a worktree separates edits but is not a security sandbox.", open: () => useUI.getState().setView("agents"), action: "Open Tasks" },
   { title: "Your workspace is ready to explore", description: "Customize the widgets below or start a task from a project in the sidebar. Skipped steps remain available from navigation; finishing this guide does not mark anything connected." },
 ];
 type Progress = { step: number; dismissed: boolean };

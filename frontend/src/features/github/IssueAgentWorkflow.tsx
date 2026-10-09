@@ -1,25 +1,30 @@
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { useGitHub } from "./store";
-import { ExternalLink, RefreshCw } from "lucide-react";
+import { Bot, ExternalLink, RefreshCw } from "lucide-react";
 import { Agents, GitHub, type Issue, type IssueAgentRun, type IssueAgentStart, type IssuePRPreparation } from "@/mygo";
 import { useAgents } from "@/stores/agents";
 import { useUI } from "@/stores/ui";
+import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogDescription, DialogFooter, DialogHeader, DialogPanel, DialogPopup, DialogTitle } from "@/components/ui/dialog";
 import { Field, FieldDescription, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
+import { Kbd } from "@/components/ui/kbd";
+import { RadioGroup, RadioPrimitive } from "@/components/ui/radio-group";
 import { Select, SelectGroup, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Sheet, SheetDescription, SheetFooter, SheetHeader, SheetPanel, SheetPopup, SheetTitle } from "@/components/ui/sheet";
 import { Textarea } from "@/components/ui/textarea";
+import { ProviderLogo } from "@/features/agents/ProviderLogo";
 import { ErrorNote, SessionBadge, SessionDiff } from "@/features/agents/shared";
 import { kindLabel, newKey, useAction } from "@/features/agents/format";
-import { EmptyLine, ErrorBox, Loading, RefreshButton, useAsync } from "./shared";
+import { EmptyLine, ErrorBox, Loading, RefreshButton, useAsync, type Async } from "./shared";
 
-const attemptKey = (repo: string, number: number) => `orole:issue-agent:${repo}#${number}`;
+export const attemptKey = (repo: string, number: number) => `orole:issue-agent:${repo}#${number}`;
 
 /** Only the pending user-authored intent is cached here; run history and source snapshots live in the daemon. */
-function readAttempt(repo: string, number: number): IssueAgentStart | null {
+export function readAttempt(repo: string, number: number): IssueAgentStart | null {
   const raw = localStorage.getItem(attemptKey(repo, number));
   if (!raw) return null;
   const value: unknown = JSON.parse(raw);
@@ -36,7 +41,22 @@ function retrySpec(run: IssueAgentRun): IssueAgentStart {
   return { repo: run.repo, number: run.number, projectId: run.projectId, kind: run.kind, task: run.task, issueUpdatedAt: run.issueUpdatedAt, key: run.key, confirmed: true };
 }
 
-export function IssueAgentWorkflow({ repo, issue }: { repo: string; issue: Issue }) {
+export interface IssueAgent {
+  history: Async<IssueAgentRun[]>;
+  /** A launch request saved on this device that has not been confirmed as started. */
+  saved: Async<IssueAgentStart | null>;
+  launch: IssueAgentStart | "new" | null;
+  setLaunch: (launch: IssueAgentStart | "new" | null) => void;
+  setSelected: (run: IssueAgentRun) => void;
+  /** The run whose review is shown: the chosen one, else the newest. */
+  run: IssueAgentRun | undefined;
+  reload: () => void;
+  canStart: boolean;
+  start: () => void;
+}
+
+/** Durable run history, the saved retry (if any) and launch state for one issue. */
+export function useIssueAgent(repo: string, issue: Issue): IssueAgent {
   const history = useAsync(() => GitHub.issueAgentRuns(repo, issue.number), [repo, issue.number]);
   const saved = useAsync(async () => readAttempt(repo, issue.number), [repo, issue.number]);
   const [launch, setLaunch] = useState<IssueAgentStart | "new" | null>(null);
@@ -49,37 +69,60 @@ export function IssueAgentWorkflow({ repo, issue }: { repo: string; issue: Issue
     if (runs?.length) setSelected((current) => runs.find((r) => r.id === current?.id) ?? current ?? runs[0]!);
   }, [history.data]);
   const reload = () => { history.reload(); saved.reload(); };
+  const canStart = !saved.loading && !saved.error && !issue.pull_request;
+  return { history, saved, launch, setLaunch, setSelected, run, reload, canStart, start: () => { if (canStart) setLaunch(saved.data ?? "new"); } };
+}
 
+/** Saved-retry notices, run history and the selected run's review. `quiet` renders nothing for an issue with no runs. */
+export function IssueAgentRuns({ agent, quiet = false }: { agent: IssueAgent; quiet?: boolean }) {
+  const { history, saved, run, setSelected, setLaunch } = agent;
+  const empty = history.data?.length === 0 && !saved.data && !saved.error && !history.error;
+  if (quiet && (empty || (history.loading && !history.data && !saved.data))) return null;
+  return <section aria-label="Agent runs" className="flex min-w-0 flex-col gap-3">
+    {saved.error && <ErrorBox error={saved.error} onRetry={saved.reload} />}
+    {saved.data && <p role="status" className="text-xs text-muted-foreground">A launch request is saved on this device. Retry it with the same key to recover its result without starting a duplicate session.</p>}
+    {history.error && <ErrorBox error={history.error} onRetry={history.reload} />}
+    {history.loading && !history.data && <Loading what="issue agent history" />}
+    {!quiet && history.data?.length === 0 && <EmptyLine>No agent runs for this issue yet.</EmptyLine>}
+    {!!history.data?.length && <ul aria-label="Durable issue run history" className="flex flex-col gap-1">
+      {history.data.map((r) => <li key={r.id}>
+        <button type="button" aria-current={r.id === run?.id ? "true" : undefined} onClick={() => setSelected(r)} className="flex w-full flex-wrap items-center gap-2 rounded-md px-2 py-2 text-left text-xs outline-none hover:bg-accent/50 aria-current:bg-accent focus-visible:ring-2 focus-visible:ring-ring">
+          <span className="min-w-0 flex-1 break-words">{kindLabel(r.kind)} · {r.branch || "No worktree yet"}</span>
+          <Badge variant={r.state === "failed" ? "error" : r.state === "published" ? "success" : "secondary"}>{r.state}</Badge>
+          <span className="font-mono text-muted-foreground">{r.id.slice(0, 8)}</span>
+        </button>
+      </li>)}
+    </ul>}
+    {history.error && run && <p className="text-xs text-muted-foreground">Run details below are from the last successful history read. Refresh history to reconcile any changes.</p>}
+    {run && <IssueRunReview key={run.id} run={run} onChanged={history.reload} onRetry={() => setLaunch(retrySpec(run))} />}
+  </section>;
+}
+
+/** The launch sheet; renders nothing until `agent.launch` is set. */
+export function IssueAgentLauncher({ agent, repo, issue }: { agent: IssueAgent; repo: string; issue: Issue }) {
+  const { launch, setLaunch, saved, reload, setSelected } = agent;
+  if (!launch) return null;
+  return <LaunchIssueAgent repo={repo} number={issue.number} initial={launch === "new" ? null : launch} onClose={() => { setLaunch(null); saved.reload(); }} onChanged={reload} onStarted={(r) => { setSelected(r); setLaunch(null); reload(); }} />;
+}
+
+export function IssueAgentWorkflow({ repo, issue }: { repo: string; issue: Issue }) {
+  const agent = useIssueAgent(repo, issue);
+  const { history, saved } = agent;
   return <section aria-label="Issue agent workflow" className="mt-5 flex min-w-0 flex-col gap-3 border-y py-4">
     <header className="flex flex-wrap items-center gap-2">
       <h3 className="flex-1 font-medium text-sm">Work on this issue</h3>
       <RefreshButton a={history} />
-      <Button size="sm" disabled={saved.loading || !!saved.error || !!issue.pull_request} onClick={() => setLaunch(saved.data ?? "new")}>
+      <Button size="sm" disabled={!agent.canStart} onClick={agent.start}>
         {saved.data ? "Review saved launch…" : "Assign to agent…"}
       </Button>
     </header>
     <p className="text-xs text-muted-foreground">Review the source and write an explicit task. An installed agent runs in a new manager-owned worktree of a matching local project. Nothing is published automatically.</p>
-    {saved.error && <ErrorBox error={saved.error} onRetry={saved.reload} />}
-    {saved.data && <p role="status" className="text-xs text-muted-foreground">A launch request is saved on this device. Retry it with the same key to recover its result without starting a duplicate session.</p>}
-    {history.error && <ErrorBox error={history.error} onRetry={history.reload} />}
-    {history.loading && <Loading what="issue agent history" />}
-    {history.data?.length === 0 && <EmptyLine>No agent runs for this issue yet.</EmptyLine>}
-    {!!history.data?.length && <>
-      <ul aria-label="Durable issue run history" className="flex flex-col gap-1">
-        {history.data.map((r) => <li key={r.id}>
-          <button type="button" aria-current={r.id === run?.id ? "true" : undefined} onClick={() => setSelected(r)} className="flex w-full flex-wrap items-center gap-2 rounded-md px-2 py-2 text-left text-xs outline-none hover:bg-accent/50 aria-current:bg-accent focus-visible:ring-2 focus-visible:ring-ring">
-            <span className="min-w-0 flex-1 break-words">{kindLabel(r.kind)} · {r.branch || "No worktree yet"}</span>
-            <Badge variant={r.state === "failed" ? "error" : r.state === "published" ? "success" : "secondary"}>{r.state}</Badge>
-            <span className="font-mono text-muted-foreground">{r.id.slice(0, 8)}</span>
-          </button>
-        </li>)}
-      </ul>
-    </>}
-    {history.error && run && <p className="text-xs text-muted-foreground">Run details below are from the last successful history read. Refresh history to reconcile any changes.</p>}
-    {run && <IssueRunReview key={run.id} run={run} onChanged={history.reload} onRetry={() => setLaunch(retrySpec(run))} />}
-    {launch && <LaunchIssueAgent repo={repo} number={issue.number} initial={launch === "new" ? null : launch} onClose={() => { setLaunch(null); saved.reload(); }} onChanged={reload} onStarted={(r) => { setSelected(r); setLaunch(null); reload(); }} />}
+    <IssueAgentRuns agent={agent} />
+    <IssueAgentLauncher agent={agent} repo={repo} issue={issue} />
   </section>;
 }
+
+const LAST_AGENT_KEY = "orole.task.harness";
 
 function LaunchIssueAgent({ repo, number, initial, onClose, onChanged, onStarted }: {
   repo: string; number: number; initial: IssueAgentStart | null; onClose: () => void; onChanged: () => void; onStarted: (run: IssueAgentRun) => void;
@@ -89,19 +132,29 @@ function LaunchIssueAgent({ repo, number, initial, onClose, onChanged, onStarted
   const projects = useAsync(() => GitHub.issueAgentProjects(repo), [repo]);
   const agents = useAsync(() => Agents.detect(false), []);
   const [pending, setPending] = useState(initial);
-  const [projectId, setProjectId] = useState(initial?.projectId ?? "");
-  const [kind, setKind] = useState(initial?.kind ?? "");
+  const [projectChoice, setProjectChoice] = useState(initial?.projectId ?? "");
+  const [kindChoice, setKindChoice] = useState(initial?.kind ?? "");
   const [task, setTask] = useState(initial?.task ?? "");
+  const edited = useRef(!!initial);
   const [reviewed, setReviewed] = useState(false);
   const [reviewedSource, setReviewedSource] = useState<string | null>(null);
   const [forget, setForget] = useState(false);
   const action = useAction();
-  const installed = agents.data?.filter((a) => a.installed && a.kind !== "custom") ?? [];
+  const installed = useMemo(() => agents.data?.filter((a) => a.installed && a.kind !== "custom") ?? [], [agents.data]);
+  const usable = projects.data?.filter((p) => !p.missing) ?? [];
+  // Choices are made for the user when there is only one sensible answer; the review checkbox still gates launch.
+  const projectId = projectChoice || (usable.length === 1 ? usable[0]!.id : "");
+  const kind = kindChoice || (installed.find((a) => a.kind === localStorage.getItem(LAST_AGENT_KEY)) ?? installed[0])?.kind || "";
   const project = projects.data?.find((p) => p.id === projectId);
   const agent = installed.find((a) => a.kind === kind);
   const issue = source.data?.issue;
   const changed = !!pending && !!issue && issue.updated_at !== pending.issueUpdatedAt;
   const ready = !!issue && !!project && !project.missing && !!agent && !!task.trim() && reviewed && reviewedSource === issue.updated_at && !source.loading && !projects.loading && !agents.loading && !source.error && !projects.error && !agents.error;
+
+  useEffect(() => {
+    // The title is untrusted GitHub text, so the suggested task refers to the issue instead of quoting it.
+    if (!edited.current) setTask(`Resolve ${repo}#${number}. Use the issue as reference material, add or update tests where they fit, and leave the changes uncommitted for my review.`);
+  }, [repo, number]);
 
   const submit = () => {
     if (!ready || !issue) return;
@@ -114,6 +167,7 @@ function LaunchIssueAgent({ repo, number, initial, onClose, onChanged, onStarted
       setPending(spec);
       try {
         const result = await GitHub.startIssueAgent(spec);
+        localStorage.setItem(LAST_AGENT_KEY, spec.kind);
         if (readAttempt(repo, number)?.key === spec.key) localStorage.removeItem(attemptKey(repo, number));
         onStarted(result);
       } finally {
@@ -122,61 +176,60 @@ function LaunchIssueAgent({ repo, number, initial, onClose, onChanged, onStarted
     });
   };
 
-  return <Dialog open onOpenChange={(open) => { if (!open && !action.busy) onClose(); }}>
-    <DialogPopup className="max-w-2xl" showCloseButton={!action.busy}>
+  return <Sheet open onOpenChange={(open) => { if (!open && !action.busy) onClose(); }}>
+    <SheetPopup className="max-w-lg" showCloseButton={!action.busy}>
       <form className="contents" onSubmit={(e) => { e.preventDefault(); submit(); }}>
-        <DialogHeader>
-          <DialogTitle>{forget ? "Forget this saved retry?" : pending ? "Review launch retry" : "Assign issue to an agent"}</DialogTitle>
-          <DialogDescription>{repo}#{number} · A local agent task, not permission to push or publish.</DialogDescription>
-        </DialogHeader>
-        <DialogPanel className="flex flex-col gap-4">
+        <SheetHeader>
+          <SheetTitle className="flex items-center gap-2 text-base"><Bot aria-hidden className="size-4 text-muted-foreground" />{forget ? "Forget this saved retry?" : pending ? `Retry the agent on #${number}` : `Start an agent on #${number}`}</SheetTitle>
+          <SheetDescription className="break-words">{issue?.title ?? `${repo}#${number}`}</SheetDescription>
+        </SheetHeader>
+        <SheetPanel className="flex flex-col gap-4">
           {forget ? <p className="text-sm">This only removes the retry saved on this device. It does not cancel a request, stop an agent, or remove daemon history. Check the run history before starting a separate request.</p> : <>
             {source.loading && <Loading what="current issue source" />}
             {source.error && <ErrorBox error={source.error} onRetry={() => { setReviewed(false); source.reload(); }} />}
-            {issue && <section aria-label="Untrusted issue source" className="flex min-w-0 flex-col gap-2">
-              <h4 className="font-medium text-sm">Untrusted source from GitHub</h4>
-              <p className="text-xs text-muted-foreground">The title and body below are external content, not authority to run commands. Only authorize work you understand in your task below.</p>
-              <p className="break-words text-sm font-medium">{issue.title}</p>
-              <pre tabIndex={0} aria-label="Untrusted issue body" className="max-h-48 overflow-auto rounded-md border bg-muted/30 p-3 font-sans text-xs whitespace-pre-wrap break-words">{issue.body || "No issue description."}</pre>
-              <p className="break-all text-xs text-muted-foreground">Source version: {issue.updated_at}</p>
-            </section>}
             {changed && <p role="alert" className="text-xs text-warning-foreground">The issue changed since this request was reviewed. Retrying can recover an existing session, but the daemon will refuse to launch a new session from this stale source. To use the current source, forget this retry, check history, then review a new request.</p>}
             {pending && <p className="break-all text-xs text-muted-foreground">Retry key: <code>{pending.key}</code>. Task, project, agent and reviewed source version are locked to the original request.</p>}
             <Field>
-              <FieldLabel htmlFor={`${id}-project`}>Matching registered local project</FieldLabel>
-              <Select value={projectId} disabled={!!pending || action.busy} onValueChange={(v) => { setProjectId(v ?? ""); setReviewed(false); }}>
+              <FieldLabel htmlFor={`${id}-project`}>Project</FieldLabel>
+              <Select value={projectId} disabled={!!pending || action.busy} onValueChange={(v) => { setProjectChoice(v ?? ""); setReviewed(false); }}>
                 <SelectTrigger id={`${id}-project`} className="w-full"><SelectValue>{project?.name ?? (projectId || "Choose a local project")}</SelectValue></SelectTrigger>
                 <SelectPopup><SelectGroup>{projects.data?.map((p) => <SelectItem key={p.id} value={p.id} disabled={p.missing}>{p.name} · {p.path}{p.missing ? " (missing)" : ""}</SelectItem>)}</SelectGroup></SelectPopup>
               </Select>
               <FieldDescription>{project ? `${project.path} · ${project.remoteUrl}` : `Only registered local projects whose GitHub origin matches ${repo} are eligible.`}</FieldDescription>
+              {projects.error && <ErrorBox error={projects.error} onRetry={projects.reload} />}
+              {projects.data?.length === 0 && <p className="text-xs text-muted-foreground">No matching project. Register a local clone in Projects, then <button type="button" className="underline underline-offset-2" onClick={() => { setReviewed(false); projects.reload(); }}>refresh this list</button>.</p>}
             </Field>
-            {projects.loading && <p role="status" className="text-xs">Finding matching local projects…</p>}
-            {projects.error && <ErrorBox error={projects.error} onRetry={projects.reload} />}
-            {projects.data?.length === 0 && <p className="text-xs text-muted-foreground">No matching project. Register a local clone in Projects, then refresh this list.</p>}
-            <Button type="button" size="xs" variant="outline" disabled={projects.loading || action.busy} onClick={() => { setReviewed(false); projects.reload(); }}>Refresh projects</Button>
             <Field>
-              <FieldLabel htmlFor={`${id}-agent`}>Installed agent</FieldLabel>
-              <Select value={kind} disabled={!!pending || action.busy} onValueChange={(v) => { setKind(v ?? ""); setReviewed(false); }}>
-                <SelectTrigger id={`${id}-agent`} className="w-full"><SelectValue>{agent?.name ?? (kind || "Choose an installed agent")}</SelectValue></SelectTrigger>
-                <SelectPopup><SelectGroup>{installed.map((a) => <SelectItem key={a.kind} value={a.kind}>{a.name}{a.version ? ` · ${a.version}` : ""}</SelectItem>)}</SelectGroup></SelectPopup>
-              </Select>
-              <FieldDescription>Built-in adapters only. The daemon creates and owns a separate worktree; your current checkout is not the task directory.</FieldDescription>
+              <FieldLabel id={`${id}-agent`}>Agent</FieldLabel>
+              <RadioGroup aria-labelledby={`${id}-agent`} value={kind} disabled={!!pending || action.busy} onValueChange={(v) => { setKindChoice(String(v)); setReviewed(false); }} className="flex w-full flex-row flex-wrap gap-2">
+                {installed.map((a) => <RadioPrimitive.Root key={a.kind} value={a.kind} aria-labelledby={`${id}-agent-${a.kind}`} className={cn("flex min-w-0 items-center gap-2 rounded-lg border px-3 py-1.5 text-sm outline-none transition-colors hover:bg-accent/50 focus-visible:ring-2 focus-visible:ring-ring data-checked:border-primary data-checked:bg-accent data-disabled:cursor-not-allowed data-disabled:opacity-60")}>
+                  <ProviderLogo kind={a.kind} /><span id={`${id}-agent-${a.kind}`} className="truncate">{a.name}</span>{a.version && <span className="truncate font-mono text-[11px] text-muted-foreground">{a.version}</span>}
+                </RadioPrimitive.Root>)}
+              </RadioGroup>
+              {agents.loading && <p role="status" className="text-xs text-muted-foreground">Detecting installed agents…</p>}
+              {agents.error && <ErrorBox error={agents.error} onRetry={agents.reload} />}
+              {agents.data && installed.length === 0 && <p className="text-xs text-muted-foreground">No supported agent is installed. Install a supported CLI, then <button type="button" className="underline underline-offset-2" disabled={action.busy} onClick={() => void action.run(async () => { await Agents.detect(true); setReviewed(false); agents.reload(); })}>refresh detection</button>.</p>}
+              <FieldDescription>The daemon creates and owns a separate worktree for this issue; your checkout is not touched.</FieldDescription>
             </Field>
-            {agents.loading && <p role="status" className="text-xs">Detecting installed agents…</p>}
-            {agents.error && <ErrorBox error={agents.error} onRetry={agents.reload} />}
-            {agents.data && installed.length === 0 && <p className="text-xs text-muted-foreground">No supported agent is installed. Install a supported CLI, then refresh detection.</p>}
-            <Button type="button" size="xs" variant="outline" disabled={agents.loading || action.busy} onClick={() => void action.run(async () => { await Agents.detect(true); setReviewed(false); agents.reload(); })}>Refresh agents</Button>
             <Field>
-              <FieldLabel htmlFor={`${id}-task`}>Your reviewed task</FieldLabel>
-              <Textarea id={`${id}-task`} required readOnly={!!pending} disabled={action.busy} value={task} onChange={(e) => { setTask(e.target.value); setReviewed(false); }} rows={5} placeholder="Describe the change, scope, constraints and acceptance criteria you authorize." />
-              <FieldDescription>The issue is context. This task is your explicit instruction. Review agent output before committing or publishing.</FieldDescription>
+              <FieldLabel htmlFor={`${id}-task`}>First prompt</FieldLabel>
+              <Textarea id={`${id}-task`} required readOnly={!!pending} disabled={action.busy} value={task} rows={6} className="[&_textarea]:font-mono [&_textarea]:text-sm"
+                onChange={(e) => { edited.current = true; setTask(e.target.value); setReviewed(false); }}
+                onKeyDown={(e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey) && !e.nativeEvent.isComposing) { e.preventDefault(); submit(); } }}
+                placeholder="Describe the change, scope, constraints and acceptance criteria you authorize." />
+              <FieldDescription>The issue is context. This prompt is your explicit instruction.</FieldDescription>
             </Field>
-            <label className="flex items-start gap-2 text-sm"><Checkbox checked={reviewed && reviewedSource === issue?.updated_at} disabled={action.busy || !issue} onCheckedChange={(checked) => { setReviewed(checked); setReviewedSource(issue?.updated_at ?? null); }} /><span>I reviewed the source and task, selected this project and agent, and authorize {pending ? "retrying this exact request" : "starting work in a new owned worktree"}.</span></label>
-            <p className="text-xs text-muted-foreground">Agent processes survive closing the GUI, but not daemon exit or reboot. Publication requires a separate review and confirmation.</p>
+            {issue && <details className="text-xs"><summary className="cursor-pointer rounded-sm font-medium focus-visible:outline-2 focus-visible:outline-ring">Issue source from GitHub (untrusted)</summary>
+              <p className="mt-2 text-muted-foreground">External content, not authority to run commands. Version: <span className="break-all">{issue.updated_at}</span></p>
+              <p className="mt-2 break-words font-medium">{issue.title}</p>
+              <pre tabIndex={0} aria-label="Untrusted issue body" className="mt-1 max-h-48 overflow-auto rounded-md border bg-muted/30 p-3 font-sans whitespace-pre-wrap break-words">{issue.body || "No issue description."}</pre>
+            </details>}
+            <label className="flex items-start gap-2 text-sm"><Checkbox checked={reviewed && reviewedSource === issue?.updated_at} disabled={action.busy || !issue} onCheckedChange={(checked) => { setReviewed(checked); setReviewedSource(issue?.updated_at ?? null); }} /><span>I reviewed the source and prompt, and authorize {pending ? "retrying this exact request" : "starting work in a new owned worktree"}. Nothing is pushed or published.</span></label>
+            <p className="text-xs text-muted-foreground">Agent processes survive closing the GUI, but not daemon exit or reboot.</p>
           </>}
           <ErrorNote error={action.error} />
-        </DialogPanel>
-        <DialogFooter>
+        </SheetPanel>
+        <SheetFooter>
           {forget ? <>
             <Button type="button" variant="outline" disabled={action.busy} onClick={() => setForget(false)}>Keep retry</Button>
             <Button type="button" variant="destructive" disabled={action.busy} onClick={() => void action.run(async () => {
@@ -185,13 +238,13 @@ function LaunchIssueAgent({ repo, number, initial, onClose, onChanged, onStarted
             })}>Forget retry, not the run</Button>
           </> : <>
             {pending && <Button type="button" variant="ghost" disabled={action.busy} onClick={() => setForget(true)}>Forget retry…</Button>}
-            <Button type="button" variant="outline" disabled={action.busy} onClick={onClose}>Close</Button>
-            <Button type="submit" disabled={action.busy || !ready}>{action.busy ? "Working…" : pending ? "Retry exact request" : "Start reviewed task"}</Button>
+            <Button type="button" variant="outline" disabled={action.busy} onClick={onClose}>Cancel</Button>
+            <Button type="submit" disabled={action.busy || !ready}>{action.busy ? "Working…" : pending ? "Retry exact request" : <>Start agent <Kbd>⌘↵</Kbd></>}</Button>
           </>}
-        </DialogFooter>
+        </SheetFooter>
       </form>
-    </DialogPopup>
-  </Dialog>;
+    </SheetPopup>
+  </Sheet>;
 }
 
 function IssueRunReview({ run, onChanged, onRetry }: { run: IssueAgentRun; onChanged: () => void; onRetry: () => void }) {

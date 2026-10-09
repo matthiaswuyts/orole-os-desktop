@@ -100,6 +100,25 @@ describe("ASCII startup scene", () => {
     expect(random).toHaveBeenCalledTimes(1);
   });
 
+  it("keeps uploads through restart and opacity changes, but replaces them on scene selection", async () => {
+    const { useSettings } = await import("@/stores/settings");
+    await useSettings.getState().load();
+    const customBackground = { name: "coast.png", pixels: btoa("\x55\xaa\xff".repeat(200 * 100)) };
+    useSettings.getState().set("ascii", { customBackground });
+    expect(useSettings.getState().ascii.randomOnStartup).toBe(false);
+    useSettings.getState().set("ascii", { opacity: 0.5 });
+    vi.resetModules();
+    const restarted = (await import("@/stores/settings")).useSettings;
+    await restarted.getState().load();
+    expect(restarted.getState().ascii).toMatchObject({ customBackground, opacity: 0.5, randomOnStartup: false });
+    restarted.getState().set("ascii", { scene: "kyoto-dusk" });
+    expect(restarted.getState().ascii.customBackground).toBeNull();
+    expect(restarted.getState().activeAsciiScene).toBe("kyoto-dusk");
+    restarted.getState().set("ascii", { customBackground });
+    restarted.getState().set("ascii", { randomOnStartup: true });
+    expect(restarted.getState().ascii.customBackground).toBeNull();
+  });
+
   it("waits for a successful settings read before choosing after a failed startup read", async () => {
     const random = vi.spyOn(Math, "random").mockReturnValue(0.3);
     bridge.all.mockRejectedValueOnce(new Error("daemon unavailable"));

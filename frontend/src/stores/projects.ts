@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { Projects, Worktrees, events, type Project, type Worktree } from "@/mygo";
 import { inDesktop } from "@/lib/backend";
+import { useUI, type ViewId } from "@/stores/ui";
 
 const EXPANDED_KEY = "orole.projects.expanded";
 
@@ -30,8 +31,8 @@ interface State {
   /** Whether the New project dialog is open (one instance, mounted in App). */
   newProjectOpen: boolean;
   setNewProjectOpen: (open: boolean) => void;
-  /** New task dialog (one instance, mounted in AppShell): the project it was opened from (null = pick one) and an optional prompt to start from. */
-  newTask: { open: boolean; projectId: string | null; prompt: string };
+  /** The New task page: the project it was opened for (null = pick one), a prompt to start from, and the view to return to. `seq` makes each opening a fresh page. */
+  newTask: { projectId: string | null; prompt: string; from: ViewId; seq: number };
   openNewTask: (projectId?: string | null, prompt?: string) => void;
   closeNewTask: () => void;
   /** Creates a project from a name and an optional folder; a blank name defaults to the folder name. */
@@ -58,9 +59,13 @@ export const useProjects = create<State>((set, get) => ({
   select: (selectedId) => set({ selectedId }),
   newProjectOpen: false,
   setNewProjectOpen: (newProjectOpen) => set({ newProjectOpen }),
-  newTask: { open: false, projectId: null, prompt: "" },
-  openNewTask: (projectId = null, prompt = "") => set({ newTask: { open: true, projectId, prompt } }),
-  closeNewTask: () => set((s) => ({ newTask: { ...s.newTask, open: false } })),
+  newTask: { projectId: null, prompt: "", from: "home", seq: 0 },
+  openNewTask: (projectId = null, prompt = "") => {
+    const { view, setView } = useUI.getState();
+    set((s) => ({ newTask: { projectId, prompt, from: view === "new-task" ? s.newTask.from : view, seq: s.newTask.seq + 1 } }));
+    setView("new-task");
+  },
+  closeNewTask: () => useUI.getState().setView(get().newTask.from),
 
   async load() {
     if (!inDesktop) { set({ loaded: true }); return; }

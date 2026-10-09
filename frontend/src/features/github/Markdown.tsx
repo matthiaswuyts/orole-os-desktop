@@ -1,16 +1,33 @@
-import { Fragment, useMemo, type ReactNode } from "react";
+import { Fragment, createContext, useContext, useMemo, type ReactNode } from "react";
+import { openExternal } from "@/lib/openExternal";
 import { parseMarkdown, type Block, type Inline } from "./mdparse";
+import { splitReferences } from "./references";
 
-function Inlines({ c }: { c: Inline[] }): ReactNode {
+/** Repository that `#123` references resolve against; without one they stay plain text. */
+const RepoContext = createContext<string | undefined>(undefined);
+
+function Reference({ value, kind }: { value: string; kind: "mention" | "issue" }) {
+  const repo = useContext(RepoContext);
+  const href = kind === "mention" ? `https://github.com/${value.slice(1)}` : repo ? `https://github.com/${repo}/issues/${value.slice(1)}` : "";
+  if (!href) return <>{value}</>;
+  return <a href={href} target="_blank" rel="noopener noreferrer nofollow" onClick={(e) => { e.preventDefault(); void openExternal(href); }} className={kind === "mention" ? "rounded bg-info/10 px-0.5 font-medium text-info-foreground hover:underline" : "text-info-foreground hover:underline"}>{value}</a>;
+}
+
+function Text({ v, linked }: { v: string; linked: boolean }) {
+  if (linked) return <>{v}</>;
+  return splitReferences(v).map((token, i) => token.kind === "text" ? <Fragment key={i}>{token.value}</Fragment> : <Reference key={i} kind={token.kind} value={token.value} />);
+}
+
+function Inlines({ c, linked = false }: { c: Inline[]; linked?: boolean }): ReactNode {
   return c.map((n, i) => {
     switch (n.t) {
-      case "text": return <Fragment key={i}>{n.v}</Fragment>;
+      case "text": return <Text key={i} v={n.v} linked={linked} />;
       case "br": return <br key={i} />;
       case "code": return <code key={i} className="rounded bg-muted px-1 py-px font-mono text-[0.85em]">{n.v}</code>;
-      case "strong": return <strong key={i}><Inlines c={n.c} /></strong>;
-      case "em": return <em key={i}><Inlines c={n.c} /></em>;
-      case "del": return <del key={i}><Inlines c={n.c} /></del>;
-      case "link": return <a key={i} href={n.href} target="_blank" rel="noopener noreferrer nofollow" className="text-info-foreground underline underline-offset-2"><Inlines c={n.c} /></a>;
+      case "strong": return <strong key={i}><Inlines c={n.c} linked={linked} /></strong>;
+      case "em": return <em key={i}><Inlines c={n.c} linked={linked} /></em>;
+      case "del": return <del key={i}><Inlines c={n.c} linked={linked} /></del>;
+      case "link": return <a key={i} href={n.href} target="_blank" rel="noopener noreferrer nofollow" className="text-info-foreground underline underline-offset-2"><Inlines c={n.c} linked /></a>;
     }
   });
 }
@@ -43,9 +60,9 @@ function Blocks({ blocks }: { blocks: Block[] }): ReactNode {
   });
 }
 
-/** Renders untrusted markdown as React elements only: no HTML is ever injected. */
-export function Markdown({ source, className }: { source: string; className?: string }) {
+/** Renders untrusted markdown as React elements only: no HTML is ever injected. `repo` ("owner/name") enables `#123` links. */
+export function Markdown({ source, className, repo }: { source: string; className?: string; repo?: string }) {
   const tree = useMemo(() => parseMarkdown(source), [source]);
   if (!source.trim()) return <p className={`text-muted-foreground italic ${className ?? ""}`}>No description provided.</p>;
-  return <div className={`selectable text-sm leading-relaxed ${className ?? ""}`}><Blocks blocks={tree} /></div>;
+  return <RepoContext.Provider value={repo}><div className={`selectable text-sm leading-relaxed ${className ?? ""}`}><Blocks blocks={tree} /></div></RepoContext.Provider>;
 }

@@ -3,6 +3,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { Project, Session } from "@/mygo";
 import { useAgents } from "@/stores/agents";
 import { useProjects } from "@/stores/projects";
+import { useUI } from "@/stores/ui";
 import { SidebarProjects } from "./SidebarProjects";
 
 const project: Project = {
@@ -12,7 +13,8 @@ const project: Project = {
 
 beforeEach(() => {
   useAgents.setState({ sessions: {} });
-  useProjects.setState({ projects: [project], available: true, loaded: true, error: null, expanded: {}, startSync: vi.fn(() => () => {}), newTask: { open: false, projectId: null, prompt: "" } });
+  useUI.setState({ view: "home" });
+  useProjects.setState({ projects: [project], available: true, loaded: true, error: null, expanded: {}, startSync: vi.fn(() => () => {}), newTask: { projectId: null, prompt: "", from: "home", seq: 0 } });
 });
 afterEach(cleanup);
 
@@ -20,7 +22,8 @@ it("offers a working start action for an empty folderless project", () => {
   render(<SidebarProjects />);
   expect(screen.getByRole("button", { name: "New task in Research" })).toBeEnabled();
   fireEvent.click(screen.getByRole("button", { name: "Start a task" }));
-  expect(useProjects.getState().newTask).toEqual({ open: true, projectId: "notes", prompt: "" });
+  expect(useProjects.getState().newTask).toMatchObject({ projectId: "notes", prompt: "", from: "home" });
+  expect(useUI.getState().view).toBe("new-task");
 });
 
 it("shows managed-workspace tasks under their folderless project", () => {

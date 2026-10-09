@@ -11,7 +11,14 @@ import { openTask } from "@/features/projects/tasks";
 import { useTaskAttachments } from "./useTaskAttachments";
 import { loadProviderPreferences, saveProviderPreferences } from "./provider-preferences";
 
-export function useHomeTaskLaunch() {
+export interface TaskLaunchOptions {
+  initialProjectId?: string | null;
+  initialPrompt?: string;
+  onStarted?: () => void;
+  onBusyChange?: (busy: boolean) => void;
+}
+
+export function useHomeTaskLaunch({ initialProjectId, initialPrompt = "", onStarted, onBusyChange }: TaskLaunchOptions = {}) {
   const projects = useProjects((s) => s.projects);
   const selectedId = useProjects((s) => s.selectedId);
   const worktrees = useProjects((s) => s.worktrees);
@@ -19,10 +26,10 @@ export function useHomeTaskLaunch() {
   const machines = useBoxes((s) => s.machines);
   const observations = useBoxes((s) => s.observations);
   const now = useBoxes((s) => s.now);
-  const [machine, setMachine] = useState("local");
+  const [machine, setMachine] = useState(() => projects.find((p) => p.id === initialProjectId)?.machineId ?? "local");
   const source = useHarnessOptions(machine);
   const [savedProject] = useState(() => localStorage.getItem("orole.home.project"));
-  const [remoteProject, setRemoteProject] = useState("");
+  const [remoteProject, setRemoteProject] = useState(initialProjectId ?? "");
   const registered = projects.filter((p) => p.machineId === machine).map((p) => ({ ...p, registered: true }));
   const choices = [...registered, ...(source.options?.projects ?? []).filter((p) => p.machine === machine && !registered.some((r) => r.id === p.id || r.path === p.path)).map((p) => ({ id: p.id, name: p.name, path: p.path, machineId: p.machine, isGit: p.git, missing: false, registered: false }))];
   const project = choices.find((p) => p.id === (remoteProject || selectedId || savedProject)) ?? choices.find((p) => !p.missing);
@@ -42,7 +49,7 @@ export function useHomeTaskLaunch() {
   const modelOption = models.find((m) => m.id === model);
   const reasoningLevels = modelOption ? modelOption.reasoning : harness?.reasoning ?? [];
   const reasoning = reasoningLevels.includes(selected.reasoning) ? selected.reasoning : "";
-  const [prompt, setPrompt] = useState("");
+  const [prompt, setPrompt] = useState(initialPrompt);
   const [busy, setBusy] = useState(false);
   const attachments = useTaskAttachments(inDesktop && !busy && !source.offline);
   const inFlight = useRef(false);
@@ -56,7 +63,7 @@ export function useHomeTaskLaunch() {
   function chooseProject(id: string) {
     const p = choices.find((p) => p.id === id);
     if (!p) return;
-    setRemoteProject(p.registered ? "" : id);
+    setRemoteProject(id);
     if (p.registered) useProjects.getState().select(id);
     localStorage.setItem("orole.home.project", id);
     setWorktreeChoice(null);
@@ -85,15 +92,16 @@ export function useHomeTaskLaunch() {
     };
     const signature = JSON.stringify(spec);
     if (attempt.current?.signature !== signature) attempt.current = { signature, key: newKey() };
-    inFlight.current = true; setBusy(true);
+    inFlight.current = true; setBusy(true); onBusyChange?.(true);
     try {
       const session = await Agents.start({ ...spec, key: attempt.current.key });
       attempt.current = null;
       localStorage.setItem("orole.task.harness", harness.id);
       localStorage.setItem("orole.home.project", project.id);
       useAgents.getState().upsert(session); setPrompt(""); attachments.clear(); openTask(session.id);
+      onStarted?.();
     } catch (error) { toastError("Could not start task", error); }
-    finally { inFlight.current = false; setBusy(false); }
+    finally { inFlight.current = false; setBusy(false); onBusyChange?.(false); }
   }
   return { machine, machines, observations, now, choices, project, trees, worktree, canIsolate, harnesses, harness, model, reasoning, prompt, setPrompt, busy, blocked, canStart, chooseProject, chooseMachine, chooseAgent, start, attachments,
     chooseWorktree: (value: string) => { if (project) setWorktreeChoice({ project: project.id, value }); },

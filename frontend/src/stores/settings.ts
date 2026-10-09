@@ -3,6 +3,7 @@ import { Settings, events } from "@/mygo";
 import { inDesktop, previewKey } from "@/lib/backend";
 import type { BuiltinThemeId } from "@/themes/builtin";
 import { SCENES } from "@/components/ascii/scenes";
+import type { CustomBackground } from "@/components/ascii/custom-background";
 
 export type ThemeId = BuiltinThemeId | "custom";
 export type Density = "compact" | "comfortable";
@@ -16,6 +17,7 @@ export interface Appearance {
 
 export interface AsciiSettings {
   scene: string;
+  customBackground: CustomBackground | null;
   /** Choose a scene once after saved preferences load, on the next app startup. */
   randomOnStartup: boolean;
   enabled: boolean;
@@ -75,6 +77,7 @@ export const defaults = {
   appearance: { theme: "midnight", density: "compact", customTokens: {} } as Appearance,
   ascii: {
     scene: "night-coast", randomOnStartup: false, enabled: true, paused: false, fps: 12, opacity: 1, intensity: 1,
+    customBackground: null,
     pauseWhenUnfocused: true, respectReducedMotion: true, staticOnly: false,
   } as AsciiSettings,
   accessibility: { reduceMotion: "system" } as Accessibility,
@@ -139,6 +142,8 @@ export const useSettings = create<SettingsState>((set, get) => ({
       const asciiPatch = patch as Partial<AsciiSettings>;
       const ascii = { ...get().ascii, ...asciiPatch };
       if (asciiPatch.scene !== undefined) ascii.randomOnStartup = false;
+      if (asciiPatch.customBackground) ascii.randomOnStartup = false;
+      if (asciiPatch.scene !== undefined || asciiPatch.randomOnStartup === true) ascii.customBackground = null;
       set({ ascii, activeAsciiScene: activeAsciiScene(ascii) });
       write(key, ascii).catch((e) => set({ error: e instanceof Error ? e.message : String(e) }));
       return;

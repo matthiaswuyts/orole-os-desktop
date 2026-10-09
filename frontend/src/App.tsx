@@ -17,6 +17,7 @@ import { AudioFeedback } from "@/components/shell/AudioFeedback";
 import { useUpdates } from "@/stores/updates";
 import { ToastProvider } from "@/components/ui/toast";
 import { NewProjectDialog } from "@/features/projects/dialogs";
+import { StartupScreen } from "@/components/shell/StartupScreen";
 
 function ViewHost() {
   const view = useUI((s) => s.view);
@@ -37,16 +38,18 @@ export default function App() {
   }, []);
   return (
     <ToastProvider>
+      <NativeNavigation />
+      <StartupScreen>
       <AppShell>
         <Suspense fallback={<div role="status" className="p-6 text-muted-foreground">Loading…</div>}>
           <ViewHost />
         </Suspense>
         <PolicyApprovals />
-        <NativeNavigation />
         <PluginContributions />
         <AudioFeedback />
         <NewProjectDialog />
       </AppShell>
+      </StartupScreen>
     </ToastProvider>
   );
 }

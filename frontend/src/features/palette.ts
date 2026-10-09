@@ -48,11 +48,8 @@ export const domainProviders: SearchProvider[] = [
       if (signal.aborted) return [];
       if (response.errors && Object.keys(response.errors).length) throw new Error(Object.values(response.errors).join("; "));
       return (response.results ?? []).map((result) => ({
-        id: `setting.${result.id}`, title: result.title, category: result.action.view === "mcp" ? "MCP" : "Settings",
-        run: () => {
-          if (result.action.view === "mcp") useUI.getState().setView("mcp");
-          else useUI.getState().openSettings(result.action.section, result.action.tab);
-        },
+        id: `setting.${result.id}`, title: result.title, category: "Settings",
+        run: () => useUI.getState().openSettings(result.action.section, result.action.tab),
       }));
     },
   },

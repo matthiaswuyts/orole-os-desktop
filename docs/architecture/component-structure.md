@@ -58,6 +58,17 @@ keycaps and sidebar tooltip; its runtime error buffer was empty.
 
 ## Shell and themes
 
+`App.tsx` starts its existing settings/workspace loads, daemon polling and task subscriptions
+while `components/shell/StartupScreen.tsx` gates the shell. The centered ASCII bar follows
+the classic `[====>   ]` style from [ascii.rest/progress-bar](https://ascii.rest/progress-bar/),
+but uses actual settled startup checks, not the upstream demo's timed simulated percentages.
+Preferences, workspaces, tasks and the first daemon connection result each account for 25%.
+Failed requests count as checked and retain their store errors; offline startup can reach the app.
+Preview mode skips daemon/task work through the existing preview states. The real 100% state
+paints before handoff, without a minimum-duration timer. Once opened, subsequent refreshes
+or disconnects do not restore the screen. Native navigation remains mounted during startup.
+The bar exposes a named ARIA progressbar and live status; it has no looping motion.
+
 The sidebar begins at the workspace switcher without a top spacer. `AppShell` owns
 the route heading; feature toolbars keep their actions, counts and filters without
 repeating it. Detail headings and Settings subsection headings remain.
@@ -258,7 +269,7 @@ desktop-required preview message names `go tool mygo dev`, not Vite-only startup
 
 ## Skills and MCP servers
 
-These top-level views configure things once for every harness.
+Settings > Skills and Settings > MCP configure things once for every harness.
 
 - `features/skills/SkillsView.tsx`: the central skill registry (`Skills.*`). Lists skills with search and an
   enable switch, edits `SKILL.md` (a new skill starts from `skillTemplate`; saving goes through the daemon,
@@ -268,9 +279,9 @@ These top-level views configure things once for every harness.
   The list is metadata-only: opening an editor fetches the full body with `Skills.get(name)`. Only the latest
   open request may populate the editor; closing or starting a new draft discards pending results. The editor
   cannot save while a body is loading, and save completion cannot overwrite another selected draft.
-- `features/mcp/McpView.tsx`: wraps the `MCPSettings` panel (add server, OAuth, enable, tools, policy). The
-  panel is no longer a Settings > Integrations tab; Mail and Drive still embed it for their setup screens.
-  Configuration search opens the top-level MCP view, not the removed Settings tab.
+- `features/mcp/McpView.tsx`: wraps the `MCPSettings` panel (add server, OAuth, enable, tools, policy) in
+  Settings > MCP; Mail and Drive still embed the panel for their setup screens.
+  Configuration search, palette commands, onboarding links, and the MCP status-bar button open these Settings sections.
   The MCP page offers generic Add by URL, without Mail/Drive quick-add buttons. The add-server
   form uses `display: contents` so its scrollable body and footer participate in the popup's
   flex layout and stay inside its rounded border.
@@ -335,8 +346,10 @@ and diff selections open a responsive side canvas without removing chat or the t
 
 ## Navigation, projects and tasks
 
-The sidebar offers Home, Tasks (view id `agents`), Review, Automations, Skills, MCP and Settings (`lib/nav.ts`,
-`features/registry.tsx` and the allowlist in `internal/applications/navigation.go` are kept in step). Under the rows, the
+The sidebar offers Home, Tasks (view id `agents`), Review, Automations and Settings (`lib/nav.ts`,
+`features/registry.tsx`). Skills and MCP live in separate Settings sections, retaining their full-page
+editors and scrolling. Native deep links use `orole://open/settings/skills` and `orole://open/settings/mcp`;
+the allowlist is in `internal/applications/navigation.go`. Under the rows, the
 project tree expands each project to its **tasks**: dashboard-visible sessions associated by `Session.projectId`
 on the same machine, newest first, with status dots and "Needs you" or "Failed" badges. Older sessions without
 an ID still match their `Session.project` folder (`features/projects/tasks.ts`). Folderless projects offer
@@ -349,12 +362,16 @@ The sidebar is 256px wide (capped at 45vw on narrow windows). Left-aligned title
 space; system badges are capped at 64px and may shrink rather than squeezing titles.
 Hover tooltips retain the full project/task name and system labels.
 
-`NewTaskDialog` is mounted once in `AppShell` and opened with `useProjects.openNewTask(projectId?, prompt?)` from a project
-row, the Tasks header or the "New task…" command. It starts a task with `Agents.start`: one `StartSpec`
-with `projectId` and an empty `dir` (resolved by the daemon), the chosen harness (cards from `Agents.options`),
-optional model and reasoning, the prompt, and "Isolate on a new branch" (default on for git projects; branch
-`orole/<slug>`, editable, based on the project's current commit). A retry of an identical spec reuses its idempotency key,
-so an uncertain failure never starts a second agent. Errors appear as toasts.
+The **New task** page (`features/projects/NewTaskView.tsx`, view id `new-task`, not listed in the sidebar) replaces the old modal.
+`useProjects.openNewTask(projectId?, prompt?)` records the project, prompt and the view to return to (`closeNewTask`, or Escape
+once nothing is focused), then switches to the page; each opening is a fresh page (`newTask.seq`). It starts a task with
+`Agents.start` through the same composer and launch state as Home (`HomeComposerView`, `useHomeTaskLaunch`): one `StartSpec`
+with `projectId` and an empty `dir` (resolved by the daemon), the chosen harness, optional model and reasoning, the prompt,
+attachments and the project/system/worktree menus. A retry of an identical spec reuses its idempotency key, so an uncertain
+failure never starts a second agent. Errors appear as toasts. Above the input sit one small random ascii.rest piece
+(`AsciiMark`, from a fixed list of 13 text pieces; hidden when the ASCII setting is off, still when motion is reduced), the
+project name and its repository, system and folder. Below it: "New <agent>" rows that choose the agent and focus the input,
+"All tasks in <project>", and "Pick up where you left off" (the project's three newest tasks, each with an Open button).
 
 The daemon resolves attached projects to their approved folder and folderless projects to
 `<daemon data>/project-workspaces/<project UUID>`. The directory is created lazily, is reused by future

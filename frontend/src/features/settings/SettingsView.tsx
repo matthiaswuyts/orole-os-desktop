@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { Bell, Cpu, Palette, PanelsTopLeft, PlugZap, Settings2 } from "lucide-react";
+import { Bell, Cpu, Palette, PanelsTopLeft, Plug, PlugZap, Settings2, Sparkles } from "lucide-react";
 import { useSettings } from "@/stores/settings";
 import { BUILTIN_THEMES } from "@/themes/builtin";
 import { useDaemon } from "@/stores/daemon";
@@ -21,6 +21,8 @@ import { SoundSettings } from "@/features/settings/SoundSettings";
 import { UpdateSettings } from "@/features/settings/UpdateSettings";
 import { useUI } from "@/stores/ui";
 import { WorkspaceSettings } from "@/features/settings/WorkspaceSettings";
+import { SkillsView } from "@/features/skills/SkillsView";
+import { McpView } from "@/features/mcp/McpView";
 
 type Section = { id: string; label: string; icon: typeof Palette };
 // Search and deep links address a section by id and, optionally, a tab or an anchor inside it (see openSettings).
@@ -28,6 +30,8 @@ const SECTIONS: Section[] = [
   { id: "customization", label: "Customization", icon: Palette },
   { id: "workspaces", label: "Workspaces", icon: PanelsTopLeft },
   { id: "integrations", label: "Integrations", icon: PlugZap },
+  { id: "skills", label: "Skills", icon: Sparkles },
+  { id: "mcp", label: "MCP", icon: Plug },
   { id: "notifications", label: "Alerts & automations", icon: Bell },
   { id: "system", label: "System", icon: Settings2 },
 ];
@@ -127,9 +131,9 @@ function Customization() {
       <SettingsSection title="Density" description="Compact is the default; comfortable adds spacing.">
         <Field label="Compact density"><Switch checked={density === "compact"} onCheckedChange={(c) => set("appearance", { density: c ? "compact" : "comfortable" })} aria-label="Compact density" /></Field>
       </SettingsSection>
-      <SettingsSection id="settings-ascii" title="Background" description="ASCII scenes for Home.">
+      <SettingsSection id="settings-ascii" title="Background" description="ASCII scenes or your own image, rendered in the same pixelated style.">
         <Field label="Show background"><Switch checked={a.enabled} onCheckedChange={(c) => patch({ enabled: c })} aria-label="Show background" /></Field>
-        <Field label="Random scene on startup" hint="Applies next time you open the app. Choosing a scene turns this off.">
+        <Field label="Random scene on startup" hint="Applies next time you open the app. Enabling this replaces your uploaded background.">
           <Switch checked={a.randomOnStartup} onCheckedChange={(c) => patch({ randomOnStartup: c })} aria-label="Random scene on startup" />
         </Field>
         <ScenePicker />
@@ -198,10 +202,12 @@ export function SettingsView() {
           </button>
         ))}
       </nav>
-      <div className="min-h-0 flex-1 overflow-auto pr-1">
-        <h1 className="mb-3 text-base font-medium">{sec.label}</h1>
+      <div className={cn("min-h-0 min-w-0 flex-1", id === "skills" || id === "mcp" ? "overflow-hidden" : "overflow-auto pr-1")}>
+        {id !== "skills" && id !== "mcp" && <h1 className="mb-3 text-base font-medium">{sec.label}</h1>}
         {id === "customization" && <Customization />}
         {id === "workspaces" && <WorkspaceSettings />}
+        {id === "skills" && <SkillsView />}
+        {id === "mcp" && <McpView />}
         {id === "integrations" && <Tabbed section={id} tabs={[
           { id: "github", label: "GitHub", panel: <GitHubSettings /> },
           { id: "plugins", label: "Plugins", panel: <PluginSettings /> },

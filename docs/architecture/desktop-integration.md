@@ -37,7 +37,7 @@ Implementation research read both the local `../_upstream/mygo` source and the p
 
 ### Deep links
 
-The only accepted syntax is `orole://open/<module>`, with an exact built-in allowlist in `applications.InternalView`. The allowed modules are `home`, `agents` (Tasks), `review`, `automations`, `skills`, `mcp`, `images` and `settings`; modules removed from the shell (mail, drive, github, projects, files, terminals, browser, machines, applications, worktrees) are rejected. Examples: `orole://open/agents`, `orole://open/skills`, `orole://open/settings`.
+The accepted syntax is `orole://open/<destination>`, with an exact built-in allowlist in `applications.InternalView`. Top-level destinations are `home`, `agents` (Tasks), `review`, `automations`, and `settings`. Skills and MCP use `orole://open/settings/skills` and `orole://open/settings/mcp`, opening their Settings sections. The former top-level `skills` and `mcp` destinations, and removed modules (images, mail, drive, github, projects, files, terminals, browser, machines, applications, worktrees), are rejected. Examples: `orole://open/agents`, `orole://open/settings/skills`, `orole://open/settings`.
 
 Queries, fragments, encoded aliases, credentials, ports, external schemes/hosts, executable IDs, arbitrary paths, and unsupported modules are rejected. A deep link can only request internal navigation. It cannot launch a configured shortcut, access a file, run a command, change settings, or submit an agent prompt. Rejected URL contents are not logged.
 

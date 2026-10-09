@@ -13,4 +13,6 @@ export const SCENES: { id: PieceName; label: string }[] = [
   { id: "misty-forest" as PieceName, label: "Misty forest" },
   { id: "ocean-sunset" as PieceName, label: "Ocean sunset" },
   { id: "storm-plains" as PieceName, label: "Storm plains" },
+  { id: "tokyo-rain", label: "Tokyo rain" },
+  { id: "lantern-lake", label: "Lantern lake" },
 ];

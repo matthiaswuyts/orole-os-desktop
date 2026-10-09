@@ -10,7 +10,7 @@ import (
 	"github.com/rayorole/orole-os-desktop/internal/search"
 )
 
-// settingsIndex lists configuration destinations, including top-level views.
+// settingsIndex lists configuration destinations within Settings.
 // Keep Settings sections/tabs in step with frontend/src/features/settings/SettingsView.tsx.
 var settingsIndex = []struct{ view, section, tab, title, keywords string }{
 	{"settings", "customization", "appearance", "Theme and density", "appearance theme colour color dark light midnight obsidian density compact custom"},
@@ -20,7 +20,8 @@ var settingsIndex = []struct{ view, section, tab, title, keywords string }{
 	{"settings", "customization", "terminal", "Terminal font", "terminal font size shell"},
 	{"settings", "workspaces", "", "Workspaces", "layouts widgets dashboard"},
 	{"settings", "integrations", "github", "GitHub", "token repositories issues pull requests"},
-	{"mcp", "", "", "MCP servers", "model context protocol tools"},
+	{"settings", "skills", "", "Skills", "skills harness instructions import sync"},
+	{"settings", "mcp", "", "MCP servers", "model context protocol tools"},
 	{"settings", "integrations", "plugins", "Plugins", "extensions install permissions"},
 	{"settings", "notifications", "notifications", "Notifications", "alerts toasts mute sources native"},
 	{"settings", "notifications", "automations", "Automations", "workflows triggers webhook"},

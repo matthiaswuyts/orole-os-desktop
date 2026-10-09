@@ -86,21 +86,21 @@ export function ClockWidget({ onRemove }: WidgetProps) {
 }
 
 export function SetupWidget({ onRemove }: WidgetProps) {
-  const setView = useUI((s) => s.setView);
+  const { setView, openSettings } = useUI();
   const health = useDaemon((s) => s.health);
-  const items: { label: string; done: boolean; view?: Parameters<typeof setView>[0] }[] = [
+  const items: { label: string; done: boolean; open?: () => void }[] = [
     { label: "Local daemon running", done: !!health },
-    { label: "Connect GitHub", done: false, view: "settings" },
-    { label: "Add skills", done: false, view: "skills" },
-    { label: "Add MCP servers", done: false, view: "mcp" },
-    { label: "Start a task", done: false, view: "agents" },
+    { label: "Connect GitHub", done: false, open: () => openSettings("integrations", "github") },
+    { label: "Add skills", done: false, open: () => openSettings("skills") },
+    { label: "Add MCP servers", done: false, open: () => openSettings("mcp") },
+    { label: "Start a task", done: false, open: () => setView("agents") },
   ];
   return (
     <Widget title="Get started" icon={<CheckCircle2 />} onRemove={onRemove}>
       <ul className="space-y-0.5">
         {items.map((i) => (
           <li key={i.label}>
-            <button disabled={!i.view} onClick={() => i.view && setView(i.view)} className="flex w-full items-center gap-2 rounded px-1 py-[3px] text-left hover:bg-accent disabled:cursor-default disabled:hover:bg-transparent">
+            <button disabled={!i.open} onClick={i.open} className="flex w-full items-center gap-2 rounded px-1 py-[3px] text-left hover:bg-accent disabled:cursor-default disabled:hover:bg-transparent">
               {i.done ? <CheckCircle2 className="size-3.5 text-success-foreground" /> : <Circle className="size-3.5 text-muted-foreground/60" />}
               <span className={i.done ? "text-muted-foreground line-through" : ""}>{i.label}</span>
             </button>

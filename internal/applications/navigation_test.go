@@ -3,13 +3,14 @@ package applications
 import "testing"
 
 func TestDeepLinksOnlyNavigateBuiltInModules(t *testing.T) {
-	for _, view := range []string{"home", "agents", "review", "automations", "skills", "mcp", "settings"} {
+	for _, view := range []string{"home", "agents", "review", "automations", "settings", "settings/skills", "settings/mcp"} {
 		got, err := ParseDeepLink("orole://open/" + view)
 		if err != nil || got != view {
 			t.Fatalf("%s: %q, %v", view, got, err)
 		}
 	}
 	for _, raw := range []string{
+		"orole://open/skills", "orole://open/mcp", "orole://open/settings/unknown",
 		"orole://open/images",
 		"orole://open/worktrees", "orole://open/mail", "orole://open/drive", "orole://open/github", "orole://open/projects", "orole://open/terminals",
 		"orole://open/applications", "orole://open/browser", "orole://open/files", "orole://open/machines",

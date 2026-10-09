@@ -10,10 +10,10 @@ import (
 var ErrDeepLink = errors.New("applications: unsupported deep link; use orole://open/<module>")
 
 // InternalView is deliberately independent of user-configured executable shortcuts.
-// New modules must be built in the React registry before adding them here.
+// Destinations must exist in the React registry or native Settings section dispatcher.
 func InternalView(view string) bool {
 	switch view {
-	case "home", "agents", "review", "automations", "skills", "mcp", "settings":
+	case "home", "agents", "review", "automations", "settings", "settings/skills", "settings/mcp":
 		return true
 	default:
 		return false

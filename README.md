@@ -45,15 +45,18 @@ State of this tree; the code is the source of truth (`docs/architecture/daemon.m
 Requirements: Windows 10/11, WebView2 runtime (bundled with Windows 11), Go (the `go` directive in `go.mod`; the toolchain downloads automatically), [Bun](https://bun.sh).
 
 ```powershell
-bun install --cwd frontend           # first time
-go tool mygo dev                     # desktop app with hot reload (builds the daemon, starts Vite; the app launches the daemon)
+.\start.ps1                          # isolated dev desktop with hot reload; installs frontend dependencies if missing
 bun run --cwd frontend dev           # browser preview only, http://localhost:5173 (no daemon)
 go fmt ./... ; go vet ./... ; go test -race ./...
 bun run --cwd frontend check         # tsc + lint + vitest
 ./scripts/build.ps1                  # daemon + CLI + packaged app + installer under build/
 ```
 
-Use `$env:OROLE_HOME = ".orole-dev"` to keep development data away from `%LOCALAPPDATA%\Orole`.
+`start.ps1` uses `.orole-dev` under the repository, works from any working directory, and restores
+your shell's `OROLE_HOME` afterward. Use `.\start.ps1 -DataDir <path>` for another data directory.
+It does not stop existing daemons or reset data. If a stale daemon rejects authentication, recover
+that instance before starting; restarting a daemon ends its terminals and agents.
+For a manual launch, set `$env:OROLE_HOME = ".orole-dev"` and run `go tool mygo dev`.
 
 The development command builds the bundled daemon **once at startup**. Frontend hot reload does not
 rebuild or restart that separate process. After daemon changes (including harness model discovery),

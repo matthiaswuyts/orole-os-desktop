@@ -1,6 +1,6 @@
 import { create } from "zustand";
 
-export type ViewId = "home" | "agents" | "review" | "automations" | "skills" | "mcp" | "settings";
+export type ViewId = "home" | "agents" | "review" | "issues" | "automations" | "new-task" | "settings";
 
 interface UIState {
   view: ViewId;

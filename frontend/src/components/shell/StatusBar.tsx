@@ -81,7 +81,7 @@ export function StatusBar() {
       <TooltipPopup>Running agent tasks{counts.needsYou > 0 ? `; ${counts.needsYou} need your attention` : ""}</TooltipPopup>
     </Tooltip>
     <Tooltip>
-      <TooltipTrigger render={<button type="button" />} className={footerControl} onClick={() => useUI.getState().setView("mcp")}>
+      <TooltipTrigger render={<button type="button" />} className={footerControl} onClick={() => useUI.getState().openSettings("mcp")}>
         mcp <span className="tabular-nums">{connected && mcp && !mcpError ? `${mcp.filter((server) => server.status === "connected").length}/${mcp.length}` : "—"}</span>
       </TooltipTrigger>
       <TooltipPopup>{mcpError || "Connected / configured MCP servers"}</TooltipPopup>

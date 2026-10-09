@@ -6,7 +6,8 @@ const api = vi.hoisted(() => ({ options: vi.fn(), prompt: vi.fn(), sendMessage: 
 vi.mock("@/lib/backend", () => ({ inDesktop: true }));
 vi.mock("@/mygo", () => ({ Agents: api }));
 vi.mock("@/stores/agents", () => ({ useAgents: { getState: () => ({ upsert: api.upsert }) } }));
-vi.mock("@/stores/daemon", () => ({ useDaemon: (select: (state: { link: string }) => unknown) => select({ link: "connected" }) }));
+import { useDaemon } from "@/stores/daemon";
+import { useHarnessOptionsCache } from "@/stores/harnessOptions";
 vi.mock("@/features/projects/dialogs", () => ({ toastError: api.toast }));
 import { useTaskMessage } from "./useTaskMessage";
 import { TaskAttachmentButton, TaskAttachmentPreviews, TaskModelPicker } from "./TaskMessageControls";
@@ -27,6 +28,7 @@ const session = (patch: Partial<Session> = {}): Session => ({
 }) as Session;
 
 beforeEach(() => {
+  useDaemon.setState({ link: "connected", connectEpoch: 0 }); useHarnessOptionsCache.setState({ machines: {} });
   vi.clearAllMocks();
   api.options.mockResolvedValue(options);
   api.sendMessage.mockResolvedValue(session());
