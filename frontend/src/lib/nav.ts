@@ -1,4 +1,4 @@
-import { CircleDot, Home, Inbox, LayoutDashboard, Settings, SquarePen, Workflow } from "lucide-react";
+import { CircleDot, Home, Inbox, LayoutDashboard, MessagesSquare, Settings, SquarePen, Workflow } from "lucide-react";
 import type { ViewId } from "@/stores/ui";
 
 export interface NavItem { id: ViewId; label: string; icon: typeof Home; title?: string; blurb?: string }
@@ -14,5 +14,7 @@ export const PRIMARY: NavItem[] = [
 export const SETTINGS: NavItem = { id: "settings", label: "Settings", icon: Settings };
 /** Reached from a project's "New task" control, never listed in the sidebar's main navigation. */
 export const NEW_TASK: NavItem = { id: "new-task", label: "New task", icon: SquarePen };
-export const NAV: NavItem[] = [...PRIMARY, SETTINGS, NEW_TASK];
+/** The Chat mode's single view; the Code nav list (PRIMARY) never shows it. */
+export const CHAT: NavItem = { id: "chat", label: "Chat", icon: MessagesSquare };
+export const NAV: NavItem[] = [...PRIMARY, CHAT, SETTINGS, NEW_TASK];
 export const navItem = (id: ViewId) => NAV.find((n) => n.id === id)!;

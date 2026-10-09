@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { Bell, Cpu, Palette, PanelsTopLeft, Plug, PlugZap, Settings2, Sparkles } from "lucide-react";
+import { Bell, Bot, Cpu, Palette, PanelsTopLeft, Plug, PlugZap, Settings2, Sparkles } from "lucide-react";
 import { useSettings } from "@/stores/settings";
 import { BUILTIN_THEMES } from "@/themes/builtin";
 import { useDaemon } from "@/stores/daemon";
@@ -23,6 +23,7 @@ import { useUI } from "@/stores/ui";
 import { WorkspaceSettings } from "@/features/settings/WorkspaceSettings";
 import { SkillsView } from "@/features/skills/SkillsView";
 import { McpView } from "@/features/mcp/McpView";
+import { AIProviders } from "@/features/settings/AIProviders";
 
 type Section = { id: string; label: string; icon: typeof Palette };
 // Search and deep links address a section by id and, optionally, a tab or an anchor inside it (see openSettings).
@@ -32,6 +33,7 @@ const SECTIONS: Section[] = [
   { id: "integrations", label: "Integrations", icon: PlugZap },
   { id: "skills", label: "Skills", icon: Sparkles },
   { id: "mcp", label: "MCP", icon: Plug },
+  { id: "ai", label: "AI providers", icon: Bot },
   { id: "notifications", label: "Alerts & automations", icon: Bell },
   { id: "system", label: "System", icon: Settings2 },
 ];
@@ -208,6 +210,7 @@ export function SettingsView() {
         {id === "workspaces" && <WorkspaceSettings />}
         {id === "skills" && <SkillsView />}
         {id === "mcp" && <McpView />}
+        {id === "ai" && <AIProviders />}
         {id === "integrations" && <Tabbed section={id} tabs={[
           { id: "github", label: "GitHub", panel: <GitHubSettings /> },
           { id: "plugins", label: "Plugins", panel: <PluginSettings /> },

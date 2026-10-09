@@ -16,10 +16,12 @@ import (
 
 	"github.com/rayorole/orole-os-desktop/internal/agents"
 	"github.com/rayorole/orole-os-desktop/internal/automations"
+	"github.com/rayorole/orole-os-desktop/internal/chat"
 	"github.com/rayorole/orole-os-desktop/internal/database"
 	"github.com/rayorole/orole-os-desktop/internal/events"
 	"github.com/rayorole/orole-os-desktop/internal/gateway"
 	"github.com/rayorole/orole-os-desktop/internal/ipc"
+	"github.com/rayorole/orole-os-desktop/internal/llm"
 	"github.com/rayorole/orole-os-desktop/internal/machines"
 	"github.com/rayorole/orole-os-desktop/internal/mcp"
 	"github.com/rayorole/orole-os-desktop/internal/plugins"
@@ -48,7 +50,11 @@ type Daemon struct {
 	Policy      *policy.Engine
 	Machines    *machines.Manager
 	Plugins     *plugins.Manager
-	Metrics     *systemmetrics.Sampler
+	// LLM resolves provider credentials and models (svc_llm.go); registered before Chat.
+	LLM llm.Service
+	// Chat owns bots, conversations and runs (svc_chat.go).
+	Chat    *chat.Manager
+	Metrics *systemmetrics.Sampler
 	// Skills is the central skill registry and Gateway the MCP gateway hub behind the
 	// `orole-daemon mcp-gateway` processes (svc_skills.go). gatewayExe is this executable.
 	Skills     *skills.Store
@@ -145,6 +151,9 @@ func (d *Daemon) cleanup(ln interface{ Close() error }) {
 	}
 	if d.agentsShutdown != nil {
 		d.agentsShutdown()
+	}
+	if d.Chat != nil {
+		d.Chat.Close()
 	}
 	if d.Plugins != nil {
 		d.Plugins.Close()

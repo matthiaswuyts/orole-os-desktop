@@ -55,6 +55,8 @@ func (d *Daemon) registerServices() {
 	d.registerAgents()
 	d.registerImages()
 	d.registerPublish()
+	d.registerLLM()  // first of the chat services: registerChat resolves providers through d.LLM
+	d.registerChat() // after registerLLM; registerChatMemory and registerChatTools attach to d.Chat
 }
 
 func (d *Daemon) registerCore() {

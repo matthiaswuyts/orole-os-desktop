@@ -23,6 +23,7 @@ func New() Store
 |---|---|---|
 | `github/token` | `internal/github` | a pasted personal access token |
 | `mcp/<server id>` | `internal/mcp` | OAuth/bearer tokens, client secrets (package exists; not yet wired to IPC) |
+| `llm/<provider>/key` | `internal/llm` | a pasted API key, or the key OpenRouter mints through its sign-in flow; the daemon reads it just-in-time per request and the UI only ever sees the last four characters |
 
 ## Rules
 
