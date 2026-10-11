@@ -30,7 +30,8 @@
 //
 // IPC events (published with d.IPC.Publish; MyGo forwards them as colon names):
 //
-//	chat.message  Message        upsert of a message snapshot (streaming snapshots coalesced to <= 1 per 50ms; final always sent)
+//	chat.message  Message        upsert of a message snapshot (coalesced to <= 1 event per 50ms; the final one is always a full snapshot)
+//	chat.message.delta MessageDelta  streamed text appended to one part of a running message (replaces the snapshots between checkpoints; see MessageDelta)
 //	chat.run      RunState       a bot started/finished a run
 //	chat.bot      BotChange      bot saved/archived/cleared
 //	chat.memory   MemoryChange   memory content changed (see memory_api.go)
@@ -157,6 +158,21 @@ type BotExport struct {
 type BotChange struct {
 	ID     string `json:"id"`
 	Action string `json:"action"` // "saved" | "archived" | "cleared"
+}
+
+// MessageDelta is the chat.message.delta payload: text appended to a streaming message since the
+// last chat.message or chat.message.delta event. Everything that is not appended text (new parts,
+// tool rows, citations, usage, checkpoints, the final state) is a full chat.message snapshot, and
+// the daemon sends one at least every few seconds, so a subscriber that missed a delta recovers.
+// A subscriber applies the delta only when the message and part exist, the part has Type, and its
+// text is exactly From UTF-16 units long; otherwise it waits for the next snapshot.
+type MessageDelta struct {
+	BotID     string `json:"botId"`
+	MessageID string `json:"messageId"`
+	Part      int    `json:"part"` // index into Message.Parts
+	Type      string `json:"type"` // PartText or PartReasoning
+	From      int    `json:"from"` // UTF-16 length of the part text before Text is appended
+	Text      string `json:"text"`
 }
 
 // RunState is the chat.run event payload.

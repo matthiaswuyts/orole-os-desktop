@@ -1506,6 +1506,26 @@ export interface Message {
   createdAt: number;
 }
 
+/**
+ * MessageDelta is the chat.message.delta payload: text appended to a streaming message since the
+ * last chat.message or chat.message.delta event. Everything that is not appended text (new parts,
+ * tool rows, citations, usage, checkpoints, the final state) is a full chat.message snapshot, and
+ * the daemon sends one at least every few seconds, so a subscriber that missed a delta recovers.
+ * A subscriber applies the delta only when the message and part exist, the part has Type, and its
+ * text is exactly From UTF-16 units long; otherwise it waits for the next snapshot.
+ */
+export interface MessageDelta {
+  botId: string;
+  messageId: string;
+  /** index into Message.Parts */
+  part: number;
+  /** PartText or PartReasoning */
+  type: string;
+  /** UTF-16 length of the part text before Text is appended */
+  from: number;
+  text: string;
+}
+
 /** MessagePage returns messages in ascending seq order. */
 export interface MessagePage {
   messages: Message[];
@@ -4020,6 +4040,8 @@ export const events = {
   /** DaemonState reports connection state of the daemon link. */
   daemonState: event<DaemonLink>("daemon:state"),
   chatMessage: event<Message>("chat:message"),
+  /** ChatMessageDelta carries text appended to a streaming message between full chat:message snapshots. */
+  chatMessageDelta: event<MessageDelta>("chat:message-delta"),
   chatRun: event<RunState>("chat:run"),
   chatBot: event<BotChange>("chat:bot"),
   chatMemory: event<MemoryChange>("chat:memory"),

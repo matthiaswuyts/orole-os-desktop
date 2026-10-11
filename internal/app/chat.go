@@ -13,10 +13,12 @@ import (
 
 var (
 	ChatMessage = mygo.NewEvent[chat.Message]("chat:message")
-	ChatRun     = mygo.NewEvent[chat.RunState]("chat:run")
-	ChatBot     = mygo.NewEvent[chat.BotChange]("chat:bot")
-	ChatMemory  = mygo.NewEvent[chat.MemoryChange]("chat:memory")
-	LLMChanged  = mygo.NewEvent[llm.Change]("llm:changed")
+	// ChatMessageDelta carries text appended to a streaming message between full chat:message snapshots.
+	ChatMessageDelta = mygo.NewEvent[chat.MessageDelta]("chat:message-delta")
+	ChatRun          = mygo.NewEvent[chat.RunState]("chat:run")
+	ChatBot          = mygo.NewEvent[chat.BotChange]("chat:bot")
+	ChatMemory       = mygo.NewEvent[chat.MemoryChange]("chat:memory")
+	LLMChanged       = mygo.NewEvent[llm.Change]("llm:changed")
 )
 
 func forwardChat(event string, data json.RawMessage) bool {
@@ -25,6 +27,11 @@ func forwardChat(event string, data json.RawMessage) bool {
 		var v chat.Message
 		if json.Unmarshal(data, &v) == nil {
 			ChatMessage.Broadcast(v)
+		}
+	case "chat.message.delta":
+		var v chat.MessageDelta
+		if json.Unmarshal(data, &v) == nil {
+			ChatMessageDelta.Broadcast(v)
 		}
 	case "chat.run":
 		var v chat.RunState

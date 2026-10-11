@@ -25,6 +25,7 @@ vi.mock("@/mygo", () => ({
   events: {
     chatRun: { on: (f: (s: RunState) => void) => { bridge.run.add(f); return () => { bridge.run.delete(f); }; } },
     chatMessage: { on: (f: (m: Message) => void) => { bridge.message.add(f); return () => { bridge.message.delete(f); }; } },
+    chatMessageDelta: { on: () => () => {} },
     chatBot: { on: (f: (c: BotChange) => void) => { bridge.bot.add(f); return () => { bridge.bot.delete(f); }; } },
   },
 }));

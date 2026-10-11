@@ -88,8 +88,13 @@ type Manager struct {
 	nonces   nonceCache
 	closed   bool
 
+	botMu sync.Map // bot id -> *sync.Mutex, see lockBot
+
 	catMu   sync.Mutex
 	catalog map[string]catalogEntry
+
+	sumMu   sync.Mutex
+	sumFail map[string]summaryFailure // failed summarisations by conversation, see summaryBackoff
 
 	closeOnce sync.Once
 }
@@ -234,6 +239,8 @@ func (m *Manager) emit(event string, payload any) {
 
 func (m *Manager) publishMessage(msg Message) { m.emit("chat.message", msg) }
 
+func (m *Manager) publishDelta(d MessageDelta) { m.emit("chat.message.delta", d) }
+
 func (m *Manager) publishBot(id, action string) {
 	m.emit("chat.bot", BotChange{ID: id, Action: action})
 }
@@ -311,12 +318,15 @@ const setupKickoff = "(The user just created you. Start the setup now: greet the
 
 // greet makes a new bot speak first: it stores a hidden user message and runs a turn on it.
 func (m *Manager) greet(ctx context.Context, botID string) error {
+	unlock := m.lockBot(botID)
+	defer unlock()
 	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.closed {
+	closed, running := m.closed, m.runs[botID] != nil
+	m.mu.Unlock()
+	if closed {
 		return ErrClosed
 	}
-	if m.runs[botID] != nil {
+	if running {
 		return nil
 	}
 	msg := Message{
@@ -327,8 +337,29 @@ func (m *Manager) greet(ctx context.Context, botID string) error {
 		return err
 	}
 	m.publishMessage(msg)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.closed {
+		return ErrClosed
+	}
 	m.startLocked(botID, turn{userMsgID: msg.ID})
 	return nil
+}
+
+// lockBot serialises everything that stores a message for one bot and starts or queues its runs:
+// Send, Regenerate, greet, delegation, and Archive/Clear (whenIdle). Holding it keeps message order
+// and queue order identical without holding the global m.mu across SQLite work. Lock order: a bot
+// lock is taken before m.mu, never while holding it.
+func (m *Manager) lockBot(botID string) (unlock func()) {
+	mu, _ := m.botMu.LoadOrStore(botID, new(sync.Mutex))
+	mu.(*sync.Mutex).Lock()
+	return mu.(*sync.Mutex).Unlock
+}
+
+func (m *Manager) isClosed() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.closed
 }
 
 // GrantSkill adds a registry skill to a bot's own skills so the bot can read it, and does nothing when

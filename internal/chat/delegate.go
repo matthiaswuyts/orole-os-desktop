@@ -70,14 +70,16 @@ func (m *Manager) Handoff(ctx context.Context, from RunContext, calleeID, task s
 	task = strings.TrimRight(task, " \t\r\n")
 	h := &handoff{callee: callee.Name, task: oneLine(task, 160), since: m.nowMs()}
 
+	// The callee's bot lock keeps the stored message and its queued turn in the same order as its other messages.
+	unlock := m.lockBot(callee.ID)
+	defer unlock()
+	if _, err := m.submit(ctx, Message{BotID: callee.ID, Role: "user", Author: BotPrefix + caller.ID}, task, nil, t); err != nil {
+		return err
+	}
 	m.mu.Lock()
 	if m.closed {
 		m.mu.Unlock()
 		return ErrClosed
-	}
-	if _, err := m.submitLocked(ctx, Message{BotID: callee.ID, Role: "user", Author: BotPrefix + caller.ID}, task, nil, t); err != nil {
-		m.mu.Unlock()
-		return err
 	}
 	m.handoffs[caller.ID] = append(m.handoffs[caller.ID], h)
 	m.wg.Add(1)
@@ -97,7 +99,6 @@ func (m *Manager) awaitReport(callerID string, callee Bot, h *handoff, result <-
 		return
 	}
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	if w := m.handoffs[callerID]; slices.Contains(w, h) {
 		w = slices.DeleteFunc(w, func(x *handoff) bool { return x == h })
 		if len(w) == 0 {
@@ -106,9 +107,14 @@ func (m *Manager) awaitReport(callerID string, callee Bot, h *handoff, result <-
 			m.handoffs[callerID] = w
 		}
 	}
-	if m.closed {
+	closed := m.closed
+	m.mu.Unlock()
+	if closed {
 		return
 	}
+	// The report is stored and queued under the caller's bot lock, like any other message to it.
+	unlock := m.lockBot(callerID)
+	defer unlock()
 	ctx, cancel := context.WithTimeout(m.ctx, 10*time.Second)
 	defer cancel()
 	if _, err := m.store.getBot(ctx, callerID, false); err != nil {
@@ -116,7 +122,7 @@ func (m *Manager) awaitReport(callerID string, callee Bot, h *handoff, result <-
 	}
 	text := clip(reportText(callee, r), MaxMessageTextLen-1024)
 	msg := Message{BotID: callerID, Role: "user", Author: ReportPrefix + callee.ID}
-	if _, err := m.submitLocked(ctx, msg, text, nil, turn{extra: reportExtra}); err != nil {
+	if _, err := m.submit(ctx, msg, text, nil, turn{extra: reportExtra}); err != nil {
 		m.log.Warn("chat: report not delivered", "from", callee.ID, "to", callerID, "err", err)
 	}
 }

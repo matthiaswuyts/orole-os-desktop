@@ -38,7 +38,7 @@ func (p *Provider) Stream(ctx context.Context, req llm.Request) (<-chan llm.Delt
 		return nil, err
 	}
 	hreq.Header.Set("Accept", "text/event-stream")
-	resp, err := llm.Do(p.http, hreq, p.key)
+	resp, err := llm.DoRetry(p.http, hreq, p.key)
 	if err != nil {
 		release()
 		return nil, p.lifeError(err)

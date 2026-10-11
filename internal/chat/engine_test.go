@@ -910,7 +910,7 @@ func TestSinkCoalescesPublishesAndAlwaysSendsTheFinalOne(t *testing.T) {
 		mu.Lock()
 		snaps = append(snaps, m)
 		mu.Unlock()
-	})
+	}, nil)
 	start := time.Now()
 	for time.Since(start) < 220*time.Millisecond {
 		s.appendText(PartText, "x")

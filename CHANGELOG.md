@@ -57,6 +57,13 @@ notes. See `docs/development/updates.md`.
   `propose_skill` for your approval. Built-in skills are for bots only and are never synced to coding agents.
 
 ### Changed
+- Chat streaming no longer re-sends the whole reply every 50 ms: streamed text travels as small
+  `chat.message.delta` events, with a full snapshot at tool boundaries, at least every 2 s and at the end,
+  and the daemon builds the text in linear time. A 100 KB reply now publishes about 1 MB instead of 31 MB.
+- Long conversations load only the text sent to the model, and the older backlog is summarised a page at a
+  time. A failed summary is retried with a growing backoff instead of on every message.
+- Sending, regenerating, clearing and delegating no longer hold the chat manager's global lock during
+  database work.
 - MCP gateway and bot tools no longer rebuild the tool index, re-query permissions or re-derive
   schemas on every call: the index is cached until a server is added, edited, enabled, disabled,
   removed, changes status or changes its tools. `gateway.tools` carries an ETag so the gateway
@@ -154,6 +161,9 @@ notes. See `docs/development/updates.md`.
 - Terminal: faster output decoding, and changing the font size no longer recreates the terminal.
 
 ### Fixed
+- A model stream that goes silent for 90 seconds is cancelled with a clear error instead of hanging.
+- Rate-limit (429) and server (5xx) answers are retried with jittered backoff before the reply starts,
+  honouring `Retry-After`; a reply that already began is never replayed.
 - Terminals: a program that floods its terminal (`cat` of a huge file, a runaway build log) no longer gets
   the desktop's daemon connection closed. Output is coalesced (about 12 ms, 64 KiB per event) and capped
   per session; when the window cannot keep up the oldest undelivered output is skipped and the terminal

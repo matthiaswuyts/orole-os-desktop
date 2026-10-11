@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { Chat, events, type Message, type SendRequest } from "@/mygo";
+import { Chat, events, type Message, type MessageDelta, type SendRequest } from "@/mygo";
 import { inDesktop } from "@/lib/backend";
 import { onFocusRefresh } from "@/lib/focus";
 import { useChatDrafts } from "@/stores/chatDrafts";
@@ -70,6 +70,19 @@ export function upsert(list: readonly Message[], message: Message): Message[] {
   }
   const last = list[list.length - 1];
   return !last || bySeq(last, message) <= 0 ? [...list, message] : [...list, message].sort(bySeq);
+}
+
+/**
+ * Appends a streamed delta to its message part. Returns null (message unchanged) unless the message and
+ * part exist, the part type matches and the part's text is exactly `from` UTF-16 units long: a delta
+ * that does not line up means this window missed an event, and the next full snapshot repairs it.
+ */
+export function applyDelta(message: Message, delta: MessageDelta): Message | null {
+  const part = message.parts[delta.part];
+  if (!part || part.type !== delta.type || (part.text ?? "").length !== delta.from) return null;
+  const parts = message.parts.slice();
+  parts[delta.part] = { ...part, text: (part.text ?? "") + delta.text };
+  return { ...message, parts };
 }
 
 let subscribers = 0;
@@ -194,6 +207,18 @@ export const useChatMessages = create<State>((set, get) => ({
           return { byBot: { ...state.byBot, [message.botId]: { ...current, ...(isNew ? trim(current, messages) : { messages }) } } };
         });
       });
+      // Streamed text arrives as deltas between full snapshots; one that does not line up is dropped and the next snapshot repairs it.
+      const offDelta = events.chatMessageDelta.on((delta) => {
+        if (delta.botId.startsWith(DRAFT_PREFIX)) return;
+        const current = get().byBot[delta.botId];
+        const at = current ? current.messages.findLastIndex((m) => m.id === delta.messageId) : -1;
+        const next = current && at >= 0 ? applyDelta(current.messages[at]!, delta) : null;
+        if (!current || !next) return;
+        live.get(delta.botId)?.set(next.id, next);
+        const messages = current.messages.slice();
+        messages[at] = next;
+        set((state) => ({ byBot: { ...state.byBot, [delta.botId]: { ...current, messages } } }));
+      });
       const offRun = events.chatRun.on(({ botId, running, paused }) => {
         set((state) => ({ runs: { ...state.runs, [botId]: running }, paused: { ...state.paused, [botId]: paused === true } }));
       });
@@ -211,7 +236,7 @@ export const useChatMessages = create<State>((set, get) => ({
         if (state.link === "connected" && previous.link !== "connected") refresh();
       });
       const offFocus = onFocusRefresh(refresh);
-      stop = () => { offMessage(); offRun(); offBot(); offDaemon(); offFocus(); };
+      stop = () => { offMessage(); offDelta(); offRun(); offBot(); offDaemon(); offFocus(); };
     }
     let stopped = false;
     return () => {

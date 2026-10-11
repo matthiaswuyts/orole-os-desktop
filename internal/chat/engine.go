@@ -124,7 +124,7 @@ func (m *Manager) runTurn(ctx context.Context, botID string, t turn) {
 		defer cancel()
 		return m.store.updateMessage(pc, msg)
 	}
-	s := newSink(asst, persist, m.publishMessage)
+	s := newSink(asst, persist, m.publishMessage, m.publishDelta)
 	m.emit("chat.run", RunState{BotID: botID, Running: true, MessageID: asst.ID})
 	s.checkpoint()
 

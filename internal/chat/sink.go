@@ -2,33 +2,59 @@ package chat
 
 import (
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/rayorole/orole-os-desktop/internal/llm"
 )
 
-const publishInterval = 50 * time.Millisecond
+const (
+	publishInterval = 50 * time.Millisecond
+	// resyncInterval bounds how long a subscriber that missed a delta (it opened the chat mid-reply,
+	// or the event bus dropped one) can show stale text: a full snapshot goes out at least this often.
+	resyncInterval = 2 * time.Second
+)
 
-// sink builds the assistant message incrementally, persists it at checkpoints and publishes
-// snapshots coalesced to at most one per publishInterval. The final snapshot is always published.
+// sink builds the assistant message incrementally, persists it at checkpoints and publishes it
+// coalesced to at most one event per publishInterval. The final snapshot is always published.
+//
+// Streamed text is published as MessageDelta events that carry only the appended text; everything
+// else (new parts, tool rows, citations, usage, checkpoints, the final state) and a periodic resync
+// are full snapshots. Without a delta publisher every event is a full snapshot.
 type sink struct {
-	mu      sync.Mutex
-	msg     Message
-	persist func(Message) error // nil: not stored (drafts, delegated runs)
-	publish func(Message)       // nil: silent; must not call back into the sink
+	mu           sync.Mutex
+	msg          Message
+	persist      func(Message) error // nil: not stored (drafts, delegated runs)
+	publish      func(Message)       // nil: silent; must not call back into the sink
+	publishDelta func(MessageDelta)  // nil: stream text as full snapshots
+	now          func() time.Time    // test seam; time.Now
 
-	lastPub time.Time
-	timer   *time.Timer
-	done    bool
-	gen     uint64 // bumped whenever the pending timer is cancelled or fires, so stale callbacks do nothing
+	lastPub  time.Time
+	lastFull time.Time
+	timer    *time.Timer
+	done     bool
+	gen      uint64 // bumped whenever the pending timer is cancelled or fires, so stale callbacks do nothing
+
+	// buf accumulates the text of the trailing text/reasoning part (Parts[bufPart]) so appending a
+	// token is O(token), not O(reply). Parts[bufPart].Text always aliases buf's current contents.
+	buf     strings.Builder
+	bufPart int
+	bufU16  int // length of buf in UTF-16 units, the unit a JavaScript string reports
+
+	// dirty: something other than appended text changed since the last full snapshot, so the next
+	// publish is a full one. pend is the text appended to Parts[bufPart] since the last publish and
+	// pendFrom its starting offset in UTF-16 units.
+	dirty    bool
+	pend     strings.Builder
+	pendFrom int
 }
 
-func newSink(msg Message, persist func(Message) error, publish func(Message)) *sink {
+func newSink(msg Message, persist func(Message) error, publish func(Message), publishDelta func(MessageDelta)) *sink {
 	if msg.Parts == nil {
 		msg.Parts = []MsgPart{}
 	}
-	return &sink{msg: msg, persist: persist, publish: publish}
+	return &sink{msg: msg, persist: persist, publish: publish, publishDelta: publishDelta, now: time.Now, bufPart: -1, dirty: true}
 }
 
 // snapshotLocked deep-copies the message (parts and usage are mutated in place by the sink).
@@ -48,13 +74,32 @@ func (s *sink) snapshot() Message {
 	return s.snapshotLocked()
 }
 
+// publishLocked sends a full snapshot.
 func (s *sink) publishLocked() {
 	if s.publish == nil {
 		return
 	}
 	s.stopTimerLocked() // a snapshot just went out: any pending scheduled one is redundant
-	s.lastPub = time.Now()
+	s.lastPub = s.now()
+	s.lastFull = s.lastPub
+	s.dirty = false
+	s.pend.Reset()
 	s.publish(s.snapshotLocked())
+}
+
+// flushLocked publishes what changed since the last event: the appended text when that is all there
+// is, else a full snapshot.
+func (s *sink) flushLocked() {
+	now := s.now()
+	if s.publishDelta == nil || s.dirty || s.pend.Len() == 0 || now.Sub(s.lastFull) >= resyncInterval {
+		s.publishLocked()
+		return
+	}
+	s.stopTimerLocked()
+	s.lastPub = now
+	d := MessageDelta{BotID: s.msg.BotID, MessageID: s.msg.ID, Part: s.bufPart, Type: s.msg.Parts[s.bufPart].Type, From: s.pendFrom, Text: s.pend.String()}
+	s.pend.Reset()
+	s.publishDelta(d)
 }
 
 // touchLocked publishes now when the last publish is old enough, else schedules one.
@@ -62,9 +107,9 @@ func (s *sink) touchLocked() {
 	if s.publish == nil || s.done {
 		return
 	}
-	since := time.Since(s.lastPub)
+	since := s.now().Sub(s.lastPub)
 	if since >= publishInterval {
-		s.publishLocked()
+		s.flushLocked()
 		return
 	}
 	if s.timer == nil {
@@ -75,9 +120,16 @@ func (s *sink) touchLocked() {
 			if s.gen != gen || s.done { // already stopped or superseded by a direct publish
 				return
 			}
-			s.publishLocked()
+			s.flushLocked()
 		})
 	}
+}
+
+// changedLocked records a change that a delta cannot express and schedules a full snapshot.
+func (s *sink) changedLocked() {
+	s.dirty = true
+	s.pend.Reset()
+	s.touchLocked()
 }
 
 func (s *sink) stopTimerLocked() {
@@ -95,12 +147,46 @@ func (s *sink) appendText(kind, text string) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if n := len(s.msg.Parts); n > 0 && s.msg.Parts[n-1].Type == kind {
-		s.msg.Parts[n-1].Text += text
-	} else {
+	n := len(s.msg.Parts)
+	if n == 0 || s.msg.Parts[n-1].Type != kind {
 		s.msg.Parts = append(s.msg.Parts, MsgPart{Type: kind, Text: text})
+		s.buf.Reset()
+		s.buf.WriteString(text)
+		s.bufPart, s.bufU16 = n, utf16Len(text)
+		s.changedLocked()
+		return
+	}
+	last := &s.msg.Parts[n-1]
+	if s.bufPart != n-1 || s.buf.Len() != len(last.Text) {
+		// The part was not built by the buffer (it pre-existed, or was replaced): continue from its text.
+		s.buf.Reset()
+		s.buf.WriteString(last.Text)
+		s.bufPart, s.bufU16 = n-1, utf16Len(last.Text)
+		s.dirty = true
+		s.pend.Reset()
+	}
+	if s.pend.Len() == 0 {
+		s.pendFrom = s.bufU16
+	}
+	s.buf.WriteString(text)
+	s.bufU16 += utf16Len(text)
+	last.Text = s.buf.String()
+	if !s.dirty {
+		s.pend.WriteString(text)
 	}
 	s.touchLocked()
+}
+
+// utf16Len is the length JavaScript reports for s.
+func utf16Len(s string) int {
+	n := 0
+	for _, r := range s {
+		n++
+		if r >= 0x10000 {
+			n++
+		}
+	}
+	return n
 }
 
 // addPart appends a UI part.
@@ -108,7 +194,7 @@ func (s *sink) addPart(p MsgPart) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.msg.Parts = append(s.msg.Parts, p)
-	s.touchLocked()
+	s.changedLocked()
 }
 
 // addCitation appends a citation unless the URL is already cited on this message.
@@ -121,7 +207,7 @@ func (s *sink) addCitation(c llm.Citation) {
 		}
 	}
 	s.msg.Parts = append(s.msg.Parts, MsgPart{Type: PartCitation, URL: c.URL, Title: c.Title, Snippet: c.Snippet})
-	s.touchLocked()
+	s.changedLocked()
 }
 
 // upsertTool inserts a part, or replaces the part with the same Type and ID (parts without an ID
@@ -134,14 +220,14 @@ func (s *sink) upsertTool(p MsgPart) {
 	} else {
 		s.msg.Parts = append(s.msg.Parts, p)
 	}
-	s.touchLocked()
+	s.changedLocked()
 }
 
 func (s *sink) setModel(model string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.msg.Model = model
-	s.touchLocked()
+	s.changedLocked()
 }
 
 // addUsage accumulates provider-reported usage across the steps of a run.
@@ -160,6 +246,8 @@ func (s *sink) addUsage(u llm.Usage) {
 		}
 		s.msg.Usage.CostUSD = &c
 	}
+	s.dirty = true
+	s.pend.Reset()
 }
 
 func addInt(acc, v *int64) *int64 {
@@ -173,7 +261,7 @@ func addInt(acc, v *int64) *int64 {
 	return &n
 }
 
-// checkpoint persists and publishes immediately (tool boundaries).
+// checkpoint persists and publishes a full snapshot immediately (tool boundaries).
 func (s *sink) checkpoint() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
