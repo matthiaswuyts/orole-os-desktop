@@ -31,7 +31,14 @@ const dot: Record<string, string> = {
  * Everything shown is real daemon data; with no projects it offers "Add a project".
  */
 export function SidebarProjects() {
-  const { projects, loaded, error, available, expanded, toggle, setNewProjectOpen, startSync } = useProjects();
+  const projects = useProjects((s) => s.projects);
+  const loaded = useProjects((s) => s.loaded);
+  const error = useProjects((s) => s.error);
+  const available = useProjects((s) => s.available);
+  const expanded = useProjects((s) => s.expanded);
+  const toggle = useProjects((s) => s.toggle);
+  const setNewProjectOpen = useProjects((s) => s.setNewProjectOpen);
+  const startSync = useProjects((s) => s.startSync);
   const sessions = useAgents((s) => s.sessions);
   const tasks = useMemo(() => groupTasksByProject(Object.values(sessions), projects), [sessions, projects]);
 

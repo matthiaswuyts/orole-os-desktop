@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { create } from "zustand";
 import { LLM, events, type Defaults, type ManifestRecord, type Model, type ProviderManifest, type ProviderStatus } from "@/mygo";
 import { inDesktop } from "@/lib/backend";
+import { onFocusRefresh } from "@/lib/focus";
 import { readSnapshot, writeSnapshot } from "@/lib/snapshotCache";
 import { useDaemon } from "@/stores/daemon";
 
@@ -265,7 +266,7 @@ export const useLLM = create<State>((set, get) => ({
           set({ ready: false, loading: false, error: OFFLINE, manifestsReady: false, manifestsError: OFFLINE });
         }
       });
-      window.addEventListener("focus", refresh);
+      const offFocus = onFocusRefresh(refresh);
       // Paint the last known lists at once; the refresh below replaces them with the daemon's answer.
       if (useDaemon.getState().link !== "offline") {
         const providers = readSnapshot<{ providers: ProviderStatus[]; defaults: Defaults | null }>(PROVIDERS_CACHE);
@@ -274,7 +275,7 @@ export const useLLM = create<State>((set, get) => ({
         if (manifests && !get().manifestsReady) set({ manifests, manifestsReady: true, manifestsError: null });
       }
       refresh();
-      stop = () => { offChanged(); offDaemon(); window.removeEventListener("focus", refresh); };
+      stop = () => { offChanged(); offDaemon(); offFocus(); };
     }
     let stopped = false;
     return () => {

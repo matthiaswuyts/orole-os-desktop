@@ -61,6 +61,12 @@ notes. See `docs/development/updates.md`.
   changes are debounced per session and published as small `agents.delta` updates, events are
   inserted in batches, `agents.list` is paged, diff statistics use `git diff --numstat` coalesced
   per session, headless agent output lines are bounded and history pruning counts per session.
+- Fewer git processes per request: a status or diff now takes 4 to 5 `git` spawns instead of 16, and
+  keeps git's stat cache by reviewing a copy of the real index. Ref-to-ref diffs skip the index.
+- Git calls on a worktree look its directory up in the database instead of listing every worktree
+  with a full status; worktree refreshes only write rows that changed.
+- Directory listings in Git files run one status limited to the listed directory, shared between
+  concurrent listings and reused for one second.
 - `orole-cli` no longer links the daemon, sqlite, sftp/ssh or the MCP SDK: `daemon.Health` and the IPC
   token helpers moved to the leaf package `internal/daemon/api`, and `diagnostics.Collect` takes an
   injected offline schema reader. Offline `doctor` in the CLI reports the DB schema version as
@@ -116,6 +122,11 @@ notes. See `docs/development/updates.md`.
 - Chat: a streaming reply no longer re-renders the whole conversation. The rail's preview of a reply
   updates at most once a second, the open conversation ignores preview and run-flag changes, bots and
   the run state are read once per thread, and composer drafts live in their own store.
+- Window focus now triggers one shared refresh, at most every 30 seconds, instead of every store reloading
+  on every focus. Chat messages refresh only the open conversation, and projects load their worktrees
+  only while a view that shows them is open (cached for a minute), not on every project reload.
+- Daemon health polling no longer notifies the UI when the status is unchanged, and the status bar,
+  sidebar and shell subscribe to the fields they show, so the 5 second poll does not re-render them.
 
 ### Fixed
 - Terminals: a program that floods its terminal (`cat` of a huge file, a runaway build log) no longer gets

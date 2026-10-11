@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -19,6 +20,7 @@ import (
 type reviewRepo struct {
 	dir        string
 	root       string
+	prefix     string // dir's path below root, slash-separated with a trailing slash ("" at root)
 	env        []string
 	submodules []string
 }
@@ -31,40 +33,72 @@ func reviewMetadata(ctx context.Context, dir string, args ...string) ([]byte, er
 	return out, err
 }
 
-func openReviewRepo(ctx context.Context, dir string) (_ *reviewRepo, err error) {
-	paths := make(map[string]string, 4)
-	for _, name := range []string{"objects", "HEAD", "info/exclude", "info/attributes"} {
-		out, err := reviewMetadata(ctx, dir, "rev-parse", "--path-format=absolute", "--git-path", name)
-		if err != nil {
-			return nil, err
+// openReviewRepo builds the disposable repository for dir. withIndex copies the
+// source index (and any split-index base files) so git reuses its stat cache;
+// ref-to-ref diffs pass false because they never read the index. Spawns: one
+// rev-parse, then for-each-ref and config (plus ls-files for gitlinks) in
+// parallel; everything else is plain file writes.
+func openReviewRepo(ctx context.Context, dir string, withIndex bool) (_ *reviewRepo, err error) {
+	// Git prints one value per argument, in order, so the answer is positional.
+	meta, err := reviewMetadata(ctx, dir, "rev-parse", "--path-format=absolute", "--show-toplevel", "--show-prefix", "--show-object-format",
+		"--git-path", "objects", "--git-path", "HEAD", "--git-path", "info/exclude", "--git-path", "info/attributes", "--git-path", "index")
+	if err != nil {
+		var ge *Error
+		if errors.As(err, &ge) && strings.Contains(ge.Stderr, "not a git repository") {
+			return nil, ErrNotRepo
 		}
-		paths[name] = strings.TrimSpace(string(out))
-	}
-	root, err := Toplevel(ctx, dir)
-	if err != nil {
 		return nil, err
 	}
-	format, err := reviewMetadata(ctx, dir, "rev-parse", "--show-object-format")
-	if err != nil {
-		return nil, err
+	lines := strings.Split(strings.TrimRight(string(meta), "\r\n"), "\n")
+	if len(lines) != 8 {
+		return nil, errors.New("git: repository path contains a newline or rev-parse output is malformed")
 	}
-	index, err := reviewMetadata(ctx, root, "ls-files", "--stage", "-z")
-	if err != nil {
-		return nil, err
+	for i := range lines {
+		lines[i] = strings.TrimSuffix(lines[i], "\r")
 	}
-	refs, err := reviewMetadata(ctx, root, "for-each-ref", "--format=%(objectname) %(refname)")
-	if err != nil {
-		return nil, err
+	root, prefix, format := lines[0], lines[1], lines[2]
+	objectsPath, headPath, excludePath, attributesPath, indexPath := lines[3], lines[4], lines[5], lines[6], lines[7]
+	if root == "" {
+		return nil, errors.New("git: cannot review a repository without a work tree")
 	}
-	config, err := reviewMetadata(ctx, root, "config", "--null", "--list")
-	if err != nil {
-		return nil, err
+	switch format {
+	case "sha1", "sha256":
+	default:
+		return nil, errors.New("git: unsupported repository object format")
 	}
+
+	var refs, config, index []byte
+	var refsErr, configErr, indexErr error
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		refs, refsErr = reviewMetadata(ctx, root, "for-each-ref", "--format=%(objectname) %(refname)")
+	}()
+	go func() {
+		defer wg.Done()
+		config, configErr = reviewMetadata(ctx, root, "config", "--null", "--list")
+	}()
+	if withIndex {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			// Only used to find gitlinks; the index itself is copied as a file.
+			index, indexErr = reviewMetadata(ctx, root, "ls-files", "--stage", "-z")
+		}()
+	}
+	wg.Wait()
+	for _, e := range []error{refsErr, configErr, indexErr} {
+		if e != nil {
+			return nil, e
+		}
+	}
+
 	tmp, err := os.MkdirTemp("", "orole-review-*")
 	if err != nil {
 		return nil, err
 	}
-	p := &reviewRepo{dir: tmp, root: root}
+	p := &reviewRepo{dir: tmp, root: root, prefix: prefix}
 	defer func() {
 		if err != nil {
 			p.close()
@@ -75,22 +109,21 @@ func openReviewRepo(ctx context.Context, dir string) (_ *reviewRepo, err error) 
 			return nil, err
 		}
 	}
-	gitConfig := "[core]\n\trepositoryformatversion = 0\n\tbare = false\n"
-	switch strings.TrimSpace(string(format)) {
-	case "sha1":
-	case "sha256":
-		gitConfig = "[core]\n\trepositoryformatversion = 1\n\tbare = false\n[extensions]\n\tobjectformat = sha256\n"
-	default:
-		return nil, errors.New("git: unsupported repository object format")
+	var gitConfig strings.Builder
+	if format == "sha256" {
+		gitConfig.WriteString("[core]\n\trepositoryformatversion = 1\n\tbare = false\n[extensions]\n\tobjectformat = sha256\n")
+	} else {
+		gitConfig.WriteString("[core]\n\trepositoryformatversion = 0\n\tbare = false\n")
 	}
-	if err := os.WriteFile(filepath.Join(tmp, "config"), []byte(gitConfig), 0600); err != nil {
+	writeReviewConfig(&gitConfig, config)
+	if err := os.WriteFile(filepath.Join(tmp, "config"), []byte(gitConfig.String()), 0600); err != nil {
 		return nil, err
 	}
 	if err := os.WriteFile(filepath.Join(tmp, "packed-refs"), refs, 0600); err != nil {
 		return nil, err
 	}
-	for _, name := range []string{"HEAD", "info/exclude", "info/attributes"} {
-		data, err := os.ReadFile(paths[name])
+	for name, src := range map[string]string{"HEAD": headPath, "info/exclude": excludePath, "info/attributes": attributesPath} {
+		data, err := os.ReadFile(src)
 		if name != "HEAD" && os.IsNotExist(err) {
 			continue
 		}
@@ -101,39 +134,123 @@ func openReviewRepo(ctx context.Context, dir string) (_ *reviewRepo, err error) 
 			return nil, err
 		}
 	}
-	objects := filepath.ToSlash(paths["objects"])
-	if strings.ContainsAny(objects, "\r\n") {
-		return nil, errors.New("git: repository object path contains a newline")
-	}
+	objects := filepath.ToSlash(objectsPath)
 	if err := os.WriteFile(filepath.Join(tmp, "objects", "info", "alternates"), []byte(objects+"\n"), 0600); err != nil {
 		return nil, err
 	}
-	p.env = []string{
-		"GIT_DIR=" + tmp, "GIT_WORK_TREE=" + root,
-		"GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=" + os.DevNull,
-		"GIT_NO_LAZY_FETCH=1", "GIT_ALLOW_PROTOCOL=",
-	}
-	for _, entry := range bytes.Split(config, []byte{0}) {
-		key, value, ok := strings.Cut(string(entry), "\n")
-		if !ok || !reviewConfigKey(key) {
-			continue
-		}
-		if _, _, err := p.run(ctx, root, nil, "config", "--add", key, value); err != nil {
+	// A copy, never the real file: `git diff` refreshes and rewrites the index it
+	// reads even with GIT_OPTIONAL_LOCKS=0, and DiffWorktree stages into it.
+	indexFile := filepath.Join(tmp, "index")
+	if withIndex {
+		if err := copyReviewIndex(indexPath, tmp); err != nil {
 			return nil, err
 		}
 	}
-	// Plumbing preserves staged ignored files, split indexes, gitlinks and modes.
-	if _, _, err := p.run(ctx, root, bytes.NewReader(index), "update-index", "-z", "--index-info"); err != nil {
-		return nil, err
+	p.env = []string{
+		"GIT_DIR=" + tmp, "GIT_WORK_TREE=" + root, "GIT_INDEX_FILE=" + indexFile,
+		"GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=" + os.DevNull,
+		"GIT_NO_LAZY_FETCH=1", "GIT_ALLOW_PROTOCOL=",
 	}
-	for _, entry := range bytes.Split(index, []byte{0}) {
-		meta, path, ok := strings.Cut(string(entry), "\t")
-		if ok && strings.HasPrefix(meta, "160000 ") && strings.HasSuffix(meta, " 0") {
-			p.submodules = append(p.submodules, path)
+	for rest := index; len(rest) > 0; {
+		var entry []byte
+		if i := bytes.IndexByte(rest, 0); i >= 0 {
+			entry, rest = rest[:i], rest[i+1:]
+		} else {
+			entry, rest = rest, nil
+		}
+		if bytes.HasPrefix(entry, []byte("160000 ")) {
+			if meta, path, ok := strings.Cut(string(entry), "\t"); ok && strings.HasSuffix(meta, " 0") {
+				p.submodules = append(p.submodules, path)
+			}
 		}
 	}
 	return p, nil
 }
+
+// copyReviewIndex copies the index and the shared base files a split index links
+// to into the disposable git dir. A missing index (unborn repository) is empty.
+func copyReviewIndex(indexPath, tmp string) error {
+	dst := filepath.Join(tmp, "index")
+	if err := copyFile(indexPath, dst); err != nil {
+		if !os.IsNotExist(err) {
+			return err
+		}
+	} else if err := copyIndexTimes(indexPath, dst); err != nil {
+		return err
+	}
+	shared, err := filepath.Glob(filepath.Join(filepath.Dir(indexPath), "sharedindex.*"))
+	if err != nil {
+		return err
+	}
+	for _, src := range shared {
+		if err := copyFile(src, filepath.Join(tmp, filepath.Base(src))); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+	}
+	return nil
+}
+
+func copyFile(src, dst string) (err error) {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if cerr := out.Close(); err == nil {
+			err = cerr
+		}
+	}()
+	_, err = io.Copy(out, in)
+	return err
+}
+
+// copyIndexTimes gives the copied index the source's mtime. Git treats an entry
+// whose mtime is not older than the index file's as racily clean and compares
+// content; a fresh copy mtime would silently turn those entries into stat-clean.
+func copyIndexTimes(src, dst string) error {
+	info, err := os.Stat(src)
+	if err != nil {
+		return err
+	}
+	return os.Chtimes(dst, info.ModTime(), info.ModTime())
+}
+
+// writeReviewConfig appends the allow-listed entries of `git config --null --list`
+// output to a git config file. Values are always quoted and escaped, so nothing in
+// a source value can start a new section or key.
+func writeReviewConfig(b *strings.Builder, list []byte) {
+	for _, entry := range bytes.Split(list, []byte{0}) {
+		key, value, ok := strings.Cut(string(entry), "\n")
+		if !ok || !reviewConfigKey(key) {
+			continue
+		}
+		first, last := strings.IndexByte(key, '.'), strings.LastIndexByte(key, '.')
+		if first <= 0 || last == len(key)-1 {
+			continue
+		}
+		section, name := key[:first], key[last+1:]
+		if first == last {
+			b.WriteString("[" + section + "]\n")
+		} else {
+			sub := key[first+1 : last]
+			if strings.ContainsAny(sub, "\n\r") {
+				continue
+			}
+			b.WriteString("[" + section + " \"" + subsectionEscaper.Replace(sub) + "\"]\n")
+		}
+		b.WriteString("\t" + name + " = \"" + configEscaper.Replace(value) + "\"\n")
+	}
+}
+
+// Subsection names only escape backslash and quote; other escapes are not interpreted there.
+var subsectionEscaper = strings.NewReplacer(`\`, `\\`, `"`, `\"`)
+
+var configEscaper = strings.NewReplacer(`\`, `\\`, `"`, `\"`, "\n", `\n`, "\t", `\t`, "\b", `\b`)
 
 func reviewConfigKey(key string) bool {
 	key = strings.ToLower(key)
@@ -156,16 +273,20 @@ func (p *reviewRepo) run(ctx context.Context, dir string, stdin io.Reader, args 
 
 // Ask each initialized submodule through the same isolated boundary instead of
 // letting Git spawn status against a nested repository's executable config.
-func (p *reviewRepo) dirtySubmodules(ctx context.Context, depth int) ([]string, error) {
+// Only submodules under the slash-terminated repository-relative prefix are asked.
+func (p *reviewRepo) dirtySubmodules(ctx context.Context, depth int, under string) ([]string, error) {
 	var dirty []string
 	for _, path := range p.submodules {
+		if !strings.HasPrefix(path, under) {
+			continue
+		}
 		dir := filepath.Join(p.root, filepath.FromSlash(path))
 		if _, err := os.Lstat(filepath.Join(dir, ".git")); os.IsNotExist(err) {
 			continue
 		} else if err != nil {
 			return nil, err
 		}
-		status, err := getStatus(ctx, dir, depth+1)
+		status, _, err := getStatus(ctx, dir, depth+1, false)
 		if err != nil {
 			return nil, err
 		}
@@ -180,7 +301,7 @@ func (p *reviewRepo) addDirtySubmoduleDiff(ctx context.Context, dir string, opti
 	if options.Staged || options.To != "" {
 		return nil
 	}
-	dirty, err := p.dirtySubmodules(ctx, 0)
+	dirty, err := p.dirtySubmodules(ctx, 0, "")
 	if err != nil {
 		return err
 	}
@@ -302,7 +423,7 @@ func reviewDiff(ctx context.Context, dir, base string, extra ...string) (out []b
 	}
 	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
-	p, err := openReviewRepo(ctx, dir)
+	p, err := openReviewRepo(ctx, dir, true)
 	if err != nil {
 		return nil, false, err
 	}

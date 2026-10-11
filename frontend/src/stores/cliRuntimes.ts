@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { create } from "zustand";
 import { CLIRuntimes, type CliruntimeStatus } from "@/mygo";
 import { inDesktop } from "@/lib/backend";
+import { onFocusRefresh } from "@/lib/focus";
 import { readSnapshot, writeSnapshot } from "@/lib/snapshotCache";
 
 const CACHE_KEY = "cli-runtimes";
@@ -79,7 +80,6 @@ export function useCLIRuntimesSync() {
   useEffect(() => {
     void useCLIRuntimes.getState().load();
     const refresh = () => void useCLIRuntimes.getState().load();
-    window.addEventListener("focus", refresh);
-    return () => window.removeEventListener("focus", refresh);
+    return onFocusRefresh(refresh);
   }, []);
 }
