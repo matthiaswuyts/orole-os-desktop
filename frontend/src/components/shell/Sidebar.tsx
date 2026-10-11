@@ -24,8 +24,15 @@ const MODES: { id: Mode; label: string; icon: typeof Code }[] = [
 
 /** Workspace controls, navigation, projects, and settings. */
 export function Sidebar() {
-  const { view, mode, setView, setMode, setPalette, toggleSidebar } = useUI();
-  const { list, activeId, select } = useWorkspaces();
+  const view = useUI((s) => s.view);
+  const mode = useUI((s) => s.mode);
+  const setView = useUI((s) => s.setView);
+  const setMode = useUI((s) => s.setMode);
+  const setPalette = useUI((s) => s.setPalette);
+  const toggleSidebar = useUI((s) => s.toggleSidebar);
+  const list = useWorkspaces((s) => s.list);
+  const activeId = useWorkspaces((s) => s.activeId);
+  const select = useWorkspaces((s) => s.select);
   const agentCounts = useAgentCounts();
   const item = (n: NavItem) => (
     <button key={n.id} type="button" aria-current={view === n.id ? "page" : undefined} onClick={() => setView(n.id)}

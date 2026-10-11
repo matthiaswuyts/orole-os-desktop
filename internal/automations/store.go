@@ -40,6 +40,7 @@ func (e *Engine) Save(ctx context.Context, d Definition) (SaveResult, error) {
 	now := e.clock.Now().UnixMilli()
 	_, err = e.db.ExecContext(ctx, `INSERT INTO automations(id,name,enabled,schema_version,trigger_type,definition,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,enabled=excluded.enabled,schema_version=excluded.schema_version,trigger_type=excluded.trigger_type,definition=excluded.definition,updated_at=excluded.updated_at,last_fire_at=CASE WHEN definition=excluded.definition THEN last_fire_at ELSE 0 END`, d.ID, d.Name, d.Enabled, d.SchemaVersion, d.Trigger.Type, string(b), now, now)
 	if err == nil {
+		e.invalidateDefinitions()
 		e.wake()
 	}
 	return SaveResult{Definition: d, Issues: issues, Saved: err == nil}, err
@@ -64,18 +65,6 @@ func (e *Engine) List(ctx context.Context) ([]Summary, error) {
 	}
 	return out, rows.Err()
 }
-func (e *Engine) definition(ctx context.Context, id string) (Definition, error) {
-	var b string
-	err := e.db.QueryRowContext(ctx, `SELECT definition FROM automations WHERE id=?`, id).Scan(&b)
-	if errors.Is(err, sql.ErrNoRows) {
-		return Definition{}, ErrNotFound
-	}
-	var d Definition
-	if err == nil {
-		err = json.Unmarshal([]byte(b), &d)
-	}
-	return d, err
-}
 func (e *Engine) Delete(ctx context.Context, id string) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -91,6 +80,7 @@ func (e *Engine) Delete(ctx context.Context, id string) error {
 		if n, _ := r.RowsAffected(); n == 0 {
 			return ErrNotFound
 		}
+		e.invalidateDefinitions()
 		e.wake()
 	}
 	return err
@@ -143,23 +133,30 @@ func (e *Engine) Detail(ctx context.Context, id string) (Detail, error) {
 	if err != nil {
 		return Detail{}, err
 	}
-	rows, err := e.db.QueryContext(ctx, `SELECT run_id,step_id,seq,step_type,status,attempt,idempotency_key,input,output,error,started_at,finished_at FROM automation_steps_journal WHERE run_id=? ORDER BY seq`, id)
+	steps, err := e.loadJournals(ctx, id)
 	if err != nil {
 		return Detail{}, err
 	}
+	return Detail{Run: r, Steps: steps}, nil
+}
+func (e *Engine) loadJournals(ctx context.Context, id string) ([]Journal, error) {
+	rows, err := e.db.QueryContext(ctx, `SELECT run_id,step_id,seq,step_type,status,attempt,idempotency_key,input,output,error,started_at,finished_at FROM automation_steps_journal WHERE run_id=? ORDER BY seq`, id)
+	if err != nil {
+		return nil, err
+	}
 	defer rows.Close()
-	d := Detail{Run: r, Steps: []Journal{}}
+	out := []Journal{}
 	for rows.Next() {
 		var j Journal
-		var in, out string
-		if err := rows.Scan(&j.RunID, &j.StepID, &j.Seq, &j.Type, &j.Status, &j.Attempt, &j.Key, &in, &out, &j.Error, &j.StartedAt, &j.FinishedAt); err != nil {
-			return Detail{}, err
+		var in, output string
+		if err := rows.Scan(&j.RunID, &j.StepID, &j.Seq, &j.Type, &j.Status, &j.Attempt, &j.Key, &in, &output, &j.Error, &j.StartedAt, &j.FinishedAt); err != nil {
+			return nil, err
 		}
 		j.Input = json.RawMessage(in)
-		j.Output = json.RawMessage(out)
-		d.Steps = append(d.Steps, j)
+		j.Output = json.RawMessage(output)
+		out = append(out, j)
 	}
-	return d, rows.Err()
+	return out, rows.Err()
 }
 func (e *Engine) journal(j Journal) error {
 	if len(j.Input) == 0 {
@@ -178,22 +175,31 @@ func (e *Engine) journal(j Journal) error {
 	return err
 }
 func (e *Engine) status(id, status, message string) error {
+	now := e.clock.Now().UnixMilli()
 	finish := int64(0)
 	if terminal(status) {
-		finish = e.clock.Now().UnixMilli()
+		finish = now
 	}
-	res, err := e.db.Exec(`UPDATE automation_runs SET status=?,error=?,started_at=CASE WHEN started_at=0 AND ?='running' THEN ? ELSE started_at END,finished_at=? WHERE id=? AND status NOT IN ('succeeded','failed','canceled','uncertain')`, status, e.redact.Text(message), status, e.clock.Now().UnixMilli(), finish, id)
-	if err == nil {
-		if count, _ := res.RowsAffected(); count == 0 {
-			return nil
-		}
-		e.changed(id)
-		if terminal(status) {
-			e.audit("automation.run.finish", id, status, message)
-			e.finished(id)
-		}
+	message = e.redact.Text(message)
+	res, err := e.db.Exec(`UPDATE automation_runs SET status=?,error=?,started_at=CASE WHEN started_at=0 AND ?='running' THEN ? ELSE started_at END,finished_at=? WHERE id=? AND status NOT IN ('succeeded','failed','canceled','uncertain')`, status, message, status, now, finish, id)
+	if err != nil {
+		return err
 	}
-	return err
+	if count, _ := res.RowsAffected(); count == 0 {
+		return nil
+	}
+	r, err := e.applyStatus(id, status, message, now, finish)
+	if err != nil {
+		return nil // the row was committed; only the summary event is lost
+	}
+	if e.changedFn != nil {
+		e.changedFn(r)
+	}
+	if terminal(status) {
+		e.audit("automation.run.finish", id, status, message)
+		e.finished(r)
+	}
+	return nil
 }
 func terminal(s string) bool {
 	return s == "succeeded" || s == "failed" || s == "canceled" || s == "uncertain"
@@ -253,6 +259,7 @@ func (e *Engine) Approve(ctx context.Context, runID, stepID string, approved boo
 		return err
 	}
 	e.audit("automation.approval", runID, s, note)
+	e.markQueued(runID)
 	e.queue = append(e.queue, runID)
 	e.pumpLocked()
 	return nil
@@ -264,7 +271,7 @@ func (e *Engine) expireApprovals() {
 	}
 	now := e.clock.Now().UnixMilli()
 	for _, a := range list {
-		r, err := e.loadRun(context.Background(), a.RunID)
+		r, err := e.runState(context.Background(), a.RunID)
 		if err == nil && r.StartedAt > 0 && now-r.StartedAt >= int64(r.Definition.TimeoutSec)*1000 {
 			_ = e.Approve(context.Background(), a.RunID, a.StepID, false, "Run deadline exceeded")
 			continue

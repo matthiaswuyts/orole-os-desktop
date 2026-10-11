@@ -49,6 +49,9 @@ type LaunchSpec struct {
 	Mode           Mode
 	Command        string // custom CLI command line
 	PermissionMode string
+	// AllowYolo lets a live structured conversation later switch to YOLO. Claude Code only
+	// accepts that switch when launched with it; the daemon sets it only while the YOLO setting is on.
+	AllowYolo bool
 	// Resume is the CLI session id to continue; NewAgentSessionID names a fresh one when the
 	// CLI lets us choose (Claude Code). Both empty = the CLI picks.
 	Resume            string
@@ -351,11 +354,17 @@ func (p *pipeProc) emit(e Event) {
 	p.events <- e
 }
 
+// pipeMaxLine bounds one protocol line from a headless agent (tool results and image payloads
+// can be large; a runaway child must not be able to grow the daemon without limit).
+const pipeMaxLine = 16 << 20
+
 func (p *pipeProc) run(stdout io.Reader, decode func(p *pipeProc, line []byte) []Event) {
 	br := bufio.NewReaderSize(stdout, 256<<10)
 	for {
-		line, err := br.ReadBytes('\n')
-		if t := bytes.TrimSpace(line); len(t) > 0 {
+		line, dropped, err := readBoundedLine(br, pipeMaxLine)
+		if dropped {
+			p.emit(Event{Kind: EvError, Text: "The agent sent a protocol line over 16 MiB; it was dropped"})
+		} else if t := bytes.TrimSpace(line); len(t) > 0 {
 			for _, e := range decode(p, t) {
 				p.emit(e)
 			}
@@ -487,31 +496,17 @@ func startPty(h *Host, sessionID, dir, cmdline, title string) (*ptyProc, error) 
 	return p, nil
 }
 
-// watch turns terminal exit into the final event. The terminals package reports exit only
-// through its sink, which the daemon owns, so poll the (cheap, metadata-only) list.
+// watch turns terminal exit into the final event: it blocks on the terminals manager's exit
+// notification instead of polling the session list.
 func (p *ptyProc) watch() {
-	t := time.NewTicker(250 * time.Millisecond)
-	defer t.Stop()
-	for range t.C {
-		found := false
-		for _, in := range p.term.List() {
-			if in.ID != p.id {
-				continue
-			}
-			found = true
-			if in.State == terminals.Exited {
-				code := 0
-				if in.ExitCode != nil {
-					code = *in.ExitCode
-				}
-				p.finish(code)
-				return
-			}
-		}
-		if !found { // terminal closed by the user
-			p.finish(-1)
-			return
-		}
+	info, err := p.term.Wait(context.Background(), p.id)
+	switch {
+	case err != nil: // closed by the user, or already forgotten
+		p.finish(-1)
+	case info.ExitCode != nil:
+		p.finish(*info.ExitCode)
+	default:
+		p.finish(0)
 	}
 }
 

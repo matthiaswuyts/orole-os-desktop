@@ -23,7 +23,7 @@ const (
 	maxDescriptionLen  = 500
 	maxReasoningLen    = 32
 	maxModelIDLen      = 200
-	maxMCPTools        = 100
+	maxMCPServers      = 50
 	maxSkills          = 50
 	maxToolParamsBytes = 4 << 10
 	maxStepsLimit      = 25
@@ -63,8 +63,8 @@ func normalizeConfig(c BotConfig) BotConfig {
 	if c.Tools == nil {
 		c.Tools = []BotTool{}
 	}
-	if c.MCPTools == nil {
-		c.MCPTools = []string{}
+	if c.MCPServers == nil {
+		c.MCPServers = []string{}
 	}
 	if c.Skills == nil {
 		c.Skills = []string{}
@@ -263,20 +263,19 @@ func (s *store) validateConfig(ctx context.Context, selfID string, c BotConfig) 
 	}
 	c.Tools = tools
 
-	mcp := make([]string, 0, len(c.MCPTools))
-	for _, id := range c.MCPTools {
-		server, tool, ok := strings.Cut(id, "/")
-		if !ok || server == "" || tool == "" || len(id) > 200 || strings.ContainsFunc(id, func(r rune) bool { return r < 0x20 }) {
-			return c, invalidf("MCP tool %q must look like <server>/<tool>.", id)
+	servers := make([]string, 0, len(c.MCPServers))
+	for _, id := range c.MCPServers {
+		if id == "" || len(id) > 200 || strings.ContainsFunc(id, func(r rune) bool { return r < 0x20 || r == '/' }) {
+			return c, invalidf("MCP server %q is not a valid server id.", id)
 		}
-		if !slices.Contains(mcp, id) {
-			mcp = append(mcp, id)
+		if !slices.Contains(servers, id) {
+			servers = append(servers, id)
 		}
 	}
-	if len(mcp) > maxMCPTools {
-		return c, invalidf("At most %d MCP tools can be enabled.", maxMCPTools)
+	if len(servers) > maxMCPServers {
+		return c, invalidf("At most %d integrations can be enabled.", maxMCPServers)
 	}
-	c.MCPTools = mcp
+	c.MCPServers = servers
 
 	skills := make([]string, 0, len(c.Skills))
 	for _, n := range c.Skills {
@@ -333,10 +332,6 @@ func (s *store) saveBot(ctx context.Context, in BotInput) (Bot, error) {
 	if err != nil {
 		return Bot{}, err
 	}
-	cfg, err := json.Marshal(in.Config)
-	if err != nil {
-		return Bot{}, err
-	}
 	now := s.now().UnixMilli()
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -352,11 +347,24 @@ func (s *store) saveBot(ctx context.Context, in BotInput) (Bot, error) {
 			return Bot{}, invalidf("You can have at most %d bots. Archive one to add another.", MaxBots)
 		}
 		in.ID = newID()
+		in.Config.Pinned = false
+		cfg, err := json.Marshal(in.Config)
+		if err != nil {
+			return Bot{}, err
+		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO bots(`+botCols+`) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
 			in.ID, in.Name, in.Avatar, in.Color, in.Description, in.Instructions, in.Provider, in.Model, in.Reasoning, string(cfg), now, now); err != nil {
 			return Bot{}, err
 		}
 	} else {
+		// Pinning is not part of a save: keep what is stored.
+		var pinned sql.NullInt64
+		_ = tx.QueryRowContext(ctx, `SELECT json_extract(config,'$.pinned') FROM bots WHERE id=? AND archived_at IS NULL`, in.ID).Scan(&pinned)
+		in.Config.Pinned = pinned.Valid && pinned.Int64 == 1
+		cfg, err := json.Marshal(in.Config)
+		if err != nil {
+			return Bot{}, err
+		}
 		res, err := tx.ExecContext(ctx, `UPDATE bots SET name=?, avatar=?, color=?, description=?, instructions=?, provider=?, model=?, reasoning=?, config=?, updated_at=?
 			WHERE id=? AND archived_at IS NULL`,
 			in.Name, in.Avatar, in.Color, in.Description, in.Instructions, in.Provider, in.Model, in.Reasoning, string(cfg), now, in.ID)
@@ -584,24 +592,6 @@ func (s *store) pageMessages(ctx context.Context, req MessagesRequest) (MessageP
 	return page, nil
 }
 
-// between returns messages with afterSeq < seq < beforeSeq in ascending order.
-func (s *store) between(ctx context.Context, botID string, afterSeq, beforeSeq int64) ([]Message, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT `+msgCols+` FROM messages WHERE bot_id=? AND seq>? AND seq<? ORDER BY seq`, botID, afterSeq, beforeSeq)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []Message
-	for rows.Next() {
-		m, err := scanMessage(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, m)
-	}
-	return out, rows.Err()
-}
-
 // clearConversation deletes messages, the summary and the bot's sent attachments (except files kept
 // as knowledge). It returns the blob hashes that may have become unreferenced.
 func (s *store) clearConversation(ctx context.Context, botID string) ([]string, error) {
@@ -653,4 +643,20 @@ func (s *store) markInterrupted(ctx context.Context) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE messages SET status=?, error=? WHERE status=?`,
 		StatusCanceled, "Not sent: Orole was closed before this message was processed.", StatusPending)
 	return err
+}
+
+// setPinned pins or unpins a bot without touching the rest of its configuration.
+func (s *store) setPinned(ctx context.Context, id string, pinned bool) error {
+	expr := "json_remove(config, '$.pinned')"
+	if pinned {
+		expr = "json_set(config, '$.pinned', json('true'))"
+	}
+	res, err := s.db.ExecContext(ctx, `UPDATE bots SET config=`+expr+`, updated_at=? WHERE id=? AND archived_at IS NULL`, s.now().UnixMilli(), id)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return notFoundf("Bot not found.")
+	}
+	return nil
 }

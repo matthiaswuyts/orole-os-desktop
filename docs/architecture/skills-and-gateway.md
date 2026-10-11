@@ -33,6 +33,20 @@ IPC (all audited, all publish `skills.changed {action,name}`): `skills.list` (no
 `skills.save`, `skills.delete`, `skills.setEnabled`, `skills.discover`, `skills.import`, `skills.syncState`,
 `skills.sync`.
 
+### Built-in skills (bots only)
+
+Skills embedded in the daemon (`internal/skills/builtin/<name>/`, `go:embed`) are installed by `Store.EnsureBuiltin` at
+daemon start with source `builtin`. They are written for Chat bots, which have no shell or file access, so they are
+**never synced to harness directories, never listed in the harness prompt index, and never served by the gateway**
+(`Store.EnabledForHarnesses`, `Hub.SkillList/SkillGet`). Every bot can read them with `orole_get_skill` without a grant in
+`BotConfig.Skills`; the Skills view lists them as "Built in (bots)" and the enable switch turns one off for all bots.
+
+`.registry.json` keeps `builtin: {name: content hash}` for every built-in skill ever installed. A newer shipped version
+replaces the installed copy only when that copy still matches the recorded hash; a user edit is kept, a deleted skill
+stays deleted, and a same-named skill from another source is never touched. Currently shipped: `skill-creator`, the
+authoring guide that teaches a bot to draft a skill with the user and offer it with `propose_skill` (the in-chat Add card
+and its rules are in [chat](chat.md#skill-cards-propose_skill)).
+
 ## Harness directories and sync
 
 | Harness | Skills dir written | MCP entry | Notes |
@@ -79,7 +93,14 @@ authenticated pipe client as the CLI and hooks (`OROLE_HOME` selects the data di
 - The tool list follows the daemon: `mcp.status`, `mcp.removed` and `skills.changed` events (plus a slow safety
   poll) trigger a re-list; changed definitions send `notifications/tools/list_changed`. Until the daemon is
   reachable only the two skill tools exist.
-- IPC: `gateway.tools`, `gateway.call`, `gateway.skills`, `gateway.skill`.
+- The daemon caches the tool index and routing table keyed on `Manager.Generation()`, which moves exactly when a
+  server is added, edited, enabled, disabled, removed, changes status or changes its catalog content. Per-tool
+  permissions are not part of the index: they decorate catalogs only, are cached per server (dropped on every write
+  and on removal), and the policy engine reads them straight from SQLite on each call, so a cached index never
+  widens access. `mcp.status` is published only when a server's state differs from the last one published.
+- IPC: `gateway.tools` (request `{sessionId, etag?}`, answer `{etag, tools}` or `{etag, notModified: true}` when the
+  caller's etag is current, so the 30 s safety poll costs no tool bodies), `gateway.call`, `gateway.skills`,
+  `gateway.skill`.
 
 ### Security model
 

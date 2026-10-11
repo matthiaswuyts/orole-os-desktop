@@ -66,19 +66,48 @@ func (c CodexApp) terminal() terminalCLI {
 	}}
 }
 
-// codexPolicy maps an Orole permission mode onto Codex's approval policy and sandbox:
+// codexPolicy is how an Orole permission mode runs in Codex app-server: the approval policy, the
+// sandbox, and who reviews approval requests.
+type codexPolicy struct {
+	approval string // untrusted | on-request | never
+	sandbox  string // read-only | workspace-write | danger-full-access
+	reviewer string // user | auto_review
+}
+
+// codexPolicyFor maps an Orole permission mode onto Codex:
 //
-//	default     ask before anything not known to be safe (untrusted), workspace-write sandbox
-//	acceptEdits run and edit inside the workspace sandbox, ask to escalate (on-request)
-//	plan        read-only sandbox, ask to escalate
-func codexPolicy(mode string) (approval, sandbox string) {
+//	manual  ask before anything not known to be safe (untrusted), workspace-write sandbox
+//	auto    on-request in the workspace sandbox with Codex's auto-review subagent deciding which
+//	        escalations are safe; the rest still reach the user
+//	yolo    never ask, no sandbox
+//	plan    read-only sandbox, ask to escalate
+func codexPolicyFor(mode string) (codexPolicy, error) {
 	switch mode {
-	case "acceptEdits":
-		return "on-request", "workspace-write"
-	case "plan":
-		return "on-request", "read-only"
+	case "", PermManual:
+		return codexPolicy{"untrusted", "workspace-write", "user"}, nil
+	case PermAuto:
+		return codexPolicy{"on-request", "workspace-write", "auto_review"}, nil
+	case PermYolo:
+		return codexPolicy{"never", "danger-full-access", "user"}, nil
+	case PermPlan:
+		return codexPolicy{"on-request", "read-only", "user"}, nil
 	}
-	return "untrusted", "workspace-write"
+	return codexPolicy{}, fmt.Errorf("unsupported permission mode %q", mode)
+}
+
+// turnParams are the turn/start overrides that move a live thread onto this policy.
+func (c codexPolicy) turnParams() map[string]any {
+	policy := map[string]string{"read-only": "readOnly", "workspace-write": "workspaceWrite", "danger-full-access": "dangerFullAccess"}[c.sandbox]
+	return map[string]any{"approvalPolicy": c.approval, "approvalsReviewer": c.reviewer, "sandboxPolicy": map[string]any{"type": policy}}
+}
+
+// PermissionModes: Codex has a native "AI decides" reviewer (approvalsReviewer = auto_review).
+func (CodexApp) PermissionModes(context.Context, Detection) []PermissionModeSupport {
+	return []PermissionModeSupport{
+		modeSupport(PermManual, false, "Codex asks before anything not known to be safe, inside its workspace sandbox."),
+		modeSupport(PermAuto, false, "Codex's auto-review agent decides which escalations from the workspace sandbox are safe."),
+		modeSupport(PermYolo, false, "Codex runs without a sandbox and never asks."),
+	}
 }
 
 func (c CodexApp) Start(ctx context.Context, h *Host, spec LaunchSpec) (Process, error) {
@@ -179,15 +208,18 @@ type codexProc struct {
 	calls    map[int64]chan rpcResp
 	closed   bool
 	threadID string
-	turn     string // id of the running turn ("" = idle)
-	lastDone string // id of the last completed turn, so a late turn/start response cannot revive it
-	final    string // last agent message of the current turn
-	items    map[string]codexItem
-	pending  map[string]*codexPending // by Orole permission id
-	byRPC    map[string]string        // JSON-RPC request id -> permission id
-	inputs   map[string]codexInput    // by immutable Orole question id
-	live     map[string]string        // streamed text per item id, for the activity line
-	liveAt   time.Time
+	policy   codexPolicy // what the thread runs under
+	// policyDirty: policy changed since the last turn/start, so the next one carries the overrides.
+	policyDirty bool
+	turn        string // id of the running turn ("" = idle)
+	lastDone    string // id of the last completed turn, so a late turn/start response cannot revive it
+	final       string // last agent message of the current turn
+	items       map[string]codexItem
+	pending     map[string]*codexPending // by Orole permission id
+	byRPC       map[string]string        // JSON-RPC request id -> permission id
+	inputs      map[string]codexInput    // by immutable Orole question id
+	live        map[string]string        // streamed text per item id, for the activity line
+	liveAt      time.Time
 }
 
 func startCodexProc(dir, bin string) (*codexProc, error) {
@@ -236,13 +268,13 @@ func (p *codexProc) emit(e Event) {
 	p.events <- e
 }
 
-// readCodexLine reads one line of any length; lines over codexMaxLine are consumed and reported
-// as dropped.
-func readCodexLine(br *bufio.Reader) (line []byte, dropped bool, err error) {
+// readBoundedLine reads one line of any length, keeping at most limit bytes of it: a longer
+// line is consumed to its end and reported as dropped, so a runaway child cannot grow memory.
+func readBoundedLine(br *bufio.Reader, limit int) (line []byte, dropped bool, err error) {
 	for {
 		part, isPrefix, e := br.ReadLine()
 		if !dropped {
-			if len(line)+len(part) > codexMaxLine {
+			if len(line)+len(part) > limit {
 				dropped, line = true, nil
 			} else {
 				line = append(line, part...)
@@ -257,7 +289,7 @@ func readCodexLine(br *bufio.Reader) (line []byte, dropped bool, err error) {
 func (p *codexProc) run(stdout io.Reader) {
 	br := bufio.NewReaderSize(stdout, 256<<10)
 	for {
-		line, dropped, err := readCodexLine(br)
+		line, dropped, err := readBoundedLine(br, codexMaxLine)
 		switch {
 		case dropped:
 			p.emit(Event{Kind: EvError, Text: "Codex sent a message over 64 MiB; it was dropped"})
@@ -423,8 +455,14 @@ func (p *codexProc) handshake(spec LaunchSpec) error {
 	if err := p.notify("initialized", nil); err != nil {
 		return err
 	}
-	approval, sandbox := codexPolicy(spec.PermissionMode)
-	params := map[string]any{"cwd": spec.Dir, "approvalPolicy": approval, "sandbox": sandbox}
+	policy, err := codexPolicyFor(spec.PermissionMode)
+	if err != nil {
+		return err
+	}
+	params := map[string]any{"cwd": spec.Dir, "approvalPolicy": policy.approval, "sandbox": policy.sandbox}
+	if policy.reviewer != "user" {
+		params["approvalsReviewer"] = policy.reviewer // "user" is the default; older servers need not know the field
+	}
 	if spec.Model != "" {
 		params["model"] = spec.Model
 	}
@@ -448,15 +486,20 @@ func (p *codexProc) handshake(spec LaunchSpec) error {
 		Thread struct {
 			ID string `json:"id"`
 		} `json:"thread"`
-		Model string `json:"model"`
+		Model             string `json:"model"`
+		ApprovalsReviewer string `json:"approvalsReviewer"`
 	}
 	if err := json.Unmarshal(raw, &resp); err != nil || resp.Thread.ID == "" {
 		return fmt.Errorf("codex %s returned no thread", method)
 	}
 	p.mu.Lock()
-	p.threadID = resp.Thread.ID
+	p.threadID, p.policy = resp.Thread.ID, policy
 	p.mu.Unlock()
 	p.emit(Event{Kind: EvInit, Data: jraw(map[string]string{"agentSessionId": resp.Thread.ID, "model": resp.Model})})
+	if policy.reviewer == "auto_review" && resp.ApprovalsReviewer != "auto_review" {
+		// A Codex without auto-review ignores the field and keeps routing approvals to the user.
+		p.emit(Event{Kind: EvSystem, Text: "This Codex did not enable auto-review; approval requests will come to you."})
+	}
 	return nil
 }
 
@@ -526,6 +569,14 @@ func (p *codexProc) SendConfigured(prompt, model, reasoning string) error {
 		// The turn ended between our check and the steer; start a new one.
 	}
 	params := map[string]any{"threadId": thread, "input": input, "summary": "auto"}
+	p.mu.Lock()
+	policy, policyDirty := p.policy, p.policyDirty
+	p.mu.Unlock()
+	if policyDirty {
+		for k, v := range policy.turnParams() {
+			params[k] = v
+		}
+	}
 	if model != "" {
 		params["model"] = model
 	}
@@ -554,7 +605,26 @@ func (p *codexProc) SendConfigured(prompt, model, reasoning string) error {
 	if reasoning != "" {
 		p.effort = reasoning
 	}
+	if policyDirty {
+		p.mu.Lock()
+		p.policyDirty = p.policyDirty && p.policy != policy // a newer change keeps its own overrides
+		p.mu.Unlock()
+	}
 	return nil
+}
+
+// SetPermissionMode records the new policy; the next turn/start carries the approvalPolicy,
+// approvalsReviewer and sandboxPolicy overrides, which Codex keeps for later turns. A turn that
+// is running finishes under the old policy.
+func (p *codexProc) SetPermissionMode(mode string) (bool, error) {
+	policy, err := codexPolicyFor(mode)
+	if err != nil {
+		return false, err
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.policy, p.policyDirty = policy, true
+	return true, nil
 }
 
 // Stop interrupts the running turn so Codex can end its child commands, then ends the process tree.

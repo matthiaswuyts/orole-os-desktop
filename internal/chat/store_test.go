@@ -16,15 +16,15 @@ func TestBotCRUDAndNormalisation(t *testing.T) {
 	b, err := e.m.SaveBot(ctx, BotInput{
 		Name: "  Ada  ", Color: "blue", Avatar: "🦉", Instructions: "Be Ada.", Provider: "fake", Model: "m1",
 		Config: BotConfig{
-			Tools:    []BotTool{{ID: ToolWebSearch}, {ID: ToolWebSearch}, {ID: ToolDatetime}},
-			MCPTools: []string{"srv/a", "srv/a", "srv/b"},
-			Memory:   []ScopeAccess{{Scope: ScopeUser, Write: true}},
+			Tools:      []BotTool{{ID: ToolWebSearch}, {ID: ToolWebSearch}, {ID: ToolDatetime}},
+			MCPServers: []string{"srv-a", "srv-a", "srv-b"},
+			Memory:     []ScopeAccess{{Scope: ScopeUser, Write: true}},
 		},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if b.Name != "Ada" || len(b.Config.Tools) != 2 || len(b.Config.MCPTools) != 2 {
+	if b.Name != "Ada" || len(b.Config.Tools) != 2 || len(b.Config.MCPServers) != 2 {
 		t.Fatalf("not normalised: %+v", b)
 	}
 	if !b.Config.Memory[0].Read {
@@ -85,7 +85,8 @@ func TestBotValidation(t *testing.T) {
 		{"bad color", BotInput{Name: "x", Color: "Not A Token"}},
 		{"provider without model", BotInput{Name: "x", Provider: "fake"}},
 		{"unknown tool", BotInput{Name: "x", Config: BotConfig{Tools: []BotTool{{ID: "shell"}}}}},
-		{"bad mcp id", BotInput{Name: "x", Config: BotConfig{MCPTools: []string{"noslash"}}}},
+		{"bad mcp server id", BotInput{Name: "x", Config: BotConfig{MCPServers: []string{"srv/tool"}}}},
+		{"empty mcp server id", BotInput{Name: "x", Config: BotConfig{MCPServers: []string{""}}}},
 		{"unknown scope", BotInput{Name: "x", Config: BotConfig{Memory: []ScopeAccess{{Scope: "shared:ghost", Read: true}}}}},
 		{"private scope grant", BotInput{Name: "x", Config: BotConfig{Memory: []ScopeAccess{{Scope: "bot:abc", Read: true}}}}},
 		{"negative steps", BotInput{Name: "x", Config: BotConfig{Limits: BotLimits{MaxSteps: -1}}}},
@@ -116,12 +117,12 @@ func TestImportExportIsPortable(t *testing.T) {
 	ctx := context.Background()
 	src := e.bot("Src", func(in *BotInput) {
 		in.Config = BotConfig{
-			Tools:     []BotTool{{ID: ToolWebSearch, Params: map[string]any{"allowed_domains": []string{"go.dev"}}}},
-			MCPTools:  []string{"srv/danger"},
-			Skills:    []string{"deploy"},
-			Executive: true,
-			Memory:    []ScopeAccess{{Scope: ScopeUser, Read: true}},
-			Limits:    BotLimits{MaxSteps: 3},
+			Tools:      []BotTool{{ID: ToolWebSearch, Params: map[string]any{"allowed_domains": []string{"go.dev"}}}},
+			MCPServers: []string{"danger"},
+			Skills:     []string{"deploy"},
+			Executive:  true,
+			Memory:     []ScopeAccess{{Scope: ScopeUser, Read: true}},
+			Limits:     BotLimits{MaxSteps: 3},
 		}
 	})
 	e.send(src.ID, "secret conversation")
@@ -134,19 +135,19 @@ func TestImportExportIsPortable(t *testing.T) {
 	if exp.Version != 1 || exp.Bot.ID != "" || exp.Bot.Name != "Src" || len(exp.Bot.Config.Tools) != 1 || exp.Bot.Config.Limits.MaxSteps != 3 {
 		t.Fatalf("export: %+v", exp)
 	}
-	if len(exp.Bot.Config.MCPTools)+len(exp.Bot.Config.Skills)+len(exp.Bot.Config.Memory) != 0 || exp.Bot.Config.Executive {
+	if len(exp.Bot.Config.MCPServers)+len(exp.Bot.Config.Skills)+len(exp.Bot.Config.Memory) != 0 || exp.Bot.Config.Executive {
 		t.Fatalf("export leaks local grants: %+v", exp.Bot.Config)
 	}
 
 	// A hostile file cannot grant itself access.
 	exp.Bot.ID = src.ID
-	exp.Bot.Config.MCPTools = []string{"srv/danger"}
+	exp.Bot.Config.MCPServers = []string{"danger"}
 	exp.Bot.Config.Executive = true
 	imp, err := e.m.ImportBot(ctx, exp)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if imp.ID == src.ID || len(imp.Config.MCPTools) != 0 || imp.Config.Executive {
+	if imp.ID == src.ID || len(imp.Config.MCPServers) != 0 || imp.Config.Executive {
 		t.Fatalf("import: %+v", imp)
 	}
 	if h := e.history(imp.ID); len(h) != 0 {

@@ -23,7 +23,8 @@ agents, integrations, automations, machine transport and declarative plugins as 
 4. **External content -> app:** mail, issue/PR text, MCP tool output and descriptions, file names and repository files
    (including `AGENTS.md`-style instruction files) are attacker-controllable data.
 5. **Daemon -> external services** (GitHub API, MCP servers): HTTPS to user-configured endpoints; OAuth endpoints
-   must be https (or loopback http) with no embedded credentials (`internal/mcp/oauth_discovery.go`).
+   must be https (or loopback http) with no embedded credentials (`internal/mcp/oauth_discovery.go`). Dictation also sends user-recorded
+   audio to OpenAI (`/v1/audio/transcriptions`); see `docs/architecture/daemon.md`.
 
 ## Threats and controls
 
@@ -39,6 +40,7 @@ agents, integrations, automations, machine transport and declarative plugins as 
 | Daemon DoS by a stuck client | bounded frames (4 MiB), bounded queues (256), write deadline 10 s, per-call 30 s deadline | no per-method rate limits |
 | Tampered installer/update | updates require a signature that the embedded public key verifies; installer is **unsigned** | no code signing and no update keys configured yet (`docs/development/updates.md`) |
 | Persistence abuse via autostart | per-user logon task, `LeastPrivilege`, runs only the daemon path chosen at install | task points at a fixed exe path; whoever can write that file can run code at logon (normal per-user install risk) |
+| Microphone audio leaves the machine unexpectedly | recording starts only after a consent disclosure that audio goes to OpenAI; the daemon (`internal/dictation`) sends it only when the user presses Stop, with the user's own OpenAI key from Credential Manager; no key means a setup state, never a fallback; audio and transcript are never logged or stored; each attempt is audited without the text; 2 MiB / 120 s caps | OpenAI's own retention of API audio is governed by the user's OpenAI account terms; same-user malware can still use the microphone itself |
 
 ## Prompt injection
 

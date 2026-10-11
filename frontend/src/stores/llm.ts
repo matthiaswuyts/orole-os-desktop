@@ -2,7 +2,12 @@ import { useEffect } from "react";
 import { create } from "zustand";
 import { LLM, events, type Defaults, type ManifestRecord, type Model, type ProviderManifest, type ProviderStatus } from "@/mygo";
 import { inDesktop } from "@/lib/backend";
+import { onFocusRefresh } from "@/lib/focus";
+import { readSnapshot, writeSnapshot } from "@/lib/snapshotCache";
 import { useDaemon } from "@/stores/daemon";
+
+const PROVIDERS_CACHE = "llm-providers";
+const MANIFESTS_CACHE = "llm-manifests";
 
 /** A failed action carries a message the UI can show verbatim; a successful one carries its result. */
 export type Outcome<T = void> = { ok: true; value: T } | { ok: false; error: string; /** the daemon's error code (conflict, denied, canceled, bad_request, …) when it sent one */ code?: string };
@@ -130,7 +135,10 @@ export const useLLM = create<State>((set, get) => ({
     set({ loading: true, error: null });
     try {
       const [providers, defaults] = await Promise.all([LLM.providers(), LLM.defaults()]);
-      if (request === sequence) set({ providers: providers ?? [], defaults, ready: true, loading: false, error: null });
+      if (request === sequence) {
+        set({ providers: providers ?? [], defaults, ready: true, loading: false, error: null });
+        writeSnapshot(PROVIDERS_CACHE, { providers: providers ?? [], defaults });
+      }
     } catch (cause) {
       if (request === sequence) set({ ready: false, loading: false, error: message(cause) });
     }
@@ -141,7 +149,10 @@ export const useLLM = create<State>((set, get) => ({
     const request = ++manifestSequence;
     try {
       const manifests = await LLM.manifests();
-      if (request === manifestSequence) set({ manifests: manifests ?? [], manifestsReady: true, manifestsError: null });
+      if (request === manifestSequence) {
+        set({ manifests: manifests ?? [], manifestsReady: true, manifestsError: null });
+        writeSnapshot(MANIFESTS_CACHE, manifests ?? []);
+      }
     } catch (cause) {
       if (request === manifestSequence) set({ manifestsReady: false, manifestsError: message(cause) });
     }
@@ -255,9 +266,16 @@ export const useLLM = create<State>((set, get) => ({
           set({ ready: false, loading: false, error: OFFLINE, manifestsReady: false, manifestsError: OFFLINE });
         }
       });
-      window.addEventListener("focus", refresh);
+      const offFocus = onFocusRefresh(refresh);
+      // Paint the last known lists at once; the refresh below replaces them with the daemon's answer.
+      if (useDaemon.getState().link !== "offline") {
+        const providers = readSnapshot<{ providers: ProviderStatus[]; defaults: Defaults | null }>(PROVIDERS_CACHE);
+        if (providers && !get().ready) set({ providers: providers.providers, defaults: providers.defaults, ready: true, error: null });
+        const manifests = readSnapshot<ManifestRecord[]>(MANIFESTS_CACHE);
+        if (manifests && !get().manifestsReady) set({ manifests, manifestsReady: true, manifestsError: null });
+      }
       refresh();
-      stop = () => { offChanged(); offDaemon(); window.removeEventListener("focus", refresh); };
+      stop = () => { offChanged(); offDaemon(); offFocus(); };
     }
     let stopped = false;
     return () => {

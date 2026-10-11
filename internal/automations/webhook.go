@@ -8,6 +8,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -17,8 +18,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-
-	"github.com/rayorole/orole-os-desktop/internal/automations/expr"
 )
 
 const webhookCredential = "automations/webhook-hmac"
@@ -45,15 +44,16 @@ func (e *Engine) GenerateSecret() error {
 		return err
 	}
 	e.redact.Register(secret)
+	e.setWebhookSecret([]byte(secret))
 	return nil
 }
 func (e *Engine) startWebhook(port int) error {
 	webhookMu.Lock()
 	defer webhookMu.Unlock()
 	if e.credentials == nil {
-		return fmt.Errorf("OS credential store unavailable")
+		return errCredentialsUnavailable
 	}
-	secret, err := e.credentials.Get(webhookCredential)
+	secret, err := e.webhookSecret()
 	if err != nil {
 		return fmt.Errorf("generate a webhook secret before enabling: %w", err)
 	}
@@ -116,11 +116,11 @@ func (e *Engine) WebhookHandler() http.Handler {
 			http.Error(w, "invalid timestamp", http.StatusUnauthorized)
 			return
 		}
-		if e.credentials == nil {
+		secret, err := e.webhookSecret()
+		if errors.Is(err, errCredentialsUnavailable) {
 			http.Error(w, "credential store unavailable", http.StatusServiceUnavailable)
 			return
 		}
-		secret, err := e.credentials.Get(webhookCredential)
 		if err != nil {
 			http.Error(w, "credential unavailable", http.StatusServiceUnavailable)
 			return
@@ -155,23 +155,23 @@ func (e *Engine) WebhookHandler() http.Handler {
 				return
 			}
 		}
-		d, err := e.definition(r.Context(), id)
-		if err != nil || !d.Enabled || d.Trigger.Type != "webhook" {
+		entry, err := e.definitionEntry(r.Context(), id)
+		if err != nil || !entry.def.Enabled || entry.def.Trigger.Type != "webhook" {
 			http.NotFound(w, r)
 			return
 		}
+		d := entry.def
 		var data any
 		if err = json.Unmarshal(body, &data); err != nil {
 			http.Error(w, "body must be JSON", http.StatusBadRequest)
 			return
 		}
 		if d.Trigger.Filter != "" {
-			filter, err := expr.Parse(d.Trigger.Filter)
-			if err != nil {
+			if entry.filterBad {
 				http.Error(w, "invalid filter", http.StatusBadRequest)
 				return
 			}
-			matches, err := filter.EvalBool(map[string]any{"event": map[string]any{"data": data}})
+			matches, err := entry.filter.EvalBool(map[string]any{"event": map[string]any{"data": data}})
 			if err != nil || !matches {
 				w.WriteHeader(http.StatusNoContent)
 				return

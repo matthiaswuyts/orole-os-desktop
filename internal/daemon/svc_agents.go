@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -21,10 +22,13 @@ import (
 // machine access snapshots. A lost remote transport never implies process termination.
 // Sessions, events and the orchestration journal persist in SQLite.
 //
-// IPC methods: agents.detect/list/get/start/stop/restart/prompt/approve/events/transcript/
+// IPC methods: agents.detect/list/get/start/stop/restart/prompt/setPermissionMode/approve/events/transcript/
 // remove/diff/review/check/hook, agents.handoff/reviewWith/loopUntil/tryN/runs/cancelRun.
-// Events: agents.updated (Session), agents.event (Event), agents.removed ({id}),
-// agents.run (Run).
+// agents.list takes {limit, offset} (default page 200, at most 500) and returns sessions
+// newest first; callers page until a page comes back shorter than the limit.
+// Events: agents.updated (Session: status and other durable changes), agents.delta
+// (SessionDelta: display fields changed on a hot path), agents.event (Event),
+// agents.removed ({id}), agents.run (Run).
 
 // agentWorktrees creates/removes worktrees through the projects service and reads diffs with git.
 type agentWorktrees struct {
@@ -80,11 +84,39 @@ func (w agentWorktrees) Diff(ctx context.Context, dir, base string) (agents.Diff
 	return w.git.Diff(ctx, dir, base)
 }
 
+func (w agentWorktrees) DiffStat(ctx context.Context, dir, base string) (files, additions, deletions int, err error) {
+	return w.git.DiffStat(ctx, dir, base)
+}
+
+// Page sizes of the agents.list method.
+const (
+	agentListDefault = 200
+	agentListMax     = 500
+)
+
 func (d *Daemon) projectTaskDirectory(ctx context.Context, projectID, machine, dir string) (string, error) {
 	if d.Projects == nil {
 		return "", errors.New("project workspaces are unavailable")
 	}
 	return d.Projects.TaskDirectory(ctx, projectID, machine, dir, filepath.Join(d.DataDir, "project-workspaces"))
+}
+
+// yoloEnabled reads the daemon setting that can turn YOLO sessions off entirely. The "agents"
+// settings value is {"yoloDisabled": true}; absent or unreadable means YOLO stays available, and
+// a stored value that cannot be parsed fails closed.
+func (d *Daemon) yoloEnabled() bool {
+	var raw string
+	err := d.DB.QueryRow(`SELECT value FROM settings WHERE key='agents'`).Scan(&raw)
+	if errors.Is(err, sql.ErrNoRows) {
+		return true
+	}
+	if err != nil {
+		return false
+	}
+	var v struct {
+		YoloDisabled bool `json:"yoloDisabled"`
+	}
+	return json.Unmarshal([]byte(raw), &v) == nil && !v.YoloDisabled
 }
 
 func (d *Daemon) registerAgents() {
@@ -118,8 +150,9 @@ func (d *Daemon) registerAgents() {
 			}
 			return out, nil
 		},
-		Publish: d.IPC.Publish,
-		Audit:   d.audit,
+		Publish:     d.IPC.Publish,
+		Audit:       d.audit,
+		YoloEnabled: d.yoloEnabled,
 		Authorize: func(ctx context.Context, action, resource, detail string) error {
 			if d.Policy == nil {
 				return errors.New("permission policy is unavailable")
@@ -196,7 +229,16 @@ func (d *Daemon) registerAgents() {
 	}) (agents.LaunchOptions, error) {
 		return m.Options(ctx, p.Machine)
 	})
-	handle(d, "agents.list", func(ctx context.Context, _ none) ([]agents.Session, error) { return m.List() })
+	handle(d, "agents.list", func(ctx context.Context, p struct {
+		Limit  int `json:"limit"`
+		Offset int `json:"offset"`
+	}) ([]agents.Session, error) {
+		limit := p.Limit
+		if limit <= 0 {
+			limit = agentListDefault
+		}
+		return m.ListPage(min(limit, agentListMax), p.Offset)
+	})
 	handle(d, "agents.get", func(ctx context.Context, p idArg) (agents.Session, error) {
 		s, err := m.Get(p.ID)
 		return s, mapErr(err)
@@ -224,6 +266,14 @@ func (d *Daemon) registerAgents() {
 		Key  string `json:"key"`
 	}) (agents.Session, error) {
 		return orch.SendPrompt(ctx, p.Key, p.ID, p.Text)
+	})
+	handle(d, "agents.setPermissionMode", func(ctx context.Context, p struct {
+		ID          string `json:"id"`
+		Mode        string `json:"mode"`
+		ConfirmYolo bool   `json:"confirmYolo"`
+	}) (agents.Session, error) {
+		s, err := m.SetPermissionMode(ctx, p.ID, p.Mode, p.ConfirmYolo)
+		return s, mapErr(err)
 	})
 	handle(d, "agents.approve", func(ctx context.Context, p struct {
 		ID        string `json:"id"`

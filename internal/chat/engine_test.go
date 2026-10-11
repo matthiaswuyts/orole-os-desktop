@@ -910,7 +910,7 @@ func TestSinkCoalescesPublishesAndAlwaysSendsTheFinalOne(t *testing.T) {
 		mu.Lock()
 		snaps = append(snaps, m)
 		mu.Unlock()
-	})
+	}, nil)
 	start := time.Now()
 	for time.Since(start) < 220*time.Millisecond {
 		s.appendText(PartText, "x")
@@ -956,5 +956,32 @@ func TestNewSetupBotSpeaksFirstFromAHiddenKickoff(t *testing.T) {
 	bots, _ := e.m.Bots(context.Background())
 	if len(bots) != 1 || bots[0].LastMessage == nil || bots[0].LastMessage.Role != "assistant" {
 		t.Fatalf("preview = %+v", bots)
+	}
+}
+
+func TestAQuestionEndsTheTurnAndOnlyTheFirstOneIsShown(t *testing.T) {
+	asked := 0
+	ask := &fakeTool{id: "ask", call: func(ctx context.Context, rc RunContext, name string, args json.RawMessage) (ToolResult, error) {
+		asked++
+		return ToolResult{Text: "shown", Parts: []MsgPart{{Type: PartQuestion, Text: "Q", Choices: []Choice{{Label: "A"}}}}}, nil
+	}}
+	e := newEnv(t, func(call int, req llm.Request) []llm.Delta {
+		return []llm.Delta{
+			{Kind: llm.DeltaToolCall, Call: &llm.ToolCall{ID: "q1", Name: "ask", Args: []byte(`{}`)}},
+			{Kind: llm.DeltaToolCall, Call: &llm.ToolCall{ID: "q2", Name: "ask", Args: []byte(`{"n":2}`)}},
+			{Kind: llm.DeltaStop, Stop: llm.StopToolCalls},
+		}
+	})
+	e.m.AddTools(ask)
+	b := e.bot("Asker")
+	e.send(b.ID, "hi")
+	e.idle(b.ID)
+
+	if asked != 1 || len(e.fake.Calls()) != 1 {
+		t.Fatalf("tool runs %d, model calls %d: the turn must end after the first question", asked, len(e.fake.Calls()))
+	}
+	reply := e.lastReply(b.ID)
+	if reply.Status != StatusComplete || len(partsOfType(reply.Parts, PartQuestion)) != 1 {
+		t.Fatalf("reply: %+v", reply)
 	}
 }

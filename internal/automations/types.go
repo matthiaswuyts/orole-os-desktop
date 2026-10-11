@@ -106,10 +106,15 @@ type Config struct {
 	WebhookEnabled    bool `json:"webhookEnabled"`
 	WebhookPort       int  `json:"webhookPort"`
 	HasSecret         bool `json:"hasSecret"`
+	// RetentionDays and RetentionMaxRuns bound the finished run history. Runs
+	// that are queued, running or waiting for approval are never removed.
+	// RetentionMaxRuns applies per automation. Zero means the default.
+	RetentionDays    int `json:"retentionDays"`
+	RetentionMaxRuns int `json:"retentionMaxRuns"`
 }
 
 func DefaultConfig() Config {
-	return Config{GlobalConcurrency: 4, PerAutomation: 1, WebhookPort: 17843}
+	return Config{GlobalConcurrency: 4, PerAutomation: 1, WebhookPort: 17843, RetentionDays: DefaultRetentionDays, RetentionMaxRuns: DefaultRetentionMaxRuns}
 }
 
 // Field describes a typed step parameter for the structured editor.

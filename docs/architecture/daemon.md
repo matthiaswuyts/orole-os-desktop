@@ -41,6 +41,25 @@ Notifications and search are registered through the integration service initiali
 These modules are reachable through authenticated IPC; unavailable configuration is reported
 explicitly rather than replaced with mock data. See the module guides and `ipc-protocol.md`.
 
+### Dictation (`svc_dictation.go`, `internal/dictation`)
+
+| Method | Behaviour |
+|---|---|
+| `dictation.status` | `{ready, provider, maxSeconds, maxBytes}`: `ready` is whether an OpenAI API key is stored; no network call |
+| `dictation.transcribe` | `{mimeType, dataBase64, durationMs}` -> `{text, model}`; sends one recording to OpenAI `/v1/audio/transcriptions` |
+
+The desktop's `Dictation` service forwards these. The webview records with `MediaRecorder` (`audio/webm;codecs=opus`
+where supported) and Chromium's Web Speech API is deliberately not used: WebView2 has no speech service behind it.
+The daemon reads the OpenAI key from Credential Manager (`llm/openai/key`, the same entry as the AI providers page) for
+every call; it never reaches the frontend, logs or SQLite, and is scrubbed from every error. Models: `gpt-4o-mini-transcribe`,
+then `whisper-1` only when the account cannot use the first. Caps: 2 MiB of audio, 120 s (the frontend stops there; the daemon
+rejects more than 125 s), 25 s upstream timeout, two recordings in flight. Neither audio nor transcript is logged or stored.
+Every attempt is audited as `dictation.transcribe` on `dictation/openai` with the outcome, model and audio size, never the text.
+Failures are IPC errors coded `dictation_<code>` (`not_connected`, `auth`, `quota`, `rate_limit`, `network`, `timeout`, `server`,
+`rejected`, `too_large`, `too_long`, `no_audio`, `unsupported`, `busy`, `canceled`, `credentials`) with a user-ready message.
+The MyGo WebView2 shell grants the microphone to the app's own pages by default (`Page.SetPermissionHandler` is not needed);
+Windows can still block it under Settings > Privacy & security > Microphone, which the UI explains.
+
 ## Operating it
 
 ```
@@ -49,8 +68,11 @@ orole daemon install | uninstall      # start at logon via Task Scheduler (see w
 ```
 
 `diagnostics` prints app/Go versions, data dir, pipe name, daemon exe, daemon health, DB schema version
-(from the daemon, else read-only from `orole.db`), whether the credential store round-trips, the WebView2
+(from the daemon, else read-only from `orole.db` in the desktop app; the CLI reports it unavailable), whether the credential store round-trips, the WebView2
 runtime version, autostart state and the last 20 log lines. The same report backs Settings > Diagnostics.
+
+`orole-cli` is a thin IPC client: it must not link the daemon, sqlite, sftp/ssh or the MCP SDK. Wire types it needs
+(`Health`, token path) live in the leaf package `internal/daemon/api`; `scripts/check-cli-linkage.sh` enforces this in CI.
 
 ## Logging
 

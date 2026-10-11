@@ -72,11 +72,9 @@ func (m *worktreeManager) reconcile(ctx context.Context, p Project, list []git.W
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	tx, err := m.s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return nil, err
-	}
-	defer tx.Rollback()
+	// Collect what actually differs first; a steady-state refresh writes nothing.
+	var writes []wtRow
+	var stale []string
 	out := make([]wtRow, 0, len(list))
 	seen := map[string]bool{}
 	for i, w := range list {
@@ -93,18 +91,34 @@ func (m *worktreeManager) reconcile(ctx context.Context, p Project, list []git.W
 				r.name = p.Name
 			}
 		}
-		r.branch = w.Branch
-		if _, err := tx.ExecContext(ctx, `INSERT INTO worktrees(id,project_id,name,path,branch,base_ref,is_main,created_at) VALUES(?,?,?,?,?,?,?,?)
-			ON CONFLICT(id) DO UPDATE SET branch=excluded.branch`, r.id, p.ID, r.name, r.path, r.branch, r.baseRef, boolInt(r.isMain), r.createdAt); err != nil {
-			return nil, err
+		if !ok || r.branch != w.Branch {
+			r.branch = w.Branch
+			writes = append(writes, r)
 		}
 		out = append(out, r)
 	}
 	for id := range existing {
 		if !seen[id] {
-			if _, err := tx.ExecContext(ctx, `DELETE FROM worktrees WHERE id=?`, id); err != nil {
-				return nil, err
-			}
+			stale = append(stale, id)
+		}
+	}
+	if len(writes) == 0 && len(stale) == 0 {
+		return out, nil
+	}
+	tx, err := m.s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	for _, r := range writes {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO worktrees(id,project_id,name,path,branch,base_ref,is_main,created_at) VALUES(?,?,?,?,?,?,?,?)
+			ON CONFLICT(id) DO UPDATE SET branch=excluded.branch`, r.id, p.ID, r.name, r.path, r.branch, r.baseRef, boolInt(r.isMain), r.createdAt); err != nil {
+			return nil, err
+		}
+	}
+	for _, id := range stale {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM worktrees WHERE id=?`, id); err != nil {
+			return nil, err
 		}
 	}
 	return out, tx.Commit()
@@ -132,10 +146,21 @@ func build(ctx context.Context, r wtRow, w git.WorktreeInfo) Worktree {
 	}
 	wt.Upstream, wt.Ahead, wt.Behind = st.Branch.Upstream, st.Branch.Ahead, st.Branch.Behind
 	wt.Staged, wt.Unstaged, wt.Untracked, wt.Dirty = st.Staged, st.Unstaged, st.Untracked, st.Dirty
+	wt.StatusKnown = true
 	return wt
 }
 
+// List reads git's worktree list only: no per-worktree `git status`, so it stays fast in large repositories.
 func (m *worktreeManager) List(ctx context.Context, projectID string) ([]Worktree, error) {
+	return m.list(ctx, projectID, false)
+}
+
+// ListStatus is List plus live git status for every worktree.
+func (m *worktreeManager) ListStatus(ctx context.Context, projectID string) ([]Worktree, error) {
+	return m.list(ctx, projectID, true)
+}
+
+func (m *worktreeManager) list(ctx context.Context, projectID string, withStatus bool) ([]Worktree, error) {
 	p, err := m.s.Get(ctx, projectID)
 	if err != nil {
 		return nil, err
@@ -163,6 +188,18 @@ func (m *worktreeManager) List(ctx context.Context, projectID string) ([]Worktre
 		}
 	}
 	out := make([]Worktree, len(rows))
+	if !withStatus {
+		for i, r := range rows {
+			w := byPath[pathKey(r.path)]
+			wt := Worktree{ID: r.id, ProjectID: r.projectID, Name: r.name, Path: r.path, Branch: w.Branch, Head: w.Head, BaseRef: r.baseRef,
+				IsMain: r.isMain, Detached: w.Detached, Locked: w.Locked, Prunable: w.Prunable, CreatedAt: r.createdAt}
+			if w.Prunable {
+				wt.Error = "directory is missing (prunable)"
+			}
+			out[i] = wt
+		}
+		return out, nil
+	}
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, 4)
 	for i, r := range rows {
@@ -178,25 +215,65 @@ func (m *worktreeManager) List(ctx context.Context, projectID string) ([]Worktre
 	return out, nil
 }
 
-func (m *worktreeManager) Get(ctx context.Context, id string) (Worktree, error) {
-	var projectID string
-	err := m.s.db.QueryRowContext(ctx, `SELECT project_id FROM worktrees WHERE id=?`, id).Scan(&projectID)
+// Path returns the checkout directory of a registered worktree from the database
+// alone: no git process, no status and no reconcile. It is what per-call callers
+// (every git IPC request) use to find where to run.
+func (m *worktreeManager) Path(ctx context.Context, id string) (string, error) {
+	var path string
+	err := m.s.db.QueryRowContext(ctx, `SELECT path FROM worktrees WHERE id=?`, id).Scan(&path)
 	if errors.Is(err, sql.ErrNoRows) {
-		return Worktree{}, fmt.Errorf("%w: worktree %s", ErrNotFound, id)
+		return "", fmt.Errorf("%w: worktree %s", ErrNotFound, id)
 	}
 	if err != nil {
-		return Worktree{}, err
+		return "", err
 	}
-	all, err := m.List(ctx, projectID)
+	if st, err := os.Stat(path); err != nil || !st.IsDir() {
+		return "", fmt.Errorf("%w: worktree directory is missing: %s", ErrNotFound, path)
+	}
+	return path, nil
+}
+
+// lookup finds one worktree's row and git's entry for it: one list call, no status
+// for its siblings and no database writes (List reconciles).
+func (m *worktreeManager) lookup(ctx context.Context, id string) (wtRow, git.WorktreeInfo, Project, error) {
+	r := wtRow{id: id}
+	var isMain int
+	err := m.s.db.QueryRowContext(ctx, `SELECT project_id,name,path,branch,base_ref,is_main,created_at FROM worktrees WHERE id=?`, id).
+		Scan(&r.projectID, &r.name, &r.path, &r.branch, &r.baseRef, &isMain, &r.createdAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return r, git.WorktreeInfo{}, Project{}, fmt.Errorf("%w: worktree %s", ErrNotFound, id)
+	}
+
 	if err != nil {
-		return Worktree{}, err
+		return r, git.WorktreeInfo{}, Project{}, err
 	}
-	for _, w := range all {
-		if w.ID == id {
-			return w, nil
+	r.isMain = isMain == 1
+	p, err := m.s.Get(ctx, r.projectID)
+	if err != nil {
+		return r, git.WorktreeInfo{}, p, err
+	}
+	if !p.IsGit {
+		return r, git.WorktreeInfo{}, p, fmt.Errorf("%w: worktree %s", ErrNotFound, id)
+	}
+	list, err := git.WorktreeList(ctx, p.Path)
+	if err != nil {
+		return r, git.WorktreeInfo{}, p, err
+	}
+	key := pathKey(r.path)
+	for _, w := range list {
+		if c, err := canonical(w.Path); err == nil && pathKey(c) == key {
+			return r, w, p, nil
 		}
 	}
-	return Worktree{}, fmt.Errorf("%w: worktree %s", ErrNotFound, id)
+	return r, git.WorktreeInfo{}, p, fmt.Errorf("%w: worktree %s", ErrNotFound, id)
+}
+
+func (m *worktreeManager) Get(ctx context.Context, id string) (Worktree, error) {
+	r, w, _, err := m.lookup(ctx, id)
+	if err != nil {
+		return Worktree{}, err
+	}
+	return build(ctx, r, w), nil
 }
 
 func (m *worktreeManager) Create(ctx context.Context, projectID, name, baseRef string) (Worktree, error) {
@@ -266,24 +343,20 @@ func (m *worktreeManager) createLocked(ctx context.Context, p Project, slug, bra
 }
 
 func (m *worktreeManager) Remove(ctx context.Context, id string, force bool) error {
-	wt, err := m.Get(ctx, id)
+	r, w, p, err := m.lookup(ctx, id)
 	if err != nil {
 		return err
 	}
-	if wt.IsMain {
+	if r.isMain {
 		return invalid("the main checkout cannot be removed; remove the project instead")
-	}
-	p, err := m.s.Get(ctx, wt.ProjectID)
-	if err != nil {
-		return err
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if wt.Prunable {
+	if w.Prunable {
 		if err := git.WorktreePrune(ctx, p.Path); err != nil {
 			return err
 		}
-	} else if err := git.WorktreeRemove(ctx, p.Path, wt.Path, force); err != nil {
+	} else if err := git.WorktreeRemove(ctx, p.Path, r.path, force); err != nil {
 		return err
 	}
 	_, err = m.s.db.ExecContext(ctx, `DELETE FROM worktrees WHERE id=?`, id)

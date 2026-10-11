@@ -1,9 +1,9 @@
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { useCallback } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { FeedItem } from "@/lib/taskEvents";
+import { groupRuns, type FeedItem } from "@/lib/taskEvents";
 import { conversationHits, stepSearchHit } from "./ConversationSearch";
-import { conversationDay, conversationTimeline } from "./ConversationTimeline";
+import { conversationDay } from "./ConversationTimeline";
 import { ScrollAnchor, useScrollAnchor } from "./ScrollAnchor";
 
 const message = (key: string, text: string, at = "2026-10-08T12:00:00Z"): FeedItem => ({ key, at, type: "assistant", text });
@@ -25,7 +25,7 @@ describe("conversation navigation data", () => {
     expect(stepSearchHit(0, 1, 0)).toBe(-1);
   });
 
-  it("uses local calendar days including year, rejects invalid dates, and preserves tool/message order", () => {
+  it("uses local calendar days including year, rejects invalid dates, and keeps a turn's activity in recorded order", () => {
     const local = new Date(2026, 9, 8, 23, 59);
     const next = new Date(2026, 9, 9, 0, 1);
     expect(conversationDay(local.toISOString())).toBe("2026-10-8");
@@ -33,8 +33,9 @@ describe("conversation navigation data", () => {
     expect(conversationDay("invalid")).toBeNull();
     expect(conversationDay(new Date(2027, 9, 8).toISOString())).not.toBe(conversationDay(local.toISOString()));
     const tool = (key: string, at: string): FeedItem => ({ key, at, type: "tool", call: { id: key, linked: true, name: "Read", server: "", status: "unknown", input: null, output: "", summary: "" } });
-    const entries = conversationTimeline([tool("1", local.toISOString()), tool("2", local.toISOString()), message("3", "Interleaved", local.toISOString()), tool("4", local.toISOString()), tool("5", next.toISOString())]);
-    expect(entries.map((entry) => entry.type === "tools" ? entry.items.map((item) => item.key) : entry.key)).toEqual([["1", "2"], "3", ["4"], ["5"]]);
+    const user: FeedItem = { key: "0", at: local.toISOString(), type: "user", text: "go" };
+    const [, turn] = groupRuns([user, tool("1", local.toISOString()), tool("2", local.toISOString()), message("3", "Interleaved", local.toISOString()), tool("4", local.toISOString()), message("5", "Final", next.toISOString())], { running: false, live: true, pendingPermissions: new Set(), pendingQuestions: new Set() });
+    expect(turn).toMatchObject({ type: "run", steps: [{ key: "1" }, { key: "2" }, { key: "3" }, { key: "4" }], answer: [{ key: "5" }] });
   });
 });
 
@@ -117,5 +118,32 @@ describe("real-content scroll anchor", () => {
     fireEvent.keyDown(viewport, { key: "End", ctrlKey: true });
     expect(viewport.scrollTop).toBe(500);
     expect(screen.queryByRole("button")).toBeNull();
+  });
+
+  it("keeps following when a shorter document clamps the scroll position by itself", () => {
+    const rows = [{ id: 1, height: 300 }, { id: 2, height: 300 }];
+    const view = render(<AnchoredContent rows={rows} />);
+    const viewport = screen.getByTestId("viewport");
+    expect(viewport.scrollTop).toBe(400);
+    // A row measured smaller than estimated (virtual rows): the browser clamps scrollTop; the reader did not scroll up.
+    viewport.querySelector<HTMLElement>('[data-scroll-anchor="2"]')!.dataset.height = "100";
+    viewport.scrollTop = 200;
+    fireEvent.scroll(viewport);
+    expect(screen.queryByRole("button")).toBeNull();
+    view.rerender(<AnchoredContent rows={[...rows, { id: 3, height: 100 }]} />);
+    expect(viewport.scrollTop).toBe(300);
+    expect(screen.queryByRole("button")).toBeNull();
+  });
+
+  it("anchors on the first row that starts in view, so a row cut off at the top may resize without moving the reader", () => {
+    const rows = [{ id: 1, height: 300 }, { id: 2, height: 300 }, { id: 3, height: 300 }];
+    render(<AnchoredContent rows={rows} />);
+    const viewport = screen.getByTestId("viewport");
+    Object.defineProperty(viewport, "clientHeight", { configurable: true, get: () => 200 });
+    viewport.scrollTop = 250; // row 1 is cut off at the top; row 2 starts 50px into the viewport
+    fireEvent.scroll(viewport);
+    viewport.querySelector<HTMLElement>('[data-scroll-anchor="1"]')!.dataset.height = "400";
+    act(() => resized());
+    expect(viewport.scrollTop).toBe(350);
   });
 });

@@ -1,11 +1,12 @@
 import { renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { BotChange, Message, MessagesRequest, RunState, SendRequest } from "@/mygo";
+import type { BotChange, Message, MessageDelta, MessagesRequest, RunState, SendRequest } from "@/mygo";
 
 const bridge = vi.hoisted(() => ({
   messages: vi.fn(), send: vi.fn(), cancel: vi.fn(), regenerate: vi.fn(), clear: vi.fn(),
   run: null as ((s: RunState) => void) | null,
   message: null as ((m: Message) => void) | null,
+  delta: null as ((d: MessageDelta) => void) | null,
   bot: null as ((c: BotChange) => void) | null,
 }));
 
@@ -16,12 +17,15 @@ vi.mock("@/mygo", () => ({
   events: {
     chatRun: { on: (f: (s: RunState) => void) => { bridge.run = f; return () => { bridge.run = null; }; } },
     chatMessage: { on: (f: (m: Message) => void) => { bridge.message = f; return () => { bridge.message = null; }; } },
+    chatMessageDelta: { on: (f: (d: MessageDelta) => void) => { bridge.delta = f; return () => { bridge.delta = null; }; } },
     chatBot: { on: (f: (c: BotChange) => void) => { bridge.bot = f; return () => { bridge.bot = null; }; } },
   },
 }));
 
-import { MAX_IN_MEMORY, mergeLatest, upsert, useBotRunning, useChatMessages } from "@/stores/chatMessages";
+import { FOCUS_MIN_INTERVAL_MS } from "@/lib/focus";
+import { MAX_IN_MEMORY, applyDelta, mergeLatest, upsert, useBotRunning, useChatMessages } from "@/stores/chatMessages";
 import { useChat } from "@/stores/chat";
+import { useChatDrafts } from "@/stores/chatDrafts";
 import { useDaemon } from "@/stores/daemon";
 
 const msg = (seq: number, over: Partial<Message> = {}): Message => ({
@@ -37,11 +41,12 @@ const deferred = <T,>() => {
 const settle = async () => { for (let i = 0; i < 8; i++) await Promise.resolve(); };
 
 let stop: (() => void) | undefined;
-const reset = () => useChatMessages.setState({ byBot: {}, runs: {}, drafts: {}, problems: {} });
+const reset = () => { useChatMessages.setState({ byBot: {}, runs: {}, problems: {} }); useChatDrafts.setState({ drafts: {} }); };
 
 beforeEach(() => {
   Object.values(bridge).forEach((v) => { if (typeof v === "function" && "mockReset" in v) v.mockReset(); });
   useDaemon.setState({ link: "connected" });
+  useChat.setState({ selectedBotId: "a" });
   reset();
   stop = useChatMessages.getState().startSync();
 });
@@ -117,6 +122,41 @@ describe("event sync", () => {
     expect(list[2]).toMatchObject({ status: "complete", parts: [{ text: "Hello there" }] });
   });
 
+  it("appends streamed deltas to the running message, in order, and a snapshot replaces the accumulated text", () => {
+    const delta = (from: number, text: string): MessageDelta => ({ botId: "a", messageId: "m3", part: 0, type: "text", from, text });
+    bridge.message!(msg(3, { status: "running", parts: [{ type: "text", text: "Hel" }] }));
+    bridge.delta!(delta(3, "lo"));
+    bridge.delta!(delta(5, " there"));
+    expect(useChatMessages.getState().byBot.a!.messages[2]!.parts[0]!.text).toBe("Hello there");
+    bridge.message!(msg(3, { status: "complete", parts: [{ type: "text", text: "Hello there!" }] }));
+    expect(useChatMessages.getState().byBot.a!.messages[2]).toMatchObject({ status: "complete", parts: [{ text: "Hello there!" }] });
+  });
+
+  it("drops a delta that does not line up and recovers on the next snapshot", () => {
+    bridge.message!(msg(3, { status: "running", parts: [{ type: "text", text: "Hel" }] }));
+    bridge.delta!({ botId: "a", messageId: "m3", part: 0, type: "text", from: 10, text: "lost the middle" }); // missed an event
+    bridge.delta!({ botId: "a", messageId: "m3", part: 0, type: "text", from: 0, text: "dup" }); // replayed
+    bridge.delta!({ botId: "a", messageId: "m3", part: 4, type: "text", from: 3, text: "no such part" });
+    bridge.delta!({ botId: "a", messageId: "m3", part: 0, type: "reasoning", from: 3, text: "wrong kind" });
+    bridge.delta!({ botId: "a", messageId: "ghost", part: 0, type: "text", from: 0, text: "unknown message" });
+    expect(useChatMessages.getState().byBot.a!.messages[2]!.parts).toEqual([{ type: "text", text: "Hel" }]);
+    bridge.message!(msg(3, { status: "running", parts: [{ type: "text", text: "Hello wor" }] }));
+    bridge.delta!({ botId: "a", messageId: "m3", part: 0, type: "text", from: 9, text: "ld" });
+    expect(useChatMessages.getState().byBot.a!.messages[2]!.parts[0]!.text).toBe("Hello world");
+  });
+
+  it("ignores deltas for bots never loaded and for draft: conversations", () => {
+    bridge.delta!({ botId: "never", messageId: "m3", part: 0, type: "text", from: 0, text: "x" });
+    bridge.delta!({ botId: "draft:1", messageId: "m3", part: 0, type: "text", from: 0, text: "x" });
+    expect(Object.keys(useChatMessages.getState().byBot)).toEqual(["a"]);
+  });
+
+  it("counts the offset in UTF-16 units, as JavaScript strings do", () => {
+    const base = msg(3, { status: "running", parts: [{ type: "text", text: "a😀" }] }); // 3 UTF-16 units, 5 UTF-8 bytes
+    expect(applyDelta(base, { botId: "a", messageId: "m3", part: 0, type: "text", from: 3, text: "!" })?.parts[0]?.text).toBe("a😀!");
+    expect(applyDelta(base, { botId: "a", messageId: "m3", part: 0, type: "text", from: 5, text: "!" })).toBeNull();
+  });
+
   it("ignores events for bots never loaded and for draft: conversations", () => {
     bridge.message!(msg(1, { id: "x", botId: "never" }));
     bridge.message!(msg(1, { id: "d", botId: "draft:1" }));
@@ -130,11 +170,14 @@ describe("event sync", () => {
     expect(useChatMessages.getState().runs.a).toBe(false);
   });
 
-  it("empties the window when the conversation is cleared and forgets an archived bot", () => {
+  it("empties the window when the conversation is cleared and forgets an archived bot and its draft", () => {
+    useChatDrafts.getState().setDraft("a", { text: "unsent" });
     bridge.bot!({ id: "a", action: "cleared" });
     expect(useChatMessages.getState().byBot.a).toMatchObject({ messages: [], loaded: true });
+    expect(useChatDrafts.getState().drafts.a?.text).toBe("unsent");
     bridge.bot!({ id: "a", action: "archived" });
     expect(useChatMessages.getState().byBot.a).toBeUndefined();
+    expect(useChatDrafts.getState().drafts.a).toBeUndefined();
   });
 
   it("keeps at most MAX_IN_MEMORY messages while following the live end", () => {
@@ -163,13 +206,47 @@ describe("reconnect and focus refresh", () => {
     expect(list[3]!.parts[0]!.text).toBe("live");
   });
 
-  it("refetches on window focus", async () => {
-    bridge.messages.mockResolvedValue({ messages: [msg(1)], hasMore: false });
-    await useChatMessages.getState().load("a");
-    bridge.messages.mockClear();
-    window.dispatchEvent(new Event("focus"));
-    await settle();
-    expect(bridge.messages).toHaveBeenCalledTimes(1);
+  describe("window focus", () => {
+    const refocus = () => { vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(Date.now() + FOCUS_MIN_INTERVAL_MS); window.dispatchEvent(new Event("focus")); };
+    afterEach(() => { vi.useRealTimers(); });
+
+    it("refetches the open conversation once however many focus events arrive", async () => {
+      bridge.messages.mockResolvedValue({ messages: [msg(1)], hasMore: false });
+      await useChatMessages.getState().load("a");
+      bridge.messages.mockClear();
+      refocus();
+      for (let i = 0; i < 9; i++) window.dispatchEvent(new Event("focus"));
+      await settle();
+      expect(bridge.messages).toHaveBeenCalledTimes(1);
+      expect(bridge.messages).toHaveBeenCalledWith({ botId: "a", beforeSeq: 0, limit: 50 } satisfies MessagesRequest);
+    });
+
+    it("leaves every other loaded conversation alone", async () => {
+      bridge.messages.mockImplementation(async ({ botId }: MessagesRequest) => ({ messages: [msg(1, { botId })], hasMore: false }));
+      for (const botId of ["a", "b", "c", "d"]) await useChatMessages.getState().load(botId);
+      bridge.messages.mockClear();
+      refocus();
+      await settle();
+      expect(bridge.messages.mock.calls.map(([request]) => request.botId)).toEqual(["a"]);
+      bridge.messages.mockClear();
+      useChat.setState({ selectedBotId: "c" });
+      vi.setSystemTime(Date.now() + FOCUS_MIN_INTERVAL_MS);
+      window.dispatchEvent(new Event("focus"));
+      await settle();
+      expect(bridge.messages.mock.calls.map(([request]) => request.botId)).toEqual(["c"]);
+    });
+
+    it("fetches nothing when no conversation is open or the open one was never loaded", async () => {
+      useChat.setState({ selectedBotId: null });
+      refocus();
+      await settle();
+      expect(bridge.messages).not.toHaveBeenCalled();
+      useChat.setState({ selectedBotId: "a" });
+      vi.setSystemTime(Date.now() + FOCUS_MIN_INTERVAL_MS);
+      window.dispatchEvent(new Event("focus"));
+      await settle();
+      expect(bridge.messages).not.toHaveBeenCalled();
+    });
   });
 
   it("mergeLatest keeps older history the page does not cover", () => {
@@ -218,12 +295,6 @@ describe("sending, cancelling, regenerating", () => {
     bridge.clear.mockResolvedValue(undefined);
     expect(await useChatMessages.getState().clear("a")).toBe(true);
     expect(useChatMessages.getState().byBot.a).toMatchObject({ messages: [], loaded: true });
-  });
-
-  it("keeps drafts per bot", () => {
-    useChatMessages.getState().setDraft("a", { text: "one" });
-    useChatMessages.getState().setDraft("b", { text: "two", research: true });
-    expect(useChatMessages.getState().drafts).toEqual({ a: { text: "one", research: false }, b: { text: "two", research: true } });
   });
 });
 

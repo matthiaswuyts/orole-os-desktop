@@ -110,6 +110,9 @@ jobs:
       - name: Go test (race), portable packages and Linux terminals
         run: go test -race ./internal/ipc/... ./internal/database/... ./internal/platform/... ./internal/paths/... ./internal/credentials/... ./internal/terminals/...
 
+      - name: orole-cli must not link daemon/sqlite/ssh/MCP
+        run: ./scripts/check-cli-linkage.sh
+
   actionlint:
     runs-on: ubuntu-latest
     timeout-minutes: 5

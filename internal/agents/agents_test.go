@@ -114,11 +114,15 @@ type envCfg struct {
 	data               string
 	permissionDecision func(context.Context, string, agents.PermissionRequest) error
 	authorize          func(context.Context, string, string, string) error
+	yolo               func() bool
 }
 
 func withWT(w agents.Worktrees) opt { return func(c *envCfg) { c.wt = w } }
 func withHook(exe string) opt       { return func(c *envCfg) { c.hookExe = exe } }
 func sameDB(path, data string) opt  { return func(c *envCfg) { c.dbPath, c.data = path, data } }
+
+// withYoloSetting stands in for the daemon setting that can turn YOLO off.
+func withYoloSetting(f func() bool) opt { return func(c *envCfg) { c.yolo = f } }
 
 func newEnv(t *testing.T, opts ...opt) *env {
 	t.Helper()
@@ -143,6 +147,7 @@ func newEnv(t *testing.T, opts ...opt) *env {
 		Publish: e.pubs.publish, Audit: e.rec.audit,
 		PermissionDecision: c.permissionDecision,
 		Authorize:          c.authorize,
+		YoloEnabled:        c.yolo,
 		Adapters:           []agents.Adapter{agents.Claude{Bin: fakeBin}, agents.Custom{}},
 	})
 	t.Cleanup(func() { e.m.Shutdown(); e.term.Shutdown() })
@@ -359,16 +364,19 @@ func TestStartValidation(t *testing.T) {
 	e := newEnv(t)
 	ctx := ctx10(t)
 	for name, spec := range map[string]agents.StartSpec{
-		"unknown kind":    {Kind: "nope", Dir: t.TempDir()},
-		"missing dir":     {Kind: "claude", Dir: filepath.Join(t.TempDir(), "gone")},
-		"no dir":          {Kind: "claude"},
-		"bad mode":        {Kind: "claude", Dir: t.TempDir(), Mode: "weird"},
-		"bad permission":  {Kind: "claude", Dir: t.TempDir(), PermissionMode: "bypassPermissions"},
-		"custom no cmd":   {Kind: "custom", Dir: t.TempDir()},
-		"worktree no git": {Kind: "claude", Dir: t.TempDir(), NewWorktree: true},
-		"bad model":       {Kind: "claude", Dir: t.TempDir(), Model: "model\ninjected"},
-		"long model":      {Kind: "claude", Dir: t.TempDir(), Model: strings.Repeat("m", 129)},
-		"bad reasoning":   {Kind: "claude", Dir: t.TempDir(), Reasoning: "invented"},
+		"unknown kind":     {Kind: "nope", Dir: t.TempDir()},
+		"missing dir":      {Kind: "claude", Dir: filepath.Join(t.TempDir(), "gone")},
+		"no dir":           {Kind: "claude"},
+		"bad mode":         {Kind: "claude", Dir: t.TempDir(), Mode: "weird"},
+		"bad permission":   {Kind: "claude", Dir: t.TempDir(), PermissionMode: "bypassPermissions"},
+		"legacy default":   {Kind: "claude", Dir: t.TempDir(), PermissionMode: "default"},
+		"legacy accept":    {Kind: "claude", Dir: t.TempDir(), PermissionMode: "acceptEdits"},
+		"yolo unconfirmed": {Kind: "claude", Dir: t.TempDir(), PermissionMode: "yolo"},
+		"custom no cmd":    {Kind: "custom", Dir: t.TempDir()},
+		"worktree no git":  {Kind: "claude", Dir: t.TempDir(), NewWorktree: true},
+		"bad model":        {Kind: "claude", Dir: t.TempDir(), Model: "model\ninjected"},
+		"long model":       {Kind: "claude", Dir: t.TempDir(), Model: strings.Repeat("m", 129)},
+		"bad reasoning":    {Kind: "claude", Dir: t.TempDir(), Reasoning: "invented"},
 	} {
 		if _, err := e.m.Start(ctx, spec); err == nil {
 			t.Errorf("%s: expected an error", name)

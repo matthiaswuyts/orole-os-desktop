@@ -21,7 +21,7 @@ export function registerCoreCommands() {
     { id: "mode.chat", title: "Switch to Chat", category: "Navigate", keywords: ["bots", "contacts", "conversation", "mode"], icon: createElement(CHAT.icon), run: () => useUI.getState().setMode("chat") },
     { id: "mode.code", title: "Switch to Code", category: "Navigate", keywords: ["tasks", "projects", "agents", "mode"], icon: createElement(Code), run: () => useUI.getState().setMode("code") },
     { id: "settings.skills", title: "Open Skills settings", category: "Settings", keywords: ["skills", "harness"], run: () => useUI.getState().openSettings("skills") },
-    { id: "settings.mcp", title: "Open MCP settings", category: "Settings", keywords: ["mcp", "servers", "tools"], run: () => useUI.getState().openSettings("mcp") },
+    { id: "settings.mcp", title: "Open integrations and MCP servers", category: "Settings", keywords: ["integrations", "connectors", "mcp", "servers", "tools"], run: () => useUI.getState().openSettings("integrations") },
     ...BUILTIN_THEMES.map((theme): Command => ({
       id: `theme.${theme.id}`, title: `Theme: ${theme.label}`, category: "Appearance", keywords: [theme.id],
       run: () => s().set("appearance", { theme: theme.id }),

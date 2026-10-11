@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Bot, BotChange, Message, RunState } from "@/mygo";
 
 const bridge = vi.hoisted(() => ({
@@ -15,6 +15,7 @@ vi.mock("@/mygo", () => ({
   events: {
     chatRun: { on: (f: (s: RunState) => void) => { bridge.run = f; return () => { bridge.run = null; }; } },
     chatMessage: { on: (f: (m: Message) => void) => { bridge.message = f; return () => { bridge.message = null; }; } },
+    chatMessageDelta: { on: () => () => {} },
     chatBot: { on: (f: (c: BotChange) => void) => { bridge.bot = f; return () => { bridge.bot = null; }; } },
   },
 }));
@@ -22,11 +23,11 @@ vi.mock("@/mygo", () => ({
 import { useChat, previewOf, sortBots, useSelectedBot } from "@/stores/chat";
 import { useDaemon } from "@/stores/daemon";
 import { useUI } from "@/stores/ui";
-import { renderHook } from "@testing-library/react";
+import { act, renderHook } from "@testing-library/react";
 
 const bot = (id: string, over: Partial<Bot> = {}): Bot => ({
   id, name: id, avatar: "", color: "blue", description: "", instructions: "", provider: "", model: "", reasoning: "",
-  config: { tools: [], mcpTools: [], skills: [], memory: [], limits: { maxSteps: 0, maxToolCalls: 0 } },
+  config: { tools: [], mcpServers: [], skills: [], memory: [], limits: { maxSteps: 0, maxToolCalls: 0 } },
   createdAt: 1, updatedAt: 1, running: false, ...over,
 });
 const message = (botId: string, text: string, over: Partial<Message> = {}): Message => ({
@@ -215,5 +216,74 @@ describe("selection", () => {
     expect(useChat.getState().builder).toEqual({ open: true, botId: "a" });
     useChat.getState().closeBuilder();
     expect(useChat.getState().builder).toEqual({ open: false, botId: null });
+  });
+});
+
+describe("streaming previews", () => {
+  const streaming = (botId: string, text: string, at = 100) => message(botId, text, { status: "running", createdAt: at });
+  const syncWith = async (...bots: Bot[]) => {
+    bridge.bots.mockResolvedValue(bots);
+    stop = useChat.getState().startSync();
+    await settle();
+  };
+  afterEach(() => vi.useRealTimers());
+
+  it("applies a streaming snapshot at once when idle, then at most once per second with the newest text", async () => {
+    await syncWith(bot("a"), bot("b"));
+    vi.useFakeTimers();
+    let changes = 0;
+    const off = useChat.subscribe((state, previous) => { if (state.bots !== previous.bots) changes++; });
+    for (let i = 1; i <= 60; i++) { bridge.message!(streaming("a", `word ${i}`)); vi.advanceTimersByTime(50); }
+    expect(changes).toBeLessThanOrEqual(4);
+    expect(changes).toBeGreaterThan(1);
+    vi.advanceTimersByTime(1000);
+    expect(useChat.getState().bots.find((b) => b.id === "a")!.lastMessage!.text).toBe("word 60");
+    off();
+  });
+
+  it("applies a settled message immediately and keeps untouched bots by reference", async () => {
+    await syncWith(bot("a"), bot("b"));
+    vi.useFakeTimers();
+    const before = useChat.getState().bots.find((b) => b.id === "b");
+    bridge.message!(streaming("a", "partial"));
+    bridge.message!(streaming("a", "partial more"));
+    bridge.message!(message("a", "final answer", { id: "m-a-partial", createdAt: 100 }));
+    expect(useChat.getState().bots.find((b) => b.id === "a")!.lastMessage!.text).toBe("final answer");
+    expect(useChat.getState().bots.find((b) => b.id === "b")).toBe(before);
+    vi.advanceTimersByTime(5000);
+    expect(useChat.getState().bots.find((b) => b.id === "a")!.lastMessage!.text).toBe("final answer");
+  });
+
+  it("keeps the bots array when a snapshot shows what the rail already has", async () => {
+    await syncWith(bot("a"));
+    bridge.message!(message("a", "same"));
+    const bots = useChat.getState().bots;
+    bridge.message!(message("a", "same"));
+    expect(useChat.getState().bots).toBe(bots);
+  });
+
+  it("drops a pending preview when the bot is archived or the sync stops", async () => {
+    await syncWith(bot("a"), bot("b"));
+    vi.useFakeTimers();
+    bridge.message!(streaming("a", "first"));
+    bridge.message!(streaming("a", "second"));
+    bridge.bots.mockResolvedValue([bot("b")]);
+    bridge.bot!({ id: "a", action: "archived" });
+    vi.advanceTimersByTime(2000);
+    expect(useChat.getState().bots.map((b) => b.id)).toEqual(["b"]);
+  });
+
+  it("useSelectedBot stays the same object while only the preview or run flag changes", async () => {
+    await syncWith(bot("a"), bot("b"));
+    useChat.getState().select("a");
+    const { result } = renderHook(() => useSelectedBot());
+    const first = result.current;
+    bridge.message!(message("a", "hello"));
+    bridge.run!({ botId: "a", running: true });
+    expect(useChat.getState().bots.find((b) => b.id === "a")!.lastMessage!.text).toBe("hello");
+    expect(result.current).toBe(first);
+    bridge.bots.mockResolvedValue([bot("a", { name: "Renamed" }), bot("b")]);
+    await act(async () => { await useChat.getState().load(); });
+    expect(result.current?.name).toBe("Renamed");
   });
 });

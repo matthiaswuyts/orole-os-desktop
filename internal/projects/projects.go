@@ -84,6 +84,9 @@ type Worktree struct {
 	Unstaged  int    `json:"unstaged"`
 	Untracked int    `json:"untracked"`
 	Dirty     int    `json:"dirty"`
+	// StatusKnown is true when Upstream, Ahead, Behind and the change counts were read from git.
+	// List leaves it false: reading them runs `git status` per worktree, which is slow in large repos.
+	StatusKnown bool `json:"statusKnown"`
 	// Error is set when git state could not be read for this worktree.
 	Error string `json:"error,omitempty"`
 }
@@ -92,10 +95,14 @@ type Worktree struct {
 type Worktrees interface {
 	// Create adds a worktree on a new branch orole/<slug(name)> started at baseRef ("" = HEAD).
 	Create(ctx context.Context, projectID, name, baseRef string) (Worktree, error)
-	// Get returns one worktree with live git state.
+	// Get returns one worktree with live git state (one git list plus that worktree's status).
 	Get(ctx context.Context, id string) (Worktree, error)
-	// List returns the worktrees of one project; the main checkout comes first.
+	// Path returns a registered worktree's directory from the database only: no git process, no status.
+	Path(ctx context.Context, id string) (string, error)
+	// List returns the worktrees of one project without reading per-worktree git status (fast); the main checkout comes first.
 	List(ctx context.Context, projectID string) ([]Worktree, error)
+	// ListStatus is List plus live git status (ahead/behind, dirty counts) for every worktree.
+	ListStatus(ctx context.Context, projectID string) ([]Worktree, error)
 	// Remove deletes a linked worktree (never the main checkout). force discards local changes.
 	Remove(ctx context.Context, id string, force bool) error
 }
