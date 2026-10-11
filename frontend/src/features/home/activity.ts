@@ -4,6 +4,8 @@ export interface DayCell {
   count: number;
   level: 0 | 1 | 2 | 3 | 4;
   titles: string[];
+  /** Accessible description, e.g. "2 tasks on October 10, 2026", built once with the grid. */
+  label: string;
 }
 
 export interface ActivityGrid {
@@ -15,6 +17,10 @@ export interface ActivityGrid {
 }
 
 const DAYS = 365;
+
+// One formatter each: `toLocaleDateString` with options builds a new Intl formatter per call.
+const DAY_LABEL = new Intl.DateTimeFormat(undefined, { month: "long", day: "numeric", year: "numeric" });
+const MONTH_LABEL = new Intl.DateTimeFormat(undefined, { month: "short" });
 
 export const dayKey = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 
@@ -66,12 +72,12 @@ export function buildActivityGrid(items: { at: string | number; title: string }[
       if (cursor > end || key < startKey) column.push(null);
       else {
         const titles = byDay.get(key) ?? [];
-        column.push({ date: key, count: titles.length, level: levelFor(titles.length, max), titles });
+        column.push({ date: key, count: titles.length, level: levelFor(titles.length, max), titles, label: `${titles.length} ${titles.length === 1 ? "task" : "tasks"} on ${DAY_LABEL.format(cursor)}` });
       }
       if (i === 0 && cursor.getMonth() !== lastMonth && cursor >= windowStart) {
         lastMonth = cursor.getMonth();
         // The window's first partial week is labelled only if the month starts there.
-        months.push({ week: weeks.length, label: cursor.toLocaleString(undefined, { month: "short" }) });
+        months.push({ week: weeks.length, label: MONTH_LABEL.format(cursor) });
       }
       cursor.setDate(cursor.getDate() + 1);
     }

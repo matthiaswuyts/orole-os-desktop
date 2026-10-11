@@ -141,6 +141,17 @@ notes. See `docs/development/updates.md`.
   only while a view that shows them is open (cached for a minute), not on every project reload.
 - Daemon health polling no longer notifies the UI when the status is unchanged, and the status bar,
   sidebar and shell subscribe to the fields they show, so the 5 second poll does not re-render them.
+- Tasks: a streaming agent no longer re-renders the whole task feed. Events are grouped once for the feed and
+  the canvas, unchanged messages and turns skip rendering, and conversations over 60 entries (messages and
+  assistant turns) render only the entries near the viewport (search, "Load earlier" and following the newest
+  message keep working).
+- Tasks board: a session update re-renders only its own card, counts are computed in one pass, and only live
+  sessions tick their elapsed time (a finished task now shows how long it ran, not time since it started).
+- Task changes (diff) in Review and issue workflows refresh at most once every two seconds, never overlap, and
+  keep showing the previous diff while refreshing.
+- Startup no longer waits for the full task list; the Tasks view and Home activity show their own loading state.
+- Home activity calendar no longer rebuilds or reformats its 365 days on hover or on every session update.
+- Terminal: faster output decoding, and changing the font size no longer recreates the terminal.
 
 ### Fixed
 - Terminals: a program that floods its terminal (`cat` of a huge file, a runaway build log) no longer gets

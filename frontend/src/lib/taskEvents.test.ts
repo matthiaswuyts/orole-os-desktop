@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Event as AgentEvent } from "@/mygo";
-import { groupEvents, liveActivity, mergeEvent, mergeHistory, toolInputJSON, toolPreview, type FeedItem } from "./taskEvents";
+import { groupEvents, liveActivity, mergeEvent, mergeHistory, shareItems, toolInputJSON, toolPreview, type FeedItem } from "./taskEvents";
 
 let seq = 0;
 const at = (s: number) => new Date(Date.UTC(2026, 9, 8, 12, 0, s)).toISOString();
@@ -114,6 +114,60 @@ describe("event merging", () => {
     for (const e of [b, a, b, c]) list = mergeEvent(list, e);
     expect(list.map((e) => e.id)).toEqual([a.id, b.id]);
     expect(mergeHistory([a], [b, a, c]).map((e) => e.id)).toEqual([a.id, b.id]);
+  });
+
+  it("inserts a late event at its sorted place and returns the same list for a repeat", () => {
+    const events = Array.from({ length: 6 }, (_, i) => ev("message", `m${i}`));
+    const held = [events[0]!, events[1]!, events[3]!, events[5]!];
+    expect(mergeEvent(held, events[4]!).map((e) => e.id)).toEqual([0, 1, 3, 4, 5].map((i) => events[i]!.id));
+    expect(mergeEvent(held, events[0]!)).toBe(held);
+    expect(mergeEvent(held, events[3]!)).toBe(held);
+    expect(mergeEvent(held, events[2]!).map((e) => e.id)).toEqual([0, 1, 2, 3, 5].map((i) => events[i]!.id));
+    expect(mergeEvent([], events[0]!)).toEqual([events[0]]);
+  });
+
+  it("lets a later event win a repeated id when merging history", () => {
+    const old = ev("message", "old");
+    const replaced = { ...old, text: "new" };
+    expect(mergeHistory([old], [replaced]).map((e) => e.text)).toEqual(["new"]);
+  });
+});
+
+describe("shareItems", () => {
+  const items = (events: AgentEvent[]) => groupEvents(events);
+
+  it("keeps the identity of every item an event did not change, and replaces only the one it did", () => {
+    const events = [ev("prompt", "go"), ev("message", "one"), ev("tool", "", { id: "t1", name: "Read", status: "running", input: { path: "a" } })];
+    const first = items(events);
+    const finished = [...events, ev("tool_result", "", { id: "t1", name: "Read", status: "ok", output: "done" })];
+    const next = shareItems(first, items(finished));
+    expect(next).not.toBe(first);
+    expect(next[0]).toBe(first[0]);
+    expect(next[1]).toBe(first[1]);
+    expect(next[2]).not.toBe(first[2]);
+    expect(only(next, "tool")[0]!.call.status).toBe("ok");
+  });
+
+  it("returns the previous list when an event changes nothing visible", () => {
+    const events = [ev("prompt", "go"), ev("message", "one")];
+    const first = items(events);
+    expect(shareItems(first, items([...events, ev("usage", "", { tokens: 3 })]))).toBe(first);
+  });
+
+  it("compares data parsed from a JSON string by value", () => {
+    const events = [ev("tool", "", '{"id":"t9","name":"Edit","status":"ok","input":{"a":1}}')];
+    const first = items(events);
+    expect(shareItems(first, items([...events]))).toBe(first);
+  });
+
+  it("settles every call of a finished turn without a result, across many turns", () => {
+    const events: AgentEvent[] = [];
+    for (let i = 0; i < 50; i++) events.push(ev("prompt", `p${i}`), ev("tool", "", { id: `t${i}`, name: "Bash", status: "running" }), ev("turn_done", "ok"));
+    events.push(ev("prompt", "last"), ev("tool", "", { id: "open", name: "Bash", status: "running" }));
+    const statuses = only(groupEvents(events), "tool").map((t) => t.call.status);
+    expect(statuses.slice(0, 50).every((s) => s === "unknown")).toBe(true);
+    expect(statuses[50]).toBe("running");
+    expect(only(groupEvents(events, { live: false }), "tool")[50]!.call.status).toBe("unknown");
   });
 });
 
