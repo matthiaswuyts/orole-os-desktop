@@ -70,3 +70,28 @@ describe("ui mode", () => {
     expect(useUI.getState()).toMatchObject({ mode: "code", view: "review" });
   });
 });
+
+describe("opening settings", () => {
+  it("opens the settings window in the desktop app and leaves the current view alone", async () => {
+    vi.resetModules();
+    const openSettings = vi.fn().mockResolvedValue(undefined);
+    vi.doMock("@/lib/backend", () => ({ inDesktop: true }));
+    vi.doMock("@/mygo", () => ({ Desktop: { openSettings } }));
+    const { useUI } = await import("./ui");
+    useUI.getState().setView("review");
+    useUI.getState().openSettings("integrations");
+    expect(openSettings).toHaveBeenCalledWith("integrations");
+    expect(useUI.getState()).toMatchObject({ view: "review", settingsSection: "integrations" });
+    vi.doUnmock("@/lib/backend");
+    vi.doUnmock("@/mygo");
+  });
+
+  it("shows settings in place in the browser preview", async () => {
+    vi.resetModules();
+    vi.doMock("@/lib/backend", () => ({ inDesktop: false }));
+    const { useUI } = await import("./ui");
+    useUI.getState().openSettings("ai");
+    expect(useUI.getState()).toMatchObject({ view: "settings", settingsSection: "ai" });
+    vi.doUnmock("@/lib/backend");
+  });
+});

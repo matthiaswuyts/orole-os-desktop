@@ -2,7 +2,7 @@
 
 ## Ownership and lifecycle
 
-The daemon owns `machines.Manager`, persisted machine metadata, SSH credentials, and active command cancellation. `internal/app.Machines` is a stateless IPC bridge. Register `registerMachines()` after `Policy` exists and before `registerFiles()`; retain `Daemon.Machines` and call `Machines.Close()` at shutdown. `machines.NewProvider(d.Machines)` registers the shared Files `remote` provider. Bind `app.Machines{L: link}` in the desktop process and regenerate MyGo bindings. The Machines surface is `frontend/src/features/machines/MachinesView.tsx`.
+The daemon owns `machines.Manager`, persisted machine metadata, SSH credentials, and active command cancellation. `internal/app.Machines` is a stateless IPC bridge. Register `registerMachines()` after `Policy` exists and before `registerFiles()`; retain `Daemon.Machines` and call `Machines.Close()` at shutdown. `machines.NewProvider(d.Machines)` registers the shared Files `remote` provider. Bind `app.Machines{L: link}` in the desktop process and regenerate MyGo bindings.
 
 Migration `0070_machines.sql` adds execution backend, SSH username, public host-key bytes, approved roots, command grant and write grant to the existing machines table. Local identity is `local`, initialized from the actual hostname and runtime OS. Local operations use the native OS directly and do not require SSH. Remote connections use `golang.org/x/crypto/ssh` and `github.com/pkg/sftp`; no Tailscale, network listener, or remote Orole daemon is required.
 

@@ -1,4 +1,4 @@
-import { Suspense, useEffect } from "react";
+import { lazy, Suspense, useEffect } from "react";
 import { AppShell } from "@/components/shell/AppShell";
 import { useApplyTheme } from "@/hooks/useApplyTheme";
 import { registerCoreCommands } from "@/lib/coreCommands";
@@ -18,7 +18,11 @@ import { useUpdates } from "@/stores/updates";
 import { ToastProvider } from "@/components/ui/toast";
 import { NewProjectDialog } from "@/features/projects/dialogs";
 import { StartupScreen } from "@/components/shell/StartupScreen";
-import { SettingsWindow, isSettingsWindow } from "@/features/settings/SettingsWindow";
+
+/** Query flag the desktop shell puts on the URL of the isolated settings window. */
+const isSettingsWindow = new URLSearchParams(window.location.search).get("window") === "settings";
+// The settings window is its own webview; the main window never loads its pages.
+const SettingsWindow = lazy(() => import("@/features/settings/SettingsWindow").then((m) => ({ default: m.SettingsWindow })));
 
 function ViewHost() {
   const view = useUI((s) => s.view);
@@ -56,5 +60,5 @@ function MainApp() {
 }
 
 export default function App() {
-  return isSettingsWindow ? <SettingsWindow /> : <MainApp />;
+  return isSettingsWindow ? <Suspense fallback={null}><SettingsWindow /></Suspense> : <MainApp />;
 }

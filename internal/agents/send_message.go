@@ -16,6 +16,12 @@ type FollowupCapabilities struct {
 	Model       bool   `json:"model"`
 	Reasoning   bool   `json:"reasoning"`
 	Reason      string `json:"reason"`
+	// PermissionMode reports whether Manual/Auto/YOLO can be changed on this conversation now.
+	// PermissionModeRestarts is true when applying it resumes the conversation (only while
+	// idle); PermissionModeReason explains a refusal.
+	PermissionMode         bool   `json:"permissionMode"`
+	PermissionModeRestarts bool   `json:"permissionModeRestarts"`
+	PermissionModeReason   string `json:"permissionModeReason"`
 }
 
 type configuredProcess interface {
@@ -24,6 +30,12 @@ type configuredProcess interface {
 }
 
 func (m *Manager) followupCapabilities(s Session, ls *liveSess) FollowupCapabilities {
+	c := m.messageCapabilities(s, ls)
+	c.PermissionMode, c.PermissionModeRestarts, c.PermissionModeReason = m.permissionControl(s, ls)
+	return c
+}
+
+func (m *Manager) messageCapabilities(s Session, ls *liveSess) FollowupCapabilities {
 	if !localMachine(s.Machine) || s.Mode != ModeStructured {
 		return FollowupCapabilities{Reason: "Follow-ups require a local structured conversation; continue this agent in its terminal."}
 	}

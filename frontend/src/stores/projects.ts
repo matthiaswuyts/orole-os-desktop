@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { Projects, Worktrees, events, type Project, type Worktree } from "@/mygo";
 import { inDesktop } from "@/lib/backend";
+import { onFocusRefresh } from "@/lib/focus";
 import { useUI, type ViewId } from "@/stores/ui";
 
 const EXPANDED_KEY = "orole.projects.expanded";
@@ -12,6 +13,13 @@ function loadExpanded(): Record<string, boolean> {
 /** A refresh requested while one is in flight: run once more afterwards so no event is lost. */
 let reloadQueued = false;
 
+/** Worktree lists cost a git call per project on the backend, so a list younger than this is reused. */
+export const WORKTREES_TTL_MS = 60_000;
+/** Views currently showing worktrees; only while this is above zero do events and focus refetch them. */
+let worktreeWatchers = 0;
+let worktreesInFlight: Promise<void> | null = null;
+let worktreesQueued = false;
+
 const msg = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 interface State {
@@ -21,13 +29,24 @@ interface State {
   loading: boolean;
   error: string | null;
   projects: Project[];
+  /** Filled lazily by `loadWorktrees`: empty until a view that shows worktrees asks for them. */
   worktrees: Record<string, Worktree[]>;
+  /** When each project's worktrees were last fetched (ms); drives the TTL. */
+  worktreesAt: Record<string, number>;
+  worktreesError: string | null;
   /** Per-project collapse state; projects are expanded unless explicitly collapsed. */
   expanded: Record<string, boolean>;
   /** Project shown in the Projects view. */
   selectedId: string | null;
   select: (id: string | null) => void;
+  /** Reloads the project list. Worktrees are not fetched here unless a view is watching them; see `loadWorktrees`. */
   load: () => Promise<void>;
+  /** Fetches worktrees of git projects that have none yet or whose list is older than the TTL; `force` refetches all. */
+  loadWorktrees: (force?: boolean) => Promise<void>;
+  /** Marks the caller as showing worktrees: loads them now and keeps them fresh until the returned release is called. */
+  watchWorktrees: () => () => void;
+  /** Reads ahead/behind and change counts per worktree (runs `git status`; slow in big repos), one project at a time. */
+  loadStatus: () => Promise<void>;
   /** Whether the New project dialog is open (one instance, mounted in App). */
   newProjectOpen: boolean;
   setNewProjectOpen: (open: boolean) => void;
@@ -54,6 +73,8 @@ export const useProjects = create<State>((set, get) => ({
   error: null,
   projects: [],
   worktrees: {},
+  worktreesAt: {},
+  worktreesError: null,
   expanded: loadExpanded(),
   selectedId: null,
   select: (selectedId) => set({ selectedId }),
@@ -73,12 +94,75 @@ export const useProjects = create<State>((set, get) => ({
     set({ loading: true });
     try {
       const projects = await Projects.list();
-      const lists = await Promise.all(projects.filter((p) => !p.missing && p.isGit).map(async (p) => [p.id, await Worktrees.list(p.id)] as const));
-      set({ projects, worktrees: Object.fromEntries(lists), loaded: true, loading: false, error: null });
+      set((s) => {
+        const gone = Object.keys(s.worktrees).filter((id) => !projects.some((p) => p.id === id));
+        return { projects, loaded: true, loading: false, error: null, ...(gone.length ? { worktrees: omitKeys(s.worktrees, gone), worktreesAt: omitKeys(s.worktreesAt, gone) } : {}) };
+      });
     } catch (e) {
       set({ loaded: true, loading: false, error: msg(e) });
     }
-    if (reloadQueued) { reloadQueued = false; await get().load(); }
+    if (reloadQueued) { reloadQueued = false; await get().load(); return; }
+    if (worktreeWatchers > 0) await get().loadWorktrees();
+  },
+
+  loadWorktrees(force = false) {
+    if (!inDesktop) return Promise.resolve();
+    if (worktreesInFlight) {
+      if (force) worktreesQueued = true;
+      return worktreesInFlight;
+    }
+    const { projects, worktreesAt } = get();
+    const now = Date.now();
+    const due = projects.filter((p) => !p.missing && p.isGit && (force || now - (worktreesAt[p.id] ?? 0) >= WORKTREES_TTL_MS));
+    if (!due.length) return Promise.resolve();
+    worktreesInFlight = (async () => {
+      try {
+        // Per project: one unreadable repository must not hide every other project; its previous worktrees stay.
+        let failure: string | null = null;
+        await Promise.all(due.map(async (p) => {
+          try {
+            const fresh = await Worktrees.list(p.id);
+            set((s) => {
+              if (!s.projects.some((x) => x.id === p.id)) return s;
+              // A list carries no git status; keep the ahead/behind and change counts `loadStatus` already read.
+              const known = new Map((s.worktrees[p.id] ?? []).filter((w) => w.statusKnown).map((w) => [w.id, w]));
+              const merged = fresh.map((w) => { const old = known.get(w.id); return old && !w.error ? { ...w, upstream: old.upstream, ahead: old.ahead, behind: old.behind, staged: old.staged, unstaged: old.unstaged, untracked: old.untracked, dirty: old.dirty, statusKnown: true } : w; });
+              return { worktrees: { ...s.worktrees, [p.id]: merged }, worktreesAt: { ...s.worktreesAt, [p.id]: Date.now() } };
+            });
+          } catch (e) {
+            failure = msg(e);
+          }
+        }));
+        set({ worktreesError: failure });
+      } finally {
+        worktreesInFlight = null;
+      }
+      if (worktreesQueued) { worktreesQueued = false; await get().loadWorktrees(true); }
+    })();
+    return worktreesInFlight;
+  },
+
+  async loadStatus() {
+    if (!inDesktop) return;
+    await Promise.all(get().projects.filter((p) => !p.missing && p.isGit).map(async (p) => {
+      try {
+        const list = await Worktrees.status(p.id);
+        set((s) => s.projects.some((x) => x.id === p.id) ? { worktrees: { ...s.worktrees, [p.id]: list } } : s);
+      } catch (e) {
+        set((s) => ({ worktrees: { ...s.worktrees, [p.id]: (s.worktrees[p.id] ?? []).map((w) => ({ ...w, error: msg(e) })) } }));
+      }
+    }));
+  },
+
+  watchWorktrees() {
+    worktreeWatchers++;
+    void get().loadWorktrees();
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      worktreeWatchers--;
+    };
   },
 
   async create(name, path) {
@@ -89,7 +173,7 @@ export const useProjects = create<State>((set, get) => ({
 
   async remove(id) {
     await Projects.remove(id);
-    set((s) => ({ projects: s.projects.filter((p) => p.id !== id), worktrees: Object.fromEntries(Object.entries(s.worktrees).filter(([k]) => k !== id)), selectedId: s.selectedId === id ? null : s.selectedId }));
+    set((s) => ({ projects: s.projects.filter((p) => p.id !== id), worktrees: omitKeys(s.worktrees, [id]), worktreesAt: omitKeys(s.worktreesAt, [id]), selectedId: s.selectedId === id ? null : s.selectedId }));
   },
 
   async open(id) { await Projects.open(id); },
@@ -101,12 +185,14 @@ export const useProjects = create<State>((set, get) => ({
 
   async createWorktree(projectId, name, baseRef) {
     const wt = await Worktrees.create(projectId, name, baseRef);
+    set({ worktreesAt: {} });
     await get().load();
     return wt;
   },
 
   async removeWorktree(id, force) {
     await Worktrees.remove(id, force);
+    set({ worktreesAt: {} });
     await get().load();
   },
 
@@ -118,13 +204,21 @@ export const useProjects = create<State>((set, get) => ({
 
   startSync() {
     if (!inDesktop) return () => {};
-    void get().load();
     const refresh = () => void get().load();
-    const offs = [events.projectsChanged.on(refresh), events.worktreesChanged.on(refresh)];
-    window.addEventListener("focus", refresh);
-    return () => { offs.forEach((o) => o()); window.removeEventListener("focus", refresh); };
+    refresh();
+    // A worktrees event only marks the lists stale; they are refetched right away only while a view is watching them.
+    const refreshWorktrees = () => {
+      set({ worktreesAt: {} });
+      if (worktreeWatchers > 0) void get().loadWorktrees(true);
+    };
+    const offs = [events.projectsChanged.on(refresh), events.worktreesChanged.on(refreshWorktrees), onFocusRefresh(refresh)];
+    return () => offs.forEach((o) => o());
   },
 }));
+
+function omitKeys<T>(record: Record<string, T>, keys: readonly string[]): Record<string, T> {
+  return Object.fromEntries(Object.entries(record).filter(([key]) => !keys.includes(key)));
+}
 
 /** Branch state color key for a worktree: error, dirty, ahead/behind or clean. */
 export function worktreeState(w: Worktree): "error" | "dirty" | "ahead" | "behind" | "clean" {

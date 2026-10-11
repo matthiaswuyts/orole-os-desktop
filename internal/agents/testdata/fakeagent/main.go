@@ -10,6 +10,11 @@
 //	CRASH     exit with code 3 and a message on stderr
 //	EDIT      create edited.txt in the working directory
 //	command-output   create ok.txt (what the loop-until fix request triggers)
+//	WHICHMODE        answer with the current permission mode and the launch arguments
+//
+// Like the real CLI it reports --permission-mode in the init message, accepts a
+// set_permission_mode control request, and refuses bypassPermissions unless it was launched
+// with --allow-dangerously-skip-permissions.
 package main
 
 import (
@@ -22,6 +27,11 @@ import (
 )
 
 var out = bufio.NewWriter(os.Stdout)
+
+var (
+	permissionMode = "default"
+	allowBypass    bool
+)
 
 func emit(v any) {
 	b, _ := json.Marshal(v)
@@ -47,6 +57,12 @@ func main() {
 			i++
 			resume = os.Args[i]
 			sid = resume
+		case "--permission-mode":
+			i++
+			permissionMode = os.Args[i]
+			allowBypass = allowBypass || permissionMode == "bypassPermissions"
+		case "--allow-dangerously-skip-permissions":
+			allowBypass = true
 		}
 	}
 	if !print {
@@ -67,15 +83,38 @@ func main() {
 			if json.Unmarshal([]byte(line), &m) == nil && m.Type == "user" {
 				if !started {
 					started = true
-					emit(map[string]any{"type": "system", "subtype": "init", "session_id": sid, "model": "fake-1"})
+					emit(map[string]any{"type": "system", "subtype": "init", "session_id": sid, "model": "fake-1", "permissionMode": permissionMode})
 				}
 				turn(in, m.Message.Content, sid, resume)
+			} else if m.Type == "control_request" {
+				setMode(line)
 			}
 		}
 		if err != nil {
 			return
 		}
 	}
+}
+
+func setMode(line string) {
+	var r struct {
+		RequestID string `json:"request_id"`
+		Request   struct {
+			Subtype string `json:"subtype"`
+			Mode    string `json:"mode"`
+		} `json:"request"`
+	}
+	if json.Unmarshal([]byte(line), &r) != nil || r.Request.Subtype != "set_permission_mode" {
+		return
+	}
+	resp := map[string]any{"subtype": "success", "request_id": r.RequestID, "response": map[string]any{"mode": r.Request.Mode}}
+	if r.Request.Mode == "bypassPermissions" && !allowBypass {
+		resp = map[string]any{"subtype": "error", "request_id": r.RequestID, "error_code": "bypass_not_launched",
+			"error": "Cannot set permission mode to bypassPermissions because the session was not launched with --dangerously-skip-permissions"}
+	} else {
+		permissionMode = r.Request.Mode
+	}
+	emit(map[string]any{"type": "control_response", "response": resp})
 }
 
 func terminal() {
@@ -159,6 +198,12 @@ func turn(in *bufio.Reader, content, sid, resume string) {
 	}
 	if strings.Contains(content, "FAIL") {
 		result(false, "boom")
+		return
+	}
+	if strings.Contains(content, "WHICHMODE") {
+		msg := fmt.Sprintf("mode=%s args=%s", permissionMode, strings.Join(os.Args[1:], " "))
+		text(msg)
+		result(true, msg)
 		return
 	}
 	mode := "fresh"

@@ -1,6 +1,6 @@
 import { Tooltip, TooltipPopup, TooltipTrigger } from "@/components/ui/tooltip";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { CircleAlert, CircleCheck, CircleDot, CircleSlash, GitMerge, GitPullRequest, GitPullRequestClosed, GitPullRequestDraft, LoaderCircle, RefreshCw } from "lucide-react";
+import { CircleAlert, CircleCheck, CircleDot, CircleSlash, GitMerge, GitPullRequest, GitPullRequestClosed, GitPullRequestDraft, RefreshCw } from "lucide-react";
 import type { Issue, Label, PullRequest } from "@/mygo";
 import { ago } from "@/lib/projects";
 import { Badge } from "@/components/ui/badge";
@@ -88,7 +88,7 @@ export function ReviewBadge({ state }: { state: string }) {
 
 /** CI conclusion for a workflow run or check. */
 export function CiBadge({ status, conclusion }: { status: string; conclusion: string }) {
-  if (status !== "completed") return <Badge variant="warning"><LoaderCircle className="animate-spin" />{status.replace("_", " ")}</Badge>;
+  if (status !== "completed") return <Badge variant="warning"><Spinner size={12} />{status.replace("_", " ")}</Badge>;
   if (conclusion === "success") return <Badge variant="success">passed</Badge>;
   if (conclusion === "skipped" || conclusion === "neutral" || conclusion === "cancelled") return <Badge variant="outline">{conclusion}</Badge>;
   return <Badge variant="error">{conclusion.replace("_", " ") || "failed"}</Badge>;
