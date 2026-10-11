@@ -130,6 +130,22 @@ func TestStatusReadsVersionUpdateAndSignIn(t *testing.T) {
 	if g.Installed || g.UpdateAvailable || g.Latest != "1.0.50" || g.Auth != Unknown || !g.Installable {
 		t.Fatalf("grok: %+v", g)
 	}
+
+	// Grok has no status command: `models` says whether a sign-in exists.
+	for out, want := range map[string]string{
+		"You are not authenticated.\n\nDefault model: grok-4.6\n\nAvailable models:\n  * grok-4.6 (default)\n": SignedOut,
+		"Default model: grok-4.6\n\nAvailable models:\n  * grok-4.6 (default)\n":                               SignedIn,
+		"something unexpected": Unknown,
+	} {
+		cli := &fakeCLI{version: "1.0.50", out: map[string]string{"models": out}}
+		gm := newTestManager(t, cli, func(c *Config) {
+			c.NPM, c.GitHub, c.Grok = srv.URL, srv.URL+"/codex", srv.URL+"/grok"
+			c.LookPath = func(string) (string, error) { return "/bin/grok", nil }
+		})
+		if st, _ := gm.Status(context.Background(), Grok); st.Auth != want {
+			t.Errorf("grok auth for %q = %s, want %s", out, st.Auth, want)
+		}
+	}
 }
 
 func TestAStatusLookupFailureNeverHidesTheRest(t *testing.T) {

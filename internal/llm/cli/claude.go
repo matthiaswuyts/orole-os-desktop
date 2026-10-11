@@ -101,7 +101,7 @@ func (p *Claude) Stream(ctx context.Context, req llm.Request) (<-chan llm.Delta,
 	go func() {
 		defer close(ch)
 		defer os.RemoveAll(dir)
-		p.read(ctx, out, wait, req, func(d llm.Delta) bool {
+		readStreamJSON(ctx, out, wait, req, func(d llm.Delta) bool {
 			select {
 			case ch <- d: // a free slot always takes the delta, so a cancellation error is never dropped
 				return true
@@ -113,13 +113,14 @@ func (p *Claude) Stream(ctx context.Context, req llm.Request) (<-chan llm.Delta,
 					return false
 				}
 			}
-		})
+		}, claudeError)
 	}()
 	return ch, nil
 }
 
-// read turns Claude Code's stream-json lines into deltas.
-func (p *Claude) read(ctx context.Context, out io.ReadCloser, wait func() error, req llm.Request, send func(llm.Delta) bool) {
+// readStreamJSON turns the stream-json lines of Claude Code (and of Grok, whose headless mode speaks the same
+// Anthropic Messages wire format) into deltas. fail maps a reported failure or a bad exit to an error.
+func readStreamJSON(ctx context.Context, out io.ReadCloser, wait func() error, req llm.Request, send func(llm.Delta) bool, fail func(string, error) *llm.Error) {
 	var reply replyStream
 	var usage *llm.Usage
 	var failure string
@@ -169,7 +170,7 @@ func (p *Claude) read(ctx context.Context, out io.ReadCloser, wait func() error,
 		return
 	}
 	if failure != "" || (werr != nil && reply.full.Len() == 0) {
-		send(llm.Delta{Kind: llm.DeltaError, Err: claudeError(failure, werr)})
+		send(llm.Delta{Kind: llm.DeltaError, Err: fail(failure, werr)})
 		return
 	}
 	rest, calls := reply.Finish(req.Tools)

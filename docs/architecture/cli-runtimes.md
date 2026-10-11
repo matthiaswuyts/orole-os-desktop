@@ -16,7 +16,7 @@ Each provider reports `installed`, `path`, `source`, `version`, `latest`, `updat
 | --- | --- | --- | --- |
 | Claude | `claude --version` | npm `@anthropic-ai/claude-code` `latest` | `claude auth status` (JSON) |
 | ChatGPT | `codex --version` | GitHub `openai/codex` latest release | `codex login status` |
-| Grok | `grok --version` | `https://x.ai/cli/stable` | not askable: Sign in is always offered |
+| Grok | `grok --version` | `https://x.ai/cli/stable` | `grok models` (no status command): "not authenticated" means signed out, a model list means signed in |
 
 Latest versions are cached for 30 minutes.
 
@@ -59,3 +59,13 @@ instructions and the conversation go on stdin, never on the command line.
 
 Anthropic's terms limit subscription sign-in to ordinary individual use of the unmodified CLI; bots that work in the
 background on a plan can go past that. The Accounts page says so next to the Claude row.
+
+## Grok as a model for bots
+Grok Build's headless mode (`--prompt-file`, `--output-format streaming-messages-json --include-partial-messages`) speaks
+the same Anthropic Messages wire format as Claude Code, so `internal/llm/cli/grok.go` shares `readStreamJSON` with the
+Claude provider. Text streams. Models come from `grok models`, which also tells whether anyone is signed in.
+
+The CLI has no switch for "no tools". Orole removes its built-in tools with `--disallowed-tools`, `--no-subagents` and
+`--no-plan`, replaces its system prompt and runs it in an empty scratch directory. A few shell and subagent tools cannot be
+removed; headless mode has nobody to approve them, so a call is cancelled instead of run (verified: a requested
+`echo > file` created no file). A turn where the model insists on a tool ends as an error result.

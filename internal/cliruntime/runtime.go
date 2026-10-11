@@ -278,6 +278,15 @@ func (m *Manager) auth(ctx context.Context, s spec, path string) (state, account
 			return SignedIn, v.Email
 		}
 		return SignedOut, ""
+	case Grok:
+		// Grok has no status command; `models` lists the models when signed in and says so when not.
+		low := strings.ToLower(out)
+		switch {
+		case strings.Contains(low, "not authenticated"):
+			return SignedOut, ""
+		case strings.Contains(low, "available models"):
+			return SignedIn, ""
+		}
 	case Codex:
 		low := strings.ToLower(out)
 		switch {
