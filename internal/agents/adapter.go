@@ -490,31 +490,17 @@ func startPty(h *Host, sessionID, dir, cmdline, title string) (*ptyProc, error) 
 	return p, nil
 }
 
-// watch turns terminal exit into the final event. The terminals package reports exit only
-// through its sink, which the daemon owns, so poll the (cheap, metadata-only) list.
+// watch turns terminal exit into the final event: it blocks on the terminals manager's exit
+// notification instead of polling the session list.
 func (p *ptyProc) watch() {
-	t := time.NewTicker(250 * time.Millisecond)
-	defer t.Stop()
-	for range t.C {
-		found := false
-		for _, in := range p.term.List() {
-			if in.ID != p.id {
-				continue
-			}
-			found = true
-			if in.State == terminals.Exited {
-				code := 0
-				if in.ExitCode != nil {
-					code = *in.ExitCode
-				}
-				p.finish(code)
-				return
-			}
-		}
-		if !found { // terminal closed by the user
-			p.finish(-1)
-			return
-		}
+	info, err := p.term.Wait(context.Background(), p.id)
+	switch {
+	case err != nil: // closed by the user, or already forgotten
+		p.finish(-1)
+	case info.ExitCode != nil:
+		p.finish(*info.ExitCode)
+	default:
+		p.finish(0)
 	}
 }
 

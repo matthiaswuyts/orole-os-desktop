@@ -207,6 +207,11 @@ func (t termSink) Output(id string, seq uint64, data []byte) {
 }
 func (t termSink) Changed(info terminals.Info) { t.d.IPC.Publish("terminal.changed", info) }
 
+// Removed tells the GUI that the manager reaped an exited session.
+func (t termSink) Removed(id string) {
+	t.d.IPC.Publish("terminal.removed", map[string]string{"id": id})
+}
+
 // handle registers a typed method.
 func handle[P any, R any](d *Daemon, name string, f func(ctx context.Context, p P) (R, error)) {
 	d.IPC.Handle(name, func(ctx context.Context, raw json.RawMessage) (any, error) {
