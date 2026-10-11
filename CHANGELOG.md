@@ -9,6 +9,8 @@ notes. See `docs/development/updates.md`.
 ## Unreleased
 
 ### Added
+- Bots can use your Grok account: Grok models appear in the bot model picker once Grok is downloaded and signed in under Settings > AI
+  providers > Accounts. Grok's sign-in state is read with `grok models`.
 - Bots can use your Claude plan too: Claude models (Opus, Sonnet, Haiku) appear in the bot model picker once the Claude account is signed in.
   Text streams as it is written. Claude Code runs as a plain model with all of its own tools, settings and MCP servers switched off.
 - Bots can use your ChatGPT plan: once the ChatGPT account is signed in under Settings > AI providers > Accounts, its models appear in the

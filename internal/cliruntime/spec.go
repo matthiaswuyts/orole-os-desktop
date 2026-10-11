@@ -37,7 +37,7 @@ type spec struct {
 var specs = []spec{
 	{id: Claude, name: "Claude", binary: "claude", authArgs: []string{"auth", "status"}, login: []string{"auth", "login", "--claudeai"}, logout: []string{"auth", "logout"}},
 	{id: Codex, name: "ChatGPT", binary: "codex", authArgs: []string{"login", "status"}, login: []string{"login"}, logout: []string{"logout"}},
-	{id: Grok, name: "Grok", binary: "grok", login: []string{"login"}, logout: []string{"logout"}},
+	{id: Grok, name: "Grok", binary: "grok", authArgs: []string{"models"}, login: []string{"login"}, logout: []string{"logout"}},
 }
 
 func specOf(id string) (spec, bool) {
