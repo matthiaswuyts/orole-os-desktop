@@ -4,7 +4,7 @@ import type { Bot, BotChange, Message, RunState } from "@/mygo";
 import type { ChatState } from "@/stores/chat";
 
 const bridge = vi.hoisted(() => ({
-  bots: vi.fn(), clear: vi.fn(), archiveBot: vi.fn(),
+  bots: vi.fn(), clear: vi.fn(), archiveBot: vi.fn(), pinBot: vi.fn(),
   provider: { value: true as boolean | null },
   run: null as ((s: RunState) => void) | null,
   message: null as ((m: Message) => void) | null,
@@ -17,7 +17,7 @@ vi.mock("@/mygo", async (importOriginal) => {
   const none = () => () => {};
   return {
     ...actual,
-    Chat: { bots: bridge.bots, clear: bridge.clear, archiveBot: bridge.archiveBot },
+    Chat: { bots: bridge.bots, clear: bridge.clear, archiveBot: bridge.archiveBot, pinBot: bridge.pinBot },
     events: {
       chatRun: { on: (f: (s: RunState) => void) => { bridge.run = f; return () => { bridge.run = null; }; } },
       chatMessage: { on: (f: (m: Message) => void) => { bridge.message = f; return () => { bridge.message = null; }; } },
@@ -48,7 +48,7 @@ const loaded = (over: Partial<ChatState> = {}) =>
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ["Date"] });
   vi.setSystemTime(NOW);
-  bridge.bots.mockReset(); bridge.clear.mockReset(); bridge.archiveBot.mockReset();
+  bridge.bots.mockReset(); bridge.clear.mockReset(); bridge.archiveBot.mockReset(); bridge.pinBot.mockReset();
   bridge.provider.value = true;
   localStorage.clear();
   useDaemon.setState({ link: "connected" });
@@ -212,6 +212,31 @@ describe("BotRail actions", () => {
     fireEvent.click(await screen.findByRole("menuitem", { name: "Bot settings" }));
     expect(useChat.getState().settingsOpen).toBe(true);
     expect(useChat.getState().selectedBotId).toBe("coder");
+  });
+
+  it("lists pinned bots first, keeps each group's order and marks the pin", () => {
+    loaded({ bots: [bots[0]!, bots[1]!, { ...bots[2]!, config: { ...bots[2]!.config, pinned: true } }] });
+    render(<BotRail />);
+    const rows = screen.getAllByRole("button", { name: /^(Travel|Coder|Quiet)/ }).map((b) => b.textContent);
+    expect(rows[0]).toMatch(/^Quiet/);
+    expect(rows[1]).toMatch(/^Travel/);
+    expect(rows[2]).toMatch(/^Coder/);
+    expect(within(screen.getByRole("button", { name: /^Quiet/ })).getByLabelText("Pinned")).toBeInTheDocument();
+    expect(within(screen.getByRole("button", { name: /^Travel/ })).queryByLabelText("Pinned")).toBeNull();
+  });
+
+  it("pins and unpins from the row menu", async () => {
+    bridge.pinBot.mockResolvedValue(undefined);
+    loaded({ bots: [bots[0]!, { ...bots[1]!, config: { ...bots[1]!.config, pinned: true } }] });
+    render(<BotRail />);
+    fireEvent.contextMenu(screen.getByRole("button", { name: /^Travel/ }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Pin to top" }));
+    await waitFor(() => expect(bridge.pinBot).toHaveBeenCalledWith({ id: "travel", pinned: true }));
+    cleanup();
+    render(<BotRail />);
+    fireEvent.contextMenu(screen.getByRole("button", { name: /^Coder/ }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Unpin" }));
+    await waitFor(() => expect(bridge.pinBot).toHaveBeenLastCalledWith({ id: "coder", pinned: false }));
   });
 
   it("clears a conversation only after confirmation", async () => {

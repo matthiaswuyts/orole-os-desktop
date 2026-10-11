@@ -297,6 +297,15 @@ func (m *Manager) greet(ctx context.Context, botID string) error {
 	if err := m.store.insertMessage(ctx, &msg); err != nil {
 		return err
 	}
+// PinBot pins a bot to the top of the bot list, or unpins it.
+func (m *Manager) PinBot(ctx context.Context, id string, pinned bool) error {
+	if err := m.store.setPinned(ctx, id, pinned); err != nil {
+		return err
+	}
+	m.publishBot(id, "saved")
+	return nil
+}
+
 	m.publishMessage(msg)
 	m.startLocked(botID, turn{userMsgID: msg.ID})
 	return nil

@@ -347,11 +347,24 @@ func (s *store) saveBot(ctx context.Context, in BotInput) (Bot, error) {
 		var n int
 		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM bots WHERE archived_at IS NULL`).Scan(&n); err != nil {
 			return Bot{}, err
+		in.Config.Pinned = false
+		cfg, err := json.Marshal(in.Config)
+		if err != nil {
+			return Bot{}, err
+		}
 		}
 		if n >= MaxBots {
 			return Bot{}, invalidf("You can have at most %d bots. Archive one to add another.", MaxBots)
 		}
 		in.ID = newID()
+		// Pinning is not part of a save: keep what is stored.
+		var pinned sql.NullInt64
+		_ = tx.QueryRowContext(ctx, `SELECT json_extract(config,'$.pinned') FROM bots WHERE id=? AND archived_at IS NULL`, in.ID).Scan(&pinned)
+		in.Config.Pinned = pinned.Valid && pinned.Int64 == 1
+		cfg, err := json.Marshal(in.Config)
+		if err != nil {
+			return Bot{}, err
+		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO bots(`+botCols+`) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
 			in.ID, in.Name, in.Avatar, in.Color, in.Description, in.Instructions, in.Provider, in.Model, in.Reasoning, string(cfg), now, now); err != nil {
 			return Bot{}, err
@@ -649,6 +662,22 @@ func (s *store) putSummary(ctx context.Context, botID string, sm summary) error 
 func (s *store) markInterrupted(ctx context.Context) error {
 	if _, err := s.db.ExecContext(ctx, `UPDATE messages SET status=? WHERE status=?`, StatusIncomplete, StatusRunning); err != nil {
 		return err
+
+// setPinned pins or unpins a bot without touching the rest of its configuration.
+func (s *store) setPinned(ctx context.Context, id string, pinned bool) error {
+	expr := "json_remove(config, '$.pinned')"
+	if pinned {
+		expr = "json_set(config, '$.pinned', json('true'))"
+	}
+	res, err := s.db.ExecContext(ctx, `UPDATE bots SET config=`+expr+`, updated_at=? WHERE id=? AND archived_at IS NULL`, s.now().UnixMilli(), id)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return notFoundf("Bot not found.")
+	}
+	return nil
+}
 	}
 	_, err := s.db.ExecContext(ctx, `UPDATE messages SET status=?, error=? WHERE status=?`,
 		StatusCanceled, "Not sent: Orole was closed before this message was processed.", StatusPending)

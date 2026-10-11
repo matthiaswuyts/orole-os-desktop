@@ -14,6 +14,10 @@
 //	chat.messages.list    MessagesRequest          -> MessagePage
 //	chat.send             SendRequest              -> Message   (the stored user message; reply streams via events)
 //	chat.cancel           BotRef                   -> struct{}
+//	chat.bots.pin         PinRequest               -> struct{}  (pin a bot to the top of the list)
+//	chat.queue.pause      BotRef                   -> struct{}  (the next queued message waits until resume)
+//	chat.queue.resume     BotRef                   -> struct{}
+//	chat.queue.cancel     QueueItemRef             -> struct{}  (drops one waiting message)
 //	chat.regenerate       RegenerateRequest        -> struct{}
 //	chat.clear            BotRef                   -> struct{}  (deletes the conversation + summary; memory is kept)
 //	chat.draft.send       DraftRequest             -> Message   (bot-builder preview: ephemeral, nothing persisted)
@@ -86,6 +90,8 @@ type BotConfig struct {
 	// Setup marks a freshly created bot that still has to learn its purpose: it is offered the setup
 	// tools (ask_user, save_profile) until it saves its own instructions.
 	Setup bool `json:"setup,omitempty"`
+	// Pinned keeps the bot at the top of the bot list. It is changed only by PinBot: saving a bot never touches it.
+	Pinned bool `json:"pinned,omitempty"`
 }
 
 // Bot is a contact: identity, brain settings and live status.
@@ -128,6 +134,12 @@ type BotInput struct {
 	Model        string    `json:"model"`
 	Reasoning    string    `json:"reasoning"`
 	Config       BotConfig `json:"config"`
+}
+
+// PinRequest pins or unpins a bot.
+type PinRequest struct {
+	ID     string `json:"id"`
+	Pinned bool   `json:"pinned"`
 }
 
 // BotRef identifies a bot.
