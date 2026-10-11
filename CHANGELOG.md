@@ -35,6 +35,10 @@ notes. See `docs/development/updates.md`.
   `propose_skill` for your approval. Built-in skills are for bots only and are never synced to coding agents.
 
 ### Changed
+- Model picker: the company filter is a row of chips shown only for All and aggregators like OpenRouter (an account serves only its own
+  models), the "Use default" entry is gone (a bot always shows and runs on a named model; new bots start on the default chat model), and the
+  instructions box in bot settings stops growing at a maximum height. Choosing a provider shows all of its models, not only the handpicked
+  ones (All still shows the handpicked ones, and a search reaches everything); the first row no longer carries a selection border.
 - The model picker (bot settings and new bot) starts with a provider chooser: tiles for each connected provider, marked "Your account"
   (Claude, ChatGPT, Grok) or "API key" (OpenRouter, OpenAI), with logos. Models say who serves them ("via Claude") and the picker links to
   Settings > AI providers to connect more.
