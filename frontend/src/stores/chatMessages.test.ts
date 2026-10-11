@@ -22,6 +22,7 @@ vi.mock("@/mygo", () => ({
 
 import { MAX_IN_MEMORY, mergeLatest, upsert, useBotRunning, useChatMessages } from "@/stores/chatMessages";
 import { useChat } from "@/stores/chat";
+import { useChatDrafts } from "@/stores/chatDrafts";
 import { useDaemon } from "@/stores/daemon";
 
 const msg = (seq: number, over: Partial<Message> = {}): Message => ({
@@ -37,7 +38,7 @@ const deferred = <T,>() => {
 const settle = async () => { for (let i = 0; i < 8; i++) await Promise.resolve(); };
 
 let stop: (() => void) | undefined;
-const reset = () => useChatMessages.setState({ byBot: {}, runs: {}, drafts: {}, problems: {} });
+const reset = () => { useChatMessages.setState({ byBot: {}, runs: {}, problems: {} }); useChatDrafts.setState({ drafts: {} }); };
 
 beforeEach(() => {
   Object.values(bridge).forEach((v) => { if (typeof v === "function" && "mockReset" in v) v.mockReset(); });
@@ -130,11 +131,14 @@ describe("event sync", () => {
     expect(useChatMessages.getState().runs.a).toBe(false);
   });
 
-  it("empties the window when the conversation is cleared and forgets an archived bot", () => {
+  it("empties the window when the conversation is cleared and forgets an archived bot and its draft", () => {
+    useChatDrafts.getState().setDraft("a", { text: "unsent" });
     bridge.bot!({ id: "a", action: "cleared" });
     expect(useChatMessages.getState().byBot.a).toMatchObject({ messages: [], loaded: true });
+    expect(useChatDrafts.getState().drafts.a?.text).toBe("unsent");
     bridge.bot!({ id: "a", action: "archived" });
     expect(useChatMessages.getState().byBot.a).toBeUndefined();
+    expect(useChatDrafts.getState().drafts.a).toBeUndefined();
   });
 
   it("keeps at most MAX_IN_MEMORY messages while following the live end", () => {
@@ -218,12 +222,6 @@ describe("sending, cancelling, regenerating", () => {
     bridge.clear.mockResolvedValue(undefined);
     expect(await useChatMessages.getState().clear("a")).toBe(true);
     expect(useChatMessages.getState().byBot.a).toMatchObject({ messages: [], loaded: true });
-  });
-
-  it("keeps drafts per bot", () => {
-    useChatMessages.getState().setDraft("a", { text: "one" });
-    useChatMessages.getState().setDraft("b", { text: "two", research: true });
-    expect(useChatMessages.getState().drafts).toEqual({ a: { text: "one", research: false }, b: { text: "two", research: true } });
   });
 });
 

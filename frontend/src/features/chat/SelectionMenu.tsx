@@ -2,6 +2,7 @@ import { LightbulbIcon, MessageSquarePlusIcon, MinimizeIcon, SparklesIcon, type 
 import { Fragment, useEffect, useState, type RefObject } from "react";
 import { Button } from "@/components/ui/button";
 import { Group, GroupSeparator } from "@/components/ui/group";
+import { useChatDrafts } from "@/stores/chatDrafts";
 import { useChatMessages } from "@/stores/chatMessages";
 import { withQuote } from "./quote";
 
@@ -93,7 +94,7 @@ export function SelectionMenu({ botId, root }: { botId: string; root: RefObject<
     setSelected(null);
   };
   const addToChat = () => {
-    const store = useChatMessages.getState();
+    const store = useChatDrafts.getState();
     const draft = store.drafts[botId]?.text ?? "";
     store.setDraft(botId, { text: `${draft ? `${draft.trimEnd()}\n\n` : ""}${withQuote(selected.text, "")}` });
     window.getSelection()?.removeAllRanges();

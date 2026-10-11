@@ -61,6 +61,11 @@ notes. See `docs/development/updates.md`.
   changes are debounced per session and published as small `agents.delta` updates, events are
   inserted in batches, `agents.list` is paged, diff statistics use `git diff --numstat` coalesced
   per session, headless agent output lines are bounded and history pruning counts per session.
+- `orole-cli` no longer links the daemon, sqlite, sftp/ssh or the MCP SDK: `daemon.Health` and the IPC
+  token helpers moved to the leaf package `internal/daemon/api`, and `diagnostics.Collect` takes an
+  injected offline schema reader. Offline `doctor` in the CLI reports the DB schema version as
+  unavailable when the daemon is not running (the desktop app still reads it). CI guards this with
+  `scripts/check-cli-linkage.sh`.
 - SQLite: transactions take the write lock up front (`_txlock=immediate`), 4 idle connections,
   `temp_store`/`cache_size`/`journal_size_limit` pragmas, and `PRAGMA optimize` plus a WAL checkpoint on close.
   Migration 0101 adds a partial index on in-flight `messages.status` for startup recovery.
@@ -108,6 +113,9 @@ notes. See `docs/development/updates.md`.
 ### Removed
 - Unused frontend dependencies: `@tanstack/react-query`, `cn`, `@fontsource-variable/dm-sans`,
   `@fontsource-variable/geist`.
+- Chat: a streaming reply no longer re-renders the whole conversation. The rail's preview of a reply
+  updates at most once a second, the open conversation ignores preview and run-flag changes, bots and
+  the run state are read once per thread, and composer drafts live in their own store.
 
 ### Fixed
 - Terminals: a program that floods its terminal (`cat` of a huge file, a runaway build log) no longer gets

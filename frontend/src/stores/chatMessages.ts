@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { Chat, events, type Message, type SendRequest } from "@/mygo";
 import { inDesktop } from "@/lib/backend";
+import { useChatDrafts } from "@/stores/chatDrafts";
 import { useChat } from "@/stores/chat";
 import { useDaemon } from "@/stores/daemon";
 
@@ -22,9 +23,6 @@ export interface Conversation {
   browsing: boolean;
 }
 
-/** The composer's per-bot state kept while another bot is open. */
-export interface Draft { text: string; research: boolean }
-
 /** Something the user should see about the last action; a failed send carries its request so Retry is idempotent. */
 export interface Problem { message: string; request?: SendRequest }
 
@@ -36,7 +34,6 @@ interface State {
   runs: Record<string, boolean>;
   /** Bots whose queue is on hold (chat.run events): waiting messages start only after `resumeQueue`. */
   paused: Record<string, boolean>;
-  drafts: Record<string, Draft>;
   problems: Record<string, Problem>;
   load: (botId: string) => Promise<void>;
   loadOlder: (botId: string) => Promise<void>;
@@ -52,7 +49,6 @@ interface State {
   regenerate: (botId: string, messageId: string) => Promise<void>;
   clear: (botId: string) => Promise<boolean>;
   dismissProblem: (botId: string) => void;
-  setDraft: (botId: string, patch: Partial<Draft>) => void;
   startSync: () => () => void;
 }
 
@@ -105,7 +101,7 @@ function trim(conversation: Conversation, messages: Message[]): Pick<Conversatio
 
 /** The daemon owns conversations. This is a disposable, event-synchronized window onto each one that has been opened. */
 export const useChatMessages = create<State>((set, get) => ({
-  byBot: {}, runs: {}, paused: {}, drafts: {}, problems: {},
+  byBot: {}, runs: {}, paused: {}, problems: {},
   async load(botId) {
     if (!inDesktop || botId.startsWith(DRAFT_PREFIX)) return;
     const request = ++token;
@@ -180,7 +176,6 @@ export const useChatMessages = create<State>((set, get) => ({
     }
   },
   dismissProblem: (botId) => set((state) => ({ problems: omit(state.problems, botId) })),
-  setDraft: (botId, change) => set((state) => ({ drafts: { ...state.drafts, [botId]: { ...(state.drafts[botId] ?? { text: "", research: false }), ...change } } })),
   startSync() {
     if (!inDesktop) return () => {};
     if (++subscribers === 1) {
@@ -205,7 +200,8 @@ export const useChatMessages = create<State>((set, get) => ({
       const offBot = events.chatBot.on(({ id, action }) => {
         if (action === "archived") {
           latest.delete(id); older.delete(id); live.delete(id);
-          set((state) => ({ byBot: omit(state.byBot, id), runs: omit(state.runs, id), paused: omit(state.paused, id), problems: omit(state.problems, id), drafts: omit(state.drafts, id) }));
+          set((state) => ({ byBot: omit(state.byBot, id), runs: omit(state.runs, id), paused: omit(state.paused, id), problems: omit(state.problems, id) }));
+          useChatDrafts.getState().dropDraft(id);
         } else if (action === "cleared") {
           latest.delete(id); older.delete(id); live.delete(id);
           set((state) => state.byBot[id] ? { byBot: { ...state.byBot, [id]: { ...EMPTY, loaded: true } } } : state);
