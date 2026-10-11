@@ -96,6 +96,14 @@ notes. See `docs/development/updates.md`.
 - Integrations and MCP servers are one Settings > Integrations page: company logos, one-click Add for Vercel,
   Cloudflare, Notion, Linear, Stripe, Netlify, Railway, Supabase, Neon, Prisma, Sentry, Zapier, Intercom, PayPal
   and Mixpanel, and a Custom connector button that needs only a name and a server URL.
+- Faster startup: the Home view, home widgets, command palette and the settings window's pages now load
+  on demand. The entry chunk drops from 929 kB to 592 kB (gzip 266 kB to 163 kB). Widgets show a
+  per-widget loading card while their code loads.
+- Only the Latin subsets of Inter and JetBrains Mono are bundled.
+
+### Removed
+- Unused frontend dependencies: `@tanstack/react-query`, `cn`, `@fontsource-variable/dm-sans`,
+  `@fontsource-variable/geist`.
 
 ### Fixed
 - IPC: a daemon reply larger than the 4 MiB frame limit now returns a `too_large` error instead of
