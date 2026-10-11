@@ -4,7 +4,7 @@ import { columnOf, groupColumns } from "@/features/agents/columns";
 import { reviewList } from "@/features/review/filter";
 vi.mock("@/lib/backend", () => ({ inDesktop: false }));
 vi.mock("@/mygo", () => ({ Agents: {}, events: {} }));
-import { applySessionUpdate, removeSession, selectCounts, mergeList } from "./agents";
+import { applySessionDelta, applySessionUpdate, removeSession, selectCounts, mergeList } from "./agents";
 const session = (id: string, status: AgentsStatus, review = "", updatedAt = "2026-10-08T10:00:00Z") => ({ id, status, review, updatedAt }) as Session;
 
 describe("dashboard columns", () => {
@@ -30,6 +30,22 @@ describe("agent reducers", () => {
     const held = { a: session("a", "working"), b: session("b", "done") };
     const result = mergeList(held, [session("a", "idle", "", "2026-10-08T09:00:00Z"), session("removed", "done")], new Set(["b", "removed"]));
     expect(result).toEqual(held);
+  });
+  it("merges a delta into the held session without touching other fields", () => {
+    const held = { d1: { ...session("d1", "working"), activity: "old", tail: "t", files: 1 } as Session };
+    const next = applySessionDelta(held, { id: "d1", updatedAt: "2026-10-08T10:00:05Z", activity: "new", files: 3 });
+    expect(next.d1).toMatchObject({ status: "working", activity: "new", tail: "t", files: 3, updatedAt: "2026-10-08T10:00:05Z" });
+    expect(held.d1.activity).toBe("old");
+    expect(applySessionDelta(held, { id: "unknown", updatedAt: "2026-10-08T10:00:05Z", activity: "x" })).toBe(held);
+    expect(applySessionDelta(next, { id: "d1", updatedAt: "2026-10-08T10:00:01Z", activity: "stale" })).toBe(next);
+  });
+  it("keeps a status change that arrives after a newer delta, and the delta's display fields", () => {
+    const held = applySessionUpdate({}, { ...session("d2", "working"), activity: "a" } as Session);
+    const afterDelta = applySessionDelta(held, { id: "d2", updatedAt: "2026-10-08T10:00:05Z", activity: "from delta" });
+    const full = { ...session("d2", "needs-you", "", "2026-10-08T10:00:03Z"), activity: "from full" } as Session;
+    const merged = applySessionUpdate(afterDelta, full);
+    expect(merged.d2).toMatchObject({ status: "needs-you", activity: "from delta", updatedAt: "2026-10-08T10:00:05Z" });
+    expect(applySessionUpdate(merged, { ...full, status: "working", updatedAt: "2026-10-08T10:00:02Z" } as Session)).toBe(merged);
   });
   it("counts failed as needs-you and only unreviewed finished turns as reviewable", () => {
     const sessions = [session("a", "needs-you"), session("b", "failed"), session("c", "working"), session("d", "done"), session("e", "lost"), session("f", "done", "approved"), session("g", "failed", "discarded"), session("h", "working", "sent-back")];

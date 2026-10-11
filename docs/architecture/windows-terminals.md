@@ -146,7 +146,25 @@ invoked by an automation.
 
 Runtime IPC: `agents.detect/list/get/start/stop/restart/prompt/approve/events/transcript/remove/diff/review/check/hook`,
 `agents.publish`, `agents.handoff/reviewWith/loopUntil/tryN/runs/cancelRun`. Live topics: `agents.updated`,
-`agents.event`, `agents.removed`, `agents.run`.
+`agents.delta`, `agents.event`, `agents.removed`, `agents.run`.
+
+#### Persistence and live updates
+
+- `agents.list` takes `{limit, offset}` (default 200, at most 500), newest first; the desktop `Agents.List`
+  pages through it so no reply or query grows with the number of sessions.
+- A live session's hot-path changes (assistant message, tool call/result, activity, usage, transcript path,
+  diff counts) update memory under the manager lock and are written to SQLite outside it, debounced per
+  session (250 ms). Every status change, permission/question, queue, review, exit and `Shutdown` writes
+  immediately, so only display text of the last quarter second can be lost if the daemon is killed rather
+  than stopped. Memory never runs ahead of a failed durable write: the change is rolled back.
+- Hot-path changes publish `agents.delta` (`SessionDelta`: `id`, `updatedAt` and only the fields that changed).
+  Everything else still publishes the whole `Session` as `agents.updated`. Clients merge a delta into the
+  session they hold and ignore one for an unknown or newer session.
+- Events are queued, get their id at once, and are inserted in batches (at most 100 ms later, 128 per flush);
+  every read of events flushes first. History is pruned to 5000 events per session by a per-session counter.
+- The post-turn and post-exit diff statistics use `git diff --numstat` (through the same isolated review
+  repository as the diff view), coalesce per session and run at most two at a time.
+- Headless agent protocol lines are bounded (16 MiB, Codex 64 MiB); an oversized line is dropped with an error event.
 
 ### Verification and installed CLI evidence
 

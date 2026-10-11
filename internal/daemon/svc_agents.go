@@ -23,8 +23,11 @@ import (
 //
 // IPC methods: agents.detect/list/get/start/stop/restart/prompt/approve/events/transcript/
 // remove/diff/review/check/hook, agents.handoff/reviewWith/loopUntil/tryN/runs/cancelRun.
-// Events: agents.updated (Session), agents.event (Event), agents.removed ({id}),
-// agents.run (Run).
+// agents.list takes {limit, offset} (default page 200, at most 500) and returns sessions
+// newest first; callers page until a page comes back shorter than the limit.
+// Events: agents.updated (Session: status and other durable changes), agents.delta
+// (SessionDelta: display fields changed on a hot path), agents.event (Event),
+// agents.removed ({id}), agents.run (Run).
 
 // agentWorktrees creates/removes worktrees through the projects service and reads diffs with git.
 type agentWorktrees struct {
@@ -79,6 +82,16 @@ func (w agentWorktrees) Head(ctx context.Context, dir string) (string, error) {
 func (w agentWorktrees) Diff(ctx context.Context, dir, base string) (agents.Diff, error) {
 	return w.git.Diff(ctx, dir, base)
 }
+
+func (w agentWorktrees) DiffStat(ctx context.Context, dir, base string) (files, additions, deletions int, err error) {
+	return w.git.DiffStat(ctx, dir, base)
+}
+
+// Page sizes of the agents.list method.
+const (
+	agentListDefault = 200
+	agentListMax     = 500
+)
 
 func (d *Daemon) projectTaskDirectory(ctx context.Context, projectID, machine, dir string) (string, error) {
 	if d.Projects == nil {
@@ -196,7 +209,16 @@ func (d *Daemon) registerAgents() {
 	}) (agents.LaunchOptions, error) {
 		return m.Options(ctx, p.Machine)
 	})
-	handle(d, "agents.list", func(ctx context.Context, _ none) ([]agents.Session, error) { return m.List() })
+	handle(d, "agents.list", func(ctx context.Context, p struct {
+		Limit  int `json:"limit"`
+		Offset int `json:"offset"`
+	}) ([]agents.Session, error) {
+		limit := p.Limit
+		if limit <= 0 {
+			limit = agentListDefault
+		}
+		return m.ListPage(min(limit, agentListMax), p.Offset)
+	})
 	handle(d, "agents.get", func(ctx context.Context, p idArg) (agents.Session, error) {
 		s, err := m.Get(p.ID)
 		return s, mapErr(err)

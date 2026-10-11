@@ -134,6 +134,26 @@ type Session struct {
 	UpdatedAt time.Time           `json:"updatedAt"`
 }
 
+// SessionDelta is the "agents.delta" payload: the display fields a live session changed on a
+// hot path (a message, tool call, activity line, usage or diff-stat update). A field is
+// present only when it changed; everything else is unchanged since the last "agents.updated"
+// or delta. Status changes, requests, queue and review changes always publish the full
+// Session as "agents.updated" instead. Clients drop a delta older than the session they hold.
+type SessionDelta struct {
+	ID             string        `json:"id"`
+	UpdatedAt      time.Time     `json:"updatedAt"`
+	Activity       *string       `json:"activity,omitempty"`
+	Tail           *string       `json:"tail,omitempty"`
+	LastMessage    *string       `json:"lastMessage,omitempty"`
+	AgentSessionID *string       `json:"agentSessionId,omitempty"`
+	Model          *string       `json:"model,omitempty"`
+	TranscriptRef  *string       `json:"transcriptRef,omitempty"`
+	Files          *int          `json:"files,omitempty"`
+	Additions      *int          `json:"additions,omitempty"`
+	Deletions      *int          `json:"deletions,omitempty"`
+	Usage          *ContextUsage `json:"usage,omitempty"`
+}
+
 // Event kinds.
 const (
 	EvInit        = "init"        // CLI session established; Data = {agentSessionId, model}

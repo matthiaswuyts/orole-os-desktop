@@ -351,11 +351,17 @@ func (p *pipeProc) emit(e Event) {
 	p.events <- e
 }
 
+// pipeMaxLine bounds one protocol line from a headless agent (tool results and image payloads
+// can be large; a runaway child must not be able to grow the daemon without limit).
+const pipeMaxLine = 16 << 20
+
 func (p *pipeProc) run(stdout io.Reader, decode func(p *pipeProc, line []byte) []Event) {
 	br := bufio.NewReaderSize(stdout, 256<<10)
 	for {
-		line, err := br.ReadBytes('\n')
-		if t := bytes.TrimSpace(line); len(t) > 0 {
+		line, dropped, err := readBoundedLine(br, pipeMaxLine)
+		if dropped {
+			p.emit(Event{Kind: EvError, Text: "The agent sent a protocol line over 16 MiB; it was dropped"})
+		} else if t := bytes.TrimSpace(line); len(t) > 0 {
 			for _, e := range decode(p, t) {
 				p.emit(e)
 			}

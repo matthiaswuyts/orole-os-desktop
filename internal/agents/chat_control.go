@@ -475,7 +475,7 @@ func (m *Manager) applyChatEvent(id string, e Event) bool {
 			if usage.At.IsZero() {
 				usage.At = e.At
 			}
-			_, _ = m.mutate(id, func(s *Session) {
+			m.mutateHot(id, func(s *Session) {
 				merged := cloneUsage(s.Usage)
 				if merged == nil {
 					merged = &ContextUsage{}

@@ -2340,6 +2340,28 @@ export interface Session {
   updatedAt: string;
 }
 
+/**
+ * SessionDelta is the "agents.delta" payload: the display fields a live session changed on a
+ * hot path (a message, tool call, activity line, usage or diff-stat update). A field is
+ * present only when it changed; everything else is unchanged since the last "agents.updated"
+ * or delta. Status changes, requests, queue and review changes always publish the full
+ * Session as "agents.updated" instead. Clients drop a delta older than the session they hold.
+ */
+export interface SessionDelta {
+  id: string;
+  updatedAt: string;
+  activity?: string;
+  tail?: string;
+  lastMessage?: string;
+  agentSessionId?: string;
+  model?: string;
+  transcriptRef?: string;
+  files?: number;
+  additions?: number;
+  deletions?: number;
+  usage?: ContextUsage;
+}
+
 /** SettingChange is a changed setting. */
 export interface SettingChange {
   key: string;
@@ -3231,7 +3253,10 @@ export const Agents = {
   handOff(p: HandOffParams, key: string): Promise<Session> {
     return call("Agents.HandOff", p, key);
   },
-  /** List returns every session, newest first. */
+  /**
+   * List returns every session, newest first, fetched a page at a time so no single IPC reply
+   * or daemon query grows with the number of sessions.
+   */
   list(): Promise<Session[]> {
     return call("Agents.List");
   },
@@ -3789,8 +3814,16 @@ export const Desktop = {
 
 /** Events sent by the Go side. Subscribe with `events.name.on(listener)`. */
 export const events = {
-  /** AgentUpdated fires whenever a session's state changes (status, activity, tail, counts). */
+  /**
+   * AgentUpdated fires when a session changes in a way the UI must replace wholesale (status,
+   * requests, queue, review, errors). Carries the full session.
+   */
   agentsUpdated: event<Session>("agents:updated"),
+  /**
+   * AgentDelta fires for the frequent display-only changes of a live session (activity, tail,
+   * last message, usage, diff counts); merge it into the held session.
+   */
+  agentsDelta: event<SessionDelta>("agents:delta"),
   /** AgentEvent carries one new entry of a session's history (message, tool use, permission request...). */
   agentsEvent: event<Event>("agents:event"),
   /** AgentRemoved fires when a session is deleted. */

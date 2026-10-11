@@ -236,13 +236,13 @@ func (p *codexProc) emit(e Event) {
 	p.events <- e
 }
 
-// readCodexLine reads one line of any length; lines over codexMaxLine are consumed and reported
-// as dropped.
-func readCodexLine(br *bufio.Reader) (line []byte, dropped bool, err error) {
+// readBoundedLine reads one line of any length, keeping at most limit bytes of it: a longer
+// line is consumed to its end and reported as dropped, so a runaway child cannot grow memory.
+func readBoundedLine(br *bufio.Reader, limit int) (line []byte, dropped bool, err error) {
 	for {
 		part, isPrefix, e := br.ReadLine()
 		if !dropped {
-			if len(line)+len(part) > codexMaxLine {
+			if len(line)+len(part) > limit {
 				dropped, line = true, nil
 			} else {
 				line = append(line, part...)
@@ -257,7 +257,7 @@ func readCodexLine(br *bufio.Reader) (line []byte, dropped bool, err error) {
 func (p *codexProc) run(stdout io.Reader) {
 	br := bufio.NewReaderSize(stdout, 256<<10)
 	for {
-		line, dropped, err := readCodexLine(br)
+		line, dropped, err := readBoundedLine(br, codexMaxLine)
 		switch {
 		case dropped:
 			p.emit(Event{Kind: EvError, Text: "Codex sent a message over 64 MiB; it was dropped"})

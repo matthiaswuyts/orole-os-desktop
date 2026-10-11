@@ -6,6 +6,14 @@ Each release needs a `## X.Y.Z - YYYY-MM-DD` section matching `version` in `mygo
 workflow refuses to build without it, and the in-app update window shows that section as the release
 notes. See `docs/development/updates.md`.
 
+## Unreleased
+
+### Changed
+- Agents: live sessions no longer write to SQLite on every event under the global lock. Hot-path
+  changes are debounced per session and published as small `agents.delta` updates, events are
+  inserted in batches, `agents.list` is paged, diff statistics use `git diff --numstat` coalesced
+  per session, headless agent output lines are bounded and history pruning counts per session.
+
 ## 0.1.0 - 2026-10-10
 
 First tagged release. Windows only.

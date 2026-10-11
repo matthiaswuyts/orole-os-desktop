@@ -28,8 +28,9 @@ type Config struct {
 	ProjectOptions func(context.Context) ([]ProjectOption, error)
 	// ProjectDirectory resolves and validates a registered project's task directory.
 	ProjectDirectory func(ctx context.Context, projectID, machine, dir string) (string, error)
-	// Publish delivers "agents.updated" (Session), "agents.event" (Event) and
-	// "agents.removed" ({id}) to subscribed clients.
+	// Publish delivers "agents.updated" (Session), "agents.delta" (SessionDelta: display
+	// fields changed on a hot path), "agents.event" (Event) and "agents.removed" ({id}) to
+	// subscribed clients.
 	Publish  func(event string, data any)
 	Finished func(Session) // called once per completed turn, or process-only completion
 	// PermissionDecision checks policy before honoring a user's Allow. Errors fail closed
@@ -75,6 +76,12 @@ type Manager struct {
 	detectMu sync.Mutex
 	detectAt time.Time
 	detected []Detection
+
+	w *sessionWriter // writes live sessions outside mu, debounced
+
+	diffMu   sync.Mutex // guards diffRuns
+	diffRuns map[string]*diffRun
+	diffSem  chan struct{} // bounds concurrent diff-stat refreshes
 }
 
 type liveSess struct {
@@ -84,6 +91,7 @@ type liveSess struct {
 	deliveryUncertain bool   // no further dispatch until this process is explicitly replaced
 	id                string // immutable; s is guarded by Manager.mu
 	s                 Session
+	ver               uint64 // bumped by every in-memory change to s; guarded by Manager.mu
 	proc              Process
 	stopping          bool
 	shutdown          bool
@@ -111,7 +119,12 @@ func NewManager(cfg Config) *Manager {
 		cfg.Adapters = []Adapter{Claude{}, Codex(), Omp{}, OpenCode(), Gemini(), Custom{}}
 	}
 	m := &Manager{cfg: cfg, st: cfg.Store, adapters: map[string]Adapter{}, boot: uuid.NewString(),
-		live: map[string]*liveSess{}, changed: make(chan struct{})}
+		live: map[string]*liveSess{}, changed: make(chan struct{}),
+		diffRuns: map[string]*diffRun{}, diffSem: make(chan struct{}, diffStatWorkers)}
+	if cfg.Store != nil {
+		cfg.Store.SetLogger(cfg.Log)
+	}
+	m.w = newSessionWriter(cfg.Store, cfg.Log)
 	m.bg, m.bgCancel = context.WithCancel(context.Background())
 	for _, a := range cfg.Adapters {
 		m.adapters[a.Kind()] = a
@@ -133,7 +146,7 @@ func (m *Manager) Boot() string { return m.boot }
 // Recover marks sessions whose process died with the previous daemon as lost, and flags
 // unfinished journal rows/runs as interrupted. It never re-runs anything.
 func (m *Manager) Recover() (lost int, err error) {
-	sessions, err := m.st.ListSessions()
+	sessions, err := m.st.ListSessions(0, 0)
 	if err != nil {
 		return 0, err
 	}
@@ -235,17 +248,27 @@ func (m *Manager) Get(id string) (Session, error) {
 }
 
 // List returns every session, newest first.
-func (m *Manager) List() ([]Session, error) {
-	all, err := m.st.ListSessions()
+func (m *Manager) List() ([]Session, error) { return m.ListPage(0, 0) }
+
+// ListPage returns at most limit sessions (0 = all) after skipping offset, newest first, with
+// runtime state overlaid.
+func (m *Manager) ListPage(limit, offset int) ([]Session, error) {
+	all, err := m.st.ListSessions(limit, offset)
 	if err != nil {
 		return nil, err
 	}
+	stored := make([]bool, len(all))
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	for i := range all {
 		if ls, ok := m.live[all[i].ID]; ok {
 			all[i] = m.snapshotLocked(ls)
 		} else {
+			stored[i] = true
+		}
+	}
+	m.mu.Unlock()
+	for i := range all {
+		if stored[i] {
 			all[i].Followup = m.followupCapabilities(all[i], nil)
 		}
 	}
@@ -294,17 +317,113 @@ func (m *Manager) WaitFor(ctx context.Context, id string, pred func(Session) boo
 
 // ---- mutation plumbing ----
 
-// mutate loads the session (live cache first), applies f, persists and publishes it.
-func (m *Manager) mutate(id string, f func(s *Session)) (Session, error) {
-	m.mu.Lock()
-	s, err := m.mutateLocked(id, f)
-	m.mu.Unlock()
-	if err == nil {
-		m.cfg.Publish("agents.updated", s)
-	}
-	return s, err
+// notifyLocked wakes WaitFor callers after a state change.
+func (m *Manager) notifyLocked() {
+	close(m.changed)
+	m.changed = make(chan struct{})
 }
 
+// mutate loads the session (live cache first), applies f, persists and publishes it.
+//
+// A live session changes in memory under m.mu and is written as soon as the lock is released;
+// when that write fails the change is rolled back and the error returned, so memory never runs
+// ahead of what a restart would find. A stored session is read, changed and written under
+// m.mu. Callers that must test state and mutate atomically hold m.mu and call mutateLocked.
+func (m *Manager) mutate(id string, f func(s *Session)) (Session, error) {
+	m.mu.Lock()
+	ls := m.live[id]
+	if ls == nil {
+		s, err := m.mutateLocked(id, f)
+		m.mu.Unlock()
+		if err == nil {
+			m.cfg.Publish("agents.updated", s)
+		}
+		return s, err
+	}
+	prev := ls.s
+	s := m.applyLocked(ls, f)
+	ver := ls.ver
+	m.mu.Unlock()
+	return m.commit(ls, prev, ver, s)
+}
+
+// applyLocked applies f to a live session in memory and hands the new state to the writer.
+func (m *Manager) applyLocked(ls *liveSess, f func(s *Session)) Session {
+	s := ls.s
+	f(&s)
+	s.UpdatedAt = time.Now().UTC()
+	ls.s = s
+	ls.ver++
+	m.w.mark(s)
+	m.notifyLocked()
+	return m.snapshotLocked(ls)
+}
+
+// commit writes a change applyLocked made and publishes it, or rolls it back.
+func (m *Manager) commit(ls *liveSess, prev Session, ver uint64, s Session) (Session, error) {
+	if err := m.w.flush(ls.id); err != nil {
+		m.rollback(ls, prev, ver)
+		return s, err
+	}
+	m.cfg.Publish("agents.updated", s)
+	return s, nil
+}
+
+// rollback restores prev unless the session changed again since ver.
+func (m *Manager) rollback(ls *liveSess, prev Session, ver uint64) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.live[ls.id] == ls && ls.ver == ver {
+		ls.s = prev
+		ls.ver++
+		m.notifyLocked()
+	}
+}
+
+// mutateHot is mutate for the per-event display fields (activity, tail, last message, usage,
+// diff counts...). It never waits for SQLite: the new state is written by the debounce timer,
+// and only a SessionDelta is published. A change to the status or to any field a delta cannot
+// carry takes the full mutate path instead (write now, publish the whole session), so f may
+// change Status but must otherwise stay within SessionDelta's fields to remain cheap. f runs on
+// a throw-away copy first and so must be a pure function of the session.
+func (m *Manager) mutateHot(id string, f func(s *Session)) {
+	m.mu.Lock()
+	ls := m.live[id]
+	if ls == nil {
+		m.mu.Unlock()
+		_, _ = m.mutate(id, f)
+		return
+	}
+	s := ls.s
+	f(&s)
+	if !onlyDeltaFieldsChanged(ls.s, s) {
+		m.mu.Unlock()
+		_, _ = m.mutate(id, f)
+		return
+	}
+	delta, changed := sessionDelta(&ls.s, &s)
+	if !changed {
+		m.mu.Unlock()
+		return
+	}
+	s.UpdatedAt = time.Now().UTC()
+	delta.UpdatedAt = s.UpdatedAt
+	ls.s = s
+	ls.ver++
+	scheduled := m.w.mark(s)
+	m.notifyLocked()
+	m.mu.Unlock()
+	if !scheduled { // shutting down: nothing will flush later
+		if err := m.w.flush(id); err != nil {
+			m.cfg.Log.Warn("agent session write failed", "session", id, "err", err)
+		}
+	}
+	m.cfg.Publish("agents.delta", delta)
+}
+
+// mutateLocked is mutate for callers that hold m.mu to test and change state atomically. It
+// writes synchronously, so a persistence error reaches the caller before anything happens
+// on the strength of the new state, and memory is only changed once the write succeeded.
 func (m *Manager) mutateLocked(id string, f func(s *Session)) (Session, error) {
 	ls := m.live[id]
 	var s Session
@@ -318,11 +437,12 @@ func (m *Manager) mutateLocked(id string, f func(s *Session)) (Session, error) {
 	}
 	f(&s)
 	s.UpdatedAt = time.Now().UTC()
-	if err := m.st.SaveSession(s, ""); err != nil {
+	if err := m.w.write(s); err != nil {
 		return s, err
 	}
 	if ls != nil {
 		ls.s = s
+		ls.ver++
 		s = m.snapshotLocked(ls)
 	} else {
 		s.Followup = m.followupCapabilities(s, nil)
@@ -330,12 +450,11 @@ func (m *Manager) mutateLocked(id string, f func(s *Session)) (Session, error) {
 			s.Pending = []PermissionRequest{}
 		}
 	}
-	close(m.changed)
-	m.changed = make(chan struct{})
+	m.notifyLocked()
 	return s, nil
 }
 
-// record persists and publishes an event.
+// record persists (queued, written in batches) and publishes an event.
 func (m *Manager) record(sessionID string, e Event) Event {
 	e.SessionID = sessionID
 	if e.At.IsZero() {
@@ -346,7 +465,7 @@ func (m *Manager) record(sessionID string, e Event) Event {
 		e.Data = json.RawMessage("null")
 	}
 	if e.Kind != EvOutputBytes {
-		if err := m.st.AppendEvent(&e); err != nil {
+		if err := m.st.QueueEvent(&e); err != nil {
 			m.cfg.Log.Warn("agent event write failed", "session", sessionID, "err", err)
 		}
 	}
@@ -1062,6 +1181,7 @@ func (m *Manager) Remove(ctx context.Context, id string) error {
 	if s.TerminalID != "" && m.cfg.Host != nil && m.cfg.Host.Terminals != nil {
 		_ = m.cfg.Host.Terminals.Close(s.TerminalID)
 	}
+	m.w.forget(id)
 	if err := m.st.DeleteSession(id); err != nil {
 		return err
 	}
@@ -1101,6 +1221,14 @@ func (m *Manager) Shutdown() {
 	}
 	wg.Wait()
 	m.bgWork.Wait()
+	if err := m.w.close(); err != nil {
+		m.cfg.Log.Warn("agent session flush failed", "err", err)
+	}
+	if m.st != nil {
+		if err := m.st.FlushEvents(); err != nil {
+			m.cfg.Log.Warn("agent event flush failed", "err", err)
+		}
+	}
 }
 
 // ---- event handling ----
@@ -1163,7 +1291,7 @@ func (m *Manager) apply(id string, e Event) {
 	switch e.Kind {
 	case EvInit:
 		aid, model := str("agentSessionId"), str("model")
-		_, _ = m.mutate(id, func(s *Session) {
+		m.mutateHot(id, func(s *Session) {
 			if aid != "" {
 				s.AgentSessionID = aid
 			}
@@ -1172,23 +1300,23 @@ func (m *Manager) apply(id string, e Event) {
 			}
 		})
 	case EvMessage:
-		_, _ = m.mutate(id, func(s *Session) {
+		m.mutateHot(id, func(s *Session) {
 			s.LastMessage = truncate(e.Text, 32<<10)
 			s.Tail = lastLines(e.Text, 3)
 			s.Activity = truncate(firstLine(e.Text), 120)
 			wakeIdle(s)
 		})
 	case EvTool:
-		_, _ = m.mutate(id, func(s *Session) {
+		m.mutateHot(id, func(s *Session) {
 			s.Activity, s.Tail = truncate(e.Text, 160), truncate(e.Text, 200)
 			wakeIdle(s)
 		})
 	case EvToolResult:
-		_, _ = m.mutate(id, func(s *Session) { s.Tail = lastLines(e.Text, 3) })
+		m.mutateHot(id, func(s *Session) { s.Tail = lastLines(e.Text, 3) })
 	case EvActivity:
-		_, _ = m.mutate(id, func(s *Session) { s.Activity = truncate(e.Text, 160) })
+		m.mutateHot(id, func(s *Session) { s.Activity = truncate(e.Text, 160) })
 	case EvWorking:
-		_, _ = m.mutate(id, func(s *Session) {
+		m.mutateHot(id, func(s *Session) {
 			if s.Status != StatusNeedsYou || (len(s.Pending) == 0 && len(s.Questions) == 0) {
 				s.Status = StatusWorking
 			}
@@ -1197,7 +1325,7 @@ func (m *Manager) apply(id string, e Event) {
 			}
 		})
 	case EvTranscript:
-		_, _ = m.mutate(id, func(s *Session) { s.TranscriptRef = e.Text })
+		m.mutateHot(id, func(s *Session) { s.TranscriptRef = e.Text })
 	case EvPermission:
 		var req PermissionRequest
 		if json.Unmarshal(e.Data, &req) != nil || req.ID == "" {
@@ -1353,11 +1481,64 @@ func (m *Manager) finalize(ls *liveSess, e Event) {
 	if !completedTurn && m.cfg.Finished != nil && (s.Status == StatusDone || s.Status == StatusFailed) {
 		m.cfg.Finished(s)
 	}
-	m.background(func() { m.refreshDiffStat(id) })
+	if !completedTurn { // a finished turn already queued its refresh; the exit changes no files
+		m.background(func() { m.refreshDiffStat(id) })
+	}
 }
 
-// refreshDiffStat updates the +/- counts shown in Review.
+// diffStatWorkers bounds the diff-stat refreshes that run at once across all sessions; each
+// one spawns several git processes.
+const diffStatWorkers = 2
+
+// diffRun is the in-flight diff-stat refresh of one session. again records that another
+// request arrived meanwhile, which earns exactly one more run when this one ends.
+type diffRun struct{ again bool }
+
+// diffStatter is implemented by Worktrees that can count changes without building the diff.
+type diffStatter interface {
+	DiffStat(ctx context.Context, dir, base string) (files, additions, deletions int, err error)
+}
+
+func (m *Manager) diffStat(ctx context.Context, dir, base string) (files, additions, deletions int, err error) {
+	if ds, ok := m.cfg.Worktrees.(diffStatter); ok {
+		return ds.DiffStat(ctx, dir, base)
+	}
+	d, err := m.cfg.Worktrees.Diff(ctx, dir, base)
+	return len(d.Files), d.Additions, d.Deletions, err
+}
+
+// refreshDiffStat updates the +/- counts shown in Review. Requests for one session coalesce:
+// while a refresh runs, later requests only mark it to run once more afterwards.
 func (m *Manager) refreshDiffStat(id string) {
+	m.diffMu.Lock()
+	if r, running := m.diffRuns[id]; running {
+		r.again = true
+		m.diffMu.Unlock()
+		return
+	}
+	r := &diffRun{}
+	m.diffRuns[id] = r
+	m.diffMu.Unlock()
+	for {
+		m.refreshDiffStatOnce(id)
+		m.diffMu.Lock()
+		if !r.again {
+			delete(m.diffRuns, id)
+			m.diffMu.Unlock()
+			return
+		}
+		r.again = false
+		m.diffMu.Unlock()
+	}
+}
+
+func (m *Manager) refreshDiffStatOnce(id string) {
+	select {
+	case m.diffSem <- struct{}{}:
+		defer func() { <-m.diffSem }()
+	case <-m.bg.Done():
+		return
+	}
 	m.worktreeMu.RLock()
 	defer m.worktreeMu.RUnlock()
 	if m.cfg.Worktrees == nil {
@@ -1369,11 +1550,11 @@ func (m *Manager) refreshDiffStat(id string) {
 	}
 	ctx, cancel := context.WithTimeout(m.bg, 60*time.Second)
 	defer cancel()
-	d, err := m.cfg.Worktrees.Diff(ctx, s.Dir, s.BaseRef)
-	if err != nil {
+	files, additions, deletions, err := m.diffStat(ctx, s.Dir, s.BaseRef)
+	if err != nil || (files == s.Files && additions == s.Additions && deletions == s.Deletions) {
 		return
 	}
-	_, _ = m.mutate(id, func(s *Session) { s.Files, s.Additions, s.Deletions = len(d.Files), d.Additions, d.Deletions })
+	m.mutateHot(id, func(s *Session) { s.Files, s.Additions, s.Deletions = files, additions, deletions })
 }
 
 // background starts tracked work only while the manager is accepting it.
@@ -1417,6 +1598,8 @@ func (m *Manager) Diff(ctx context.Context, id string) (ReviewDiff, error) {
 	if d.Files == nil {
 		out.Diff.Files = []DiffFile{}
 	}
-	_, _ = m.mutate(id, func(s *Session) { s.Files, s.Additions, s.Deletions = out.Files, out.Additions, out.Deletions })
+	if s.Files != out.Files || s.Additions != out.Additions || s.Deletions != out.Deletions {
+		m.mutateHot(id, func(s *Session) { s.Files, s.Additions, s.Deletions = out.Files, out.Additions, out.Deletions })
+	}
 	return out, nil
 }
