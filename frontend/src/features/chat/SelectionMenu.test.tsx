@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("@/lib/backend", () => ({ inDesktop: true }));
 vi.mock("@/mygo", async () => (await import("./builder/testing")).mygoMock);
 
+import { useChatDrafts } from "@/stores/chatDrafts";
 import { useChatMessages } from "@/stores/chatMessages";
 import { SelectionMenu } from "./SelectionMenu";
 
@@ -63,11 +64,11 @@ describe("selection menu", () => {
 
   it("adds the quoted passage to the message box without sending, keeping what is already typed", () => {
     mount();
-    useChatMessages.setState({ drafts: { a: { text: "Regarding this:", research: false } } });
+    useChatDrafts.setState({ drafts: { a: { text: "Regarding this:", research: false } } });
     select("p1");
     fireEvent.click(screen.getByRole("button", { name: "Add to chat" }));
     expect(send).not.toHaveBeenCalled();
-    expect(useChatMessages.getState().drafts.a?.text).toBe("Regarding this:\n\n> first\n\n");
+    expect(useChatDrafts.getState().drafts.a?.text).toBe("Regarding this:\n\n> first\n\n");
     expect(screen.queryByRole("group")).toBeNull();
   });
 
