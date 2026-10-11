@@ -35,6 +35,8 @@ notes. See `docs/development/updates.md`.
   `propose_skill` for your approval. Built-in skills are for bots only and are never synced to coding agents.
 
 ### Changed
+- The app window no longer shows the browser's right-click menu (except in text fields, for paste) and DevTools are off, including Ctrl+Shift+I
+  and F12. Developers set `OROLE_DEVTOOLS=1` to get them back.
 - Bot settings: the MCP tools and Skills dropdowns are plain switch lists. Integrations / MCP picks whole servers with their
   company logos (a bot can use every tool of a connected server except the ones you deny in Settings > Integrations);
   existing per-tool selections are migrated to their servers. Skills show only an icon and the name.
