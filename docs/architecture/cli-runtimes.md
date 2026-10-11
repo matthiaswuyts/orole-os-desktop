@@ -31,3 +31,19 @@ CLI the user installed themselves untouched. Install and sign-in are audited (`c
 ## Terms
 Anthropic limits Claude subscription sign-in to ordinary individual use of the unmodified CLI. The Accounts page says so
 next to the Claude row.
+
+## ChatGPT (Codex) as a model for bots
+`internal/llm/cli` registers the provider `codex` (kind `account`, no key). It counts as connected while the CLI is
+installed and signed in (`cliruntime.Manager.Ready`, from the last known status: the daemon refreshes it at start and
+after every install, sign-in and sign-out and then publishes `llm.changed`). Models come from `codex debug models`,
+so the picker lists what the account may use.
+
+Each model call is one `codex exec --json --ephemeral --ignore-user-config --ignore-rules -s read-only` run in an
+empty scratch directory, with the prompt on stdin. The CLI is used as a plain model, not as an agent: the prompt
+tells it not to run commands or read files, and the read-only sandbox backs that up. Orole's own tool loop stays in
+charge. Bot tools are described in the prompt and a reply holding a `tool_calls` block becomes tool-call deltas (a
+malformed block, or one naming a tool that was not offered, is ordinary text), so memory, budgets, handoffs, queue and
+`show_*` components work as with any provider.
+
+Limits: `codex exec` prints whole messages, so replies appear at once instead of streaming; every step of a tool loop is a
+new CLI start (a few seconds); images and PDFs are not forwarded (vision is off for these models).

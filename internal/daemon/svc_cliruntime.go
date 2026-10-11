@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 
 	"github.com/rayorole/orole-os-desktop/internal/cliruntime"
+	"github.com/rayorole/orole-os-desktop/internal/llm"
 )
 
 // cliRef names one provider CLI.
@@ -26,6 +27,12 @@ func (d *Daemon) registerCLIRuntimes() {
 	}
 	m := cliruntime.New(cliruntime.Config{StoreDir: filepath.Join(d.DataDir, "cli"), Overrides: over})
 	d.CLI = m
+	// Provider lists read the last known state, so take it once at start and again after every change.
+	changed := func(id string) { d.IPC.Publish("llm.changed", llm.Change{ID: id}) }
+	go func() {
+		m.All(context.Background())
+		changed("")
+	}()
 
 	handle(d, "cli.providers.list", func(ctx context.Context, _ none) ([]cliruntime.Status, error) {
 		return m.All(ctx), nil
@@ -37,16 +44,19 @@ func (d *Daemon) registerCLIRuntimes() {
 			outcome = "failed"
 		}
 		d.audit("cli.install", p.ID, outcome, st.Version)
+		changed(p.ID)
 		return st, err
 	})
 	handle(d, "cli.providers.login", func(ctx context.Context, p cliRef) (cliruntime.Status, error) {
 		st, err := m.Login(ctx, p.ID)
 		d.audit("cli.login", p.ID, outcomeOf(err), "")
+		changed(p.ID)
 		return st, err
 	})
 	handle(d, "cli.providers.logout", func(ctx context.Context, p cliRef) (cliruntime.Status, error) {
 		st, err := m.Logout(ctx, p.ID)
 		d.audit("cli.logout", p.ID, outcomeOf(err), "")
+		changed(p.ID)
 		return st, err
 	})
 }

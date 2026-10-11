@@ -63,6 +63,9 @@ type Manager struct {
 	mu      sync.Mutex // serialises installs
 	latestM sync.Mutex
 	latest  map[string]latestEntry
+
+	lastM sync.Mutex
+	last  map[string]Status // the newest status computed per provider
 }
 
 type latestEntry struct {
@@ -97,7 +100,7 @@ func New(cfg Config) *Manager {
 	if cfg.Now == nil {
 		cfg.Now = time.Now
 	}
-	return &Manager{cfg: cfg, latest: map[string]latestEntry{}}
+	return &Manager{cfg: cfg, latest: map[string]latestEntry{}, last: map[string]Status{}}
 }
 
 func valueOr(v, d string) string {
@@ -166,7 +169,28 @@ func (m *Manager) status(ctx context.Context, s spec) Status {
 		st.Auth, st.Account = m.auth(ctx, s, path)
 	}
 	st.Problem = strings.Join(problems, "; ")
+	m.lastM.Lock()
+	m.last[s.id] = st
+	m.lastM.Unlock()
 	return st
+}
+
+// Ready reports from the newest computed status whether the provider can be used for chat now (installed and
+// signed in), and what is missing when it cannot. It never runs a CLI, so it is cheap enough for every provider
+// listing; the status is refreshed by All, Status and every install or sign-in.
+func (m *Manager) Ready(id string) (bool, string) {
+	m.lastM.Lock()
+	st, ok := m.last[id]
+	m.lastM.Unlock()
+	switch {
+	case !ok:
+		return false, "Checking the installed tools…"
+	case !st.Installed:
+		return false, st.Name + " is not installed. Download it in Settings > AI providers."
+	case st.Auth == SignedOut:
+		return false, "Sign in to " + st.Name + " in Settings > AI providers."
+	}
+	return true, ""
 }
 
 // resolve picks the CLI to run: an explicit override, then the newest managed copy, then PATH.

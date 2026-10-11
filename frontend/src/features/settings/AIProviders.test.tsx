@@ -210,6 +210,16 @@ describe("account CLIs", () => {
     expect(within(row("Grok")).queryByRole("button")).toBeNull();
   });
 
+  it("does not list an account provider among the API keys", async () => {
+    const account: ProviderStatus = { id: "codex", name: "ChatGPT", kind: "account", connected: true };
+    seed([openrouter, account]);
+    bridge.cliList.mockResolvedValue([cli({ id: "codex", name: "ChatGPT", installed: true, version: "0.162.1", auth: "signed_in", account: "ChatGPT", source: "managed" })]);
+    render(<AIProviders />);
+    await screen.findByRole("listitem", { name: "ChatGPT" });
+    expect(screen.getAllByRole("listitem", { name: "ChatGPT" })).toHaveLength(1);
+    expect(screen.getByRole("listitem", { name: "OpenRouter" })).toBeInTheDocument();
+  });
+
   it("downloads, then signs in, and shows a failed sign-in", async () => {
     seed([openrouter]);
     bridge.cliList.mockResolvedValue([cli({ id: "codex", name: "ChatGPT" })]);

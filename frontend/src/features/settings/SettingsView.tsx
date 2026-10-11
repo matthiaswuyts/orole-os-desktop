@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { Bell, Bot, Cpu, Palette, PanelsTopLeft, Plug, PlugZap, Settings2, Sparkles, Upload } from "lucide-react";
+import { Bell, Bot, Cpu, Palette, PanelsTopLeft, PlugZap, Settings2, Sparkles, Upload } from "lucide-react";
 import { useSettings } from "@/stores/settings";
 import { BUILTIN_THEMES } from "@/themes/builtin";
 import { useDaemon } from "@/stores/daemon";
@@ -13,7 +13,7 @@ import { cn } from "@/lib/utils";
 import { AutostartPanel } from "@/features/settings/Autostart";
 import { validateCustomTokens } from "@/themes/custom";
 import { fmtUptime } from "@/components/widgets/builtin";
-import { Integrations } from "@/features/settings/Integrations";
+import { Integrations } from "@/features/integrations/Integrations";
 import { NotificationSettings } from "@/features/notifications/NotificationSettings";
 import { AutomationSettings } from "@/features/automations/AutomationSettings";
 import { SoundSettings } from "@/features/settings/SoundSettings";
@@ -21,7 +21,6 @@ import { UpdateSettings } from "@/features/settings/UpdateSettings";
 import { useUI } from "@/stores/ui";
 import { WorkspaceSettings } from "@/features/settings/WorkspaceSettings";
 import { SkillsView } from "@/features/skills/SkillsView";
-import { McpView } from "@/features/mcp/McpView";
 import { AIProviders } from "@/features/settings/AIProviders";
 
 type Section = { id: string; label: string; icon: typeof Palette };
@@ -31,7 +30,6 @@ const SECTIONS: Section[] = [
   { id: "workspaces", label: "Workspaces", icon: PanelsTopLeft },
   { id: "integrations", label: "Integrations", icon: PlugZap },
   { id: "skills", label: "Skills", icon: Sparkles },
-  { id: "mcp", label: "MCP", icon: Plug },
   { id: "ai", label: "AI providers", icon: Bot },
   { id: "notifications", label: "Alerts & automations", icon: Bell },
   { id: "system", label: "System", icon: Settings2 },
@@ -212,7 +210,8 @@ function Diagnostics() {
 export function SettingsView() {
   const requested = useUI((state) => state.settingsSection);
   const tab = useUI((state) => state.settingsTab);
-  const sec = SECTIONS.find((section) => section.id === requested) ?? SECTIONS[0]!;
+  // "mcp" is the pre-merge section id; orole://settings/mcp links and the settings index still send it.
+  const sec = SECTIONS.find((section) => section.id === (requested === "mcp" ? "integrations" : requested)) ?? SECTIONS[0]!;
   const id = sec.id;
   const setId = useUI((state) => state.openSettings);
   useEffect(() => { if (tab) document.getElementById(`settings-${tab}`)?.scrollIntoView({ block: "start" }); }, [id, tab]);
@@ -226,12 +225,11 @@ export function SettingsView() {
           </button>
         ))}
       </nav>
-      <div className={cn("min-h-0 min-w-0 flex-1", id === "skills" || id === "mcp" ? "overflow-hidden" : "overflow-auto pr-1")}>
-        {id !== "skills" && id !== "mcp" && <h1 className="mb-3 text-base font-medium">{sec.label}</h1>}
+      <div className={cn("min-h-0 min-w-0 flex-1", id === "skills" ? "overflow-hidden" : "overflow-auto pr-1")}>
+        {id !== "skills" && <h1 className="mb-3 text-base font-medium">{sec.label}</h1>}
         {id === "customization" && <Customization />}
         {id === "workspaces" && <WorkspaceSettings />}
         {id === "skills" && <SkillsView />}
-        {id === "mcp" && <McpView />}
         {id === "ai" && <AIProviders />}
         {id === "integrations" && <Integrations />}
         {id === "notifications" && <Tabbed section={id} tabs={[
