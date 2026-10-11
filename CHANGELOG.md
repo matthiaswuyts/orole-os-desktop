@@ -57,6 +57,12 @@ notes. See `docs/development/updates.md`.
   `propose_skill` for your approval. Built-in skills are for bots only and are never synced to coding agents.
 
 ### Changed
+- Automations: finished runs and their journal are now pruned (30 days and 500 runs per automation by
+  default; `retentionDays` and `retentionMaxRuns` in the automations config, no settings UI yet).
+  Queued, running and waiting-approval runs are never removed.
+- Automations: run updates, queue scheduling and event dispatch no longer reload runs and definitions
+  from SQLite for every step or event; the scheduler uses one timer that event bursts cannot postpone,
+  and the webhook secret is read from the credential store once instead of per request.
 - Agents: live sessions no longer write to SQLite on every event under the global lock. Hot-path
   changes are debounced per session and published as small `agents.delta` updates, events are
   inserted in batches, `agents.list` is paged, diff statistics use `git diff --numstat` coalesced
