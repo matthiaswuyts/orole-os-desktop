@@ -5,6 +5,8 @@ import type { Bot } from "@/mygo";
 const env = vi.hoisted(() => ({ desktop: true, provider: true as boolean | null }));
 
 vi.mock("@/lib/backend", () => ({ get inDesktop() { return env.desktop; } }));
+const openSettings = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
+vi.mock("@/mygo", () => ({ Desktop: { openSettings } }));
 vi.mock("@/stores/llm", () => ({ useHasProvider: () => env.provider }));
 vi.mock("@/features/chat/Conversation", () => ({ Conversation: ({ bot }: { bot: Bot }) => <div data-testid="conversation">{bot.name}</div> }));
 vi.mock("@/features/chat/builder/NewBot", () => ({ NewBot: () => <div data-testid="builder">new</div> }));
@@ -42,8 +44,7 @@ describe("ChatView states", () => {
     expect(screen.getByText("Connect an AI provider to start chatting")).toBeInTheDocument();
     expect(screen.queryByTestId("conversation")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Open AI settings" }));
-    expect(useUI.getState().view).toBe("settings");
-    expect(useUI.getState().settingsSection).toBe("ai");
+    expect(openSettings).toHaveBeenCalledWith("ai");
   });
 
   it("waits quietly while the provider answer is unknown and the bots load", () => {

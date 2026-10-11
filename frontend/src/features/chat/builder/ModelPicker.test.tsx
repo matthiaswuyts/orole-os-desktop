@@ -8,7 +8,7 @@ import { useLLM } from "@/stores/llm";
 import { useUI } from "@/stores/ui";
 import { ModelPicker } from "./ModelPicker";
 import { useModelOptions } from "./modelOptions";
-import { model, provider, resetBridge } from "./testing";
+import { bridge, model, provider, resetBridge } from "./testing";
 
 // jsdom has no layout; the virtualized model list renders nothing in a zero-height scroller.
 Object.defineProperty(HTMLElement.prototype, "offsetHeight", { configurable: true, value: 320 });
@@ -61,8 +61,7 @@ describe("provider chooser", () => {
     expect(screen.getByRole("button", { name: /Claude Sonnet/ })).toHaveTextContent("via Claude account");
     fireEvent.click(screen.getByRole("button", { name: /Claude Sonnet/ }));
     fireEvent.click(screen.getByRole("button", { name: /Use a Claude, ChatGPT or Grok account/ }));
-    expect(useUI.getState().view).toBe("settings");
-    expect(useUI.getState().settingsSection).toBe("ai");
+    expect(bridge.desktop.openSettings).toHaveBeenCalledWith("ai"); // settings open in their own window
   });
 
   it("offers the company filter for All and for an aggregator, not for a single-vendor account", () => {

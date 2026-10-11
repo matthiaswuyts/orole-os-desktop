@@ -38,6 +38,8 @@ notes. See `docs/development/updates.md`.
   `propose_skill` for your approval. Built-in skills are for bots only and are never synced to coding agents.
 
 ### Changed
+- Status bar: the MCP count opens Settings > Integrations (every "open settings" link in the app now opens the settings window), a connected
+  daemon shows a green dot, and the host popover is a compact card with the OS logo, architecture, status and memory.
 - Model picker: the company filter is a row of chips shown only for All and aggregators like OpenRouter (an account serves only its own
   models), the "Use default" entry is gone (a bot always shows and runs on a named model; new bots start on the default chat model), and the
   instructions box in bot settings stops growing at a maximum height. Choosing a provider shows all of its models, not only the handpicked
