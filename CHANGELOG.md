@@ -9,6 +9,8 @@ notes. See `docs/development/updates.md`.
 ## Unreleased
 
 ### Added
+- Select text in a bot's reply and a small menu appears below it: Shorten, Improve or Explain. The bot gets the selected passage quoted
+  (drawn as a quote in your message) with the request.
 - Bots can use your Grok account: Grok models appear in the bot model picker once Grok is downloaded and signed in under Settings > AI
   providers > Accounts. Grok's sign-in state is read with `grok models`.
 - Bots can use your Claude plan too: Claude models (Opus, Sonnet, Haiku) appear in the bot model picker once the Claude account is signed in.

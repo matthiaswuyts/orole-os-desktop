@@ -13,9 +13,10 @@ import { QuestionCard } from "./Question";
 import { StructuredPart } from "./StructuredPart";
 import { MentionText } from "../MentionText";
 import type { MentionTarget } from "../mentions";
-import { TypingIndicator } from "@/components/assistant-ui/elements/typing-indicator";
-
-export { TypingIndicator };
+import { splitQuote } from "../quote";
+import { splitBubbles } from "./bubbles";
+import { cn } from "@/lib/utils";
+import { WorkingStatus } from "@/components/assistant-ui/elements/working-status";
 
 /** Whether a user message has anything to draw (the setup kickoff is text the user never sees). */
 export const hasVisibleParts = (parts: readonly MsgPart[]): boolean => parts.some((p) => p.type === "attachment" || (p.type === "text" && !p.hidden));
@@ -24,9 +25,11 @@ export const hasVisibleParts = (parts: readonly MsgPart[]): boolean => parts.som
 export function UserParts({ parts, targets }: { parts: readonly MsgPart[]; /** bots and skills to draw as chips; absent = plain text */ targets?: readonly MentionTarget[] }) {
   const files = parts.filter((p) => p.type === "attachment");
   const text = parts.filter((p) => p.type === "text" && !p.hidden).map((p) => p.text ?? "").join("\n\n");
+  const { quote, rest } = splitQuote(text);
   return <>
     {files.length > 0 && <div className="mb-1 flex flex-wrap gap-1.5">{files.map((p, i) => <AttachmentPill key={p.attachmentId || i} name={p.name || p.title} mime={p.mime} size={p.size} />)}</div>}
-    {text && <p className="selectable whitespace-pre-wrap break-words">{targets?.length ? <MentionText text={text} targets={targets} /> : text}</p>}
+    {quote && <blockquote data-slot="chat-quote" className="selectable mb-1.5 border-s-2 border-primary/60 ps-2.5 text-muted-foreground text-xs whitespace-pre-wrap break-words">{quote}</blockquote>}
+    {rest && <p className="selectable whitespace-pre-wrap break-words">{targets?.length ? <MentionText text={rest} targets={targets} /> : rest}</p>}
   </>;
 }
 

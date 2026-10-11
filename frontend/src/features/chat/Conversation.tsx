@@ -15,7 +15,9 @@ import { CopyButton } from "./parts/Sources";
 import { SOURCE_KEY } from "./runtime/convert";
 import { useChatRuntime } from "./runtime/useChatRuntime";
 import { ThreadSearch } from "./ThreadSearch";
-import { targetsFor } from "./mentions";
+import { QueuePanel } from "./QueuePanel";
+import { SelectionMenu } from "./SelectionMenu";
+import { targetsFor, useRegistrySkills } from "./mentions";
 
 /** How close to the top (px) the reader gets before the next older page is fetched. */
 const LOAD_OLDER_AT = 160;
@@ -115,6 +117,7 @@ function Thread({ bot }: { bot: Bot }) {
     <ThreadPrimitive.Root ref={thread} className="relative flex min-h-0 flex-1 flex-col">
       {searching && <ThreadSearch messages={conversation.messages} scope={thread} onClose={closeSearch} />}
       <ThreadPrimitive.Viewport ref={viewport} role="region" aria-label={`Conversation with ${bot.name}`} tabIndex={0}
+      <SelectionMenu botId={bot.id} root={thread} />
         onScroll={(event) => { if (event.currentTarget.scrollTop < LOAD_OLDER_AT) loadOlder(); }}
         className="flex min-h-0 flex-1 flex-col overflow-y-auto outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring">
         <div className="mx-auto flex min-h-full w-full max-w-3xl shrink-0 flex-col gap-5 px-4 pt-6 pb-12">
