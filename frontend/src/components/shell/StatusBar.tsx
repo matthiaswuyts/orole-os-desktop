@@ -73,10 +73,17 @@ function BoxStatus({ machine, observation, now, connected }: { machine: Machine;
 }
 
 export function StatusBar() {
-  const { link, health } = useDaemon();
+  const link = useDaemon((state) => state.link);
+  const version = useDaemon((state) => state.health?.version);
   const counts = useAgentCounts();
   const agentsKnown = useAgents((state) => state.available && state.loaded && !state.offline && !state.error);
-  const { machines, observations, loaded, error, now, mcp, mcpError } = useBoxes();
+  const machines = useBoxes((state) => state.machines);
+  const observations = useBoxes((state) => state.observations);
+  const loaded = useBoxes((state) => state.loaded);
+  const error = useBoxes((state) => state.error);
+  const now = useBoxes((state) => state.now);
+  const mcp = useBoxes((state) => state.mcp);
+  const mcpError = useBoxes((state) => state.mcpError);
   const update = useUpdates((state) => state.status);
   useEffect(() => startBoxesPolling(), []);
   const connected = link === "connected";
@@ -85,7 +92,7 @@ export function StatusBar() {
   return <footer aria-label="System status" className="flex h-7 min-w-0 shrink-0 items-center gap-2 border-t bg-sidebar px-3 font-mono text-xs text-muted-foreground">
     <span className="inline-flex shrink-0 items-center gap-1.5">
       <span aria-hidden="true" data-state={connected ? "connected" : link} className={cn("size-1.5 rounded-full border border-current", connected && "border-success bg-success", link === "offline" && "text-destructive-foreground")} />
-      daemon {connected && health ? `v${health.version}` : link}
+      daemon {connected && version ? `v${version}` : link}
     </span>
     <Tooltip>
       <TooltipTrigger render={<button type="button" />} className={footerControl} onClick={() => useUI.getState().setView("agents")}>

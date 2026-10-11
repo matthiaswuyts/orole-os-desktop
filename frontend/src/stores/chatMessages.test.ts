@@ -20,6 +20,7 @@ vi.mock("@/mygo", () => ({
   },
 }));
 
+import { FOCUS_MIN_INTERVAL_MS } from "@/lib/focus";
 import { MAX_IN_MEMORY, mergeLatest, upsert, useBotRunning, useChatMessages } from "@/stores/chatMessages";
 import { useChat } from "@/stores/chat";
 import { useChatDrafts } from "@/stores/chatDrafts";
@@ -43,6 +44,7 @@ const reset = () => { useChatMessages.setState({ byBot: {}, runs: {}, problems: 
 beforeEach(() => {
   Object.values(bridge).forEach((v) => { if (typeof v === "function" && "mockReset" in v) v.mockReset(); });
   useDaemon.setState({ link: "connected" });
+  useChat.setState({ selectedBotId: "a" });
   reset();
   stop = useChatMessages.getState().startSync();
 });
@@ -167,13 +169,47 @@ describe("reconnect and focus refresh", () => {
     expect(list[3]!.parts[0]!.text).toBe("live");
   });
 
-  it("refetches on window focus", async () => {
-    bridge.messages.mockResolvedValue({ messages: [msg(1)], hasMore: false });
-    await useChatMessages.getState().load("a");
-    bridge.messages.mockClear();
-    window.dispatchEvent(new Event("focus"));
-    await settle();
-    expect(bridge.messages).toHaveBeenCalledTimes(1);
+  describe("window focus", () => {
+    const refocus = () => { vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(Date.now() + FOCUS_MIN_INTERVAL_MS); window.dispatchEvent(new Event("focus")); };
+    afterEach(() => { vi.useRealTimers(); });
+
+    it("refetches the open conversation once however many focus events arrive", async () => {
+      bridge.messages.mockResolvedValue({ messages: [msg(1)], hasMore: false });
+      await useChatMessages.getState().load("a");
+      bridge.messages.mockClear();
+      refocus();
+      for (let i = 0; i < 9; i++) window.dispatchEvent(new Event("focus"));
+      await settle();
+      expect(bridge.messages).toHaveBeenCalledTimes(1);
+      expect(bridge.messages).toHaveBeenCalledWith({ botId: "a", beforeSeq: 0, limit: 50 } satisfies MessagesRequest);
+    });
+
+    it("leaves every other loaded conversation alone", async () => {
+      bridge.messages.mockImplementation(async ({ botId }: MessagesRequest) => ({ messages: [msg(1, { botId })], hasMore: false }));
+      for (const botId of ["a", "b", "c", "d"]) await useChatMessages.getState().load(botId);
+      bridge.messages.mockClear();
+      refocus();
+      await settle();
+      expect(bridge.messages.mock.calls.map(([request]) => request.botId)).toEqual(["a"]);
+      bridge.messages.mockClear();
+      useChat.setState({ selectedBotId: "c" });
+      vi.setSystemTime(Date.now() + FOCUS_MIN_INTERVAL_MS);
+      window.dispatchEvent(new Event("focus"));
+      await settle();
+      expect(bridge.messages.mock.calls.map(([request]) => request.botId)).toEqual(["c"]);
+    });
+
+    it("fetches nothing when no conversation is open or the open one was never loaded", async () => {
+      useChat.setState({ selectedBotId: null });
+      refocus();
+      await settle();
+      expect(bridge.messages).not.toHaveBeenCalled();
+      useChat.setState({ selectedBotId: "a" });
+      vi.setSystemTime(Date.now() + FOCUS_MIN_INTERVAL_MS);
+      window.dispatchEvent(new Event("focus"));
+      await settle();
+      expect(bridge.messages).not.toHaveBeenCalled();
+    });
   });
 
   it("mergeLatest keeps older history the page does not cover", () => {

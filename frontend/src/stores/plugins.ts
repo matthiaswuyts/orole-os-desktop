@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { Plugins, events, type PluginRecord } from "@/mygo";
 import { inDesktop } from "@/lib/backend";
+import { onFocusRefresh } from "@/lib/focus";
 import { useDaemon } from "@/stores/daemon";
 
 interface State {
@@ -47,9 +48,9 @@ export const usePlugins = create<State>((set, get) => ({
           set({ ready: false, loading: false, error: "The daemon is offline. Reconnect to load or run plugins." });
         }
       });
-      window.addEventListener("focus", refresh);
+      const offFocus = onFocusRefresh(refresh);
       refresh();
-      stop = () => { offChanged(); offDaemon(); window.removeEventListener("focus", refresh); };
+      stop = () => { offChanged(); offDaemon(); offFocus(); };
     }
     let stopped = false;
     return () => {

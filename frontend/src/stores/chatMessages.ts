@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { Chat, events, type Message, type SendRequest } from "@/mygo";
 import { inDesktop } from "@/lib/backend";
+import { onFocusRefresh } from "@/lib/focus";
 import { useChatDrafts } from "@/stores/chatDrafts";
 import { useChat } from "@/stores/chat";
 import { useDaemon } from "@/stores/daemon";
@@ -37,7 +38,7 @@ interface State {
   problems: Record<string, Problem>;
   load: (botId: string) => Promise<void>;
   loadOlder: (botId: string) => Promise<void>;
-  /** Re-fetches the latest page of every loaded conversation and merges it into what live events already delivered. */
+  /** Re-fetches the latest page of the open conversation and merges it into what live events already delivered; other conversations reload when opened. */
   refresh: () => void;
   send: (botId: string, input: SendInput) => Promise<boolean>;
   retrySend: (botId: string) => Promise<boolean>;
@@ -136,10 +137,9 @@ export const useChatMessages = create<State>((set, get) => ({
     }
   },
   refresh() {
-    for (const botId of Object.keys(get().byBot)) {
-      const conversation = get().byBot[botId];
-      if (conversation?.loaded || conversation?.error) void get().load(botId);
-    }
+    const botId = useChat.getState().selectedBotId;
+    const conversation = botId ? get().byBot[botId] : undefined;
+    if (botId && (conversation?.loaded || conversation?.error)) void get().load(botId);
   },
   async send(botId, input) {
     const request: SendRequest = { botId, text: input.text, attachmentIds: input.attachmentIds ?? [], mode: input.mode ?? "", clientNonce: crypto.randomUUID(), ...(input.mentions?.length ? { mentions: input.mentions } : {}), ...(input.skills?.length ? { skills: input.skills } : {}) };
@@ -210,8 +210,8 @@ export const useChatMessages = create<State>((set, get) => ({
       const offDaemon = useDaemon.subscribe((state, previous) => {
         if (state.link === "connected" && previous.link !== "connected") refresh();
       });
-      window.addEventListener("focus", refresh);
-      stop = () => { offMessage(); offRun(); offBot(); offDaemon(); window.removeEventListener("focus", refresh); };
+      const offFocus = onFocusRefresh(refresh);
+      stop = () => { offMessage(); offRun(); offBot(); offDaemon(); offFocus(); };
     }
     let stopped = false;
     return () => {
