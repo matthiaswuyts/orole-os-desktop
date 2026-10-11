@@ -1,12 +1,15 @@
-import { useState } from "react";
+import { lazy, Suspense, useState } from "react";
 import { GitCompareArrows, SquareTerminal } from "lucide-react";
 import type { Session } from "@/mygo";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetDescription, SheetHeader, SheetPopup, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
-import { SessionDiff } from "@/features/agents/shared";
 import { isRemoteProcess, sessionTitle } from "@/features/agents/format";
-import { TerminalPane } from "@/features/terminals/TerminalPane";
-import { PublishPanel } from "./PublishPanel";
+
+// xterm and the diff renderer only load when a sheet is opened.
+const TerminalPane = lazy(() => import("@/features/terminals/TerminalPane").then((m) => ({ default: m.TerminalPane })));
+const TaskChanges = lazy(() => import("./TaskChanges").then((m) => ({ default: m.TaskChanges })));
+
+const SheetLoading = ({ label }: { label: string }) => <p role="status" className="m-auto text-muted-foreground text-sm">{label}</p>;
 
 export function TaskSheets({ session }: { session: Session }) {
   const [terminalOpen, setTerminalOpen] = useState(false);
@@ -20,8 +23,7 @@ export function TaskSheets({ session }: { session: Session }) {
           <SheetDescription>{sessionTitle(session)}{session.branch ? ` · ${session.branch}` : ""}</SheetDescription>
         </SheetHeader>
         <div className="flex min-h-0 flex-1 flex-col overflow-auto">
-          <PublishPanel session={session} />
-          <div className="flex min-h-64 flex-1 p-3"><SessionDiff session={session} /></div>
+          <Suspense fallback={<SheetLoading label="Loading changes…" />}><TaskChanges session={session} /></Suspense>
         </div>
       </SheetPopup>
     </Sheet>
@@ -30,7 +32,9 @@ export function TaskSheets({ session }: { session: Session }) {
       <SheetPopup side="right" className="w-full max-w-4xl">
         <SheetHeader className="shrink-0 pr-12"><SheetTitle>Terminal</SheetTitle><SheetDescription>{sessionTitle(session)}</SheetDescription></SheetHeader>
         <div className="flex min-h-0 flex-1 p-3">
-          {session.terminalId ? <TerminalPane id={session.terminalId} active={terminalOpen} onFocus={() => {}} fontSize={13} /> : <p role="status" className="m-auto text-muted-foreground">This session has no attached terminal.</p>}
+          {session.terminalId
+            ? <Suspense fallback={<SheetLoading label="Loading terminal…" />}><TerminalPane id={session.terminalId} active={terminalOpen} onFocus={() => {}} fontSize={13} /></Suspense>
+            : <p role="status" className="m-auto text-muted-foreground">This session has no attached terminal.</p>}
         </div>
       </SheetPopup>
     </Sheet>}

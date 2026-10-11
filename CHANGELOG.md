@@ -6,6 +6,18 @@ Each release needs a `## X.Y.Z - YYYY-MM-DD` section matching `version` in `mygo
 workflow refuses to build without it, and the in-app update window shows that section as the release
 notes. See `docs/development/updates.md`.
 
+## Unreleased
+
+### Changed
+- Faster startup: the terminal (xterm), task Changes sheet, Home view, home widgets and command
+  palette now load on demand. The entry chunk drops from 1,277 kB to 772 kB (gzip 352 kB to 214 kB).
+  Widgets show a per-widget loading card while their code loads.
+- Only the Latin subsets of Inter and JetBrains Mono are bundled.
+
+### Removed
+- Unused frontend dependencies: `@tanstack/react-query`, `cn`, `@fontsource-variable/dm-sans`,
+  `@fontsource-variable/geist`.
+
 ## 0.1.0 - 2026-10-10
 
 First tagged release. Windows only.

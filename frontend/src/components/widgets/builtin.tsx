@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { CalendarDays, CheckCircle2, Circle, NotebookPen, Server } from "lucide-react";
 import { useDaemon } from "@/stores/daemon";
 import { useUI } from "@/stores/ui";
-import { HostActivity } from "@/features/system/HostActivity";
+import { fmtUptime } from "@/lib/utils";
 import { Widget } from "./Widget";
 import type { WidgetProps } from "./registry";
 
@@ -38,11 +38,6 @@ export function DaemonHealthWidget({ onRemove }: WidgetProps) {
     </Widget>
   );
 }
-
-export const fmtUptime = (s: number) => {
-  const d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600), m = Math.floor((s % 3600) / 60);
-  return d ? `${d}d ${h}h` : h ? `${h}h ${m}m` : m ? `${m}m ${s % 60}s` : `${s}s`;
-};
 
 export function ClockWidget({ onRemove }: WidgetProps) {
   const [now, setNow] = useState(() => new Date());
@@ -120,8 +115,4 @@ export function NotesWidget({ onRemove, config, onConfig }: WidgetProps) {
         placeholder="Quick notes, saved with this workspace…" className="selectable h-full w-full resize-none bg-transparent text- outline-none placeholder:text-muted-foreground/60" />
     </Widget>
   );
-}
-
-export function ActivityWidget({ onRemove }: WidgetProps) {
-  return <HostActivity onRemove={onRemove} />;
 }
