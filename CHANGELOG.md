@@ -8,6 +8,8 @@ notes. See `docs/development/updates.md`.
 
 ## Unreleased
 
+## 0.2.0 - 2026-10-12
+
 ### Added
 - Code tasks have three permission modes, chosen before launch and switchable while the task runs: **Manual** asks before
   anything not known to be safe, **Auto** lets the agent decide which actions are safe, and **YOLO** never asks. Auto uses
@@ -141,10 +143,6 @@ notes. See `docs/development/updates.md`.
   on demand. The entry chunk drops from 929 kB to 592 kB (gzip 266 kB to 163 kB). Widgets show a
   per-widget loading card while their code loads.
 - Only the Latin subsets of Inter and JetBrains Mono are bundled.
-
-### Removed
-- Unused frontend dependencies: `@tanstack/react-query`, `cn`, `@fontsource-variable/dm-sans`,
-  `@fontsource-variable/geist`.
 - Chat: a streaming reply no longer re-renders the whole conversation. The rail's preview of a reply
   updates at most once a second, the open conversation ignores preview and run-flag changes, bots and
   the run state are read once per thread, and composer drafts live in their own store.
@@ -164,6 +162,10 @@ notes. See `docs/development/updates.md`.
 - Startup no longer waits for the full task list; the Tasks view and Home activity show their own loading state.
 - Home activity calendar no longer rebuilds or reformats its 365 days on hover or on every session update.
 - Terminal: faster output decoding, and changing the font size no longer recreates the terminal.
+
+### Removed
+- Unused frontend dependencies: `@tanstack/react-query`, `cn`, `@fontsource-variable/dm-sans`,
+  `@fontsource-variable/geist`.
 
 ### Fixed
 - A model stream that goes silent for 90 seconds is cancelled with a clear error instead of hanging.
