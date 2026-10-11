@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/rayorole/orole-os-desktop/internal/chat"
@@ -29,6 +30,11 @@ type MCPClient interface {
 	List(ctx context.Context) ([]mcp.ServerState, error)
 	Catalog(ctx context.Context, id string) (*mcp.Catalog, error)
 	InvokeChecked(ctx context.Context, id, tool string, args map[string]any, opts mcp.CallOptions) (*mcp.CallResult, error)
+	// Generation changes whenever the server list, a server's status or a catalog changes, and
+	// PermissionVersion whenever a per-tool permission is written or a server removed; the tools
+	// derived from them (permissions decide which tools are offered) are cached until either moves.
+	Generation() uint64
+	PermissionVersion() uint64
 }
 
 // MCPTools exposes the tools of the MCP servers (integrations) a bot was given (BotConfig.MCPServers):
@@ -38,6 +44,13 @@ type MCPClient interface {
 // never reaches the server. Results are untrusted.
 type MCPTools struct {
 	Client MCPClient
+
+	mu       sync.Mutex // guards the per-generation cache below
+	gen      uint64
+	perm     uint64
+	have     bool
+	live     map[string]mcp.ServerState // enabled, connected servers; nil until listed for gen
+	byServer map[string][]mcpEntry      // offered tools (denied ones dropped) of a server whose catalog was read
 }
 
 // maxBotMCPTools bounds the tools offered to one model call; providers reject far fewer than a large
@@ -48,7 +61,8 @@ const maxBotMCPTools = 128
 type mcpEntry struct {
 	Server, Tool string
 	ServerName   string
-	Info         *mcp.ToolInfo
+	Description  string          // what the model is told, derived once per generation
+	Schema       json.RawMessage // object schema, derived once per generation
 	Name         string
 }
 
@@ -104,31 +118,47 @@ func (t *MCPTools) toolsOf(ctx context.Context, bot chat.Bot) []mcpEntry {
 	}
 	ctx, cancel := context.WithTimeout(ctx, mcpLookupLimit)
 	defer cancel()
-	servers, err := t.Client.List(ctx)
-	if err != nil {
-		return nil
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	// Read the versions first: a change during the lookups below leaves the cache stale-marked.
+	gen, perm := t.Client.Generation(), t.Client.PermissionVersion()
+	if !t.have || gen != t.gen || perm != t.perm {
+		t.gen, t.perm, t.have = gen, perm, true
+		t.live, t.byServer = nil, map[string][]mcpEntry{}
 	}
-	live := map[string]mcp.ServerState{}
-	for _, s := range servers {
-		if s.Enabled && s.Status == mcp.StatusConnected {
-			live[s.ID] = s
+	if t.live == nil {
+		servers, err := t.Client.List(ctx)
+		if err != nil {
+			return nil
+		}
+		t.live = map[string]mcp.ServerState{}
+		for _, s := range servers {
+			if s.Enabled && s.Status == mcp.StatusConnected {
+				t.live[s.ID] = s
+			}
 		}
 	}
 	var entries []mcpEntry
 	for _, id := range bot.Config.MCPServers {
-		srv, ok := live[id]
+		srv, ok := t.live[id]
 		if !ok {
 			continue
 		}
-		cat, err := t.Client.Catalog(ctx, id)
-		if err != nil || cat == nil {
-			continue
-		}
-		for i := range cat.Tools {
-			if ti := &cat.Tools[i]; ti.Permission != "deny" {
-				entries = append(entries, mcpEntry{Server: id, Tool: ti.Name, ServerName: srv.Name, Info: ti})
+		offered, seen := t.byServer[id]
+		if !seen {
+			cat, err := t.Client.Catalog(ctx, id)
+			if err != nil || cat == nil {
+				continue // not cached: retried on the next call
 			}
+			for i := range cat.Tools {
+				if ti := &cat.Tools[i]; ti.Permission != "deny" {
+					offered = append(offered, mcpEntry{Server: id, Tool: ti.Name, ServerName: srv.Name,
+						Description: mcpDescription(srv.Name, ti), Schema: objectSchema(ti.InputSchema)})
+				}
+			}
+			t.byServer[id] = offered
 		}
+		entries = append(entries, offered...)
 	}
 	if len(entries) > maxBotMCPTools {
 		entries = entries[:maxBotMCPTools]
@@ -143,11 +173,7 @@ func (t *MCPTools) Specs(bot chat.Bot, caps llm.Caps) []llm.ToolSpec {
 	}
 	var specs []llm.ToolSpec
 	for _, e := range t.toolsOf(context.Background(), bot) {
-		specs = append(specs, llm.ToolSpec{
-			Name:        e.Name,
-			Description: mcpDescription(e.ServerName, e.Info),
-			Schema:      objectSchema(e.Info.InputSchema),
-		})
+		specs = append(specs, llm.ToolSpec{Name: e.Name, Description: e.Description, Schema: e.Schema})
 	}
 	return specs
 }

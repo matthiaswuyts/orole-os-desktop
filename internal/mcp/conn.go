@@ -83,7 +83,7 @@ func (c *conn) setStatus(s Status) {
 	c.status = s
 	cfg := c.cfg
 	c.mu.Unlock()
-	c.m.publish("mcp.status", c.m.state(cfg))
+	c.m.publishStatus(c.m.state(cfg), false)
 }
 
 func (c *conn) noteError(err error) {
@@ -93,7 +93,7 @@ func (c *conn) noteError(err error) {
 	c.lastErrAt = time.Now()
 	cfg := c.cfg
 	c.mu.Unlock()
-	c.m.publish("mcp.status", c.m.state(cfg))
+	c.m.publishStatus(c.m.state(cfg), false)
 }
 
 func (c *conn) noteLatency(d time.Duration) { c.mu.Lock(); c.latency = d; c.mu.Unlock() }
@@ -167,7 +167,7 @@ func (c *conn) stop() {
 	c.status = StatusDisabled
 	cfg := c.cfg
 	c.mu.Unlock()
-	c.m.publish("mcp.status", c.m.state(cfg))
+	c.m.publishStatus(c.m.state(cfg), false)
 }
 
 // reconnect drops the session so the loop dials again with current credentials.
@@ -359,13 +359,15 @@ func (c *conn) refreshCatalog(ctx context.Context) (*Catalog, error) {
 	cat, err := buildCatalog(ctx, c.id, sess)
 	if cat != nil && (err == nil || len(cat.Tools) > 0) {
 		c.mu.Lock()
+		changed := !sameCatalogContent(c.catalog, cat)
 		c.catalog = cat
 		cfg := c.cfg
 		c.mu.Unlock()
 		if serr := c.m.saveCatalog(cat); serr != nil {
 			c.m.log.Warn("mcp catalog not cached", "server", c.id, "err", serr)
 		}
-		c.m.publish("mcp.status", c.m.state(cfg))
+		// Same tool count but different tools must still reach the gateway and the bots.
+		c.m.publishStatus(c.m.state(cfg), changed)
 	}
 	return cat, err
 }

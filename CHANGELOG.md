@@ -57,6 +57,10 @@ notes. See `docs/development/updates.md`.
   `propose_skill` for your approval. Built-in skills are for bots only and are never synced to coding agents.
 
 ### Changed
+- MCP gateway and bot tools no longer rebuild the tool index, re-query permissions or re-derive
+  schemas on every call: the index is cached until a server is added, edited, enabled, disabled,
+  removed, changes status or changes its tools. `gateway.tools` carries an ETag so the gateway
+  process skips unchanged lists, and `mcp.status` is published only when a server's state changes.
 - Automations: finished runs and their journal are now pruned (30 days and 500 runs per automation by
   default; `retentionDays` and `retentionMaxRuns` in the automations config, no settings UI yet).
   Queued, running and waiting-approval runs are never removed.

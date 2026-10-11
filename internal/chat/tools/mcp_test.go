@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/rayorole/orole-os-desktop/internal/chat"
@@ -23,6 +24,11 @@ type fakeMCP struct {
 	catalogs map[string][]mcp.ToolInfo
 	invokeFn func(ctx context.Context, id, tool string, args map[string]any, opts mcp.CallOptions) (*mcp.CallResult, error)
 	invoked  []invocation
+
+	gen          atomic.Uint64
+	perm         atomic.Uint64
+	listCalls    atomic.Int32
+	catalogCalls atomic.Int32
 }
 
 type invocation struct {
@@ -31,14 +37,42 @@ type invocation struct {
 	Opts         mcp.CallOptions
 }
 
-func (f *fakeMCP) List(context.Context) ([]mcp.ServerState, error) { return f.servers, nil }
+func (f *fakeMCP) List(context.Context) ([]mcp.ServerState, error) {
+	f.listCalls.Add(1)
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]mcp.ServerState(nil), f.servers...), nil
+}
 
 func (f *fakeMCP) Catalog(_ context.Context, id string) (*mcp.Catalog, error) {
+	f.catalogCalls.Add(1)
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	tools, ok := f.catalogs[id]
 	if !ok {
 		return nil, mcp.ErrNotFound
 	}
 	return &mcp.Catalog{ServerID: id, Tools: tools}, nil
+}
+
+func (f *fakeMCP) Generation() uint64        { return f.gen.Load() }
+func (f *fakeMCP) PermissionVersion() uint64 { return f.perm.Load() }
+
+// change mutates the fake's state the way a real change does: state first, then the generation.
+func (f *fakeMCP) change(fn func()) {
+	f.mu.Lock()
+	fn()
+	f.mu.Unlock()
+	f.gen.Add(1)
+}
+
+// changePermissions mutates the fake's state the way a per-tool permission write does: state first,
+// then the permission version (the generation does not move).
+func (f *fakeMCP) changePermissions(fn func()) {
+	f.mu.Lock()
+	fn()
+	f.mu.Unlock()
+	f.perm.Add(1)
 }
 
 func (f *fakeMCP) InvokeChecked(ctx context.Context, id, tool string, args map[string]any, opts mcp.CallOptions) (*mcp.CallResult, error) {
