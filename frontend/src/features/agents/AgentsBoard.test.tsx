@@ -42,7 +42,8 @@ describe("agents board", () => {
     console.log("BOARD", JSON.stringify({ cardRenders: renders.glyph, ms: Math.round(performance.now() - started) }));
     // origin/main re-rendered all 200 cards on every update (20000 for this loop).
     expect(renders.glyph).toBe(100);
-  });
+    // The assertion counts renders, not time; a loaded CI runner needs more than the default 5 s to mount 200 cards.
+  }, 30_000);
 });
 
 describe("session clock", () => {
