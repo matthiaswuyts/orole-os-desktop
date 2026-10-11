@@ -93,6 +93,9 @@ func (c Chat) Send(ctx context.Context, req chat.SendRequest) (chat.Message, err
 	err := c.L.call(ctx, "chat.send", req, &out)
 	return out, err
 }
+func (c Chat) PinBot(ctx context.Context, req chat.PinRequest) error {
+	return c.L.call(ctx, "chat.bots.pin", req, nil)
+}
 func (c Chat) Cancel(ctx context.Context, botID string) error {
 	return c.L.call(ctx, "chat.cancel", chat.BotRef{ID: botID}, nil)
 }

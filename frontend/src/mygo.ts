@@ -240,6 +240,8 @@ export interface BotConfig {
    * tools (ask_user, save_profile) until it saves its own instructions.
    */
   setup?: boolean;
+  /** Pinned keeps the bot at the top of the bot list. It is changed only by PinBot: saving a bot never touches it. */
+  pinned?: boolean;
 }
 
 /** BotExport is portable: settings and instructions only, never memory, messages or secrets. */
@@ -1674,6 +1676,12 @@ export interface PluginChange {
 export interface PluginCommand {
   id: string;
   title: string;
+/** PinRequest pins or unpins a bot. */
+export interface PinRequest {
+  id: string;
+  pinned: boolean;
+}
+
   description: string;
   actionId: string;
 }
@@ -3603,6 +3611,12 @@ export const Chat = {
   },
 } as const;
 
+  pauseQueue(botID: string): Promise<void> {
+    return call("Chat.PauseQueue", botID);
+  },
+  pinBot(req: PinRequest): Promise<void> {
+    return call("Chat.PinBot", req);
+  },
 /**
  * LLM is a stateless bridge to the daemon's provider manager. API keys are sent once on connect
  * and are never returned.
