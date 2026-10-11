@@ -12,10 +12,23 @@ The daemon's `terminals.Manager` owns every session; the UI is a view.
   make the entire desktop or credential stack portable to Linux/macOS.
 - Shells detected on `PATH`/known locations: Windows PowerShell (`powershell`), PowerShell 7 (`pwsh`),
   Command Prompt (`cmd`), Git Bash (`git-bash`, from `%ProgramFiles%\Git`).
-- Limits: 64 sessions per manager; per-session scrollback ring of 1 MiB (`ScrollbackBytes`).
-- Each output chunk gets a sequence number. `terminals.attach` returns the scrollback plus the current `seq`;
-  live `terminal.output` events with `seq <=` that value are already included, so a reattaching window neither
-  loses nor duplicates output.
+- Limits: 64 *running* sessions per manager; per-session scrollback of 1 MiB (`ScrollbackBytes`), a fixed
+  ring of 64 KiB pages that is reused once full, so reading a flooding PTY allocates nothing.
+- Exited sessions do not count against the 64. They stay attachable (final screen, exit code) for 30 minutes
+  and at most 16 are kept; older ones are forgotten and the daemon publishes `terminal.removed` for them.
+- Output is coalesced per session: the first bytes after an idle gap go out immediately (keystroke echo is
+  not delayed), then at most one `terminal.output` event every ~12 ms, each at most 64 KiB, and at most
+  ~2 MiB/s of event payload. `seq` is the stream offset (total bytes) at the end of the event, so an event
+  covers `[seq-len(data), seq)`.
+- Flood policy: a terminal cannot close the GUI's IPC connection. When more than 256 KiB is waiting to be
+  delivered the oldest undelivered bytes are skipped (they stay in the scrollback), which a client sees as an
+  event starting past the end of the previous one. The terminal view then calls `terminals.attach` again
+  and resumes from the returned `seq`.
+- `terminals.attach` returns the scrollback plus the current `seq`; live `terminal.output` events with
+  `seq <=` that value are already included, so a reattaching window neither loses nor duplicates output.
+  The session lock is held only to snapshot page headers; the ~1 MiB copy happens outside it.
+- In-process consumers (agents) use `Manager.Wait(ctx, id)` to block until a session exits instead of
+  polling `List`.
 - `Close` kills the shell process and releases the pseudoconsole exactly once (`winProc.once`): closing a
   pseudoconsole twice corrupts the heap.
 - `init()` calls `SetConsoleCtrlHandler(NULL, FALSE)` so Ctrl-C (`0x03`) works even if a parent started the
