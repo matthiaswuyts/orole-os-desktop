@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"slices"
 
 	"github.com/rayorole/orole-os-desktop/internal/chat"
 	"github.com/rayorole/orole-os-desktop/internal/llm"
@@ -20,9 +19,6 @@ type InfoSource struct {
 	}
 	// ModelCaps resolves the capabilities of a model (chat.Manager.ModelCaps).
 	ModelCaps func(ctx context.Context, provider, model string) (llm.Caps, error)
-	// HasTool reports whether a client tool with that id is registered (used for knowledge_search,
-	// which the memory subsystem provides). Nil means "none".
-	HasTool func(id string) bool
 	// Fetcher is non-nil when the fetch_url fallback exists.
 	Fetcher *Fetcher
 	// Native is the optional native research path.
@@ -49,7 +45,7 @@ func (s InfoSource) Describe(ctx context.Context, req chat.ToolsRequest) ([]chat
 	}
 	infos := baseInfos()
 	if providerID == "" || model == "" {
-		return s.keep(withReason(infos, "Choose a model first.")), nil
+		return withReason(infos, "Choose a model first."), nil
 	}
 	name := providerID
 	if statuses, err := s.LLM.Statuses(ctx); err == nil {
@@ -68,7 +64,7 @@ func (s InfoSource) Describe(ctx context.Context, req chat.ToolsRequest) ([]chat
 		case ctx.Err() != nil:
 			return nil, ctx.Err()
 		}
-		return s.keep(withReason(infos, reason)), nil
+		return withReason(infos, reason), nil
 	}
 
 	search := hasHosted(caps, llm.HostedWebSearch)
@@ -127,22 +123,7 @@ func (s InfoSource) Describe(ctx context.Context, req chat.ToolsRequest) ([]chat
 		rs.Egress = "The question and search queries are sent to " + name + "; pages are read by " + name + " or fetched from this computer."
 	}
 
-	kn := byID[chat.ToolKnowledge]
-	kn.Available = caps.Tools
-	if caps.Tools {
-		kn.Egress = "Passages found are sent to " + name + " as part of the conversation."
-	} else {
-		kn.Reason = "This model cannot call tools."
-	}
-	return s.keep(infos), nil
-}
-
-// keep drops knowledge_search unless the memory subsystem registered it.
-func (s InfoSource) keep(infos []chat.ToolInfo) []chat.ToolInfo {
-	if s.HasTool != nil && s.HasTool(chat.ToolKnowledge) {
-		return infos
-	}
-	return slices.DeleteFunc(infos, func(i chat.ToolInfo) bool { return i.ID == chat.ToolKnowledge })
+	return infos, nil
 }
 
 // withReason marks every tool unavailable for one common reason.
@@ -159,6 +140,5 @@ func baseInfos() []chat.ToolInfo {
 		{ID: chat.ToolWebFetch, Name: "Web pages", Description: "Open and read web pages and links."},
 		{ID: chat.ToolDatetime, Name: "Date and time", Description: "Know the current date and time."},
 		{ID: chat.ToolResearch, Name: "Research", Description: "Plan, search, read and write a cited report. Slow and uses many model calls."},
-		{ID: chat.ToolKnowledge, Name: "Knowledge search", Description: "Search the knowledge you shared with this bot."},
 	}
 }

@@ -72,13 +72,28 @@ func (m *Manager) buildToolset(bot Bot, caps llm.Caps, draft bool) toolset {
 
 // runTurn answers one stored user message: it creates (or resets) the assistant message, runs the
 // engine and stores the terminal state. It never returns an error; failures end up on the message.
+// A delegated turn (t.result set) also reports its outcome to the asking bot, whatever happens.
 func (m *Manager) runTurn(ctx context.Context, botID string, t turn) {
+	res := handoffResult{status: StatusError, errText: "the task could not be started"}
+	defer func() { t.deliver(res) }()
 	bg := context.WithoutCancel(ctx)
-	bot, err := m.store.getBot(bg, botID, false)
+	convo, err := m.store.getBot(bg, botID, false)
 	if err != nil {
 		m.log.Warn("chat: run skipped", "bot", botID, "err", err)
 		_ = m.store.setStatus(bg, t.userMsgID, StatusCanceled, "Not sent: the bot no longer exists.")
+		res = handoffResult{status: StatusCanceled, errText: "the bot no longer exists"}
 		return
+	}
+	bot := convo
+	if t.responder != "" {
+		if bot, err = m.store.getBot(bg, t.responder, false); err != nil {
+			m.log.Warn("chat: mention skipped", "bot", t.responder, "err", err)
+			gone := Message{ID: newID(), BotID: botID, Role: "assistant", Author: "bot:" + t.responder, Status: StatusError, Error: "The mentioned bot no longer exists.", CreatedAt: m.nowMs()}
+			if m.store.insertMessage(bg, &gone) == nil {
+				m.publishMessage(gone)
+			}
+			return
+		}
 	}
 	user, err := m.store.getMessage(bg, t.userMsgID)
 	if err != nil {
@@ -97,7 +112,7 @@ func (m *Manager) runTurn(ctx context.Context, botID string, t turn) {
 			asst, err = m.store.getMessage(bg, t.asstID)
 		}
 	} else {
-		asst = Message{ID: newID(), BotID: botID, Role: "assistant", Author: "bot:" + botID, Status: StatusRunning, CreatedAt: m.nowMs()}
+		asst = Message{ID: newID(), BotID: botID, Role: "assistant", Author: "bot:" + bot.ID, Status: StatusRunning, CreatedAt: m.nowMs()}
 		err = m.store.insertMessage(bg, &asst)
 	}
 	if err != nil {
@@ -113,14 +128,15 @@ func (m *Manager) runTurn(ctx context.Context, botID string, t turn) {
 	m.emit("chat.run", RunState{BotID: botID, Running: true, MessageID: asst.ID})
 	s.checkpoint()
 
-	rc := RunContext{BotID: botID, Bot: bot, MessageID: asst.ID, Actor: "bot:" + botID, Emit: s.upsertTool}
-	status, errText := m.executeTurn(ctx, bot, rc, user, t.mode, s)
+	rc := RunContext{BotID: bot.ID, Bot: bot, MessageID: asst.ID, Actor: "bot:" + bot.ID, Depth: t.depth, Chain: t.chain, Emit: s.upsertTool}
+	status, errText := m.executeTurn(ctx, bot, convo, rc, user, t, s)
 	if status == StatusCanceled && m.ctx.Err() != nil {
 		status = StatusIncomplete // the daemon is shutting down, not the user stopping the run
 	}
 	if err := s.finish(status, errText); err != nil {
 		m.log.Error("chat: cannot store reply", "bot", botID, "err", err)
 	}
+	res = handoffResult{text: s.finalText(), status: status, errText: errText}
 }
 
 func messageText(parts []MsgPart) string {
@@ -136,9 +152,9 @@ func messageText(parts []MsgPart) string {
 	return b.String()
 }
 
-func (m *Manager) executeTurn(ctx context.Context, bot Bot, rc RunContext, user Message, mode string, s *sink) (string, string) {
+func (m *Manager) executeTurn(ctx context.Context, bot, convo Bot, rc RunContext, user Message, t turn, s *sink) (string, string) {
 	text := messageText(user.Parts)
-	if mode == ModeResearch {
+	if t.mode == ModeResearch {
 		return m.runResearch(ctx, bot, rc, text, s)
 	}
 	var atts []MsgPart
@@ -147,7 +163,7 @@ func (m *Manager) executeTurn(ctx context.Context, bot Bot, rc RunContext, user 
 			atts = append(atts, p)
 		}
 	}
-	env, err := m.prepare(ctx, prep{bot: bot, rc: rc, sink: s, text: text, attachments: atts, userSeq: user.Seq, memory: true})
+	env, err := m.prepare(ctx, prep{bot: bot, convo: convo.ID, rc: rc, sink: s, text: text, attachments: atts, userSeq: user.Seq, memory: true, extra: answerExtra(t, bot, convo)})
 	if err != nil {
 		if ctx.Err() != nil {
 			return StatusCanceled, ""
@@ -159,7 +175,8 @@ func (m *Manager) executeTurn(ctx context.Context, bot Bot, rc RunContext, user 
 
 // prep describes the inputs of one model run.
 type prep struct {
-	bot         Bot // ID is "" in drafts
+	convo       string // conversation whose history is loaded; "" = the bot's own
+	bot         Bot    // ID is "" in drafts
 	rc          RunContext
 	sink        *sink
 	text        string
@@ -210,8 +227,12 @@ func (m *Manager) prepare(ctx context.Context, p prep) (*turnEnv, error) {
 	cur := llm.Message{Role: llm.RoleUser, Parts: userParts(p.text, atts)}
 	history := p.history
 	if p.userSeq > 0 {
+		convoID := p.convo
+		if convoID == "" {
+			convoID = p.bot.ID
+		}
 		base := estimateTokens(buildSystem(in)) + estimateTokens(p.text) + attachmentTokens(atts) + 4
-		fit, err := m.fitHistory(ctx, p.bot, mdl.Caps.ContextWindow, base, p.userSeq)
+		fit, err := m.fitHistory(ctx, p.bot, convoID, mdl.Caps.ContextWindow, base, p.userSeq)
 		if err != nil {
 			return nil, err
 		}
@@ -219,7 +240,7 @@ func (m *Manager) prepare(ctx context.Context, p prep) (*turnEnv, error) {
 			p.sink.addPart(MsgPart{Type: PartNotice, Text: n})
 		}
 		in.Summary = fit.summary
-		history = historyMessages(fit.msgs)
+		history = historyMessages(m.attribute(ctx, fit.msgs, p.bot.ID))
 	}
 	history = append(slices.Clone(history), cur)
 	if n := len(history); n > 1 && history[n-2].Role == llm.RoleUser {

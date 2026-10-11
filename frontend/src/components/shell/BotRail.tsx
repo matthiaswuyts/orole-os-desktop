@@ -96,9 +96,9 @@ export function BotRail() {
           {ready && bots.length > 0
             ? <Input nativeInput size="sm" type="search" aria-label="Search bots" placeholder="Search bots" value={filter} onChange={(e) => setFilter(e.target.value)} className="min-w-0 flex-1" />
             : <span className="flex-1" />}
-          <Button size="icon-sm" variant="outline" onClick={newBot} disabled={noProvider} aria-label="New bot" title={noProvider ? "Connect a provider before creating a bot" : "New bot"}>
+          {!(ready && bots.length === 0) && <Button size="icon-sm" variant="outline" onClick={newBot} disabled={noProvider} aria-label="New bot" title={noProvider ? "Connect a provider before creating a bot" : "New bot"}>
             <Plus />
-          </Button>
+          </Button>}
         </div>
       )}
       {available && noProvider && (

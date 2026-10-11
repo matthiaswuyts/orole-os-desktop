@@ -11,7 +11,8 @@ go test -run '^$' -bench . -benchmem ./tests/performance   # benchmarks (docs/pe
 CI (`.github/workflows/ci.yml`, pull requests only, read-only token, no secrets) runs vet, `test -race`, the
 frontend check, a bindings-up-to-date check (`go tool mygo generate` then `git diff --exit-code frontend/src/mygo.ts`),
 `scripts/build.ps1` (daemon, CLI, `mygo build`) and asserts an installer exists, on `windows-latest`. An
-`ubuntu-latest` job runs `go test -race` on `internal/{ipc,database,platform,paths,credentials}` only.
+`ubuntu-latest` job runs `go test -race` on `internal/{ipc,database,platform,paths,credentials}` only. Release tags
+are handled by `release.yml`, not CI; see [releasing.md](releasing.md).
 
 ## Style
 

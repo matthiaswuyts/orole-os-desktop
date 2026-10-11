@@ -10,10 +10,11 @@ import (
 
 // Tools returns the memory-related client tools. Each Tool's Specs decide per bot whether it is
 // offered: ask_bot needs delegation targets and an engine, knowledge_search needs ready knowledge
-// files, propose_skill needs the skills registry.
+// files, propose_skill needs the skills registry. memory and knowledge_write are always offered, so
+// every bot can read and write its own memory and knowledge.
 func (s *Store) Tools() []chat.Tool {
 	return []chat.Tool{
-		memoryTool{s}, memorySearchTool{s}, searchHistoryTool{s}, knowledgeTool{s}, askTool{s}, proposeSkillTool{s},
+		memoryTool{s}, memorySearchTool{s}, searchHistoryTool{s}, knowledgeTool{s}, knowledgeWriteTool{s}, askTool{s}, proposeSkillTool{s},
 	}
 }
 

@@ -26,6 +26,8 @@ Home combines the task composer, running-agent view and persistent widget grid. 
 
 Built-ins: Orole Midnight, Orole Obsidian, Orole Light, Solarized Dark/Light, and Catppuccin Latte/Frappé/Macchiato/Mocha. Theme IDs, labels and terminal colors come from the same registry. Custom themes extend Midnight with the whitelist in `themes/custom.ts`: background, foreground, primary, primary-foreground, card, sidebar, success, warning, destructive, border and muted-foreground. Inputs must be a JSON object with recognized keys and validated color strings, not arbitrary CSS.
 
+A custom theme is imported from a JSON file (Settings → Customization → Import theme, max 64 KiB) and then chosen from the theme select like any other.
+
 ## Components and interaction
 
 Use the existing coss/Base UI primitives in `components/ui`; do not add a competing menu, dialog, tooltip or field implementation. Preserve upstream notices and record copied changes in [upstream attribution](../research/upstream-attribution.md).

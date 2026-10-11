@@ -8,6 +8,10 @@ vi.mock("@/lib/backend", () => ({ get inDesktop() { return env.desktop; } }));
 vi.mock("@/stores/llm", () => ({ useHasProvider: () => env.provider }));
 vi.mock("@/features/chat/Conversation", () => ({ Conversation: ({ bot }: { bot: Bot }) => <div data-testid="conversation">{bot.name}</div> }));
 vi.mock("@/features/chat/builder/NewBot", () => ({ NewBot: () => <div data-testid="builder">new</div> }));
+vi.mock("@/components/ascii/AsciiMark", () => ({
+  SPACE_PIECES: ["earth", "eclipse", "black-hole", "galaxy", "planet"],
+  AsciiMark: ({ pieces }: { pieces?: readonly string[] }) => <div data-testid="ascii-mark" data-pieces={pieces?.join(",")} />,
+}));
 
 import { ChatView } from "@/features/chat/ChatView";
 import { useChat } from "@/stores/chat";
@@ -60,6 +64,7 @@ describe("ChatView states", () => {
 
   it("invites creating the first bot when there are none", () => {
     render(<ChatView />);
+    expect(screen.getByTestId("ascii-mark")).toHaveAttribute("data-pieces", "earth,eclipse,black-hole,galaxy,planet");
     fireEvent.click(screen.getByRole("button", { name: "Create your first bot" }));
     expect(useChat.getState().builder).toEqual({ open: true, botId: null });
   });

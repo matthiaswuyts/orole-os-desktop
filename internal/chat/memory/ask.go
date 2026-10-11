@@ -19,14 +19,6 @@ const maxAskDepth = 3
 
 const maxQuestionChars = 8000
 
-type chainKey struct{}
-
-// chainOf returns the bot ids of the runs currently waiting on a delegated answer.
-func chainOf(ctx context.Context) []string {
-	c, _ := ctx.Value(chainKey{}).([]string)
-	return c
-}
-
 type askTool struct{ s *Store }
 
 func (askTool) ID() string { return "ask_bot" }
@@ -139,29 +131,34 @@ func (t askTool) Call(ctx context.Context, rc chat.RunContext, _ string, raw jso
 		}
 		return toolFail(fmt.Sprintf("%q is not a bot you may ask. Allowed: %s", runeTrunc(want, 60), strings.Join(names, ", "))), nil
 	}
-	chain := chainOf(ctx)
-	if callee.ID == caller.ID || slices.Contains(chain, callee.ID) {
+	if callee.ID == caller.ID || slices.Contains(rc.Chain, callee.ID) {
 		return toolFail(fmt.Sprintf("asking %s would create a delegation cycle", cleanLabel(callee.Name))), nil
 	}
-	chain = append(slices.Clone(chain), caller.ID)
+	// The delegated run inherits the runs waiting on it: this run's own chain plus the caller.
+	rc.Chain = append(slices.Clone(rc.Chain), caller.ID)
 
 	partID := newID()
 	started := s.now()
+	request := runeTrunc(strings.TrimSpace(question), 1000)
 	emit := func(status, summary string) {
 		if rc.Emit != nil {
-			rc.Emit(chat.MsgPart{Type: chat.PartDelegation, ID: partID, Name: callee.Name, Status: status, Summary: summary,
+			// Text keeps what was asked; Summary is the progress line, then the answer or the failure.
+			rc.Emit(chat.MsgPart{Type: chat.PartDelegation, ID: partID, Name: callee.Name, BotID: callee.ID, Status: status, Summary: summary, Text: request,
 				DurationMs: s.now().Sub(started).Milliseconds()})
 		}
 	}
 	emit("running", runeTrunc(oneLine(question), 120))
 
-	askCtx, cancel := context.WithTimeout(context.WithValue(ctx, chainKey{}, chain), s.cfg.AskTimeout)
+	askCtx, cancel := context.WithTimeout(ctx, s.cfg.AskTimeout)
 	defer cancel()
 	answer, err := d.Ask(askCtx, rc, callee.ID, question)
 	if err != nil {
 		msg := err.Error()
-		if errors.Is(err, context.DeadlineExceeded) {
+		switch {
+		case errors.Is(err, context.DeadlineExceeded):
 			msg = "timed out"
+		case errors.Is(err, context.Canceled):
+			msg = "stopped"
 		}
 		emit("error", runeTrunc(oneLine(msg), 160))
 		return toolFail(fmt.Sprintf("%s could not answer: %s", cleanLabel(callee.Name), msg)), nil

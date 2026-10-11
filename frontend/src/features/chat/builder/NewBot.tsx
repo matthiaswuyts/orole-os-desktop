@@ -1,5 +1,4 @@
 import { useState } from "react";
-import { Checkbox } from "@/components/ui/checkbox";
 import { X } from "lucide-react";
 import { Chat } from "@/mygo";
 import { BotAvatar } from "@/components/shell/BotAvatar";
@@ -10,9 +9,10 @@ import { errText } from "@/features/projects/dialogs";
 import { avatarSeed } from "@/lib/botAvatar";
 import { useChat } from "@/stores/chat";
 import { initialForm, toInput, validate } from "./botForm";
-import { Block } from "./controls";
+import { Block, ExecutiveCard } from "./controls";
 import { BuilderMenu } from "./BuilderMenu";
-import { ModelCombobox, useModelOptions, type Option } from "./ModelTab";
+import { ModelPicker } from "./ModelPicker";
+import { useModelOptions, type Option } from "./modelOptions";
 
 
 /**
@@ -73,12 +73,9 @@ export function NewBot() {
             )}
           </Block>
           <Block label="Model">
-            {(id, describedBy) => <ModelCombobox id={id} describedBy={describedBy} models={models} onPick={pick} />}
+            {(id, describedBy) => <ModelPicker id={id} describedBy={describedBy} models={models} onPick={pick} />}
           </Block>
-          <label className="flex items-center gap-2 text-sm">
-            <Checkbox checked={executive} onCheckedChange={(checked) => setExecutive(checked === true)} />
-            Executive assistant
-          </label>
+          <ExecutiveCard checked={executive} onChange={setExecutive} />
           <Button type="submit" disabled={saving}>{saving ? "Creating…" : "Create bot"}</Button>
         </form>
       </div>

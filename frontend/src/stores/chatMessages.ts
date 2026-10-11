@@ -28,7 +28,7 @@ export interface Draft { text: string; research: boolean }
 /** Something the user should see about the last action; a failed send carries its request so Retry is idempotent. */
 export interface Problem { message: string; request?: SendRequest }
 
-export interface SendInput { text: string; attachmentIds?: string[]; mode?: string }
+export interface SendInput { text: string; attachmentIds?: string[]; mode?: string; mentions?: string[]; skills?: string[] }
 
 interface State {
   byBot: Record<string, Conversation>;
@@ -140,7 +140,7 @@ export const useChatMessages = create<State>((set, get) => ({
     }
   },
   async send(botId, input) {
-    const request: SendRequest = { botId, text: input.text, attachmentIds: input.attachmentIds ?? [], mode: input.mode ?? "", clientNonce: crypto.randomUUID() };
+    const request: SendRequest = { botId, text: input.text, attachmentIds: input.attachmentIds ?? [], mode: input.mode ?? "", clientNonce: crypto.randomUUID(), ...(input.mentions?.length ? { mentions: input.mentions } : {}), ...(input.skills?.length ? { skills: input.skills } : {}) };
     return deliver(botId, request);
   },
   async retrySend(botId) {

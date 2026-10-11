@@ -2,6 +2,8 @@ import { useExternalStoreRuntime, type AppendMessage, type AssistantRuntime } fr
 import { useCallback, useEffect, useMemo } from "react";
 import type { Bot } from "@/mygo";
 import { selectConversation, useBotRunning, useChatMessages } from "@/stores/chatMessages";
+import { useChat } from "@/stores/chat";
+import { mentionsOf, targetsFor } from "../mentions";
 import { ATTACHMENT_PART, createAttachmentAdapter } from "./attachments";
 import { convertMessage } from "./convert";
 import { useBotModel } from "./useBotModel";
@@ -34,9 +36,10 @@ export function useChatRuntime(bot: Pick<Bot, "id" | "provider" | "model">): Ass
     const { send, drafts, setDraft } = useChatMessages.getState();
     const { text, attachmentIds } = sendInputOf(message);
     const mode = drafts[botId]?.research ? "research" : "";
+    const { bots, skills } = mentionsOf(text, targetsFor(useChat.getState().bots, botId));
     // The composer has already cleared itself; the draft follows so a bot switch does not bring the text back.
     setDraft(botId, { text: "", research: false });
-    await send(botId, { text, attachmentIds, mode });
+    await send(botId, { text, attachmentIds, mode, mentions: mode ? [] : bots, skills: mode ? [] : skills });
   }, [botId]);
   const onCancel = useCallback(() => useChatMessages.getState().cancel(botId), [botId]);
   const onReload = useCallback(async () => {

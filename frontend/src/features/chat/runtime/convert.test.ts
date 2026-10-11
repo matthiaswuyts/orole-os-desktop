@@ -11,9 +11,9 @@ const content = (m: Message) => {
 };
 
 describe("convertMessage", () => {
-  it("maps text and reasoning to native parts and drops empty ones", () => {
+  it("maps text to native parts, drops empty ones and never shows the model's reasoning", () => {
     expect(content(message([{ type: "text", text: "Hi" }, { type: "reasoning", text: "Hmm" }, { type: "text", text: "" }]))).toEqual([
-      { type: "text", text: "Hi" }, { type: "reasoning", text: "Hmm" },
+      { type: "text", text: "Hi" },
     ]);
   });
 

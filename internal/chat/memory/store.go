@@ -53,7 +53,8 @@ type Config struct {
 	Audit func(action, target, outcome, detail string)
 	Log   *slog.Logger
 	Now   func() time.Time
-	// AskTimeout bounds one ask_bot call (default 2 minutes).
+	// AskTimeout bounds one ask_bot call, which covers the whole delegated run including any time
+	// it waits behind the callee's other work (default 20 minutes: a researcher legitimately takes minutes).
 	AskTimeout time.Duration
 }
 
@@ -93,7 +94,7 @@ func New(cfg Config) (*Store, error) {
 		s.now = time.Now
 	}
 	if s.cfg.AskTimeout <= 0 {
-		s.cfg.AskTimeout = 2 * time.Minute
+		s.cfg.AskTimeout = 20 * time.Minute
 	}
 	s.base, s.cancel = context.WithCancel(context.Background())
 	s.retriever = ftsRetriever{db: cfg.DB}

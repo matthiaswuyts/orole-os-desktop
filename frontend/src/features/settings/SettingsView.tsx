@@ -1,5 +1,5 @@
-import { useEffect, useState, type ReactNode } from "react";
-import { Bell, Bot, Cpu, Palette, PanelsTopLeft, Plug, PlugZap, Settings2, Sparkles } from "lucide-react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { Bell, Bot, Cpu, Palette, PanelsTopLeft, Plug, PlugZap, Settings2, Sparkles, Upload } from "lucide-react";
 import { useSettings } from "@/stores/settings";
 import { BUILTIN_THEMES } from "@/themes/builtin";
 import { useDaemon } from "@/stores/daemon";
@@ -7,16 +7,15 @@ import { ScenePicker } from "@/features/settings/ScenePicker";
 import { Switch } from "@/components/ui/switch";
 import { Slider } from "@/components/ui/slider";
 import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
+import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsList, TabsPanel, TabsTab } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
 import { AutostartPanel } from "@/features/settings/Autostart";
-import { CUSTOM_TOKEN_KEYS, validateCustomTokens } from "@/themes/custom";
+import { validateCustomTokens } from "@/themes/custom";
 import { fmtUptime } from "@/components/widgets/builtin";
-import { GitHubSettings } from "@/features/github/GitHubSettings";
+import { Integrations } from "@/features/settings/Integrations";
 import { NotificationSettings } from "@/features/notifications/NotificationSettings";
 import { AutomationSettings } from "@/features/automations/AutomationSettings";
-import { PluginSettings } from "@/features/plugins";
 import { SoundSettings } from "@/features/settings/SoundSettings";
 import { UpdateSettings } from "@/features/settings/UpdateSettings";
 import { useUI } from "@/stores/ui";
@@ -41,7 +40,7 @@ const SECTIONS: Section[] = [
 export function SettingsSection({ title, description, children, id }: { title: string; description?: string; children: ReactNode; id?: string }) {
   return (
     <section id={id} className="mb-5 scroll-mt-2">
-      <h2 className="text-sm font-medium">{title}</h2>
+      <h2 className={cn("text-sm font-medium", !description && "mb-2")}>{title}</h2>
       {description && <p className="mb-2 text-muted-foreground">{description}</p>}
       <div className="divide-y rounded-lg border bg-card">{children}</div>
     </section>
@@ -78,43 +77,66 @@ export function Field({ label, hint, children, htmlFor }: { label: string; hint?
   );
 }
 
-export function ThemePicker() {
-  const { theme } = useSettings((s) => s.appearance);
-  const set = useSettings((s) => s.set);
+interface ThemeOption { label: string; value: string; colors: readonly string[] }
+
+function ThemeSwatches({ colors }: { colors: readonly string[] }) {
   return (
-    <div role="radiogroup" aria-label="Theme" className="flex flex-wrap gap-2 p-3">
-      {BUILTIN_THEMES.map((t) => (
-        <button key={t.id} role="radio" aria-checked={theme === t.id} onClick={() => set("appearance", { theme: t.id })}
-          className={cn("flex w-36 flex-col gap-1.5 rounded-lg border p-2 text-left hover:bg-accent", theme === t.id ? "border-primary" : "border-border")}>
-          <span className="flex h-9 overflow-hidden rounded">{t.sw.map((c) => <span key={c} className="flex-1" style={{ background: c }} />)}</span>
-          <span>{t.label}</span>
-        </button>
-      ))}
-    </div>
+    <span aria-hidden="true" className="flex shrink-0 -space-x-1">
+      {colors.map((color) => <span key={color} className="size-4 rounded-full ring-1 ring-background" style={{ backgroundColor: color }} />)}
+    </span>
   );
 }
 
-function CustomTheme() {
-  const { customTokens, theme } = useSettings((s) => s.appearance);
+const MAX_THEME_BYTES = 64 * 1024;
+
+/** Picks a built-in theme, or the imported custom one; a custom theme comes from a JSON file of validated colour tokens over Midnight. */
+export function ThemePicker() {
+  const { theme, customTokens } = useSettings((s) => s.appearance);
   const set = useSettings((s) => s.set);
-  const [text, setText] = useState(JSON.stringify(Object.keys(customTokens).length ? customTokens : { primary: "#8fb0ff", "accent-secondary": "#f0b45a" }, null, 2));
+  const file = useRef<HTMLInputElement>(null);
   const [err, setErr] = useState<string | null>(null);
+  const hasCustom = Object.keys(customTokens).length > 0;
+  const options: ThemeOption[] = [
+    ...BUILTIN_THEMES.map((t) => ({ label: t.label, value: t.id, colors: t.sw })),
+    ...(hasCustom ? [{ label: "Custom", value: "custom", colors: [customTokens.background, customTokens.card ?? customTokens.sidebar, customTokens.primary, customTokens.foreground].filter((c): c is string => !!c) }] : []),
+  ];
+  const selected = options.find((o) => o.value === theme) ?? options[0]!;
+
+  async function importTheme(f: File) {
+    setErr(null);
+    if (f.size > MAX_THEME_BYTES) return setErr("The theme file is larger than 64 KiB.");
+    let parsed: unknown;
+    try { parsed = JSON.parse(await f.text()); } catch { return setErr("The file is not valid JSON."); }
+    const r = validateCustomTokens(parsed);
+    if (!r.ok) return setErr(r.error);
+    if (Object.keys(r.tokens).length === 0) return setErr("The theme file has no colour tokens.");
+    set("appearance", { theme: "custom", customTokens: r.tokens });
+  }
+
   return (
-    <div className="space-y-2 p-3">
-      <p className="text-muted-foreground">Custom theme: JSON of validated colour tokens over Midnight. Allowed: <span className="font-mono">{CUSTOM_TOKEN_KEYS.join(", ")}</span>.</p>
-      <Textarea aria-label="Custom theme tokens" className="selectable h-28 font-mono" value={text} onChange={(e) => setText(e.target.value)} />
-      {err && <p role="alert" className="text-destructive-foreground">{err}</p>}
-      <div className="flex gap-2">
-        <Button size="xs" onClick={() => {
-          try {
-            const r = validateCustomTokens(JSON.parse(text));
-            if (!r.ok) return setErr(r.error);
-            setErr(null);
-            set("appearance", { theme: "custom", customTokens: r.tokens });
-          } catch { setErr("Not valid JSON."); }
-        }}>Apply custom theme</Button>
-        {theme === "custom" && <Button size="xs" variant="outline" onClick={() => set("appearance", { theme: "midnight", customTokens: {} })}>Remove</Button>}
+    <div className="flex flex-col gap-2 p-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <Select value={selected} items={options} itemToStringValue={(o: ThemeOption) => o.value}
+          onValueChange={(o: ThemeOption | null) => { if (o) set("appearance", { theme: o.value as typeof theme }); }}>
+          <SelectTrigger aria-label="Theme" className="w-60">
+            <SelectValue>
+              {(o: ThemeOption) => <span className="flex items-center gap-2"><ThemeSwatches colors={o.colors} /><span className="truncate">{o.label}</span></span>}
+            </SelectValue>
+          </SelectTrigger>
+          <SelectPopup>
+            {options.map((o) => (
+              <SelectItem key={o.value} value={o}>
+                <span className="flex items-center gap-2"><ThemeSwatches colors={o.colors} />{o.label}</span>
+              </SelectItem>
+            ))}
+          </SelectPopup>
+        </Select>
+        <Button size="sm" variant="outline" onClick={() => file.current?.click()}><Upload />Import theme (JSON)</Button>
+        {hasCustom && <Button size="sm" variant="ghost" onClick={() => set("appearance", { theme: theme === "custom" ? "midnight" : theme, customTokens: {} })}>Remove custom theme</Button>}
+        <input ref={file} type="file" accept="application/json,.json" hidden aria-label="Theme JSON file"
+          onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) void importTheme(f); }} />
       </div>
+      {err && <p role="alert" className="text-destructive-foreground">{err}</p>}
     </div>
   );
 }
@@ -129,7 +151,7 @@ function Customization() {
   const num = (v: number | readonly number[]) => (Array.isArray(v) ? (v[0] as number) : (v as number));
   return (
     <>
-      <SettingsSection id="settings-appearance" title="Theme"><ThemePicker /><CustomTheme /></SettingsSection>
+      <SettingsSection id="settings-appearance" title="Theme"><ThemePicker /></SettingsSection>
       <SettingsSection title="Density" description="Compact is the default; comfortable adds spacing.">
         <Field label="Compact density"><Switch checked={density === "compact"} onCheckedChange={(c) => set("appearance", { density: c ? "compact" : "comfortable" })} aria-label="Compact density" /></Field>
       </SettingsSection>
@@ -211,10 +233,7 @@ export function SettingsView() {
         {id === "skills" && <SkillsView />}
         {id === "mcp" && <McpView />}
         {id === "ai" && <AIProviders />}
-        {id === "integrations" && <Tabbed section={id} tabs={[
-          { id: "github", label: "GitHub", panel: <GitHubSettings /> },
-          { id: "plugins", label: "Plugins", panel: <PluginSettings /> },
-        ]} />}
+        {id === "integrations" && <Integrations />}
         {id === "notifications" && <Tabbed section={id} tabs={[
           { id: "notifications", label: "Alerts", panel: <NotificationSettings /> },
           { id: "automations", label: "Automation limits", panel: <AutomationSettings /> },

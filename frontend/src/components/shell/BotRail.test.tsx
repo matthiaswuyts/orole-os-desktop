@@ -84,7 +84,7 @@ describe("BotRail states", () => {
     loaded({ bots: [] });
     render(<BotRail />);
     expect(screen.queryByRole("button", { name: /Create your first bot/ })).toBeNull();
-    expect(screen.getByRole("button", { name: /New bot/ })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: /^New bot$/ })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: /Connect a provider/ }));
     expect(useUI.getState()).toMatchObject({ view: "settings", settingsSection: "ai" });
   });
@@ -93,6 +93,7 @@ describe("BotRail states", () => {
     loaded({ bots: [] });
     render(<BotRail />);
     expect(screen.queryByRole("list", { name: "Bots" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^New bot$/ })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: /Create your first bot/ }));
     expect(useChat.getState().builder).toEqual({ open: true, botId: null });
   });

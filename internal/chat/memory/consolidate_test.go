@@ -566,6 +566,18 @@ func TestConsolidateUntrustedPropagation(t *testing.T) {
 		}
 	})
 
+	t.Run("a task another bot handed off taints", func(t *testing.T) {
+		e := newEnv(t)
+		e.bot("a", "Alpha")
+		e.msg("a", 1, "user", "I really prefer dark mode in every editor I use", func(m *msgRow) { m.author = "bot:b" })
+		e.msg("a", 2, "assistant", "Noted.")
+		e.answer(factsJSON(darkMode))
+		e.consolidate("a")
+		if f := e.active("bot:a"); len(f) != 1 || f[0].Trust != chat.TrustUntrusted {
+			t.Fatalf("facts = %+v", f)
+		}
+	})
+
 	t.Run("tainted batches cannot rewrite trusted facts", func(t *testing.T) {
 		e := newEnv(t)
 		e.bot("a", "Alpha")

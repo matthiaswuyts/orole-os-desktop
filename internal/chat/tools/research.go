@@ -41,8 +41,8 @@ type Budget struct {
 // DefaultBudgets are the depth presets.
 var DefaultBudgets = map[string]Budget{
 	DepthQuick:    {SubQuestions: 3, WorkerSteps: 3, MaxSources: 8, MaxTokens: 60_000, WallClock: 2 * time.Minute, SynthTokens: 2000},
-	DepthStandard: {SubQuestions: 5, WorkerSteps: 5, MaxSources: 20, MaxTokens: 250_000, WallClock: 6 * time.Minute, SynthTokens: 4000},
-	DepthDeep:     {SubQuestions: 6, WorkerSteps: 8, MaxSources: 40, MaxTokens: 800_000, WallClock: 15 * time.Minute, SynthTokens: 8000},
+	DepthStandard: {SubQuestions: 5, WorkerSteps: 5, MaxSources: 20, MaxTokens: 250_000, WallClock: 6 * time.Minute, SynthTokens: 6000},
+	DepthDeep:     {SubQuestions: 6, WorkerSteps: 8, MaxSources: 40, MaxTokens: 800_000, WallClock: 15 * time.Minute, SynthTokens: 10000},
 }
 
 // Providers is the part of llm.Service the research loop needs.
@@ -102,10 +102,12 @@ func (r *Research) Specs(bot chat.Bot, caps llm.Caps) []llm.ToolSpec {
 	return []llm.ToolSpec{{
 		Name: ResearchName,
 		Description: "Research a question in depth: plan sub-questions, search the web and read pages, then write a cited markdown report. " +
-			"Slow and expensive; use it only when the user asks for research or a thorough, sourced answer. Depth: quick (about 2 min), standard (about 6 min), deep (about 15 min).",
+			"Slow and expensive; use it only when the user asks for research or a thorough, sourced answer. Depth: quick (about 2 min), standard (about 6 min), deep (about 15 min). " +
+			"Match the user's wording: use quick when they say quick, brief, short or fast; use deep only when they ask for exhaustive or thorough research; otherwise standard.",
 		Schema: json.RawMessage(`{"type":"object","properties":{` +
 			`"question":{"type":"string","description":"The research question, with all context the researcher needs"},` +
-			`"depth":{"type":"string","enum":["quick","standard","deep"],"description":"How much effort to spend; default standard"}},` +
+			`"depth":{"type":"string","enum":["quick","standard","deep"],"description":"How much effort to spend; quick for quick/brief/short/fast requests, deep only for exhaustive/thorough requests; default standard"},` +
+			`"include_sources":{"type":"boolean","description":"true only when the user explicitly asks for a list of sources; inline [n] citations and the source popover cover everything else"}},` +
 			`"required":["question"],"additionalProperties":false}`),
 	}}
 }
@@ -135,8 +137,9 @@ func (r *Research) Call(ctx context.Context, rc chat.RunContext, name string, ar
 		return chat.ToolResult{}, errHostedCall
 	}
 	var a struct {
-		Question string `json:"question"`
-		Depth    string `json:"depth"`
+		Question       string `json:"question"`
+		Depth          string `json:"depth"`
+		IncludeSources bool   `json:"include_sources"`
 	}
 	if err := json.Unmarshal(args, &a); err != nil {
 		return errResult("invalid arguments: %v", err)
@@ -179,7 +182,7 @@ func (r *Research) Call(ctx context.Context, rc chat.RunContext, name string, ar
 			}
 			return errResult("research failed: %s", untrusted.Line(llm.AsError(err).Message, 300))
 		}
-		return assemble(rep, ""), nil
+		return assemble(rep, "", a.IncludeSources), nil
 	}
 	if !hasHosted(rc.Caps, llm.HostedWebSearch) {
 		return errResult("research is not available: this model's endpoint cannot run web search")
@@ -204,7 +207,7 @@ func (r *Research) Call(ctx context.Context, rc chat.RunContext, name string, ar
 		}
 		return errResult("research failed: %s", untrusted.Line(err.Error(), 300))
 	}
-	return assemble(rep, notice), nil
+	return assemble(rep, notice, a.IncludeSources), nil
 }
 
 var citeRE = regexp.MustCompile(`\[(\d{1,4})\]`)
@@ -221,9 +224,10 @@ func dropUnknownCitations(md string, sources int) string {
 }
 
 // assemble builds the tool result. The model-facing text and the report part carry the same markdown
-// (partial-run note, body with [n] citations, numbered source list) so the engine shows it once; the
-// citation parts carry the sources for the UI. The text comes from web content, so it is untrusted.
-func assemble(rep Report, notice string) chat.ToolResult {
+// (partial-run note, body with [n] citations) so the engine shows it once; the numbered source list is
+// appended only when includeSources is set (the user asked for it). The citation parts always carry the
+// sources for the UI. The text comes from web content, so it is untrusted.
+func assemble(rep Report, notice string, includeSources bool) chat.ToolResult {
 	body := dropUnknownCitations(strings.TrimSpace(rep.Markdown), len(rep.Sources))
 	title := untrusted.Line(rep.Title, 200)
 	if title == "" {
@@ -234,7 +238,7 @@ func assemble(rep Report, notice string) chat.ToolResult {
 		text.WriteString("> Note: " + notice + "\n\n")
 	}
 	text.WriteString(body)
-	if len(rep.Sources) > 0 {
+	if includeSources && len(rep.Sources) > 0 {
 		text.WriteString("\n\n## Sources\n")
 		for i, s := range rep.Sources {
 			label := s.Title

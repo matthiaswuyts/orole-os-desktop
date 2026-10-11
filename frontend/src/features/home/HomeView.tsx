@@ -5,7 +5,6 @@ import { Popover, PopoverPopup, PopoverTrigger } from "@/components/ui/popover";
 import { WidgetGrid } from "@/components/widgets/WidgetGrid";
 import { useWidgetRegistry } from "@/components/widgets/registry";
 import { useWorkspaces } from "@/stores/workspaces";
-import { FirstRunGuide } from "@/features/home/FirstRunGuide";
 import { HomeAgentComposer } from "@/features/home/HomeAgentComposer";
 import { Failure } from "@/features/mcp/shared";
 
@@ -23,7 +22,6 @@ export function HomeView() {
           <HomeAgentComposer />
         </div>
         <div className="relative mx-auto w-full max-w-[1180px] px-6 pb-12">
-          <FirstRunGuide />
           <div className="mb-2 flex items-center justify-between">
             <h2 className="font-medium text-muted-foreground text-xs">{ws?.name ?? "Home"}</h2>
             <Popover>

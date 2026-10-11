@@ -18,6 +18,7 @@ import { useUpdates } from "@/stores/updates";
 import { ToastProvider } from "@/components/ui/toast";
 import { NewProjectDialog } from "@/features/projects/dialogs";
 import { StartupScreen } from "@/components/shell/StartupScreen";
+import { SettingsWindow, isSettingsWindow } from "@/features/settings/SettingsWindow";
 
 function ViewHost() {
   const view = useUI((s) => s.view);
@@ -25,7 +26,7 @@ function ViewHost() {
   return V ? <V /> : <NotImplemented app={navItem(view).label} />;
 }
 
-export default function App() {
+function MainApp() {
   useApplyTheme();
   useEffect(() => {
     void useSettings.getState().load();
@@ -52,4 +53,8 @@ export default function App() {
       </StartupScreen>
     </ToastProvider>
   );
+}
+
+export default function App() {
+  return isSettingsWindow ? <SettingsWindow /> : <MainApp />;
 }

@@ -338,6 +338,18 @@
 }
 
 /* ---- Orole additions ---- */
+/* Text that shimmers while work is in progress (assistant-ui elements: tool timeline, web search). */
+.cv-shimmer {
+  background: linear-gradient(90deg, var(--muted-foreground) 35%, var(--foreground) 50%, var(--muted-foreground) 65%) 0 0 / 250% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: cv-shimmer 1.8s linear infinite;
+}
+@keyframes cv-shimmer { to { background-position: -150% 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .cv-shimmer { animation: none; background: none; color: var(--muted-foreground); }
+}
 :root { --titlebar-h: var(--mygo-titlebar-height, 40px); }
 .titlebar-drag { --app-region: drag; }
 .titlebar-nodrag { --app-region: no-drag; }

@@ -82,6 +82,7 @@ type Manager struct {
 	tools    []Tool
 	sections []func(Bot) string
 	runs     map[string]*runState // active runs by bot id or "draft:<id>"
+	waits    map[string][]string  // bot id -> bots whose delegated answer its active run is blocked on
 	idle     map[string]*idleJob
 	nonces   nonceCache
 	closed   bool
@@ -123,6 +124,7 @@ func New(cfg Config) (*Manager, error) {
 		log:     cfg.Log,
 		store:   &store{db: cfg.DB, now: cfg.Clock},
 		runs:    map[string]*runState{},
+		waits:   map[string][]string{},
 		idle:    map[string]*idleJob{},
 		catalog: map[string]catalogEntry{},
 	}

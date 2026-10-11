@@ -2,6 +2,7 @@ package chat
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -13,12 +14,43 @@ type turn struct {
 	mode      string
 	// asstID is set when regenerating: the assistant message is reset and reused in place.
 	asstID string
+
+	// responder is the bot that answers instead of the conversation's own bot (an @mention); "".
+	responder string
+	// skills are skill names the user asked the answering bot to use.
+	skills []string
+
+	// Delegation (ask_bot). All zero for turns the user started.
+	depth  int                  // ask_bot depth of the run
+	chain  []string             // bots waiting on this run's answer, outermost first
+	extra  string               // system prompt addendum for the run
+	result chan<- handoffResult // receives the outcome exactly once; buffered so it never blocks
+}
+
+// handoffResult is how a delegated turn ended.
+type handoffResult struct {
+	text    string // final assistant text
+	status  string // a Status* value
+	errText string // user-facing failure text when status is not complete
+}
+
+// deliver reports the outcome of a delegated turn to the bot that asked. It never blocks, and does
+// nothing for turns that were not delegated.
+func (t turn) deliver(r handoffResult) {
+	if t.result == nil {
+		return
+	}
+	select {
+	case t.result <- r:
+	default:
+	}
 }
 
 // runState exists in Manager.runs while a bot (or draft) has an active run. Further sends are
 // queued here and processed in order after the current run, one run per bot at a time.
 type runState struct {
 	cancel context.CancelFunc // cancels the active turn; nil between turns
+	active string             // user message id of the active turn
 	queue  []turn
 	done   chan struct{} // closed when the worker exits
 }
@@ -53,6 +85,10 @@ func (m *Manager) Send(ctx context.Context, req SendRequest) (Message, error) {
 		return Message{}, invalidf("Unknown mode %q.", req.Mode)
 	}
 	ids := dedupe(req.AttachmentIDs)
+	mentions, skills, err := m.checkMentions(ctx, req)
+	if err != nil {
+		return Message{}, err
+	}
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -69,30 +105,48 @@ func (m *Manager) Send(ctx context.Context, req SendRequest) (Message, error) {
 	if _, err := m.store.getBot(ctx, req.BotID, false); err != nil {
 		return Message{}, err
 	}
-	st := m.runs[req.BotID]
-	if st != nil && len(st.queue) >= maxQueued {
-		return Message{}, busyf("Too many messages are waiting. Wait for the bot to catch up.")
+	first := turn{mode: req.Mode, skills: skills}
+	if len(mentions) > 0 {
+		first.responder = mentions[0]
 	}
-	msg := Message{
-		ID: newID(), BotID: req.BotID, Role: "user", Author: "user",
-		Status: StatusComplete, CreatedAt: m.nowMs(),
-	}
-	if st != nil {
-		msg.Status = StatusPending
-	}
-	if err := m.store.insertUserMessage(ctx, &msg, text, ids); err != nil {
+	msg, err := m.submitLocked(ctx, Message{BotID: req.BotID, Role: "user", Author: "user"}, text, ids, first)
+	if err != nil {
 		return Message{}, err
+	}
+	if st := m.runs[req.BotID]; st != nil {
+		for _, id := range mentions[min(1, len(mentions)):] {
+			st.queue = append(st.queue, turn{userMsgID: msg.ID, responder: id, skills: skills})
+		}
 	}
 	if req.ClientNonce != "" {
 		m.nonces.put(req.BotID, req.ClientNonce, msg.ID)
 	}
-	m.cancelIdleLocked(req.BotID)
+	return msg, nil
+}
+
+// submitLocked stores msg (a user message of msg.BotID) with the given text and attachments,
+// publishes it and queues t to answer it, or starts the bot's worker when it is idle. The message
+// is stored pending while it waits behind an active run. The caller holds m.mu and has verified
+// that the bot exists.
+func (m *Manager) submitLocked(ctx context.Context, msg Message, text string, attachmentIDs []string, t turn) (Message, error) {
+	st := m.runs[msg.BotID]
+	if st != nil && len(st.queue) >= maxQueued {
+		return Message{}, busyf("Too many messages are waiting. Wait for the bot to catch up.")
+	}
+	msg.ID, msg.Status, msg.CreatedAt = newID(), StatusComplete, m.nowMs()
+	if st != nil {
+		msg.Status = StatusPending
+	}
+	if err := m.store.insertUserMessage(ctx, &msg, text, attachmentIDs); err != nil {
+		return Message{}, err
+	}
+	m.cancelIdleLocked(msg.BotID)
 	m.publishMessage(msg)
-	t := turn{userMsgID: msg.ID, mode: req.Mode}
+	t.userMsgID = msg.ID
 	if st != nil {
 		st.queue = append(st.queue, t)
 	} else {
-		m.startLocked(req.BotID, t)
+		m.startLocked(msg.BotID, t)
 	}
 	return msg, nil
 }
@@ -131,10 +185,15 @@ func (m *Manager) pump(botID string, st *runState) {
 	for {
 		m.mu.Lock()
 		if len(st.queue) == 0 || m.closed {
+			left := st.queue // only after a shutdown: these turns will never run
+			st.queue = nil
 			delete(m.runs, botID)
-			st.cancel = nil
+			st.cancel, st.active = nil, ""
 			close(st.done)
 			m.mu.Unlock()
+			for _, t := range left {
+				t.deliver(handoffResult{status: StatusCanceled, errText: "the daemon is shutting down"})
+			}
 			m.emit("chat.run", RunState{BotID: botID})
 			if ran {
 				m.armIdle(botID)
@@ -144,7 +203,7 @@ func (m *Manager) pump(botID string, st *runState) {
 		t := st.queue[0]
 		st.queue = st.queue[1:]
 		ctx, cancel := context.WithCancel(m.ctx)
-		st.cancel = cancel
+		st.cancel, st.active = cancel, t.userMsgID
 		m.mu.Unlock()
 		m.runTurn(ctx, botID, t)
 		cancel()
@@ -183,7 +242,11 @@ func (m *Manager) Regenerate(ctx context.Context, req RegenerateRequest) error {
 		}
 	}
 	m.cancelIdleLocked(req.BotID)
-	m.startLocked(req.BotID, turn{userMsgID: user.ID, mode: mode, asstID: last.ID})
+	responder := strings.TrimPrefix(last.Author, "bot:")
+	if !strings.HasPrefix(last.Author, "bot:") || responder == req.BotID {
+		responder = ""
+	}
+	m.startLocked(req.BotID, turn{userMsgID: user.ID, mode: mode, asstID: last.ID, responder: responder})
 	return nil
 }
 
@@ -206,18 +269,53 @@ func (m *Manager) Cancel(ctx context.Context, botID string) error {
 	return nil
 }
 
+// dropQueued cancels turns that were still waiting when their run was stopped.
 func (m *Manager) dropQueued(ctx context.Context, turns []turn) {
 	for _, t := range turns {
-		if t.userMsgID == "" {
-			continue
-		}
-		if err := m.store.setStatus(ctx, t.userMsgID, StatusCanceled, "Not sent: the reply before it was stopped."); err != nil {
-			m.log.Warn("chat: cancel queued message", "err", err)
-			continue
-		}
-		if msg, err := m.store.getMessage(ctx, t.userMsgID); err == nil {
-			m.publishMessage(msg)
-		}
+		m.cancelQueued(ctx, t, "Not sent: the reply before it was stopped.")
+	}
+}
+
+// cancelQueued marks the user message of a turn that will never run as canceled, publishes it and
+// tells the bot waiting on it, if any.
+func (m *Manager) cancelQueued(ctx context.Context, t turn, reason string) {
+	t.deliver(handoffResult{status: StatusCanceled, errText: "the task was stopped before it started"})
+	if t.userMsgID == "" {
+		return
+	}
+	if err := m.store.setStatus(ctx, t.userMsgID, StatusCanceled, reason); err != nil {
+		m.log.Warn("chat: cancel queued message", "err", err)
+		return
+	}
+	if msg, err := m.store.getMessage(ctx, t.userMsgID); err == nil {
+		m.publishMessage(msg)
+	}
+}
+
+// abandonDelegated stops a delegated turn whose asker stopped waiting. A turn still in the queue is
+// removed and its message marked canceled; the active turn is canceled. It looks the turn up by
+// its user message id, so it never touches any other turn of the bot.
+func (m *Manager) abandonDelegated(ctx context.Context, botID, userMsgID string) {
+	m.mu.Lock()
+	st := m.runs[botID]
+	if st == nil {
+		m.mu.Unlock()
+		return
+	}
+	var cancel context.CancelFunc
+	queued, wasQueued := turn{}, false
+	if i := slices.IndexFunc(st.queue, func(t turn) bool { return t.userMsgID == userMsgID }); i >= 0 {
+		queued, wasQueued = st.queue[i], true
+		st.queue = slices.Delete(st.queue, i, i+1)
+	} else if st.active == userMsgID {
+		cancel = st.cancel
+	}
+	m.mu.Unlock()
+	if wasQueued {
+		m.cancelQueued(ctx, queued, "Not sent: the bot that asked stopped waiting for the result.")
+	}
+	if cancel != nil {
+		cancel()
 	}
 }
 

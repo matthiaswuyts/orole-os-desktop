@@ -11,22 +11,25 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math"
-	"net/netip"
 	"slices"
-	"strings"
 	"time"
 
 	"github.com/rayorole/orole-os-desktop/internal/chat"
 	"github.com/rayorole/orole-os-desktop/internal/llm"
 )
 
-// Bounds applied to bot supplied hosted tool parameters.
+// Fixed options for the provider-run web tools. They are not user settings: every bot gets the same,
+// and a bot's stored tool params are ignored.
+//
+// Search returns 5 results per call: that is OpenRouter's default for its search tool (range 1-25) and
+// the figure our own research workers already use; more results mostly add tokens, since a model that
+// needs more simply searches again. Fetch keeps up to 25,000 tokens of a page: Anthropic's web fetch
+// documentation puts an average page (10 kB) at about 2,500 tokens and a large documentation page
+// (100 kB) at about 25,000, so this reads such a page whole and truncates only book-length content.
+// All domains are allowed; the daemon-side fetcher still refuses non-public addresses.
 const (
-	maxResultsCap       = 10
-	maxUsesCap          = 10
-	maxContentTokensCap = 100000
-	maxDomains          = 20
+	defaultMaxResults       = 5
+	defaultMaxContentTokens = 25_000
 )
 
 // FetchURLName is the function name of the client side fetch fallback.
@@ -44,138 +47,24 @@ func botTool(bot chat.Bot, id string) (chat.BotTool, bool) {
 
 func hasHosted(caps llm.Caps, id string) bool { return slices.Contains(caps.HostedTools, id) }
 
-// SanitizeParams whitelists and bounds the hosted tool parameters a bot may carry. Unknown keys,
-// wrong types and out-of-range values are dropped or clamped; the result never exceeds the caps
-// documented on llm.ToolSpec.Params.
-func SanitizeParams(hosted string, in map[string]any) map[string]any {
-	if len(in) == 0 {
-		return nil
-	}
-	var allowed []string
+// HostedParams returns the fixed options of a provider-run web tool, or nil for tools without any.
+func HostedParams(hosted string) map[string]any {
 	switch hosted {
 	case llm.HostedWebSearch:
-		allowed = []string{"max_results", "allowed_domains", "blocked_domains", "max_uses"}
+		return map[string]any{"max_results": defaultMaxResults}
 	case llm.HostedWebFetch:
-		allowed = []string{"allowed_domains", "blocked_domains", "max_uses", "max_content_tokens"}
+		return map[string]any{"max_content_tokens": defaultMaxContentTokens}
 	default:
 		return nil
 	}
-	out := make(map[string]any, len(allowed))
-	for _, key := range allowed {
-		v, ok := in[key]
-		if !ok {
-			continue
-		}
-		switch key {
-		case "max_results":
-			if n, ok := boundedInt(v, maxResultsCap); ok {
-				out[key] = n
-			}
-		case "max_uses":
-			if n, ok := boundedInt(v, maxUsesCap); ok {
-				out[key] = n
-			}
-		case "max_content_tokens":
-			if n, ok := boundedInt(v, maxContentTokensCap); ok {
-				out[key] = n
-			}
-		case "allowed_domains", "blocked_domains":
-			if list := Domains(v); len(list) > 0 {
-				out[key] = list
-			}
-		}
-	}
-	if len(out) == 0 {
-		return nil
-	}
-	return out
-}
-
-// boundedInt converts a JSON number to an int in [1, limit]. Non-numbers and values below 1 are
-// rejected; larger values are clamped.
-func boundedInt(v any, limit int) (int, bool) {
-	var f float64
-	switch n := v.(type) {
-	case int:
-		f = float64(n)
-	case int64:
-		f = float64(n)
-	case float64:
-		f = n
-	case json.Number:
-		var err error
-		if f, err = n.Float64(); err != nil {
-			return 0, false
-		}
-	default:
-		return 0, false
-	}
-	if math.IsNaN(f) || f < 1 {
-		return 0, false
-	}
-	return int(min(f, float64(limit))), true
-}
-
-// Domains reads a list of host names from a JSON value ([]string or []any), keeping at most 20 valid,
-// lower-cased, de-duplicated hostnames. Invalid entries are dropped.
-func Domains(v any) []string {
-	var raw []string
-	switch l := v.(type) {
-	case []string:
-		raw = l
-	case []any:
-		for _, e := range l {
-			if s, ok := e.(string); ok {
-				raw = append(raw, s)
-			}
-		}
-	default:
-		return nil
-	}
-	var out []string
-	for _, s := range raw {
-		d := strings.ToLower(strings.TrimSuffix(strings.TrimSpace(s), "."))
-		if !validHostname(d) || slices.Contains(out, d) {
-			continue
-		}
-		out = append(out, d)
-		if len(out) == maxDomains {
-			break
-		}
-	}
-	return out
-}
-
-// validHostname accepts DNS names (letters, digits, hyphens, at least two labels) and rejects
-// everything that could carry a scheme, path, port, wildcard or IP literal.
-func validHostname(h string) bool {
-	if len(h) == 0 || len(h) > 253 || !strings.Contains(h, ".") {
-		return false
-	}
-	if _, err := netip.ParseAddr(h); err == nil {
-		return false
-	}
-	for label := range strings.SplitSeq(h, ".") {
-		if len(label) == 0 || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
-			return false
-		}
-		for i := range len(label) {
-			c := label[i]
-			if !(c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '-') {
-				return false
-			}
-		}
-	}
-	return true
 }
 
 // hostedSpec builds the provider-run spec for a built-in tool, or nil.
 func hostedSpec(bot chat.Bot, caps llm.Caps, toolID, hosted string) []llm.ToolSpec {
-	cfg, ok := botTool(bot, toolID)
-	if !ok || !hasHosted(caps, hosted) {
+	if _, ok := botTool(bot, toolID); !ok || !hasHosted(caps, hosted) {
 		return nil
 	}
-	return []llm.ToolSpec{{Hosted: hosted, Params: SanitizeParams(hosted, cfg.Params)}}
+	return []llm.ToolSpec{{Hosted: hosted, Params: HostedParams(hosted)}}
 }
 
 var errHostedCall = errors.New("hosted tools run at the provider and cannot be called by the daemon")
@@ -204,12 +93,11 @@ type WebFetch struct {
 func (WebFetch) ID() string { return chat.ToolWebFetch }
 
 func (w WebFetch) Specs(bot chat.Bot, caps llm.Caps) []llm.ToolSpec {
-	cfg, ok := botTool(bot, chat.ToolWebFetch)
-	if !ok {
+	if _, ok := botTool(bot, chat.ToolWebFetch); !ok {
 		return nil
 	}
 	if hasHosted(caps, llm.HostedWebFetch) {
-		return []llm.ToolSpec{{Hosted: llm.HostedWebFetch, Params: SanitizeParams(llm.HostedWebFetch, cfg.Params)}}
+		return []llm.ToolSpec{{Hosted: llm.HostedWebFetch, Params: HostedParams(llm.HostedWebFetch)}}
 	}
 	if w.Fetcher == nil || !caps.Tools {
 		return nil
@@ -221,8 +109,7 @@ func (w WebFetch) Call(ctx context.Context, rc chat.RunContext, name string, arg
 	if name != FetchURLName || w.Fetcher == nil {
 		return chat.ToolResult{}, errHostedCall
 	}
-	cfg, _ := botTool(rc.Bot, chat.ToolWebFetch)
-	return w.Fetcher.Call(ctx, rc, DomainFilterFromParams(cfg.Params), args)
+	return w.Fetcher.Call(ctx, rc, args)
 }
 
 // Datetime offers the hosted clock where the endpoint has one, otherwise a client function that

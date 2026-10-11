@@ -221,7 +221,7 @@ func (s *Store) loadBatch(ctx context.Context, botID string, upto int64) (batch,
 		if status != chat.StatusComplete || m.role == "system" || strings.TrimSpace(m.text) == "" {
 			continue
 		}
-		if taintedParts(parts) || (m.role == "assistant" && strings.HasPrefix(author, chat.BotPrefix) && author != chat.BotPrefix+botID) {
+		if taintedParts(parts) || (strings.HasPrefix(author, chat.BotPrefix) && author != chat.BotPrefix+botID) {
 			b.tainted = true
 		}
 		m.text = runeTrunc(strings.TrimSpace(m.text), msgChars)

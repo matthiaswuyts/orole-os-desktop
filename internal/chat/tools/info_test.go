@@ -32,7 +32,6 @@ func infoSource(caps llm.Caps, capsErr error) InfoSource {
 			defaults: llm.Defaults{ChatModel: "openrouter/some/model"},
 		},
 		ModelCaps: func(context.Context, string, string) (llm.Caps, error) { return caps, capsErr },
-		HasTool:   func(id string) bool { return id == chat.ToolKnowledge },
 		Fetcher:   &Fetcher{},
 	}
 }
@@ -70,7 +69,7 @@ func describe(t *testing.T, src InfoSource, provider, model string) map[string]c
 func TestDescribeHostedEverything(t *testing.T) {
 	caps := llm.Caps{Tools: true, HostedTools: []string{llm.HostedWebSearch, llm.HostedWebFetch, llm.HostedDatetime}}
 	got := describe(t, infoSource(caps, nil), "openrouter", "m")
-	for _, id := range []string{chat.ToolWebSearch, chat.ToolWebFetch, chat.ToolDatetime, chat.ToolResearch, chat.ToolKnowledge} {
+	for _, id := range []string{chat.ToolWebSearch, chat.ToolWebFetch, chat.ToolDatetime, chat.ToolResearch} {
 		if !got[id].Available {
 			t.Errorf("%s unavailable: %+v", id, got[id])
 		}
@@ -104,7 +103,7 @@ func TestDescribeNoHostedTools(t *testing.T) {
 
 func TestDescribeModelWithoutTools(t *testing.T) {
 	got := describe(t, infoSource(llm.Caps{}, nil), "openrouter", "m")
-	for _, id := range []string{chat.ToolWebFetch, chat.ToolDatetime, chat.ToolResearch, chat.ToolKnowledge} {
+	for _, id := range []string{chat.ToolWebFetch, chat.ToolDatetime, chat.ToolResearch} {
 		if got[id].Available {
 			t.Errorf("%s available for a model that cannot call tools: %+v", id, got[id])
 		}
@@ -130,22 +129,13 @@ func TestDescribeNativeResearch(t *testing.T) {
 	}
 }
 
-func TestDescribeKnowledgeOnlyWhenRegistered(t *testing.T) {
-	src := infoSource(llm.Caps{Tools: true}, nil)
-	src.HasTool = func(string) bool { return false }
-	infos, err := src.Describe(context.Background(), chat.ToolsRequest{Provider: "openrouter", Model: "m"})
+func TestDescribeListsOnlyToggleableTools(t *testing.T) {
+	infos, err := infoSource(llm.Caps{Tools: true}, nil).Describe(context.Background(), chat.ToolsRequest{Provider: "openrouter", Model: "m"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, i := range infos {
-		if i.ID == chat.ToolKnowledge {
-			t.Fatalf("knowledge_search listed without a registered tool: %+v", i)
-		}
-	}
-	src.HasTool = nil
-	infos, _ = src.Describe(context.Background(), chat.ToolsRequest{Provider: "openrouter", Model: "m"})
 	if len(infos) != 4 {
-		t.Fatalf("infos = %d, want the four always-present tools", len(infos))
+		t.Fatalf("infos = %+v, want web search, web pages, date and time, research (knowledge is built in)", infos)
 	}
 }
 

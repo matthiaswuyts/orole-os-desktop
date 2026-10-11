@@ -3,10 +3,9 @@ import { Globe } from "lucide-react";
 import { Chat, MCP, Skills, type ChatToolInfo } from "@/mygo";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
-import { LIMITS, TOOL_IDS, emptyToolSettings, splitModel, type Action, type FormState, type Problems, type ToolSettings } from "./botForm";
-import { Block, DomainList, MultiSelect, type MultiItem } from "./controls";
+import { splitModel, type Action, type FormState, type Problems } from "./botForm";
+import { Block, MultiSelect, type MultiItem } from "./controls";
 import { useLoad } from "./useLoad";
 
 interface McpCatalog {
@@ -36,14 +35,9 @@ async function loadMcpCatalog(): Promise<McpCatalog> {
   return catalog;
 }
 
-function BuiltinTool({ info, form, dispatch, problems }: { info: ChatToolInfo; form: FormState; dispatch: Dispatch<Action>; problems: Problems }) {
+function BuiltinTool({ info, form, dispatch }: { info: ChatToolInfo; form: FormState; dispatch: Dispatch<Action> }) {
   const heading = useId();
-  const settings = form.tools[info.id];
-  const enabled = settings !== undefined;
-  const patch = (value: Partial<ToolSettings>) => dispatch({ type: "toolPatch", id: info.id, patch: value });
-  const isSearch = info.id === TOOL_IDS.webSearch;
-  const isFetch = info.id === TOOL_IDS.webFetch;
-  const key = (field: string) => `tool:${info.id}:${field}`;
+  const enabled = form.tools.includes(info.id);
   return (
     <li className="flex min-w-0 flex-col gap-2 py-2">
       <div className="flex items-center justify-between gap-3">
@@ -53,32 +47,10 @@ function BuiltinTool({ info, form, dispatch, problems }: { info: ChatToolInfo; f
         </span>
         <Switch
           checked={enabled} disabled={!info.available && !enabled} aria-labelledby={heading}
-          onCheckedChange={(on) => dispatch({ type: "tool", id: info.id, settings: on ? emptyToolSettings() : null })}
+          onCheckedChange={(on) => dispatch({ type: "tool", id: info.id, enabled: on })}
         />
       </div>
       {!info.available && <p role="status" className="text-muted-foreground text-xs">{info.reason || "The selected model cannot run this tool."}</p>}
-      {enabled && settings && (isSearch || isFetch) && (
-        <div className="flex flex-col gap-3 pb-1">
-          {isSearch && (
-            <Block label="Max results" error={problems[key("maxResults")]}>
-              {(id, describedBy) => (
-                <Input nativeInput id={id} type="number" inputMode="numeric" className="w-24" min={LIMITS.maxResults.min} max={LIMITS.maxResults.max} step={1} value={settings.maxResults} aria-invalid={!!problems[key("maxResults")] || undefined} aria-describedby={describedBy} onChange={(e) => patch({ maxResults: e.target.value })} />
-              )}
-            </Block>
-          )}
-          {isFetch && (
-            <Block label="Max page size (tokens)" error={problems[key("maxContentTokens")]}>
-              {(id, describedBy) => (
-                <Input nativeInput id={id} type="number" inputMode="numeric" className="w-32" min={LIMITS.maxContentTokens.min} max={LIMITS.maxContentTokens.max} step={1} value={settings.maxContentTokens} aria-invalid={!!problems[key("maxContentTokens")] || undefined} aria-describedby={describedBy} onChange={(e) => patch({ maxContentTokens: e.target.value })} />
-              )}
-            </Block>
-          )}
-          <DomainList label="Allowed domains" value={settings.allowed} max={LIMITS.domains} onChange={(allowed) => patch({ allowed })} />
-          {problems[key("allowed")] && <p role="alert" className="text-destructive-foreground text-xs">{problems[key("allowed")]}</p>}
-          <DomainList label="Blocked domains" value={settings.blocked} max={LIMITS.domains} onChange={(blocked) => patch({ blocked })} />
-          {problems[key("blocked")] && <p role="alert" className="text-destructive-foreground text-xs">{problems[key("blocked")]}</p>}
-        </div>
-      )}
     </li>
   );
 }
@@ -91,7 +63,7 @@ export function ToolsTab({ form, dispatch, problems }: { form: FormState; dispat
 
   const skillItems = useMemo<MultiItem[]>(() => (skills.data ?? []).map((s) => ({ value: s.name, label: s.name, detail: s.description, badge: s.enabled ? undefined : "disabled" })), [skills.data]);
   const offered = new Set((tools.data ?? []).map((t) => t.id));
-  const unknown = tools.data ? Object.keys(form.tools).filter((id) => !offered.has(id)) : [];
+  const unknown = tools.data ? form.tools.filter((id) => !offered.has(id)) : [];
 
   return (
     <div className="flex flex-col gap-4">
@@ -99,11 +71,11 @@ export function ToolsTab({ form, dispatch, problems }: { form: FormState; dispat
         <Alert variant="error"><AlertDescription className="flex items-center justify-between gap-2"><span className="selectable break-words">{tools.error}</span><Button size="xs" variant="outline" onClick={tools.reload}>Retry</Button></AlertDescription></Alert>
       )}
       {!tools.data && !tools.error && <p role="status" className="text-muted-foreground text-xs">Loading…</p>}
-      {tools.data && tools.data.length > 0 && <ul aria-label="Built-in tools" className="flex flex-col divide-y">{tools.data.map((info) => <BuiltinTool key={info.id} info={info} form={form} dispatch={dispatch} problems={problems} />)}</ul>}
+      {tools.data && tools.data.length > 0 && <ul aria-label="Built-in tools" className="flex flex-col divide-y">{tools.data.map((info) => <BuiltinTool key={info.id} info={info} form={form} dispatch={dispatch} />)}</ul>}
       {unknown.map((id) => (
         <div key={id} className="flex items-center justify-between gap-2 text-xs">
           <span className="min-w-0 break-words text-muted-foreground">{id} is not offered here.</span>
-          <Button size="xs" variant="outline" onClick={() => dispatch({ type: "tool", id, settings: null })}>Remove {id}</Button>
+          <Button size="xs" variant="outline" onClick={() => dispatch({ type: "tool", id, enabled: false })}>Remove {id}</Button>
         </div>
       ))}
 

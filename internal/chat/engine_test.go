@@ -903,41 +903,6 @@ func TestDraftCanBeCanceled(t *testing.T) {
 	}
 }
 
-func TestAskRunsTheCalleeInItsOwnContext(t *testing.T) {
-	e := newEnv(t, func(call int, req llm.Request) []llm.Delta {
-		if strings.Contains(req.System, "Be Callee.") {
-			return []llm.Delta{llmtest.Text("callee says 42")}
-		}
-		return []llm.Delta{llmtest.Text("caller reply")}
-	})
-	callee := e.bot("Callee")
-	stranger := e.bot("Stranger")
-	caller := e.bot("Caller", func(in *BotInput) { in.Config.Executive = true })
-	ctx := context.Background()
-	rc := RunContext{BotID: caller.ID, Bot: caller}
-
-	out, err := e.m.Ask(ctx, rc, callee.ID, "what is the answer?")
-	if err != nil || out != "callee says 42" {
-		t.Fatalf("ask: %q %v", out, err)
-	}
-	req := e.fake.Calls()[0]
-	if !strings.Contains(req.System, "Caller") || len(req.Messages) != 1 || req.Messages[0].Parts[0].Text != "what is the answer?" {
-		t.Fatalf("callee request: %+v", req)
-	}
-	if len(e.history(callee.ID))+len(e.history(caller.ID)) != 0 {
-		t.Fatal("a delegated exchange must not be stored in either conversation")
-	}
-	if _, err := e.m.Ask(ctx, RunContext{BotID: stranger.ID, Bot: stranger}, callee.ID, "hi"); err == nil {
-		t.Fatal("only executive assistants may delegate")
-	}
-	if _, err := e.m.Ask(ctx, RunContext{BotID: caller.ID, Bot: caller, Depth: maxDelegationDepth}, callee.ID, "hi"); err == nil {
-		t.Fatal("delegation depth must be limited")
-	}
-	if _, err := e.m.Ask(ctx, RunContext{}, callee.ID, "hi"); err == nil {
-		t.Fatal("previews cannot delegate")
-	}
-}
-
 func TestSinkCoalescesPublishesAndAlwaysSendsTheFinalOne(t *testing.T) {
 	var mu sync.Mutex
 	var snaps []Message

@@ -233,7 +233,7 @@ func (t memoryTool) Call(ctx context.Context, rc chat.RunContext, _ string, raw 
 		if err != nil {
 			return chat.ToolResult{}, err
 		}
-		lines = append(lines, fmt.Sprintf("%s %s", sc, usageLabel(coreChars(coreTexts(rows)), scopeLimit(sc))))
+		lines = append(lines, fmt.Sprintf("%s %s", r.labels[sc], usageLabel(coreChars(coreTexts(rows)), scopeLimit(sc))))
 	}
 	return chat.ToolResult{Text: strings.Join(lines, "\n")}, nil
 }
@@ -261,12 +261,40 @@ type opRunner struct {
 	rc      chat.RunContext
 	changes []opChange
 	touched []string
+	labels  map[string]string // scope id -> how the bot names it to the user
 }
 
 func (r *opRunner) touch(scope string) {
 	if !slices.Contains(r.touched, scope) {
 		r.touched = append(r.touched, scope)
 	}
+}
+
+// label names a scope the way a bot talks about it to the user: its own notes, what it knows about
+// the user, or a shared scope by display name (the slug after "shared:" if the name is unavailable).
+// Scope ids never reach user-visible text. The label is resolved once, while the transaction is open.
+func (r *opRunner) label(scope string) string {
+	if l, ok := r.labels[scope]; ok {
+		return l
+	}
+	var l string
+	switch scope {
+	case ownScope(r.bot.ID):
+		l = "my notes"
+	case chat.ScopeUser:
+		l = "what I know about you"
+	default:
+		if name, err := r.s.scopeName(r.ctx, r.tx, scope); err == nil && strings.TrimSpace(name) != "" {
+			l = cleanLabel(name)
+		} else {
+			l = strings.TrimPrefix(scope, chat.SharedPrefix)
+		}
+	}
+	if r.labels == nil {
+		r.labels = map[string]string{}
+	}
+	r.labels[scope] = l
+	return l
 }
 
 func (r *opRunner) touchedScopes() []string { return r.touched }
@@ -286,6 +314,7 @@ func (r *opRunner) apply(op memOp) (string, error) {
 		return "", err
 	}
 	r.touch(scope)
+	r.label(scope)
 	switch op.Action {
 	case "add":
 		return r.add(scope, rows, op.Content)
@@ -330,7 +359,7 @@ func (r *opRunner) add(scope string, rows []coreRow, content string) (string, er
 	}
 	for _, row := range rows {
 		if squash(row.Text) == squash(text) {
-			return "That note already exists in " + scope + "; no duplicate added.", nil
+			return "That note already exists in " + r.label(scope) + "; no duplicate added.", nil
 		}
 	}
 	limit := scopeLimit(scope)
@@ -341,8 +370,9 @@ func (r *opRunner) add(scope string, rows []coreRow, content string) (string, er
 	if _, err := insertEntry(r.ctx, r.tx, e, ""); err != nil {
 		return "", err
 	}
-	r.changes = append(r.changes, opChange{scope, "Remembered: " + runeTrunc(text, 80)})
-	return "Added to " + scope + ".", nil
+	label := r.label(scope)
+	r.changes = append(r.changes, opChange{scope, "Added to " + label + ": " + runeTrunc(text, 80)})
+	return "Added to " + label + ".", nil
 }
 
 // checkBudget verifies that the scope's texts plus add fit the limit; the error lists the current
@@ -401,8 +431,9 @@ func (r *opRunner) replace(scope string, rows []coreRow, old, content string) (s
 	if err != nil {
 		return "", err
 	}
-	r.changes = append(r.changes, opChange{scope, "Updated a note: " + runeTrunc(text, 80)})
-	return "Replaced the note in " + scope + ".", nil
+	label := r.label(scope)
+	r.changes = append(r.changes, opChange{scope, "Replaced in " + label + ": " + runeTrunc(text, 80)})
+	return "Replaced in " + label + ".", nil
 }
 
 func (r *opRunner) remove(scope string, rows []coreRow, old string) (string, error) {
@@ -421,8 +452,9 @@ func (r *opRunner) remove(scope string, rows []coreRow, old string) (string, err
 			return "", err
 		}
 	}
-	r.changes = append(r.changes, opChange{scope, "Forgot: " + runeTrunc(target.Text, 80)})
-	return "Removed the note from " + scope + ".", nil
+	label := r.label(scope)
+	r.changes = append(r.changes, opChange{scope, "Removed from " + label + ": " + runeTrunc(target.Text, 80)})
+	return "Removed from " + label + ".", nil
 }
 
 // matchRow finds the single entry containing old. An exact substring wins; otherwise a

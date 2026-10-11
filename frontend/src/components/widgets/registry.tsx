@@ -1,5 +1,6 @@
 import { useSyncExternalStore, type ComponentType } from "react";
 import { AutomationResultsWidget } from "@/features/automations/AutomationResultsWidget";
+import { ActivityHeatmapWidget } from "@/features/home/ActivityHeatmapWidget";
 import { ActivityWidget, ClockWidget, DaemonHealthWidget, NotesWidget, SetupWidget } from "./builtin";
 
 export interface WidgetProps {
@@ -25,6 +26,7 @@ const builtins: WidgetDef[] = [
   { type: "setup", title: "Get started", description: "Remaining first-run setup steps.", w: 4, h: 5, component: SetupWidget },
   { type: "activity", title: "System activity", description: "Host CPU, memory, disk and uptime, plus daemon heap history.", w: 6, h: 9, component: ActivityWidget },
   { type: "automation-results", title: "Automation results", description: "Recent daemon-owned automation runs and their status.", w: 6, h: 6, component: AutomationResultsWidget },
+  { type: "activity-heatmap", title: "Activity heat graph", description: "Agent tasks you started on each day of the last year.", w: 8, h: 6, component: ActivityHeatmapWidget },
 ];
 
 const registry = new Map(builtins.map((widget) => [widget.type, widget]));

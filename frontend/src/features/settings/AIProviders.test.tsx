@@ -47,7 +47,7 @@ afterEach(cleanup);
 const row = (name: string) => screen.getByRole("listitem", { name });
 
 describe("AI providers settings", () => {
-  it("shows unconnected providers, where keys live and an empty model chooser", async () => {
+  it("shows unconnected providers and where keys live", async () => {
     seed([openrouter, openai]);
     render(<AIProviders />);
     expect(screen.getByText(/Windows Credential Manager/)).toBeInTheDocument();
@@ -56,8 +56,6 @@ describe("AI providers settings", () => {
       expect(within(row(name)).getByText("Not connected")).toBeInTheDocument();
       expect(within(row(name)).getByRole("button", { name: "Connect" })).toBeEnabled();
     }
-    expect(screen.getByText("Connect a provider to choose models")).toBeInTheDocument();
-    expect(screen.queryByRole("combobox")).toBeNull();
   });
 
   it("connects with a pasted key, then closes and leaves no key behind", async () => {
@@ -165,36 +163,6 @@ describe("AI providers settings", () => {
     fireEvent.click(await within(await screen.findByRole("alertdialog")).findByRole("button", { name: "Disconnect" }));
     await waitFor(() => expect(bridge.disconnect).toHaveBeenCalledWith("openai"));
     await waitFor(() => expect(within(row("OpenAI")).getByText("Not connected")).toBeInTheDocument());
-  });
-
-  it("chooses default models from the connected providers' catalogues", async () => {
-    seed([{ ...openrouter, connected: true, keyHint: "9f2c", valid: true }, openai]);
-    bridge.setDefaults.mockImplementation(async (d) => d);
-    render(<AIProviders />);
-    const chat = await screen.findByRole("combobox", { name: "Default chat model" });
-    await waitFor(() => expect(chat).toBeEnabled());
-    expect(bridge.models).toHaveBeenCalledWith("openrouter");
-    expect(screen.getByRole("combobox", { name: "Memory model" })).toBeInTheDocument();
-    fireEvent.keyDown(chat, { key: "ArrowDown" });
-    expect(await screen.findAllByRole("option")).toHaveLength(2);
-    fireEvent.change(chat, { target: { value: "sonnet" } });
-    const option = await screen.findByRole("option", { name: /Claude Sonnet/ });
-    expect(within(option).getByText("Vision")).toBeInTheDocument();
-    expect(within(option).getByText("200K context")).toBeInTheDocument();
-    expect(screen.queryByRole("option", { name: /GPT Mini/ })).toBeNull();
-    fireEvent.click(option);
-    await waitFor(() => expect(bridge.setDefaults).toHaveBeenCalledWith({ chatModel: "openrouter/anthropic/claude-sonnet", memoryModel: "" }));
-    expect(useLLM.getState().defaults?.chatModel).toBe("openrouter/anthropic/claude-sonnet");
-  });
-
-  it("warns that a chat model without tools cannot drive bots and flags a model no provider offers", async () => {
-    useLLM.setState({ defaults: { chatModel: "openrouter/openai/gpt-mini", memoryModel: "openai/gone" } });
-    seed([{ ...openrouter, connected: true, keyHint: "9f2c", valid: true }, openai]);
-    useLLM.setState({ defaults: { chatModel: "openrouter/openai/gpt-mini", memoryModel: "openai/gone" } });
-    bridge.defaults.mockResolvedValue({ chatModel: "openrouter/openai/gpt-mini", memoryModel: "openai/gone" });
-    render(<AIProviders />);
-    expect(await screen.findByText(/cannot call tools/)).toBeInTheDocument();
-    expect(screen.getByText(/not offered by a connected provider/)).toBeInTheDocument();
   });
 
   it("shows the daemon error with a retry when providers cannot load", async () => {

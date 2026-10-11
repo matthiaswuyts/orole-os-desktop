@@ -6,7 +6,6 @@ import { Button } from "@/components/ui/button";
 import { ProviderManifests } from "@/features/settings/ProviderManifests";
 import { Failure, Loading } from "@/features/mcp/shared";
 import { ConnectProviderDialog } from "@/features/settings/ConnectProviderDialog";
-import { ModelDefaults } from "@/features/settings/ModelDefaults";
 import { NeedsDesktop } from "@/features/shared/States";
 import { inDesktop } from "@/lib/backend";
 import { useLLM, type Busy } from "@/stores/llm";
@@ -99,7 +98,7 @@ function ProviderRow({ provider, onConnect }: { provider: ProviderStatus; onConn
   );
 }
 
-/** Settings > AI providers: connect providers, check them, and pick default models. */
+/** Settings > AI providers: connect providers and check them. */
 export function AIProviders() {
   const providers = useLLM((state) => state.providers);
   const ready = useLLM((state) => state.ready);
@@ -124,7 +123,6 @@ export function AIProviders() {
               : <ul className="divide-y rounded-lg border bg-card">{providers.map((p) => <ProviderRow key={p.id} provider={p} onConnect={() => setConnecting(p.id)} />)}</ul>}
           </section>
           <ProviderManifests />
-          <ModelDefaults />
         </>
       )}
       {target && <ConnectProviderDialog key={target.id} provider={target} onClose={() => setConnecting(null)} />}

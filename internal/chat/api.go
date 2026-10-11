@@ -55,7 +55,8 @@ const (
 	ToolKnowledge = "knowledge_search"
 )
 
-// BotTool enables one built-in tool with optional parameters (e.g. allowed_domains).
+// BotTool enables one built-in tool. Params is kept for stored configs but ignored: the web tools run with
+// fixed options (see tools.HostedParams).
 type BotTool struct {
 	ID     string         `json:"id"`
 	Params map[string]any `json:"params,omitempty"`
@@ -165,6 +166,7 @@ const (
 	PartMemory     = "memory"     // verified memory write ("Memory updated")
 	PartNotice     = "notice"     // engine notices (compaction, budget stop)
 	PartQuestion   = "question"   // a question with suggested answers (ask_user)
+	PartUI         = "ui"         // structured component (table, chart, diagram, ...) shown by the `show` tool
 )
 
 // MsgPart is one renderable piece of a message; fields are used per Type.
@@ -178,6 +180,7 @@ type MsgPart struct {
 	Status     string `json:"status,omitempty"` // "running" | "done" | "error"
 	Summary    string `json:"summary,omitempty"`
 	DurationMs int64  `json:"durationMs,omitempty"`
+	BotID      string `json:"botId,omitempty"` // delegation: id of the bot that was asked
 	// citation
 	URL     string `json:"url,omitempty"`
 	Title   string `json:"title,omitempty"`
@@ -191,6 +194,8 @@ type MsgPart struct {
 	Choices []Choice `json:"choices,omitempty"`
 	// Hidden marks a text part the model reads but the UI never shows (the setup kickoff).
 	Hidden bool `json:"hidden,omitempty"`
+	// ui: Name is the component kind (see UIKinds) and Spec its validated JSON props.
+	Spec string `json:"spec,omitempty"`
 }
 
 // Choice is one suggested answer to a question part.
@@ -256,7 +261,12 @@ type SendRequest struct {
 	Text          string   `json:"text"`
 	AttachmentIDs []string `json:"attachmentIds"`
 	Mode          string   `json:"mode"`
-	ClientNonce   string   `json:"clientNonce"` // idempotency key; a retried nonce returns the stored message
+	// Mentions are bot ids the user @mentioned. Each one answers this message in this conversation,
+	// with this conversation as context; the conversation's own bot then stays silent.
+	Mentions []string `json:"mentions,omitempty"`
+	// Skills are skill names the user asked the answering bot to use.
+	Skills      []string `json:"skills,omitempty"`
+	ClientNonce string   `json:"clientNonce"` // idempotency key; a retried nonce returns the stored message
 }
 
 // RegenerateRequest replaces the assistant reply to the last user message.

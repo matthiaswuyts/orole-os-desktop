@@ -36,7 +36,7 @@ State of this tree; the code is the source of truth (`docs/architecture/daemon.m
 | Machines and remote files | Native and SSH implementations integrated | Local health/files/execution exercised; external Windows/Linux SSH hosts not yet verified |
 | Application launcher and native shell | Integrated; installed-app smoke passed | Shortcut editing and policy-gated execution, hide/restore, cold/warm deep links, and GUI quit/relaunch with the same daemon and PowerShell process exercised |
 | Guided first-run setup | Integrated | Optional steps, daemon-persisted progress; native reload persistence exercised |
-| Packaging: NSIS installer, signed auto-update | Installer built and installed; **no signing keys configured** | Installed WebView2 app connected to its daemon; `docs/development/packaging.md`, `docs/development/updates.md` |
+| Packaging: NSIS installer, signed auto-update | Installer built and installed; release pipeline defined; **signed upgrade unverified, no Authenticode** | Installed WebView2 app connected to its daemon; `docs/development/packaging.md`, `docs/development/updates.md`, `docs/development/releasing.md` |
 | Linux / macOS | Not supported as complete desktop targets | Platform-independent packages have tests; no cross-platform desktop-release claim |
 | Declarative MCP plugins | Integrated; daemon and installed-UI smoke passed | Exact-manifest trust, independent MCP approval, real command/widget execution, persisted revocation; no arbitrary JavaScript plugin host |
 | Chat (bots, direct OpenRouter/OpenAI APIs, web search, research, uploads, memory, provider manifests) | Daemon and UI integrated; daemon IPC wiring covered by tests; **not yet exercised against live provider APIs** | `docs/architecture/chat.md`; opt-in live smokes `OROLE_OPENROUTER_LIVE=1`, `OROLE_OPENAI_LIVE=1` |
@@ -77,7 +77,7 @@ build\orole.exe terminal list ; build\orole.exe settings get ; build\orole.exe d
 ## Documentation
 
 - `AGENTS.md` architecture rules (binding), `docs/architecture/` design, `docs/decisions/` ADRs
-- `docs/development/` setup, testing, packaging, updates, troubleshooting, resetting dev data
+- `docs/development/` setup, testing, packaging, releasing, updates, troubleshooting, resetting dev data
 - `docs/security/threat-model.md`, `docs/performance.md`, `docs/research/`
 
 ## Licence

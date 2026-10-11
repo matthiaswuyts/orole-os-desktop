@@ -253,9 +253,11 @@ func TestStagingIsRemovedOnCloseAndRestart(t *testing.T) {
 
 func TestAttachmentStoreCap(t *testing.T) {
 	e := newEnv(t, nil)
-	// Pretend the store is nearly full: one big referenced blob row.
-	if _, err := e.db.Exec(`INSERT INTO chat_attachments(id, sha256, name, mime, size, created_at) VALUES ('big', ?, 'big.bin', 'text/plain', ?, 1)`,
-		strings.Repeat("a", 64), maxStoreBytes-3); err != nil {
+	// Pretend the store is nearly full: one big blob row. It is stamped with the fake clock's "now"
+	// so the Manager's background sweeper (which runs once at start-up, concurrently with the test)
+	// never treats it as an expired, never-sent upload and deletes it.
+	if _, err := e.db.Exec(`INSERT INTO chat_attachments(id, sha256, name, mime, size, created_at) VALUES ('big', ?, 'big.bin', 'text/plain', ?, ?)`,
+		strings.Repeat("a", 64), maxStoreBytes-3, e.clock().UnixMilli()); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := e.upload("a.txt", []byte("12345"), 10); !errors.Is(err, ErrInvalid) || !strings.Contains(err.Error(), "store is full") {

@@ -285,7 +285,9 @@ func (c *conn) dial(ctx context.Context) (*sdk.ClientSession, *http.Client, erro
 		OAuthHandler: sdkHandler{a: c.m.authSession(cfg.ID)},
 		MaxRetries:   2,
 	}
-	sess, err := client.Connect(dctx, tr, nil)
+	// Pin the legacy initialize handshake: the SDK default first sends the draft 2026-07-28
+	// server/discover probe; Mobbin's notifications/initialized hung after that fallback.
+	sess, err := client.Connect(dctx, tr, &sdk.ClientSessionOptions{ProtocolVersion: "2025-06-18"})
 	if err != nil {
 		hc.CloseIdleConnections()
 		return nil, nil, classifyConnectErr(err)

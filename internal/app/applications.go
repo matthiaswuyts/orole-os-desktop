@@ -3,6 +3,9 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"net/url"
+	"regexp"
+	"sync"
 
 	"github.com/egoist/mygo"
 	"github.com/rayorole/orole-os-desktop/internal/applications"
@@ -73,4 +76,50 @@ func (d Desktop) Ready() DesktopNavigation {
 		return DesktopNavigation{}
 	}
 	return d.PendingNavigation()
+}
+
+// SettingsWindowSection asks an already-open settings window to show a section.
+var SettingsWindowSection = mygo.NewEvent[string]("settings-window:section")
+
+var (
+	settingsMu     sync.Mutex
+	settingsWindow *mygo.Window
+	sectionID      = regexp.MustCompile(`^[a-z0-9-]{0,32}$`)
+)
+
+// OpenSettings opens the isolated settings window, or focuses it and switches to
+// section when it is already open. An empty or unknown section shows the first.
+func (Desktop) OpenSettings(section string) error {
+	if !sectionID.MatchString(section) {
+		section = ""
+	}
+	settingsMu.Lock()
+	defer settingsMu.Unlock()
+	if win := settingsWindow; win != nil {
+		win.Show()
+		if win.IsMinimized() {
+			win.Restore()
+		}
+		win.Focus()
+		SettingsWindowSection.Broadcast(section)
+		return nil
+	}
+	q := url.Values{"window": {"settings"}}
+	if section != "" {
+		q.Set("section", section)
+	}
+	win := mygo.NewWindow(mygo.WindowOptions{
+		Title: "Orole OS — Settings", Width: 1040, Height: 720, MinWidth: 720, MinHeight: 480,
+		BackgroundColor: "#070b14", StateKey: "settings", URL: "/?" + q.Encode(),
+		TitleBarStyle: mygo.TitleBarHidden, TitleBarHeight: 40,
+	})
+	settingsWindow = win
+	win.OnClosed(func() {
+		settingsMu.Lock()
+		defer settingsMu.Unlock()
+		if settingsWindow == win {
+			settingsWindow = nil
+		}
+	})
+	return nil
 }

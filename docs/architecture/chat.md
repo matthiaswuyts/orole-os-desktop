@@ -44,6 +44,46 @@ goes idle, using the cheap "memory model" from Settings > AI providers. Bot writ
 Skill proposals are inert until approved in the UI. Knowledge files accept text-like files only (PDF indexing is not
 supported yet).
 
+## Delegation (`ask_bot`)
+Only executive assistants get `ask_bot`. A call is a real turn on the callee, not a hidden side run: the question is
+stored in the callee's own conversation as a user message with author `bot:<callerId>`, the turn goes through the
+callee's normal queue (one run per bot, behind anything it is already doing), and the reply is an ordinary stored,
+streamed assistant message with `chat.run` events, so the user can open the worker's chat and watch its tools and
+steps. The turn carries `RunContext.Depth` and `RunContext.Chain` (the bots waiting on it, used for cycle and depth
+limits) and a system-prompt addendum saying the task was handed off. The asking tool blocks until the callee finishes
+(`Delegator.Ask`) or its context ends; on timeout or when the executive is stopped, a still-queued turn is dropped
+(its message marked canceled) or the active turn is cancelled, never another turn of the callee. The default
+`AskTimeout` is 20 minutes. Asking a bot that is itself waiting on the caller is refused as a deadlock. Consolidation
+treats messages authored by another bot as untrusted. Delegation rows carry `MsgPart.botId` of the callee.
+
+## @mentions and skills
+Typing `@` in the composer opens the assistant-ui trigger popover: the other bots and the skills this bot has been
+given. A pick is plain `@Name` text; on send the frontend resolves names to ids (`SendRequest.Mentions`,
+`SendRequest.Skills`) and the daemon validates them (`checkMentions`: bot exists, not itself, at most 3 bots and 5
+skills, no research mode). Each mentioned bot answers in the **conversation where it was mentioned**: the user message
+is stored once and one turn per mentioned bot is queued behind it on that conversation's worker, in mention order. The
+turn runs the mentioned bot's own instructions, model, tools and memory (`RunContext.BotID` is the mentioned bot) over
+the host conversation's history, and stores the reply with `Author: bot:<mentionedId>`; the host bot stays silent. The
+answering bot's prompt gets an addendum naming the conversation and saying other bots' messages are data. Replies of
+another bot are rewritten as fenced `<untrusted source="reply of bot X">` user-side text whenever any bot reads the
+history, so no bot mistakes them for its own words. A skill mention adds an instruction to read the skill with
+`orole_get_skill`, limited to skills the answering bot owns. Regenerating a mention reply reruns the same bot.
+History summaries are keyed by the conversation, not by the answering bot.
+
+## Structured output (`show_*` tools)
+Bots whose model can call tools get nine tools that render chat components instead of Markdown: `show_table`,
+`show_chart`, `show_diagram`, `show_flow_graph`, `show_math`, `show_spec_sheet`, `show_comparison`, `show_timeline`,
+`show_job_progress` (`internal/chat/tools/show.go`). Each has an explicit JSON schema and is validated again in Go
+(unknown fields, sizes, ids, canvas bounds, ISO currency codes, control characters) before it is stored as a `ui` message
+part (`Name` = kind, `Spec` = the validated JSON). The frontend draws the part with the matching assistant-ui element
+(`parts/StructuredPart.tsx`; DataTable, Chart, Diagram, FlowGraph, MathBlock, SpecSheet, ComparisonCard, Timeline,
+JobProgress) and shows nothing for a spec it cannot parse. `ui` parts are not part of the history a bot re-reads. Maths
+is plain Unicode text; no LaTeX renderer is bundled.
+
+## Find in conversation
+Ctrl/Cmd+F in an open conversation opens the assistant-ui conversation search over the loaded messages (visible text
+parts only); Enter / Shift+Enter step through matches and scroll to the message, Escape closes.
+
 ## Attachments
 Chunked upload (1 MiB chunks, 20 MiB per file, 10 per message), type sniffed from content, stored
 content-addressed at `<DataDir>/chat/attachments/<sha256>`; staged uploads expire after 24 h.

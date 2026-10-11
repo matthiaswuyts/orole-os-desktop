@@ -1,10 +1,11 @@
 import { AssistantRuntimeProvider, ThreadPrimitive, useAui, useAuiState } from "@assistant-ui/react";
 import { ArrowDownIcon, RotateCcwIcon, XIcon } from "lucide-react";
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { MessageActions, MessagePair } from "@/components/assistant-ui/elements/message-pair";
 import { BotAvatar } from "@/components/shell/BotAvatar";
 import { Button } from "@/components/ui/button";
 import type { Bot, Message } from "@/mygo";
+import { useChat } from "@/stores/chat";
 import { selectConversation, useBotRunning, useChatMessages } from "@/stores/chatMessages";
 import { Composer } from "./Composer";
 import { ChatMessageView } from "./parts/MessageBubble";
@@ -13,6 +14,8 @@ import { messageText } from "./parts/format";
 import { CopyButton } from "./parts/Sources";
 import { SOURCE_KEY } from "./runtime/convert";
 import { useChatRuntime } from "./runtime/useChatRuntime";
+import { ThreadSearch } from "./ThreadSearch";
+import { targetsFor } from "./mentions";
 
 /** How close to the top (px) the reader gets before the next older page is fetched. */
 const LOAD_OLDER_AT = 160;
@@ -26,12 +29,16 @@ function Turn({ bot }: { bot: Bot }) {
   const raw: unknown = useAuiState((s) => s.message.metadata.custom?.[SOURCE_KEY]);
   const isLast = useAuiState((s) => s.message.isLast);
   const running = useBotRunning(bot.id);
+  const bots = useChat((s) => s.bots);
+  const targets = useMemo(() => targetsFor(bots, bot.id), [bots, bot.id]);
   if (!isDaemonMessage(raw) || (raw.role === "user" && !hasVisibleParts(raw.parts))) return null;
   const assistant = raw.role !== "user";
   const settled = raw.status !== "running" && raw.status !== "pending";
   const canRegenerate = assistant && isLast && !running;
   return <MessagePair>
     <ChatMessageView message={raw} botName={bot.name} botAvatar={bot.avatar}
+      bots={bots} handoffSettled={!isLast} mentionTargets={targets}
+      onOpenBot={(botId) => useChat.getState().open(botId)}
       onRetry={canRegenerate ? () => void useChatMessages.getState().regenerate(bot.id, raw.id) : undefined}
       onAnswer={canRegenerate && raw.status === "complete" ? (text) => void useChatMessages.getState().send(bot.id, { text }) : undefined}
       actions={assistant && settled && <MessageActions regenerate={canRegenerate}><CopyButton text={messageText(raw)} label="Copy response" /></MessageActions>} />
@@ -64,10 +71,27 @@ function Thread({ bot }: { bot: Bot }) {
   const running = useBotRunning(bot.id);
   const problem = useChatMessages((s) => s.problems[bot.id]);
   const viewport = useRef<HTMLDivElement>(null);
+  const thread = useRef<HTMLDivElement>(null);
+  const [searching, setSearching] = useState(false);
   const before = useRef<{ height: number; top: number } | null>(null);
   const firstId = conversation.messages[0]?.id;
 
   useEffect(() => useChatMessages.getState().startSync(), []);
+  // Ctrl/Cmd+F finds inside this conversation instead of the page; a handler that already took the key (an editor) wins.
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || event.altKey || event.shiftKey || !(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== "f") return;
+      event.preventDefault();
+      setSearching(true);
+      document.querySelector<HTMLInputElement>("[data-slot=thread-search] input")?.select();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, []);
+  const closeSearch = () => {
+    setSearching(false);
+    document.querySelector<HTMLElement>("[data-slot=composer] textarea")?.focus();
+  };
   useEffect(() => { void useChatMessages.getState().load(bot.id); }, [bot.id]);
 
   // Prepending older messages must not move what the reader is looking at.
@@ -88,11 +112,12 @@ function Thread({ bot }: { bot: Bot }) {
 
   const showEmpty = conversation.loaded && conversation.messages.length === 0;
   return <>
-    <ThreadPrimitive.Root className="relative flex min-h-0 flex-1 flex-col">
+    <ThreadPrimitive.Root ref={thread} className="relative flex min-h-0 flex-1 flex-col">
+      {searching && <ThreadSearch messages={conversation.messages} scope={thread} onClose={closeSearch} />}
       <ThreadPrimitive.Viewport ref={viewport} role="region" aria-label={`Conversation with ${bot.name}`} tabIndex={0}
         onScroll={(event) => { if (event.currentTarget.scrollTop < LOAD_OLDER_AT) loadOlder(); }}
         className="flex min-h-0 flex-1 flex-col overflow-y-auto outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring">
-        <div className="mx-auto flex min-h-full w-full max-w-3xl flex-col gap-5 px-4 pt-6 pb-16">
+        <div className="mx-auto flex min-h-full w-full max-w-3xl shrink-0 flex-col gap-5 px-4 pt-6 pb-12">
           {!conversation.loaded && !conversation.error && <p role="status" className="m-auto text-sm text-muted-foreground">Loading conversation…</p>}
           {!conversation.loaded && conversation.error && <div role="alert" className="m-auto flex flex-col items-center gap-2 text-center text-sm">
             <p className="selectable text-destructive-foreground">Could not load this conversation: {conversation.error}</p>

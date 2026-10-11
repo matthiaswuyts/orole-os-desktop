@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { MicIcon, SquareIcon } from "lucide-react";
+import { MicIcon, SquareIcon, XIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverPopup, PopoverTitle, PopoverTrigger } from "@/components/ui/popover";
 import { errText } from "@/features/agents/format";
@@ -35,8 +35,10 @@ const speechErrors: Record<string, string> = {
 };
 
 /** Real Web Speech only. Starting is always a separate, disclosed consent action. */
-export function ComposerVoice({ disabled, onTranscript, onActiveChange }: {
+export function ComposerVoice({ disabled, compact = false, onTranscript, onActiveChange }: {
   disabled: boolean;
+  /** A round icon button and an inline one-line recording state, for a single-line composer. */
+  compact?: boolean;
   onTranscript: (text: string) => void;
   onActiveChange: (active: boolean) => void;
 }) {
@@ -149,30 +151,54 @@ export function ComposerVoice({ disabled, onTranscript, onActiveChange }: {
     }
   };
 
+  const messages = <>
+    {notice && <p role="status" className="text-xs text-muted-foreground">{notice}</p>}
+    {error && <p role="alert" className="text-xs text-destructive-foreground">{error}</p>}
+  </>;
+  const disclosure = <PopoverPopup side="top" align={compact ? "end" : "start"} className="w-80">
+    <div className="flex flex-col gap-3">
+      <PopoverTitle>Dictate a message</PopoverTitle>
+      {Constructor ? <>
+        <p className="text-sm">Your browser or operating system may send microphone audio to its cloud speech service. Dictation is not guaranteed to stay on this device or work offline.</p>
+        <p className="text-xs text-muted-foreground">Start only if you are comfortable with that processing. Stop keeps recognized text in an editable draft; Cancel discards this recording. Nothing sends to the agent automatically.</p>
+        <Button type="button" size="sm" onClick={start}>Start dictation</Button>
+      </> : <p role="status" className="text-sm">Speech recognition is unavailable in this browser or desktop WebView. You can type your message instead.</p>}
+    </div>
+  </PopoverPopup>;
+  const elapsed = `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
+  const statusText = state === "starting" ? "Starting microphone…" : state === "recording" ? "Listening" : "Finishing dictation…";
+
+  if (compact) {
+    return <div className="relative flex shrink-0 items-center gap-2">
+      {(notice || error) && <div className="absolute end-0 bottom-full mb-2 flex w-72 flex-col gap-1 rounded-lg border bg-popover p-2 shadow-lg/5">{messages}</div>}
+      {state === "idle" ? <Popover open={open} onOpenChange={setOpen}>
+        <PopoverTrigger render={<Button type="button" size="icon-lg" className="rounded-full" disabled={disabled} aria-label="Dictate a message" />}><MicIcon aria-hidden /></PopoverTrigger>
+        {disclosure}
+      </Popover> : <>
+        <MicIcon aria-hidden className="size-4 text-warning" />
+        <span role="status" className="text-xs">{statusText}</span>
+        <span aria-label="Dictation elapsed time" className="font-mono text-xs tabular-nums">{elapsed}</span>
+        {transcript && <span aria-label="Live transcript" className="max-w-40 truncate text-muted-foreground text-xs">{transcript}</span>}
+        <Button type="button" size="icon-lg" className="rounded-full" aria-label="Stop dictation" onClick={stop} disabled={state === "finishing"}><SquareIcon aria-hidden className="fill-current" /></Button>
+        <Button type="button" size="icon-lg" variant="ghost" className="rounded-full" aria-label="Cancel dictation" onClick={() => { finish(false)?.abort(); setNotice("Dictation cancelled. Your draft is unchanged."); }}><XIcon aria-hidden /></Button>
+      </>}
+    </div>;
+  }
+
   return <div className="flex min-w-0 flex-col gap-2">
     {state === "idle" ? <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger render={<Button type="button" size="sm" variant="ghost" disabled={disabled} aria-label="Dictate a message" />}><MicIcon aria-hidden data-icon="inline-start" />Dictate</PopoverTrigger>
-      <PopoverPopup side="top" align="start" className="w-80">
-        <div className="flex flex-col gap-3">
-          <PopoverTitle>Dictate a message</PopoverTitle>
-          {Constructor ? <>
-            <p className="text-sm">Your browser or operating system may send microphone audio to its cloud speech service. Dictation is not guaranteed to stay on this device or work offline.</p>
-            <p className="text-xs text-muted-foreground">Start only if you are comfortable with that processing. Stop keeps recognized text in an editable draft; Cancel discards this recording. Nothing sends to the agent automatically.</p>
-            <Button type="button" size="sm" onClick={start}>Start dictation</Button>
-          </> : <p role="status" className="text-sm">Speech recognition is unavailable in this browser or desktop WebView. You can type your message instead.</p>}
-        </div>
-      </PopoverPopup>
+      {disclosure}
     </Popover> : <div className="flex flex-col gap-2">
       <div className="flex flex-wrap items-center gap-2">
         <MicIcon aria-hidden className="size-4 text-warning" />
-        <span role="status" className="text-xs">{state === "starting" ? "Starting microphone…" : state === "recording" ? "Listening" : "Finishing dictation…"}</span>
-        <span aria-label="Dictation elapsed time" className="font-mono text-xs tabular-nums">{Math.floor(seconds / 60)}:{String(seconds % 60).padStart(2, "0")}</span>
+        <span role="status" className="text-xs">{statusText}</span>
+        <span aria-label="Dictation elapsed time" className="font-mono text-xs tabular-nums">{elapsed}</span>
         <Button type="button" size="xs" variant="outline" onClick={stop} disabled={state === "finishing"}><SquareIcon aria-hidden data-icon="inline-start" />Stop</Button>
         <Button type="button" size="xs" variant="ghost" onClick={() => { finish(false)?.abort(); setNotice("Dictation cancelled. Your draft is unchanged."); }}>Cancel dictation</Button>
       </div>
       {transcript && <p aria-label="Live transcript" className="max-h-24 overflow-y-auto whitespace-pre-wrap break-words text-xs text-muted-foreground">{transcript}</p>}
     </div>}
-    {notice && <p role="status" className="text-xs text-muted-foreground">{notice}</p>}
-    {error && <p role="alert" className="text-xs text-destructive-foreground">{error}</p>}
+    {messages}
   </div>;
 }

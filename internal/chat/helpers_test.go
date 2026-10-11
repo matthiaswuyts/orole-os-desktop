@@ -175,6 +175,18 @@ func (e *env) idle(botID string) {
 	}
 }
 
+// until waits for cond to hold, failing the test with what if it never does.
+func (e *env) until(what string, cond func() bool) {
+	e.t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for !cond() {
+		if time.Now().After(deadline) {
+			e.t.Fatalf("timed out waiting for %s", what)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
 func (e *env) history(botID string) []Message {
 	e.t.Helper()
 	page, err := e.m.Messages(context.Background(), MessagesRequest{BotID: botID, Limit: 200})

@@ -24,7 +24,8 @@ func TestMemoryToolAddReplaceRemove(t *testing.T) {
 	if res.IsError {
 		t.Fatal(res.Text)
 	}
-	contains(t, res.Text, "Added to bot:a", "bot:a [")
+	contains(t, res.Text, "Added to my notes.", "my notes [")
+	excludes(t, res.Text, "bot:a")
 	es := e.entries("bot:a")
 	if len(es) != 1 {
 		t.Fatalf("entries = %+v", es)
@@ -36,7 +37,7 @@ func TestMemoryToolAddReplaceRemove(t *testing.T) {
 
 	// Verified confirmation: one memory part, only after the write committed, and a chat.memory event.
 	parts := r.emitted()
-	if len(parts) != 1 || parts[0].Type != chat.PartMemory || !strings.Contains(parts[0].Text, "metric units") {
+	if len(parts) != 1 || parts[0].Type != chat.PartMemory || parts[0].Text != "Added to my notes: The user prefers metric units." {
 		t.Fatalf("parts = %+v", parts)
 	}
 	if ch := e.published(); len(ch) != 1 || ch[0].Scope != "bot:a" {
@@ -63,6 +64,61 @@ func TestMemoryToolAddReplaceRemove(t *testing.T) {
 	if len(r.emitted()) != 4 { // add, add, replace, remove
 		t.Errorf("parts = %d", len(r.emitted()))
 	}
+}
+
+// The user sees what the bot wrote and where, in words: never a scope id.
+func TestMemoryToolNamesScopesForPeople(t *testing.T) {
+	e := newEnv(t)
+	team := e.shared("Team Notes")
+	bot := e.bot("a", "Alpha", grantTo(team, true, true), grantTo(chat.ScopeUser, true, true))
+	r := newRun(bot)
+	scopes := []struct{ scope, label string }{
+		{"", "my notes"},
+		{team, "Team Notes"},
+		{chat.ScopeUser, "what I know about you"},
+	}
+	step := func(label string, args map[string]any, result, part string) {
+		t.Helper()
+		res := e.mem(r, args)
+		if res.IsError {
+			t.Fatal(res.Text)
+		}
+		contains(t, res.Text, result, label+" [")
+		excludes(t, res.Text, "bot:a", "shared:")
+		parts := r.emitted()
+		if got := parts[len(parts)-1]; got.Type != chat.PartMemory || got.Text != part {
+			t.Fatalf("memory part = %+v, want %q", got, part)
+		}
+	}
+	for _, sc := range scopes {
+		with := func(args map[string]any) map[string]any {
+			if sc.scope != "" {
+				args["scope"] = sc.scope
+			}
+			return args
+		}
+		step(sc.label, with(map[string]any{"action": "add", "content": "first note"}),
+			"Added to "+sc.label+".", "Added to "+sc.label+": first note")
+		step(sc.label, with(map[string]any{"action": "replace", "old_text": "first", "content": "second note"}),
+			"Replaced in "+sc.label+".", "Replaced in "+sc.label+": second note")
+		step(sc.label, with(map[string]any{"action": "remove", "old_text": "second"}),
+			"Removed from "+sc.label+".", "Removed from "+sc.label+": second note")
+	}
+
+	// A duplicate names the scope the same way.
+	e.addNote(r, "same note")
+	res := e.mem(r, map[string]any{"action": "add", "content": "same note"})
+	contains(t, res.Text, "already exists in my notes")
+
+	// Without a display name, the slug after "shared:" stands in.
+	if _, err := e.db.Exec(`UPDATE memory_scopes SET name = '' WHERE id = ?`, team); err != nil {
+		t.Fatal(err)
+	}
+	res = e.mem(r, map[string]any{"action": "add", "scope": team, "content": "unnamed scope note"})
+	if res.IsError {
+		t.Fatal(res.Text)
+	}
+	contains(t, res.Text, "Added to team-notes.")
 }
 
 func TestMemoryToolAmbiguousAndMissingMatch(t *testing.T) {

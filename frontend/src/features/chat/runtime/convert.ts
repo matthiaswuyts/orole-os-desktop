@@ -14,8 +14,6 @@ function assistantPart(part: MsgPart, index: number): Part | null {
   switch (part.type) {
     case "text":
       return part.text ? { type: "text", text: part.text } : null;
-    case "reasoning":
-      return part.text ? { type: "reasoning", text: part.text } : null;
     case "tool": {
       // The tool UI fallback renders a tool-call part; args are not part of the daemon's row, so they stay empty.
       const done = (part.status ?? "").toLowerCase() === "done";

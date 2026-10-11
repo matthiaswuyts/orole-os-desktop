@@ -28,6 +28,13 @@ frontend/src/
 - **Add a command**: `registerCommands` / `registerProvider` in `lib/commands.ts`.
 - **Add a widget**: register in `components/widgets/registry.tsx`.
 - **Add a setting section**: `features/settings/SettingsView.tsx` `SECTIONS` (`built: true` once rendered).
+- **Settings window**: the sidebar Settings button calls `Desktop.openSettings(section)` (`internal/app/applications.go`),
+  which opens (or focuses and re-targets via the `settings-window:section` event) one native window loading
+  `/?window=settings&section=…`. `App.tsx` renders `features/settings/SettingsWindow.tsx` there: a title bar plus
+  `SettingsView` only (settings sidebar and pages), no app shell. The window keeps its own Zustand stores and loads
+  settings, workspaces and daemon polling itself; settings changes propagate via the existing `settings:changed`
+  event. In the browser preview (no native windows) the button keeps switching the in-app Settings view. Other
+  entry points (palette, deep links, status-bar MCP button) still use the in-app view.
 - **Backend access** goes through generated bindings (`Daemon`, `Settings`, `Workspaces`, `Terminals`, `Projects`,
   `Git`, `Worktrees`, `System`, and `events`). `lib/backend.ts` `inDesktop` is false in a plain browser; then
   the app is a **preview**: only UI preferences persist (localStorage), integrations show setup states, views that
@@ -84,20 +91,6 @@ schemes, daemon-backed persistence and reload, keyboard command-palette switchin
 zero sidebar top padding and a single Agent Dashboard route heading. A mounted
 PowerShell terminal recolored between Solarized Light and Catppuccin Mocha while
 retaining PID 2340.
-
-## First-run setup
-
-`features/home/FirstRunGuide.tsx` presents an optional, nonmodal sequence on Home: welcome,
-theme/background, live daemon status, GitHub, Mail, Drive, agents, remote machines, dashboard.
-Theme and scene controls use the same settings store as Settings. Integration actions navigate
-to the real setup views; they do not mark accounts connected or invent discovered capabilities.
-The desktop stores the current step and dismissal under the daemon's `onboarding` setting.
-Writes must succeed before leaving a step. A dismissed guide can be reopened from Home.
-Browser preview progress is session-only and explicitly labelled; it never calls desktop services.
-Finishing or skipping the guide is not evidence that an optional integration was configured.
-Browser smoke completed all nine steps, including theme/static-background selection
-and skipping every optional integration, then opened the dashboard. Installed
-desktop smoke separately verified daemon-backed step/theme persistence on reload.
 
 ## Workspaces
 

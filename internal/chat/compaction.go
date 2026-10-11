@@ -40,12 +40,12 @@ type fitResult struct {
 // window (or 60 messages when the window is unknown) the oldest messages are summarised into
 // conversation_summaries with the memory model. Nothing is dropped silently: summarising and any
 // last-resort trimming add a notice to the reply.
-func (m *Manager) fitHistory(ctx context.Context, bot Bot, window, base int64, userSeq int64) (fitResult, error) {
-	sm, err := m.store.getSummary(ctx, bot.ID)
+func (m *Manager) fitHistory(ctx context.Context, bot Bot, convoID string, window, base int64, userSeq int64) (fitResult, error) {
+	sm, err := m.store.getSummary(ctx, convoID)
 	if err != nil {
 		return fitResult{}, err
 	}
-	hist, err := m.store.between(ctx, bot.ID, sm.UptoSeq, userSeq)
+	hist, err := m.store.between(ctx, convoID, sm.UptoSeq, userSeq)
 	if err != nil {
 		return fitResult{}, err
 	}
@@ -62,7 +62,7 @@ func (m *Manager) fitHistory(ctx context.Context, bot Bot, window, base int64, u
 			switch {
 			case err == nil:
 				upto := hist[cut-1].Seq
-				if perr := m.store.putSummary(ctx, bot.ID, summary{Text: text, UptoSeq: upto}); perr != nil {
+				if perr := m.store.putSummary(ctx, convoID, summary{Text: text, UptoSeq: upto}); perr != nil {
 					return fitResult{}, perr
 				}
 				res.summary = text

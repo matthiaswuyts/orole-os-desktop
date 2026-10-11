@@ -48,7 +48,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                 {view !== "home" && view !== "new-task" && n.blurb && <span className="truncate text-muted-foreground text-xs">{n.blurb}</span>}
               </>}
               <div className="titlebar-nodrag ml-auto flex h-full shrink-0 items-center gap-2 pl-2">
-                {bot && <BotActions bot={bot} />}
+                {bot && <BotActions />}
                 <NotificationCenter />
                 <span aria-hidden="true" className="mr-1 h-4 w-px bg-border" />
               </div>

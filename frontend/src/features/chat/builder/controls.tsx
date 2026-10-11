@@ -1,11 +1,25 @@
-import { useId, useState, type ReactNode } from "react";
-import { Plus, X } from "lucide-react";
+import { useId, type ReactNode } from "react";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Combobox, ComboboxChip, ComboboxChips, ComboboxChipsInput, ComboboxEmpty, ComboboxItem, ComboboxList, ComboboxPopup, ComboboxValue } from "@/components/ui/combobox";
-import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
-import { parseDomain } from "./botForm";
+
+/** The executive-assistant option as a selectable card that says what the role does. */
+export function ExecutiveCard({ checked, onChange }: { checked: boolean; onChange: (checked: boolean) => void }) {
+  const id = useId();
+  return (
+    <Label className="flex items-start gap-2 rounded-lg border p-3 hover:bg-accent/50 has-data-checked:border-primary/48 has-data-checked:bg-accent/50">
+      <Checkbox checked={checked} onCheckedChange={(next) => onChange(next === true)} aria-labelledby={`${id}-title`} aria-describedby={`${id}-hint`} />
+      <div className="flex flex-col gap-1">
+        <p id={`${id}-title`}>Executive assistant</p>
+        <p id={`${id}-hint`} className="font-normal text-muted-foreground text-xs">
+          Hands work to your other bots and talks with them to get it done, instead of doing everything itself.
+        </p>
+      </div>
+    </Label>
+  );
+}
 
 /** A labelled control with optional hint and inline validation message. */
 export function Block({ label, hint, error, children, className, aside }: {
@@ -95,49 +109,5 @@ export function MultiSelect({ id, label, items, value, onChange, placeholder, em
         </ComboboxList>
       </ComboboxPopup>
     </Combobox>
-  );
-}
-
-/** A list of host names edited as chips. Entries are validated before they are added. */
-export function DomainList({ label, value, onChange, max, hint }: { label: string; value: string[]; onChange: (value: string[]) => void; max: number; hint?: string }) {
-  const id = useId();
-  const [draft, setDraft] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const add = () => {
-    const text = draft.trim();
-    if (!text) return;
-    const parsed = parseDomain(text);
-    if (!parsed.ok) { setError(parsed.error); return; }
-    if (value.includes(parsed.domain)) { setError(`${parsed.domain} is already in the list.`); return; }
-    if (value.length >= max) { setError(`At most ${max} domains.`); return; }
-    onChange([...value, parsed.domain]);
-    setDraft("");
-    setError(null);
-  };
-  return (
-    <div className="flex min-w-0 flex-col gap-1.5">
-      <label htmlFor={id} className="font-medium text-sm">{label}</label>
-      <div className="flex gap-1.5">
-        <Input
-          nativeInput size="sm" id={id} value={draft} placeholder="example.com" autoComplete="off" spellCheck={false}
-          aria-invalid={!!error || undefined} aria-describedby={`${id}-hint`}
-          onChange={(e) => { setDraft(e.target.value); setError(null); }}
-          onKeyDown={(e) => { if ((e.key === "Enter" || e.key === ",") && !e.nativeEvent.isComposing) { e.preventDefault(); add(); } }}
-        />
-        <Button type="button" size="sm" variant="outline" onClick={add} disabled={!draft.trim()} aria-label={`Add to ${label}`}><Plus />Add</Button>
-      </div>
-      {error && <p role="alert" className="text-destructive-foreground text-xs">{error}</p>}
-      {value.length > 0 && (
-        <ul aria-label={label} className="flex flex-wrap gap-1">
-          {value.map((domain) => (
-            <li key={domain} className="flex items-center gap-0.5 rounded-md bg-accent ps-2 text-accent-foreground text-xs">
-              <span className="selectable">{domain}</span>
-              <button type="button" aria-label={`Remove ${domain}`} className="grid size-5 place-items-center rounded opacity-80 hover:opacity-100" onClick={() => onChange(value.filter((d) => d !== domain))}><X className="size-3" /></button>
-            </li>
-          ))}
-        </ul>
-      )}
-      <p id={`${id}-hint`} className="text-muted-foreground text-xs">{hint ? `${hint} ` : ""}({value.length}/{max})</p>
-    </div>
   );
 }

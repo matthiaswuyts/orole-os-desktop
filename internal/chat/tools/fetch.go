@@ -35,40 +35,6 @@ type Policy interface {
 	Require(ctx context.Context, req policy.Request) error
 }
 
-// DomainFilter restricts which hosts a fetch may reach. A domain matches itself and its subdomains.
-// Blocked wins over Allowed; an empty Allowed list allows every public host.
-type DomainFilter struct {
-	Allowed, Blocked []string
-}
-
-// DomainFilterFromParams reads the allowed_domains/blocked_domains hosted tool parameters.
-func DomainFilterFromParams(params map[string]any) DomainFilter {
-	return DomainFilter{Allowed: Domains(params["allowed_domains"]), Blocked: Domains(params["blocked_domains"])}
-}
-
-// Permits reports whether host may be requested.
-func (f DomainFilter) Permits(host string) bool {
-	host = strings.ToLower(strings.TrimSuffix(host, "."))
-	for _, d := range f.Blocked {
-		if hostIn(host, d) {
-			return false
-		}
-	}
-	if len(f.Allowed) == 0 {
-		return true
-	}
-	for _, d := range f.Allowed {
-		if hostIn(host, d) {
-			return true
-		}
-	}
-	return false
-}
-
-func hostIn(host, domain string) bool {
-	return host == domain || strings.HasSuffix(host, "."+domain)
-}
-
 // FetchURLSpec is the client function offered when the model's endpoint cannot fetch pages itself.
 func FetchURLSpec() llm.ToolSpec {
 	return llm.ToolSpec{
@@ -107,14 +73,14 @@ var errNonPublic = errors.New("the destination is not a public internet address"
 
 // Call runs fetch_url for a bot: argument parsing, policy, fetch and result shaping. Failures the
 // model can act on (bad URL, blocked host, HTTP errors) are error results, not Go errors.
-func (f *Fetcher) Call(ctx context.Context, rc chat.RunContext, filter DomainFilter, args json.RawMessage) (chat.ToolResult, error) {
+func (f *Fetcher) Call(ctx context.Context, rc chat.RunContext, args json.RawMessage) (chat.ToolResult, error) {
 	var a struct {
 		URL string `json:"url"`
 	}
 	if err := json.Unmarshal(args, &a); err != nil || strings.TrimSpace(a.URL) == "" {
 		return chat.ToolResult{Text: "invalid arguments: url is required", IsError: true}, nil
 	}
-	target, err := parseFetchURL(a.URL, filter)
+	target, err := parseFetchURL(a.URL)
 	if err != nil {
 		return chat.ToolResult{Text: err.Error(), IsError: true}, nil
 	}
@@ -134,7 +100,7 @@ func (f *Fetcher) Call(ctx context.Context, rc chat.RunContext, filter DomainFil
 			return chat.ToolResult{Text: "This fetch was not permitted by your policy.", IsError: true}, nil
 		}
 	}
-	page, err := f.Fetch(ctx, target, filter)
+	page, err := f.Fetch(ctx, target)
 	if err != nil {
 		if ctx.Err() != nil {
 			return chat.ToolResult{}, ctx.Err()
@@ -177,7 +143,7 @@ func displayURL(u *url.URL) string {
 	return untrusted.Line(c.String(), 300)
 }
 
-func parseFetchURL(raw string, filter DomainFilter) (*url.URL, error) {
+func parseFetchURL(raw string) (*url.URL, error) {
 	raw = strings.TrimSpace(raw)
 	if len(raw) > maxURLLen {
 		return nil, errors.New("the URL is too long")
@@ -186,10 +152,10 @@ func parseFetchURL(raw string, filter DomainFilter) (*url.URL, error) {
 	if err != nil {
 		return nil, errors.New("the URL is not valid")
 	}
-	return u, checkFetchURL(u, filter)
+	return u, checkFetchURL(u)
 }
 
-func checkFetchURL(u *url.URL, filter DomainFilter) error {
+func checkFetchURL(u *url.URL) error {
 	if u.Scheme != "http" && u.Scheme != "https" {
 		return errors.New("only http and https URLs can be fetched")
 	}
@@ -200,16 +166,13 @@ func checkFetchURL(u *url.URL, filter DomainFilter) error {
 	if host == "" || u.Opaque != "" || strings.ContainsAny(host, "%*\\") {
 		return errors.New("the URL has no valid host")
 	}
-	if !filter.Permits(host) {
-		return errors.New("this host is not allowed by the bot's domain settings")
-	}
 	return nil
 }
 
 // Fetch downloads target. Each connection (including redirect hops) is established only after the
 // resolved addresses were checked, requests carry no credentials or cookies, and every redirect
 // target passes the same URL and domain checks.
-func (f *Fetcher) Fetch(ctx context.Context, target *url.URL, filter DomainFilter) (Page, error) {
+func (f *Fetcher) Fetch(ctx context.Context, target *url.URL) (Page, error) {
 	timeout := f.Timeout
 	if timeout <= 0 {
 		timeout = defaultFetchTimeout
@@ -237,7 +200,7 @@ func (f *Fetcher) Fetch(ctx context.Context, target *url.URL, filter DomainFilte
 			if len(via) > maxRedirects {
 				return errors.New("too many redirects")
 			}
-			return checkFetchURL(next.URL, filter)
+			return checkFetchURL(next.URL)
 		},
 	}
 	resp, err := client.Do(req)

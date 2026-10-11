@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { LIMITS, TOOL_IDS, copyName, emptyToolSettings, fingerprint, formFromBot, formReducer, initialForm, parseBotExport, parseDomain, tabOfProblem, toInput, validate, type FormState } from "./botForm";
+import { LIMITS, TOOL_IDS, copyName, fingerprint, formFromBot, initialForm, parseBotExport, tabOfProblem, toInput, validate, type FormState } from "./botForm";
 import { bot, config } from "./testing";
 
 const valid = (over: Partial<FormState> = {}): FormState => ({ ...initialForm(), name: "Planner", ...over });
@@ -30,38 +30,17 @@ describe("validate", () => {
     expect(validate(valid({ maxToolCalls: "2.5" })).maxToolCalls).toBeDefined();
   });
 
-  it("checks tool parameters and domain list sizes", () => {
-    const tool = (patch: Partial<ReturnType<typeof emptyToolSettings>>) => ({ [TOOL_IDS.webSearch]: { ...emptyToolSettings(), ...patch } });
-    expect(validate(valid({ tools: tool({ maxResults: "5" }) }))).toEqual({});
-    expect(validate(valid({ tools: tool({ maxResults: "11" }) }))[`tool:${TOOL_IDS.webSearch}:maxResults`]).toBeDefined();
-    const many = Array.from({ length: 21 }, (_, i) => `site${i}.example.com`);
-    expect(validate(valid({ tools: tool({ allowed: many }) }))[`tool:${TOOL_IDS.webSearch}:allowed`]).toMatch(/20/);
-    expect(validate(valid({ tools: tool({ blocked: many }) }))[`tool:${TOOL_IDS.webSearch}:blocked`]).toMatch(/20/);
-    expect(validate(valid({ tools: { [TOOL_IDS.webFetch]: { ...emptyToolSettings(), maxContentTokens: "100001" } } }))[`tool:${TOOL_IDS.webFetch}:maxContentTokens`]).toBeDefined();
-  });
-
   it("maps problems to the tab that holds the field", () => {
     expect(tabOfProblem("name")).toBe("persona");
     expect(tabOfProblem("maxSteps")).toBe("persona");
-    expect(tabOfProblem("tool:web_search:allowed")).toBe("tools");
+    expect(tabOfProblem("mcpTools")).toBe("tools");
     expect(tabOfProblem("skills")).toBe("tools");
   });
 });
 
-describe("parseDomain", () => {
-  it("normalises valid host names", () => {
-    expect(parseDomain(" Example.COM. ")).toEqual({ ok: true, domain: "example.com" });
-    expect(parseDomain("docs.example.co.uk")).toMatchObject({ ok: true });
-  });
-
-  it.each(["", "localhost", "https://example.com", "example.com/path", "example.com:8080", "10.0.0.1", "exa mple.com", "-bad.example.com", "a..b.com", "user@example.com"])("rejects %j", (input) => {
-    expect(parseDomain(input).ok).toBe(false);
-  });
-});
-
 describe("toInput", () => {
-  it("creates with an empty id and sends no params for untouched tools", () => {
-    const form = valid({ model: "openrouter/gpt-x", tools: { [TOOL_IDS.datetime]: emptyToolSettings() } });
+  it("creates with an empty id and sends the enabled tools without params", () => {
+    const form = valid({ model: "openrouter/gpt-x", tools: [TOOL_IDS.datetime] });
     const input = toInput(form, "");
     expect(input).toMatchObject({ id: "", name: "Planner", provider: "openrouter", model: "gpt-x" });
     expect(input.config.tools).toEqual([{ id: "datetime" }]);
@@ -73,24 +52,22 @@ describe("toInput", () => {
     expect(toInput(valid({ model: "" }), "b1")).toMatchObject({ provider: "", model: "" });
   });
 
-  it("writes tool params under the daemon's names and carries unknown params through", () => {
-    const form = valid({
-      tools: {
-        [TOOL_IDS.webSearch]: { ...emptyToolSettings(), maxResults: "4", allowed: ["a.com"], blocked: ["b.com"], rest: { region: "eu" } },
-        [TOOL_IDS.webFetch]: { ...emptyToolSettings(), maxContentTokens: "2000" },
-      },
-    });
-    expect(toInput(form, "b1").config.tools).toEqual([
-      { id: "web_search", params: { region: "eu", max_results: 4, allowed_domains: ["a.com"], blocked_domains: ["b.com"] } },
-      { id: "web_fetch", params: { max_content_tokens: 2000 } },
-    ]);
+  it("starts a new bot with every built-in tool on", () => {
+    expect(initialForm().tools).toEqual(["web_search", "web_fetch", "datetime", "research"]);
+  });
+
+  it("drops tool params saved by older versions and the retired knowledge_search entry", () => {
+    const saved = bot("b1", { config: config({ tools: [{ id: "web_search", params: { max_results: 3, allowed_domains: ["a.com"] } }, { id: "knowledge_search" }, { id: "web_search" }] }) });
+    const form = formFromBot(saved);
+    expect(form.tools).toEqual(["web_search"]);
+    expect(toInput(form, "b1").config.tools).toEqual([{ id: "web_search" }]);
   });
 
   it("round-trips a saved bot", () => {
     const saved = bot("b1", {
       name: "Researcher", provider: "openrouter", model: "gpt-x", reasoning: "low",
       config: config({
-        tools: [{ id: "web_search", params: { max_results: 3, allowed_domains: ["a.com"] } }], mcpTools: ["srv/tool"], skills: ["s"],
+        tools: [{ id: "web_search" }], mcpTools: ["srv/tool"], skills: ["s"],
         memory: [{ scope: "user", read: true, write: false }], limits: { maxSteps: 5, maxToolCalls: 12 }, executive: true,
       }),
     });
@@ -99,14 +76,7 @@ describe("toInput", () => {
   });
 });
 
-describe("formReducer access", () => {
-  it("grants write together with read, and clearing read clears write", () => {
-    let form = formReducer(valid(), { type: "access", scope: "user", read: false, write: true });
-    expect(form.memory).toEqual([{ scope: "user", read: true, write: true }]);
-    form = formReducer(form, { type: "access", scope: "user", read: false, write: false });
-    expect(form.memory).toEqual([]);
-  });
-
+describe("formReducer", () => {
   it("detects unsaved changes independent of toggle order", () => {
     const a = valid({ skills: ["x", "y"] });
     expect(fingerprint(a)).toBe(fingerprint(valid({ skills: ["y", "x"] })));

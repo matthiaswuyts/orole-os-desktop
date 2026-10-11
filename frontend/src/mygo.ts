@@ -272,7 +272,10 @@ export interface BotLimits {
   maxToolCalls: number;
 }
 
-/** BotTool enables one built-in tool with optional parameters (e.g. allowed_domains). */
+/**
+ * BotTool enables one built-in tool. Params is kept for stored configs but ignored: the web tools run with
+ * fixed options (see tools.HostedParams).
+ */
 export interface BotTool {
   id: string;
   params?: Record<string, unknown>;
@@ -1523,6 +1526,8 @@ export interface MsgPart {
   status?: string;
   summary?: string;
   durationMs?: number;
+  /** delegation: id of the bot that was asked */
+  botId?: string;
   /** citation */
   url?: string;
   title?: string;
@@ -1538,6 +1543,8 @@ export interface MsgPart {
   choices?: Choice[];
   /** Hidden marks a text part the model reads but the UI never shows (the setup kickoff). */
   hidden?: boolean;
+  /** ui: Name is the component kind (see UIKinds) and Spec its validated JSON props. */
+  spec?: string;
 }
 
 export interface Mutation {
@@ -2220,6 +2227,13 @@ export interface SendRequest {
   text: string;
   attachmentIds: string[];
   mode: string;
+  /**
+   * Mentions are bot ids the user @mentioned. Each one answers this message in this conversation,
+   * with this conversation as context; the conversation's own bot then stays silent.
+   */
+  mentions?: string[];
+  /** Skills are skill names the user asked the answering bot to use. */
+  skills?: string[];
   /** idempotency key; a retried nonce returns the stored message */
   clientNonce: string;
 }
@@ -3759,6 +3773,13 @@ export const Applications = {
 
 /** Desktop forwards to the native lifecycle controller. It owns no durable state. */
 export const Desktop = {
+  /**
+   * OpenSettings opens the isolated settings window, or focuses it and switches to
+   * section when it is already open. An empty or unknown section shows the first.
+   */
+  openSettings(section: string): Promise<void> {
+    return call("Desktop.OpenSettings", section);
+  },
   ready(): Promise<DesktopNavigation> {
     return call("Desktop.Ready");
   },
@@ -3778,6 +3799,8 @@ export const events = {
   agentsRun: event<Run>("agents:run"),
   applicationsChanged: event<ApplicationRef>("applications:changed"),
   desktopNavigate: event<DesktopNavigation>("desktop:navigate"),
+  /** SettingsWindowSection asks an already-open settings window to show a section. */
+  settingsWindowSection: event<string>("settings-window:section"),
   /** TerminalOutput carries pty output; Data is base64. */
   terminalOutput: event<TerminalChunk>("terminal:output"),
   /** TerminalChanged fires when a terminal starts or exits. */
