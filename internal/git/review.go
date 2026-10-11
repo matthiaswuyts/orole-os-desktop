@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -378,24 +379,58 @@ func (p *reviewRepo) addDirtySubmoduleDiff(ctx context.Context, dir string, opti
 // DiffWorktree reviews all changes against base, including untracked files and
 // commits, without mutating the source index or executing repository commands.
 func DiffWorktree(ctx context.Context, dir, base string) (DiffResult, error) {
-	if !ValidRef(base) {
-		return DiffResult{}, ErrInvalidRef
-	}
-	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
-	defer cancel()
-	p, err := openReviewRepo(ctx, dir, true)
-	if err != nil {
-		return DiffResult{}, err
-	}
-	defer p.close()
-	if _, _, err := p.run(ctx, p.root, nil, "add", "-A", "--", "."); err != nil {
-		return DiffResult{}, err
-	}
-	out, truncated, err := p.run(ctx, p.root, nil, "diff", "--cached", "--no-color", "--no-ext-diff", "--no-textconv", "--ignore-submodules=dirty", "-M", "--src-prefix=a/", "--dst-prefix=b/", base, "--")
+	out, truncated, err := reviewDiff(ctx, dir, base, "--no-color", "--src-prefix=a/", "--dst-prefix=b/")
 	if err != nil {
 		return DiffResult{}, err
 	}
 	result := ParseDiff(string(out))
 	result.Truncated = truncated
 	return result, nil
+}
+
+// DiffStatWorktree counts what DiffWorktree would report (files changed, added and deleted
+// lines) without building or parsing the patch: `git diff --numstat` through the same isolated
+// review repository. Binary files count as changed files with no lines.
+func DiffStatWorktree(ctx context.Context, dir, base string) (files, additions, deletions int, err error) {
+	out, truncated, err := reviewDiff(ctx, dir, base, "--numstat")
+	if err != nil {
+		return 0, 0, 0, err
+	}
+	if truncated {
+		return 0, 0, 0, errors.New("git: diff statistics exceed output limit")
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		fields := strings.SplitN(line, "\t", 3)
+		if len(fields) != 3 {
+			continue
+		}
+		files++
+		if n, err := strconv.Atoi(fields[0]); err == nil { // "-" marks a binary file
+			additions += n
+		}
+		if n, err := strconv.Atoi(fields[1]); err == nil {
+			deletions += n
+		}
+	}
+	return files, additions, deletions, nil
+}
+
+// reviewDiff stages every change of dir (untracked files included) in a disposable review
+// repository and runs `git diff --cached` against base with extra appended.
+func reviewDiff(ctx context.Context, dir, base string, extra ...string) (out []byte, truncated bool, err error) {
+	if !ValidRef(base) {
+		return nil, false, ErrInvalidRef
+	}
+	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
+	p, err := openReviewRepo(ctx, dir, true)
+	if err != nil {
+		return nil, false, err
+	}
+	defer p.close()
+	if _, _, err := p.run(ctx, p.root, nil, "add", "-A", "--", "."); err != nil {
+		return nil, false, err
+	}
+	args := append([]string{"diff", "--cached", "--no-ext-diff", "--no-textconv", "--ignore-submodules=dirty", "-M"}, extra...)
+	return p.run(ctx, p.root, nil, append(args, base, "--")...)
 }

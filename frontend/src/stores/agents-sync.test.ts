@@ -4,7 +4,7 @@ import type { Session } from "@/mygo";
 const bridge = vi.hoisted(() => {
   const callbacks = new Map<string, Set<(value: unknown) => void>>();
   const event = (name: string) => ({ on: (callback: (value: unknown) => void) => { const set = callbacks.get(name) ?? new Set(); set.add(callback); callbacks.set(name, set); return () => { set.delete(callback); }; } });
-  return { callbacks, list: vi.fn(async (): Promise<Session[]> => []), runs: vi.fn(async () => []), events: { agentsUpdated: event("updated"), agentsRemoved: event("removed"), agentsRun: event("run"), daemonState: event("daemon") } };
+  return { callbacks, list: vi.fn(async (): Promise<Session[]> => []), runs: vi.fn(async () => []), events: { agentsUpdated: event("updated"), agentsDelta: event("delta"), agentsRemoved: event("removed"), agentsRun: event("run"), daemonState: event("daemon") } };
 });
 vi.mock("@/lib/backend", () => ({ inDesktop: true }));
 vi.mock("@/mygo", () => ({ Agents: { list: bridge.list, runs: bridge.runs }, events: bridge.events }));

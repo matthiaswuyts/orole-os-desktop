@@ -11,8 +11,12 @@ import (
 
 // Events for the Agent Dashboard and Review views.
 var (
-	// AgentUpdated fires whenever a session's state changes (status, activity, tail, counts).
+	// AgentUpdated fires when a session changes in a way the UI must replace wholesale (status,
+	// requests, queue, review, errors). Carries the full session.
 	AgentUpdated = mygo.NewEvent[agents.Session]("agents:updated")
+	// AgentDelta fires for the frequent display-only changes of a live session (activity, tail,
+	// last message, usage, diff counts); merge it into the held session.
+	AgentDelta = mygo.NewEvent[agents.SessionDelta]("agents:delta")
 	// AgentEvent carries one new entry of a session's history (message, tool use, permission request...).
 	AgentEvent = mygo.NewEvent[agents.Event]("agents:event")
 	// AgentRemoved fires when a session is deleted.
@@ -33,6 +37,11 @@ func forwardAgents(event string, data json.RawMessage) bool {
 		var s agents.Session
 		if json.Unmarshal(data, &s) == nil {
 			AgentUpdated.Broadcast(s)
+		}
+	case "agents.delta":
+		var d agents.SessionDelta
+		if json.Unmarshal(data, &d) == nil {
+			AgentDelta.Broadcast(d)
 		}
 	case "agents.event":
 		var e agents.Event
@@ -74,11 +83,30 @@ func (a Agents) Options(ctx context.Context, machine string) (agents.LaunchOptio
 	return out, err
 }
 
-// List returns every session, newest first.
+// agentListPage is how many sessions one agents.list call fetches.
+const agentListPage = 200
+
+// List returns every session, newest first, fetched a page at a time so no single IPC reply
+// or daemon query grows with the number of sessions.
 func (a Agents) List(ctx context.Context) ([]agents.Session, error) {
-	var out []agents.Session
-	err := a.L.call(ctx, "agents.list", struct{}{}, &out)
-	return out, err
+	out := []agents.Session{}
+	seen := map[string]bool{}
+	for offset := 0; ; {
+		var page []agents.Session
+		if err := a.L.call(ctx, "agents.list", map[string]int{"limit": agentListPage, "offset": offset}, &page); err != nil {
+			return nil, err
+		}
+		for _, s := range page { // a session created meanwhile shifts the next page by one
+			if !seen[s.ID] {
+				seen[s.ID] = true
+				out = append(out, s)
+			}
+		}
+		if len(page) < agentListPage {
+			return out, nil
+		}
+		offset += len(page)
+	}
 }
 
 // Get returns one session.
