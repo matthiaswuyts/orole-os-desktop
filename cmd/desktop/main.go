@@ -53,6 +53,7 @@ func main() {
 	mygo.Bind(app.Chat{L: link})
 	mygo.Bind(app.LLM{L: link})
 	mygo.Bind(app.Mail{L: link})
+	mygo.Bind(app.CLIRuntimes{L: link})
 	mygo.Bind(app.Drive{L: link})
 	mygo.Bind(app.Machines{L: link})
 	mygo.Bind(app.Applications{L: link})

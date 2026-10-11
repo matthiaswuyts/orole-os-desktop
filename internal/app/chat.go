@@ -6,6 +6,7 @@ import (
 
 	"github.com/egoist/mygo"
 	"github.com/rayorole/orole-os-desktop/internal/chat"
+	"github.com/rayorole/orole-os-desktop/internal/cliruntime"
 	"github.com/rayorole/orole-os-desktop/internal/llm"
 	"github.com/rayorole/orole-os-desktop/internal/llm/manifest"
 )
@@ -189,6 +190,31 @@ func (l LLM) Providers(ctx context.Context) ([]llm.ProviderStatus, error) {
 	err := l.L.call(ctx, "llm.providers.list", struct{}{}, &out)
 	return out, err
 }
+// CLIRuntimes is a stateless bridge to the Claude, ChatGPT (Codex) and Grok CLI runtimes: install state, version,
+// updates and sign-in. Credentials stay with the CLIs.
+type CLIRuntimes struct{ L *Link }
+
+func (c CLIRuntimes) List(ctx context.Context) ([]cliruntime.Status, error) {
+	var out []cliruntime.Status
+	err := c.L.call(ctx, "cli.providers.list", struct{}{}, &out)
+	return out, err
+}
+func (c CLIRuntimes) Install(ctx context.Context, id string) (cliruntime.Status, error) {
+	var out cliruntime.Status
+	err := c.L.call(ctx, "cli.providers.install", map[string]string{"id": id}, &out)
+	return out, err
+}
+func (c CLIRuntimes) Login(ctx context.Context, id string) (cliruntime.Status, error) {
+	var out cliruntime.Status
+	err := c.L.call(ctx, "cli.providers.login", map[string]string{"id": id}, &out)
+	return out, err
+}
+func (c CLIRuntimes) Logout(ctx context.Context, id string) (cliruntime.Status, error) {
+	var out cliruntime.Status
+	err := c.L.call(ctx, "cli.providers.logout", map[string]string{"id": id}, &out)
+	return out, err
+}
+
 func (l LLM) Connect(ctx context.Context, req llm.ConnectRequest) (llm.ProviderStatus, error) {
 	var out llm.ProviderStatus
 	err := l.L.call(ctx, "llm.providers.connect", req, &out)

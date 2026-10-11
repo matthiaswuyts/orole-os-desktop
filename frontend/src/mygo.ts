@@ -3687,6 +3687,25 @@ export const Mail = {
 export const Drive = {
   list(query: DriveQuery): Promise<DrivePage> {
     return call("Drive.List", query);
+/**
+ * CLIRuntimes is a stateless bridge to the Claude, ChatGPT (Codex) and Grok CLI runtimes: install state, version,
+ * updates and sign-in. Credentials stay with the CLIs.
+ */
+export const CLIRuntimes = {
+  install(id: string): Promise<CliruntimeStatus> {
+    return call("CLIRuntimes.Install", id);
+  },
+  list(): Promise<CliruntimeStatus[]> {
+    return call("CLIRuntimes.List");
+  },
+  login(id: string): Promise<CliruntimeStatus> {
+    return call("CLIRuntimes.Login", id);
+  },
+  logout(id: string): Promise<CliruntimeStatus> {
+    return call("CLIRuntimes.Logout", id);
+  },
+} as const;
+
   },
   preview(id: string): Promise<Preview> {
     return call("Drive.Preview", id);
