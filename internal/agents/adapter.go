@@ -49,6 +49,9 @@ type LaunchSpec struct {
 	Mode           Mode
 	Command        string // custom CLI command line
 	PermissionMode string
+	// AllowYolo lets a live structured conversation later switch to YOLO. Claude Code only
+	// accepts that switch when launched with it; the daemon sets it only while the YOLO setting is on.
+	AllowYolo bool
 	// Resume is the CLI session id to continue; NewAgentSessionID names a fresh one when the
 	// CLI lets us choose (Claude Code). Both empty = the CLI picks.
 	Resume            string

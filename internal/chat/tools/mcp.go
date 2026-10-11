@@ -31,36 +31,33 @@ type MCPClient interface {
 	InvokeChecked(ctx context.Context, id, tool string, args map[string]any, opts mcp.CallOptions) (*mcp.CallResult, error)
 }
 
-// MCPTools exposes the MCP tools a bot's allow-list names (BotConfig.MCPTools, "<serverId>/<tool>").
-// Calls go through mcp.Manager.InvokeChecked with the actor "bot:<id>", so Orole's policy engine
-// decides every call and approvals appear in the normal approval UI; a denied call never reaches
-// the server. Results are untrusted.
+// MCPTools exposes the tools of the MCP servers (integrations) a bot was given (BotConfig.MCPServers):
+// every tool of each connected server, except the ones the user set to "deny" in the server's own
+// tool permissions. Calls go through mcp.Manager.InvokeChecked with the actor "bot:<id>", so Orole's
+// policy engine decides every call and approvals appear in the normal approval UI; a denied call
+// never reaches the server. Results are untrusted.
 type MCPTools struct {
 	Client MCPClient
 }
 
-// mcpEntry is one allow-list entry with its stable function name.
+// maxBotMCPTools bounds the tools offered to one model call; providers reject far fewer than a large
+// server (Vercel has well over a hundred) can list. The user prunes with per-tool permissions.
+const maxBotMCPTools = 128
+
+// mcpEntry is one callable tool with its stable function name.
 type mcpEntry struct {
 	Server, Tool string
+	ServerName   string
+	Info         *mcp.ToolInfo
 	Name         string
 }
 
 func (*MCPTools) ID() string { return "mcp" }
 
-// mcpNames maps the allow-list to function names ("mcp__<server>__<tool>"). The mapping
-// depends on the list alone, so Specs and Call always agree. Names are limited to [A-Za-z0-9_-] and
-// 64 characters; names that would collide (or were shortened) get a short hash of "server/tool".
-func mcpNames(allow []string) []mcpEntry {
-	var entries []mcpEntry
-	seen := map[string]bool{}
-	for _, a := range allow {
-		server, tool, ok := strings.Cut(a, "/")
-		if !ok || server == "" || tool == "" || seen[a] {
-			continue
-		}
-		seen[a] = true
-		entries = append(entries, mcpEntry{Server: server, Tool: tool})
-	}
+// nameEntries gives each entry its function name ("mcp__<server>__<tool>"). The mapping depends on the
+// list alone, so Specs and Call always agree. Names are limited to [A-Za-z0-9_-] and 64 characters;
+// names that would collide (or were shortened) get a short hash of "server/tool".
+func nameEntries(entries []mcpEntry) {
 	base := make([]string, len(entries))
 	count := map[string]int{}
 	for i, e := range entries {
@@ -84,7 +81,6 @@ func mcpNames(allow []string) []mcpEntry {
 		used[name] = true
 		entries[i].Name = name
 	}
-	return entries
 }
 
 func sanitizeName(s string) string {
@@ -100,16 +96,13 @@ func sanitizeName(s string) string {
 	return b.String()
 }
 
-func (t *MCPTools) Specs(bot chat.Bot, caps llm.Caps) []llm.ToolSpec {
-	if t.Client == nil || !caps.Tools || len(bot.Config.MCPTools) == 0 {
+// toolsOf lists what the bot may call right now: the tools of its connected, enabled servers minus the
+// ones set to "deny". It reads cached state, so it never blocks a run for long.
+func (t *MCPTools) toolsOf(ctx context.Context, bot chat.Bot) []mcpEntry {
+	if t.Client == nil || len(bot.Config.MCPServers) == 0 {
 		return nil
 	}
-	entries := mcpNames(bot.Config.MCPTools)
-	if len(entries) == 0 {
-		return nil
-	}
-	// Specs has no context; the lookups read cached state and must never hang a run.
-	ctx, cancel := context.WithTimeout(context.Background(), mcpLookupLimit)
+	ctx, cancel := context.WithTimeout(ctx, mcpLookupLimit)
 	defer cancel()
 	servers, err := t.Client.List(ctx)
 	if err != nil {
@@ -121,33 +114,40 @@ func (t *MCPTools) Specs(bot chat.Bot, caps llm.Caps) []llm.ToolSpec {
 			live[s.ID] = s
 		}
 	}
-	catalogs := map[string]*mcp.Catalog{}
-	var specs []llm.ToolSpec
-	for _, e := range entries {
-		srv, ok := live[e.Server]
+	var entries []mcpEntry
+	for _, id := range bot.Config.MCPServers {
+		srv, ok := live[id]
 		if !ok {
 			continue
 		}
-		cat, ok := catalogs[e.Server]
-		if !ok {
-			if cat, err = t.Client.Catalog(ctx, e.Server); err != nil {
-				cat = nil
-			}
-			catalogs[e.Server] = cat
-		}
-		if cat == nil {
+		cat, err := t.Client.Catalog(ctx, id)
+		if err != nil || cat == nil {
 			continue
 		}
 		for i := range cat.Tools {
-			if ti := &cat.Tools[i]; ti.Name == e.Tool {
-				specs = append(specs, llm.ToolSpec{
-					Name:        e.Name,
-					Description: mcpDescription(srv.Name, ti),
-					Schema:      objectSchema(ti.InputSchema),
-				})
-				break
+			if ti := &cat.Tools[i]; ti.Permission != "deny" {
+				entries = append(entries, mcpEntry{Server: id, Tool: ti.Name, ServerName: srv.Name, Info: ti})
 			}
 		}
+	}
+	if len(entries) > maxBotMCPTools {
+		entries = entries[:maxBotMCPTools]
+	}
+	nameEntries(entries)
+	return entries
+}
+
+func (t *MCPTools) Specs(bot chat.Bot, caps llm.Caps) []llm.ToolSpec {
+	if !caps.Tools {
+		return nil
+	}
+	var specs []llm.ToolSpec
+	for _, e := range t.toolsOf(context.Background(), bot) {
+		specs = append(specs, llm.ToolSpec{
+			Name:        e.Name,
+			Description: mcpDescription(e.ServerName, e.Info),
+			Schema:      objectSchema(e.Info.InputSchema),
+		})
 	}
 	return specs
 }
@@ -177,7 +177,7 @@ func (t *MCPTools) Call(ctx context.Context, rc chat.RunContext, name string, ar
 		return errResult("MCP is not available")
 	}
 	var entry *mcpEntry
-	entries := mcpNames(rc.Bot.Config.MCPTools)
+	entries := t.toolsOf(ctx, rc.Bot)
 	for i := range entries {
 		if entries[i].Name == name {
 			entry = &entries[i]

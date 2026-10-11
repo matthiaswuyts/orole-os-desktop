@@ -9,6 +9,7 @@ import type { Machine } from "@/mygo";
 import { PreviewCard, PreviewCardPopup, PreviewCardTrigger } from "@/components/ui/preview-card";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "@/components/ui/tooltip";
 import { Meter, MeterTrack, MeterIndicator } from "@/components/ui/meter";
+import { ArchChip, OsLogo } from "./HostLogo";
 
 const footerControl = "inline-flex h-6 shrink-0 items-center gap-1.5 rounded px-1 outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring";
 const bytes = new Intl.NumberFormat(undefined, { maximumFractionDigits: 1 });
@@ -32,16 +33,28 @@ function BoxStatus({ machine, observation, now, connected }: { machine: Machine;
         <span className="max-w-28 truncate">{machine.name}</span>
       </PreviewCardTrigger>
       <PreviewCardPopup align="end">
-        <div className="flex min-w-0 flex-col gap-2">
-          <p className="truncate font-medium">{machine.name}</p>
-          <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs">
-            <dt className="text-muted-foreground">Hostname</dt><dd className="truncate">{health?.hostname || machine.address || "Not observed"}</dd>
-            <dt className="text-muted-foreground">OS</dt><dd>{health?.os || machine.os}</dd>
-            <dt className="text-muted-foreground">Reachability</dt><dd>{status}</dd>
-            <dt className="text-muted-foreground">Checked</dt><dd>{observation ? new Date(health?.checkedAt || observation.attemptedAt).toLocaleTimeString() : "Not observed"}</dd>
-          </dl>
-          <p className="text-xs text-muted-foreground">{memory}</p>
-          <p className="text-xs text-muted-foreground">{observation?.error || health?.metricError || health?.detail || "Waiting for a host observation."}</p>
+        <div className="flex w-64 min-w-0 flex-col gap-2.5">
+          <div className="flex min-w-0 items-center gap-2">
+            <OsLogo os={health?.os || machine.os} className="size-5" />
+            <div className="flex min-w-0 flex-1 flex-col">
+              <p className="truncate font-medium leading-tight">{machine.name}</p>
+              <p className="truncate text-muted-foreground text-xs">{health?.hostname || machine.address || "Not observed yet"}</p>
+            </div>
+            <ArchChip architecture={health?.architecture ?? ""} />
+          </div>
+          <div className="flex items-center gap-2 text-xs">
+            <span aria-hidden="true" className={cn("size-1.5 rounded-full", status === "online" ? "bg-success" : status === "error" ? "bg-destructive" : "bg-muted-foreground/60")} />
+            <span className="capitalize">{status}</span>
+            {observation && <span className="ms-auto text-muted-foreground">{new Date(health?.checkedAt || observation.attemptedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</span>}
+          </div>
+          {ready && percent !== null && (
+            <div className="flex items-center gap-2 text-xs">
+              <span className="text-muted-foreground">Memory</span>
+              <Meter value={percent} aria-label={`${machine.name} physical memory used`} className="flex-1"><MeterTrack className="h-1"><MeterIndicator /></MeterTrack></Meter>
+              <span className="tabular-nums">{memoryBytes(used)} / {memoryBytes(health.memoryTotalBytes)}</span>
+            </div>
+          )}
+          {(observation?.error || health?.metricError) && <p className="text-destructive-foreground text-xs">{observation?.error || health?.metricError}</p>}
         </div>
       </PreviewCardPopup>
     </PreviewCard>
@@ -71,7 +84,7 @@ export function StatusBar() {
   const unknown = machines.filter((machine) => boxStatus(observations[machine.id], now) === "unknown").length;
   return <footer aria-label="System status" className="flex h-7 min-w-0 shrink-0 items-center gap-2 border-t bg-sidebar px-3 font-mono text-xs text-muted-foreground">
     <span className="inline-flex shrink-0 items-center gap-1.5">
-      <span aria-hidden="true" className={cn("size-1.5 rounded-full border border-current", connected && "bg-current", link === "offline" && "text-destructive-foreground")} />
+      <span aria-hidden="true" data-state={connected ? "connected" : link} className={cn("size-1.5 rounded-full border border-current", connected && "border-success bg-success", link === "offline" && "text-destructive-foreground")} />
       daemon {connected && health ? `v${health.version}` : link}
     </span>
     <Tooltip>
@@ -81,7 +94,7 @@ export function StatusBar() {
       <TooltipPopup>Running agent tasks{counts.needsYou > 0 ? `; ${counts.needsYou} need your attention` : ""}</TooltipPopup>
     </Tooltip>
     <Tooltip>
-      <TooltipTrigger render={<button type="button" />} className={footerControl} onClick={() => useUI.getState().openSettings("mcp")}>
+      <TooltipTrigger render={<button type="button" />} className={footerControl} onClick={() => useUI.getState().openSettings("integrations")}>
         mcp <span className="tabular-nums">{connected && mcp && !mcpError ? `${mcp.filter((server) => server.status === "connected").length}/${mcp.length}` : "—"}</span>
       </TooltipTrigger>
       <TooltipPopup>{mcpError || "Connected / configured MCP servers"}</TooltipPopup>

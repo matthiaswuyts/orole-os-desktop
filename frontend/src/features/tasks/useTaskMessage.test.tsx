@@ -14,7 +14,7 @@ import { TaskAttachmentButton, TaskAttachmentPreviews, TaskModelPicker } from ".
 
 const harness: HarnessOption = {
   id: "codex", name: "Codex", available: true, executable: "codex", version: "1", reasoning: ["low", "high"], customModel: true,
-  modes: ["structured"], structured: true, interactive: false, unavailableReason: "",
+  modes: ["structured"], structured: true, interactive: false, unavailableReason: "", permissionModes: [],
   models: [
     { id: "model-a", name: "Model A", reasoning: ["low", "high"], default: true },
     { id: "model-b", name: "Model B", reasoning: ["low", "medium"], default: false },
@@ -75,7 +75,7 @@ it("captures the displayed settings even when an earlier queued message selected
 });
 
 it("preserves the explicitly labelled fresh-task flow for an ended remote process", async () => {
-  const remote = session({ mode: "process", machine: "remote", live: false, status: "done", followup: { attachments: false, model: false, reasoning: false, reason: "Remote process" } });
+  const remote = session({ mode: "process", machine: "remote", live: false, status: "done", followup: { attachments: false, model: false, reasoning: false, reason: "Remote process", permissionMode: false, permissionModeRestarts: false, permissionModeReason: "Remote process" } });
   api.prompt.mockResolvedValue(remote);
   const { result } = renderHook(() => useTaskMessage(remote));
   await act(async () => result.current.send("new task"));
@@ -124,7 +124,7 @@ function Controls({ value }: { value: Session }) {
 }
 
 it("locks the provider and exposes disabled model controls with the daemon's explanation", async () => {
-  render(<Controls value={session({ followup: { attachments: false, model: false, reasoning: false, reason: "This live conversation cannot change model or reasoning." } })} />);
+  render(<Controls value={session({ followup: { attachments: false, model: false, reasoning: false, reason: "This live conversation cannot change model or reasoning.", permissionMode: true, permissionModeRestarts: false, permissionModeReason: "" } })} />);
   expect(screen.getByRole("button", { name: "Add attachment" })).toBeDisabled();
   fireEvent.click(screen.getByRole("button", { name: "Model and reasoning" }));
   expect(await screen.findByText("This live conversation cannot change model or reasoning.")).toBeInTheDocument();
