@@ -6,6 +6,7 @@ import (
 
 	"github.com/egoist/mygo"
 	"github.com/rayorole/orole-os-desktop/internal/chat"
+	"github.com/rayorole/orole-os-desktop/internal/cliruntime"
 	"github.com/rayorole/orole-os-desktop/internal/llm"
 	"github.com/rayorole/orole-os-desktop/internal/llm/manifest"
 )
@@ -92,8 +93,20 @@ func (c Chat) Send(ctx context.Context, req chat.SendRequest) (chat.Message, err
 	err := c.L.call(ctx, "chat.send", req, &out)
 	return out, err
 }
+func (c Chat) PinBot(ctx context.Context, req chat.PinRequest) error {
+	return c.L.call(ctx, "chat.bots.pin", req, nil)
+}
 func (c Chat) Cancel(ctx context.Context, botID string) error {
 	return c.L.call(ctx, "chat.cancel", chat.BotRef{ID: botID}, nil)
+}
+func (c Chat) PauseQueue(ctx context.Context, botID string) error {
+	return c.L.call(ctx, "chat.queue.pause", chat.BotRef{ID: botID}, nil)
+}
+func (c Chat) ResumeQueue(ctx context.Context, botID string) error {
+	return c.L.call(ctx, "chat.queue.resume", chat.BotRef{ID: botID}, nil)
+}
+func (c Chat) CancelQueued(ctx context.Context, req chat.QueueItemRef) error {
+	return c.L.call(ctx, "chat.queue.cancel", req, nil)
 }
 func (c Chat) Regenerate(ctx context.Context, req chat.RegenerateRequest) error {
 	return c.L.call(ctx, "chat.regenerate", req, nil)
@@ -171,13 +184,38 @@ func (c Chat) AddKnowledge(ctx context.Context, req chat.KnowledgeAdd) (chat.Kno
 func (c Chat) RemoveKnowledge(ctx context.Context, req chat.KnowledgeRef) error {
 	return c.L.call(ctx, "chat.knowledge.remove", req, nil)
 }
-func (c Chat) SkillProposals(ctx context.Context, botID string) ([]chat.SkillProposal, error) {
-	var out []chat.SkillProposal
-	err := c.L.call(ctx, "chat.skills.pending.list", chat.BotRef{ID: botID}, &out)
+func (c Chat) SkillProposal(ctx context.Context, id string) (chat.SkillProposal, error) {
+	var out chat.SkillProposal
+	err := c.L.call(ctx, "chat.skills.pending.get", chat.SkillRef{ID: id}, &out)
 	return out, err
 }
 func (c Chat) ResolveSkill(ctx context.Context, req chat.SkillResolve) error {
 	return c.L.call(ctx, "chat.skills.pending.resolve", req, nil)
+}
+
+// CLIRuntimes is a stateless bridge to the Claude, ChatGPT (Codex) and Grok CLI runtimes: install state, version,
+// updates and sign-in. Credentials stay with the CLIs.
+type CLIRuntimes struct{ L *Link }
+
+func (c CLIRuntimes) List(ctx context.Context) ([]cliruntime.Status, error) {
+	var out []cliruntime.Status
+	err := c.L.call(ctx, "cli.providers.list", struct{}{}, &out)
+	return out, err
+}
+func (c CLIRuntimes) Install(ctx context.Context, id string) (cliruntime.Status, error) {
+	var out cliruntime.Status
+	err := c.L.call(ctx, "cli.providers.install", map[string]string{"id": id}, &out)
+	return out, err
+}
+func (c CLIRuntimes) Login(ctx context.Context, id string) (cliruntime.Status, error) {
+	var out cliruntime.Status
+	err := c.L.call(ctx, "cli.providers.login", map[string]string{"id": id}, &out)
+	return out, err
+}
+func (c CLIRuntimes) Logout(ctx context.Context, id string) (cliruntime.Status, error) {
+	var out cliruntime.Status
+	err := c.L.call(ctx, "cli.providers.logout", map[string]string{"id": id}, &out)
+	return out, err
 }
 
 // LLM is a stateless bridge to the daemon's provider manager. API keys are sent once on connect

@@ -15,7 +15,9 @@ import { CopyButton } from "./parts/Sources";
 import { SOURCE_KEY } from "./runtime/convert";
 import { useChatRuntime } from "./runtime/useChatRuntime";
 import { ThreadSearch } from "./ThreadSearch";
-import { targetsFor } from "./mentions";
+import { QueuePanel } from "./QueuePanel";
+import { SelectionMenu } from "./SelectionMenu";
+import { targetsFor, useRegistrySkills } from "./mentions";
 
 /** How close to the top (px) the reader gets before the next older page is fetched. */
 const LOAD_OLDER_AT = 160;
@@ -30,8 +32,10 @@ function Turn({ bot }: { bot: Bot }) {
   const isLast = useAuiState((s) => s.message.isLast);
   const running = useBotRunning(bot.id);
   const bots = useChat((s) => s.bots);
-  const targets = useMemo(() => targetsFor(bots, bot.id), [bots, bot.id]);
-  if (!isDaemonMessage(raw) || (raw.role === "user" && !hasVisibleParts(raw.parts))) return null;
+  const builtin = useRegistrySkills((s) => s.builtin);
+  const targets = useMemo(() => targetsFor(bots, bot.id, builtin), [bots, bot.id, builtin]);
+  // A message still waiting for the bot is listed in the queue above the composer, not in the thread.
+  if (!isDaemonMessage(raw) || (raw.role === "user" && !hasVisibleParts(raw.parts)) || (raw.role === "user" && raw.author === "user" && raw.status === "pending")) return null;
   const assistant = raw.role !== "user";
   const settled = raw.status !== "running" && raw.status !== "pending";
   const canRegenerate = assistant && isLast && !running;
@@ -49,7 +53,6 @@ function EmptyConversation({ bot }: { bot: Bot }) {
   return <div data-slot="conversation-empty" className="mx-auto my-auto flex max-w-md flex-col items-center gap-2 py-12 text-center">
     <BotAvatar name={bot.name} avatar={bot.avatar} className="size-14 text-xl" />
     <h3 className="text-base font-semibold">{bot.name}</h3>
-    {bot.description && <p className="selectable text-sm text-muted-foreground">{bot.description}</p>}
     <p className="text-sm text-muted-foreground">Say hello to start the conversation.</p>
   </div>;
 }
@@ -114,10 +117,11 @@ function Thread({ bot }: { bot: Bot }) {
   return <>
     <ThreadPrimitive.Root ref={thread} className="relative flex min-h-0 flex-1 flex-col">
       {searching && <ThreadSearch messages={conversation.messages} scope={thread} onClose={closeSearch} />}
+      <SelectionMenu botId={bot.id} root={thread} />
       <ThreadPrimitive.Viewport ref={viewport} role="region" aria-label={`Conversation with ${bot.name}`} tabIndex={0}
         onScroll={(event) => { if (event.currentTarget.scrollTop < LOAD_OLDER_AT) loadOlder(); }}
         className="flex min-h-0 flex-1 flex-col overflow-y-auto outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring">
-        <div className="mx-auto flex min-h-full w-full max-w-3xl shrink-0 flex-col gap-5 px-4 pt-6 pb-12">
+        <div className="mx-auto flex min-h-full w-full max-w-3xl shrink-0 flex-col gap-3 px-4 pt-6 pb-12">
           {!conversation.loaded && !conversation.error && <p role="status" className="m-auto text-sm text-muted-foreground">Loading conversation…</p>}
           {!conversation.loaded && conversation.error && <div role="alert" className="m-auto flex flex-col items-center gap-2 text-center text-sm">
             <p className="selectable text-destructive-foreground">Could not load this conversation: {conversation.error}</p>
@@ -143,6 +147,7 @@ function Thread({ bot }: { bot: Bot }) {
       <Button type="button" variant="ghost" size="icon-xs" aria-label="Dismiss" onClick={() => useChatMessages.getState().dismissProblem(bot.id)}><XIcon aria-hidden /></Button>
     </div>}
     <LiveStatus running={running} />
+    <QueuePanel bot={bot} />
     <Composer bot={bot} />
   </>;
 }

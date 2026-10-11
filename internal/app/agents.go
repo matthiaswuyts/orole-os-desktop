@@ -129,6 +129,15 @@ func (a Agents) Prompt(ctx context.Context, id, text string) (agents.Session, er
 	return out, err
 }
 
+// SetPermissionMode switches a task to manual, auto or yolo. confirmYolo must be true for yolo; the
+// daemon enforces it and the setting that can turn YOLO off. Claude Code switches live, Codex from
+// its next turn, Oh My Pi by resuming its conversation while idle; terminal and remote tasks refuse.
+func (a Agents) SetPermissionMode(ctx context.Context, id, mode string, confirmYolo bool) (agents.Session, error) {
+	var out agents.Session
+	err := a.L.call(ctx, "agents.setPermissionMode", map[string]any{"id": id, "mode": mode, "confirmYolo": confirmYolo}, &out)
+	return out, err
+}
+
 // Approve answers a pending permission request. The daemon decides and audits; this only relays.
 func (a Agents) Approve(ctx context.Context, id, requestID string, allow bool, reason string) error {
 	return a.L.call(ctx, "agents.approve", map[string]any{"id": id, "requestId": requestID, "allow": allow, "reason": reason}, nil)

@@ -27,29 +27,27 @@ export function stepSearchHit(current: number, delta: number, length: number): n
   return length ? ((current + delta) % length + length) % length : -1;
 }
 
-export function ConversationSearch({ query, hits, activeIndex, onQueryChange, onStep, inputRef }: {
+export function ConversationSearch({ query, hits, activeIndex, onQueryChange, onStep, onClose, inputRef }: {
   query: string; hits: readonly SearchHit[]; activeIndex: number;
-  onQueryChange: (query: string) => void; onStep: (delta: number) => void; inputRef?: Ref<HTMLInputElement>;
+  onQueryChange: (query: string) => void; onStep: (delta: number) => void; onClose: () => void; inputRef?: Ref<HTMLInputElement>;
 }) {
   const scopeId = useId();
   const active = hits[activeIndex];
-  return <div data-slot="conversation-search" className="shrink-0 border-b px-5 py-2">
-    <div className="mx-auto max-w-4xl space-y-1.5">
-      <div className="flex items-center gap-1.5">
-        <Search aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
-        <Input nativeInput ref={inputRef} size="sm" type="search" aria-label="Find in conversation" aria-describedby={scopeId} placeholder="Find in conversation" value={query} onChange={(event) => onQueryChange(event.target.value)} onKeyDown={(event) => {
-          if (event.key === "Enter") { event.preventDefault(); onStep(event.shiftKey ? -1 : 1); }
-          if (event.key === "Escape") { event.preventDefault(); onQueryChange(""); }
-        }} />
-        <span role="status" className="min-w-12 shrink-0 text-center text-xs tabular-nums text-muted-foreground">{query.trim() ? `${active ? activeIndex + 1 : 0}/${hits.length}` : ""}</span>
-        <Button size="icon-sm" variant="ghost" aria-label="Previous match" disabled={!hits.length} onClick={() => onStep(-1)}><ArrowUp aria-hidden /></Button>
-        <Button size="icon-sm" variant="ghost" aria-label="Next match" disabled={!hits.length} onClick={() => onStep(1)}><ArrowDown aria-hidden /></Button>
-        {query && <Button size="icon-sm" variant="ghost" aria-label="Clear conversation search" onClick={() => onQueryChange("")}><X aria-hidden /></Button>}
-      </div>
-      <p id={scopeId} className="text-xs text-muted-foreground">Searches loaded user and assistant messages only. Load earlier messages to search more history.</p>
-      {query.trim() && !hits.length && <p className="text-xs text-muted-foreground">No matches in loaded messages.</p>}
-      {active && <p className="truncate text-xs" aria-label="Active search match">{active.before}<mark className="rounded-sm bg-primary/20 text-foreground">{active.match}</mark>{active.after}</p>}
+  return <div data-slot="conversation-search" className="absolute top-3 right-5 z-10 w-[min(24rem,calc(100%-2.5rem))] rounded-md border bg-background p-2">
+    <div className="flex items-center gap-1.5">
+      <Search aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
+      <Input nativeInput ref={inputRef} size="sm" type="search" aria-label="Find in conversation" aria-describedby={scopeId} placeholder="Find in conversation" value={query} onChange={(event) => onQueryChange(event.target.value)} onKeyDown={(event) => {
+        if (event.key === "Enter") { event.preventDefault(); onStep(event.shiftKey ? -1 : 1); }
+        if (event.key === "Escape") { event.preventDefault(); onClose(); }
+      }} />
+      <span role="status" className="min-w-12 shrink-0 text-center text-xs tabular-nums text-muted-foreground">{query.trim() ? `${active ? activeIndex + 1 : 0}/${hits.length}` : ""}</span>
+      <Button size="icon-sm" variant="ghost" aria-label="Previous match" disabled={!hits.length} onClick={() => onStep(-1)}><ArrowUp aria-hidden /></Button>
+      <Button size="icon-sm" variant="ghost" aria-label="Next match" disabled={!hits.length} onClick={() => onStep(1)}><ArrowDown aria-hidden /></Button>
+      <Button size="icon-sm" variant="ghost" aria-label="Close conversation search" onClick={onClose}><X aria-hidden /></Button>
     </div>
+    <p id={scopeId} className="mt-1.5 text-xs text-muted-foreground">Searches loaded user and assistant messages only.</p>
+    {query.trim() && !hits.length && <p className="mt-1 text-xs text-muted-foreground">No matches in loaded messages.</p>}
+    {active && <p className="mt-1 truncate text-xs" aria-label="Active search match">{active.before}<mark className="rounded-sm bg-primary/20 text-foreground">{active.match}</mark>{active.after}</p>}
   </div>;
 }
 

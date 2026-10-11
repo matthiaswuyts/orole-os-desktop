@@ -92,7 +92,7 @@ export function SetupWidget({ onRemove }: WidgetProps) {
     { label: "Local daemon running", done: !!health },
     { label: "Connect GitHub", done: false, open: () => openSettings("integrations", "github") },
     { label: "Add skills", done: false, open: () => openSettings("skills") },
-    { label: "Add MCP servers", done: false, open: () => openSettings("mcp") },
+    { label: "Add integrations", done: false, open: () => openSettings("integrations") },
     { label: "Start a task", done: false, open: () => setView("agents") },
   ];
   return (
