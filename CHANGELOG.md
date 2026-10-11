@@ -118,6 +118,11 @@ notes. See `docs/development/updates.md`.
 - Chat: a streaming reply no longer re-renders the whole conversation. The rail's preview of a reply
   updates at most once a second, the open conversation ignores preview and run-flag changes, bots and
   the run state are read once per thread, and composer drafts live in their own store.
+- Window focus now triggers one shared refresh, at most every 30 seconds, instead of every store reloading
+  on every focus. Chat messages refresh only the open conversation, and projects load their worktrees
+  only while a view that shows them is open (cached for a minute), not on every project reload.
+- Daemon health polling no longer notifies the UI when the status is unchanged, and the status bar,
+  sidebar and shell subscribe to the fields they show, so the 5 second poll does not re-render them.
 
 ### Fixed
 - Terminals: a program that floods its terminal (`cat` of a huge file, a runaway build log) no longer gets

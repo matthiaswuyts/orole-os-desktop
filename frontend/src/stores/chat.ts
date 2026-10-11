@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { useStoreWithEqualityFn } from "zustand/traditional";
 import { Chat, events, type Bot, type Message, type MessagePreview } from "@/mygo";
 import { inDesktop } from "@/lib/backend";
+import { onFocusRefresh } from "@/lib/focus";
 import { useDaemon } from "@/stores/daemon";
 import { useUI } from "@/stores/ui";
 
@@ -184,9 +185,9 @@ export const useChat = create<ChatState>((set, get) => ({
           set({ ready: false, loading: false, error: "The daemon is offline. Reconnect to chat with your bots." });
         }
       });
-      window.addEventListener("focus", refresh);
+      const offFocus = onFocusRefresh(refresh);
       refresh();
-      stop = () => { offRun(); offMessage(); offBot(); offDaemon(); window.removeEventListener("focus", refresh); dropPreviews(); };
+      stop = () => { offRun(); offMessage(); offBot(); offDaemon(); offFocus(); dropPreviews(); };
     }
     let stopped = false;
     return () => {

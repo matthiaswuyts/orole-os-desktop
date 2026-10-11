@@ -14,6 +14,11 @@ interface DaemonState {
   refresh: () => Promise<void>;
 }
 
+/** The next state for an offline observation; the same state object (so subscribers are not notified) when it changes nothing but the timestamp. */
+function offline(state: DaemonState, error: string): DaemonState | Pick<DaemonState, "link" | "error" | "refreshedAt"> {
+  return state.link === "offline" && state.error === error ? state : { link: "offline", error, refreshedAt: Date.now() };
+}
+
 export const useDaemon = create<DaemonState>((set) => ({
   link: inDesktop ? "unknown" : "preview",
   health: null,
@@ -24,9 +29,12 @@ export const useDaemon = create<DaemonState>((set) => ({
     if (!inDesktop) return;
     try {
       const health = await Daemon.health();
-      set((state) => ({ link: "connected", health, error: null, refreshedAt: Date.now(), connectEpoch: state.link === "connected" ? state.connectEpoch : state.connectEpoch + 1 }));
+      set((state) => {
+        if (state.link === "connected" && state.error === null && state.health && (Object.keys(health) as (keyof Health)[]).every((key) => state.health![key] === health[key])) return state;
+        return { link: "connected", health, error: null, refreshedAt: Date.now(), connectEpoch: state.link === "connected" ? state.connectEpoch : state.connectEpoch + 1 };
+      });
     } catch (e) {
-      set({ link: "offline", error: e instanceof Error ? e.message : String(e), refreshedAt: Date.now() });
+      set((state) => offline(state, e instanceof Error ? e.message : String(e)));
     }
   },
 }));
@@ -49,7 +57,7 @@ export function startDaemonPolling(): () => void {
   document.addEventListener("visibilitychange", onVis);
   const off = events.daemonState.on((l) => {
     if (l.connected) void s().refresh();
-    else useDaemon.setState({ link: "offline", error: l.error ?? "disconnected" });
+    else useDaemon.setState((state) => offline(state, l.error ?? "disconnected"));
   });
   return () => {
     clearInterval(t);

@@ -18,7 +18,12 @@ const loadPalette = () => import("./CommandPalette").then((m) => ({ default: m.C
 const CommandPalette = lazy(loadPalette);
 
 export function AppShell({ children }: { children: ReactNode }) {
-  const { setFocused, sidebarOpen, toggleSidebar, view, paletteOpen, setPalette } = useUI();
+  const setFocused = useUI((s) => s.setFocused);
+  const sidebarOpen = useUI((s) => s.sidebarOpen);
+  const toggleSidebar = useUI((s) => s.toggleSidebar);
+  const view = useUI((s) => s.view);
+  const paletteOpen = useUI((s) => s.paletteOpen);
+  const setPalette = useUI((s) => s.setPalette);
   // The palette lives in its own chunk: mounted on first open, then kept so the close animation and state survive.
   const [paletteMounted, setPaletteMounted] = useState(false);
   if (paletteOpen && !paletteMounted) setPaletteMounted(true);
