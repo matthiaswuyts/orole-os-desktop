@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/rayorole/orole-os-desktop/internal/automations/expr"
 	"github.com/rayorole/orole-os-desktop/internal/events"
 	"time"
 )
@@ -14,7 +13,13 @@ func (e *Engine) loop() {
 	sub := e.bus.Subscribe("*", 256)
 	defer sub.Close()
 	e.scheduleTick()
+	// One timer drives the scheduler. It is re-armed only after it fires, so a
+	// burst of events or wake-ups can never push the next tick back.
+	var tick <-chan time.Time
 	for {
+		if tick == nil {
+			tick = e.clock.After(time.Second)
+		}
 		select {
 		case <-e.ctx.Done():
 			return
@@ -22,83 +27,73 @@ func (e *Engine) loop() {
 			e.event(ev)
 		case <-e.wakeC:
 			e.scheduleTick()
-		case <-e.clock.After(time.Second):
+		case <-tick:
+			tick = nil
 			e.scheduleTick()
 		}
 	}
 }
 func (e *Engine) event(ev events.Event) {
-	list, err := e.List(e.ctx)
+	snap, err := e.snapshot(e.ctx)
 	if err != nil {
 		return
 	}
+	candidates := snap.matching(ev.Topic)
+	if len(candidates) == 0 {
+		return
+	}
 	env := map[string]any{"event": map[string]any{"topic": ev.Topic, "data": ev.Data, "time": ev.Time.Format(time.RFC3339)}}
-	for _, item := range list {
-		d := item.Definition
-		if !d.Enabled || d.Trigger.Type != "event" || !events.Match(d.Trigger.Event, ev.Topic) {
+	for _, it := range candidates {
+		if it.filterBad {
 			continue
 		}
-		if d.Trigger.Filter != "" {
-			ex, err := expr.Parse(d.Trigger.Filter)
-			if err != nil {
-				continue
-			}
-			yes, err := ex.EvalBool(env)
+		if it.filter != nil {
+			yes, err := it.filter.EvalBool(env)
 			if err != nil || !yes {
 				continue
 			}
 		}
-		_, err = e.trigger(e.ctx, d.ID, "event", env["event"], ev.Chain, "")
+		_, err = e.trigger(e.ctx, it.def.ID, "event", env["event"], ev.Chain, "")
 		if err != nil {
-			e.log.Warn("automation event ignored", "automation", d.ID, "error", e.redact.Text(err.Error()))
+			e.log.Warn("automation event ignored", "automation", it.def.ID, "error", e.redact.Text(err.Error()))
 		}
 	}
 }
 func (e *Engine) scheduleTick() {
 	e.expireApprovals()
-	rows, err := e.db.QueryContext(e.ctx, `SELECT definition,last_fire_at,created_at FROM automations WHERE enabled=1 AND trigger_type='schedule'`)
+	now := e.clock.Now()
+	if !now.Before(e.nextPrune) {
+		e.nextPrune = now.Add(pruneInterval)
+		e.pruneAsync()
+	}
+	snap, err := e.snapshot(e.ctx)
 	if err != nil {
 		return
 	}
-	type item struct {
-		d       Definition
-		last    int64
-		created int64
-	}
-	list := []item{}
-	for rows.Next() {
-		var it item
-		var b string
-		if err = rows.Scan(&b, &it.last, &it.created); err != nil {
-			break
+	for _, it := range snap.schedules {
+		if !it.nextOK {
+			anchor := time.Unix(it.last, 0)
+			if it.last == 0 {
+				anchor = time.UnixMilli(it.created)
+			}
+			it.next, it.hasNext = it.sched.Next(anchor)
+			it.nextOK = true
 		}
-		if json.Unmarshal([]byte(b), &it.d) == nil {
-			list = append(list, it)
-		}
-	}
-	rows.Close()
-	now := e.clock.Now()
-	for _, it := range list {
-		sc, err := ParseSchedule(it.d.Trigger.Schedule, nil)
-		if err != nil {
+		if !it.hasNext || it.next.After(now) {
 			continue
 		}
-		anchor := time.Unix(it.last, 0)
-		if it.last == 0 {
-			anchor = time.UnixMilli(it.created)
-		}
-		next, ok := sc.Next(anchor)
-		if !ok || next.After(now) {
-			continue
-		}
+		next := it.next
 		missed := now.Sub(next) > 90*time.Second
-		if !missed || it.d.Trigger.CatchUp == "run-once" {
-			_, err = e.trigger(e.ctx, it.d.ID, "schedule", map[string]any{"scheduledAt": next.Format(time.RFC3339), "catchUp": missed}, nil, fmt.Sprintf("schedule:%s:%d", it.d.ID, next.Unix()))
+		if !missed || it.def.Trigger.CatchUp == "run-once" {
+			_, err = e.trigger(e.ctx, it.def.ID, "schedule", map[string]any{"scheduledAt": next.Format(time.RFC3339), "catchUp": missed}, nil, fmt.Sprintf("schedule:%s:%d", it.def.ID, next.Unix()))
 			if err != nil {
 				e.log.Warn("scheduled automation skipped", "error", e.redact.Text(err.Error()))
 			}
 		}
-		_, _ = e.db.ExecContext(e.ctx, `UPDATE automations SET last_fire_at=? WHERE id=?`, now.Unix(), it.d.ID)
+		if _, err = e.db.ExecContext(e.ctx, `UPDATE automations SET last_fire_at=? WHERE id=?`, now.Unix(), it.def.ID); err == nil {
+			it.last = now.Unix()
+			it.nextOK = false
+		}
 	}
 }
 func (e *Engine) Preview(schedule string) ([]string, error) {
@@ -117,7 +112,7 @@ func (e *Engine) Config() Config {
 	defer e.mu.Unlock()
 	c := e.config
 	if e.credentials != nil {
-		_, err := e.credentials.Get(webhookCredential)
+		_, err := e.webhookSecret()
 		c.HasSecret = err == nil
 	}
 	return c
@@ -128,6 +123,15 @@ func (e *Engine) SetConfig(ctx context.Context, c Config) (Config, error) {
 	}
 	if c.WebhookPort < 1024 || c.WebhookPort > 65535 {
 		return Config{}, fmt.Errorf("webhook port must be 1024–65535")
+	}
+	if c.RetentionDays == 0 {
+		c.RetentionDays = DefaultRetentionDays
+	}
+	if c.RetentionMaxRuns == 0 {
+		c.RetentionMaxRuns = DefaultRetentionMaxRuns
+	}
+	if c.RetentionDays < MinRetentionDays || c.RetentionDays > MaxRetentionDays || c.RetentionMaxRuns < MinRetentionMaxRuns || c.RetentionMaxRuns > MaxRetentionMaxRuns {
+		return Config{}, fmt.Errorf("retention: keep runs for %d–%d days and %d–%d runs per automation", MinRetentionDays, MaxRetentionDays, MinRetentionMaxRuns, MaxRetentionMaxRuns)
 	}
 	e.mu.Lock()
 	old := e.config

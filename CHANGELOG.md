@@ -6,6 +6,16 @@ Each release needs a `## X.Y.Z - YYYY-MM-DD` section matching `version` in `mygo
 workflow refuses to build without it, and the in-app update window shows that section as the release
 notes. See `docs/development/updates.md`.
 
+## Unreleased
+
+### Changed
+- Automations: finished runs and their journal are now pruned (30 days and 500 runs per automation by
+  default; `retentionDays` and `retentionMaxRuns` in the automations config, no settings UI yet).
+  Queued, running and waiting-approval runs are never removed.
+- Automations: run updates, queue scheduling and event dispatch no longer reload runs and definitions
+  from SQLite for every step or event; the scheduler uses one timer that event bursts cannot postpone,
+  and the webhook secret is read from the credential store once instead of per request.
+
 ## 0.1.0 - 2026-10-10
 
 First tagged release. Windows only.
