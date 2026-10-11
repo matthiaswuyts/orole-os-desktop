@@ -57,6 +57,11 @@ notes. See `docs/development/updates.md`.
   `propose_skill` for your approval. Built-in skills are for bots only and are never synced to coding agents.
 
 ### Changed
+- `orole-cli` no longer links the daemon, sqlite, sftp/ssh or the MCP SDK: `daemon.Health` and the IPC
+  token helpers moved to the leaf package `internal/daemon/api`, and `diagnostics.Collect` takes an
+  injected offline schema reader. Offline `doctor` in the CLI reports the DB schema version as
+  unavailable when the daemon is not running (the desktop app still reads it). CI guards this with
+  `scripts/check-cli-linkage.sh`.
 - SQLite: transactions take the write lock up front (`_txlock=immediate`), 4 idle connections,
   `temp_store`/`cache_size`/`journal_size_limit` pragmas, and `PRAGMA optimize` plus a WAL checkpoint on close.
   Migration 0101 adds a partial index on in-flight `messages.status` for startup recovery.

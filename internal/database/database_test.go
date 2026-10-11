@@ -97,3 +97,19 @@ func TestReadThenWriteTxDoesNotFailBusySnapshot(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestReadSchemaVersion(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "orole.db")
+	if _, err := database.ReadSchemaVersion(p); err == nil {
+		t.Fatal("expected error for missing db")
+	}
+	db, err := database.Open(p, migrations.FS)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, _ := db.Version()
+	db.Close()
+	if got, err := database.ReadSchemaVersion(p); err != nil || got != want {
+		t.Fatalf("ReadSchemaVersion = %d, %v; want %d", got, err, want)
+	}
+}
