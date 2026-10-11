@@ -119,4 +119,31 @@ describe("real-content scroll anchor", () => {
     expect(viewport.scrollTop).toBe(500);
     expect(screen.queryByRole("button")).toBeNull();
   });
+
+  it("keeps following when a shorter document clamps the scroll position by itself", () => {
+    const rows = [{ id: 1, height: 300 }, { id: 2, height: 300 }];
+    const view = render(<AnchoredContent rows={rows} />);
+    const viewport = screen.getByTestId("viewport");
+    expect(viewport.scrollTop).toBe(400);
+    // A row measured smaller than estimated (virtual rows): the browser clamps scrollTop; the reader did not scroll up.
+    viewport.querySelector<HTMLElement>('[data-scroll-anchor="2"]')!.dataset.height = "100";
+    viewport.scrollTop = 200;
+    fireEvent.scroll(viewport);
+    expect(screen.queryByRole("button")).toBeNull();
+    view.rerender(<AnchoredContent rows={[...rows, { id: 3, height: 100 }]} />);
+    expect(viewport.scrollTop).toBe(300);
+    expect(screen.queryByRole("button")).toBeNull();
+  });
+
+  it("anchors on the first row that starts in view, so a row cut off at the top may resize without moving the reader", () => {
+    const rows = [{ id: 1, height: 300 }, { id: 2, height: 300 }, { id: 3, height: 300 }];
+    render(<AnchoredContent rows={rows} />);
+    const viewport = screen.getByTestId("viewport");
+    Object.defineProperty(viewport, "clientHeight", { configurable: true, get: () => 200 });
+    viewport.scrollTop = 250; // row 1 is cut off at the top; row 2 starts 50px into the viewport
+    fireEvent.scroll(viewport);
+    viewport.querySelector<HTMLElement>('[data-scroll-anchor="1"]')!.dataset.height = "400";
+    act(() => resized());
+    expect(viewport.scrollTop).toBe(350);
+  });
 });

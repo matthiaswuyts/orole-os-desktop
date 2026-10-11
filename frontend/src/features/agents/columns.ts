@@ -37,14 +37,13 @@ export function columnOf(status: AgentsStatus): ColumnId {
 /** Discarded sessions are gone from the dashboard; approved ones stay in Done. */
 export const onDashboard = (s: Session) => s.review !== "discarded";
 
-const byUpdatedDesc = (a: Session, b: Session) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt);
-
 export type Columns = Record<ColumnId, Session[]>;
 
-/** Groups sessions into dashboard columns, each sorted by updatedAt descending. */
+/** Groups sessions into dashboard columns, each sorted by updatedAt descending (each timestamp parsed once). */
 export function groupColumns(sessions: Iterable<Session>): Columns {
+  const stamped: Record<ColumnId, { at: number; session: Session }[]> = { "needs-you": [], working: [], done: [], idle: [] };
+  for (const s of sessions) if (onDashboard(s)) stamped[columnOf(s.status)].push({ at: Date.parse(s.updatedAt) || 0, session: s });
   const out: Columns = { "needs-you": [], working: [], done: [], idle: [] };
-  for (const s of sessions) if (onDashboard(s)) out[columnOf(s.status)].push(s);
-  for (const k of Object.keys(out) as ColumnId[]) out[k].sort(byUpdatedDesc);
+  for (const k of Object.keys(out) as ColumnId[]) out[k] = stamped[k].sort((a, b) => b.at - a.at).map((entry) => entry.session);
   return out;
 }

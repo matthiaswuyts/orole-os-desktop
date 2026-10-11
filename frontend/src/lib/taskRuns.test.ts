@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Event as AgentEvent } from "@/mygo";
-import { groupEvents, groupRuns, reasoningTitle, type RunContext, type TurnEntry, type TurnRun } from "./taskEvents";
+import { groupEvents, groupRuns, reasoningTitle, shareEntries, shareItems, type RunContext, type TurnEntry, type TurnRun } from "./taskEvents";
 
 let seq = 0;
 const at = (s: number) => new Date(Date.UTC(2026, 9, 8, 12, 0, s)).toISOString();
@@ -122,5 +122,28 @@ describe("reasoningTitle", () => {
     expect(reasoningTitle("## Heading with `code`")).toBe("Heading with code");
     expect(reasoningTitle("   ")).toBe("Thinking");
     expect(reasoningTitle("x".repeat(200)).length).toBeLessThanOrEqual(80);
+  });
+});
+
+describe("shareEntries", () => {
+  const turns = (events: AgentEvent[], previous: TurnEntry[] = [], previousItems: ReturnType<typeof groupEvents> = []) => {
+    const items = shareItems(previousItems, groupEvents(events));
+    return { items, entries: shareEntries(previous, groupRuns(items, ctx())) };
+  };
+
+  it("keeps every entry and the list itself when an event changes nothing visible", () => {
+    const events = [ev("prompt", "a", null, 0), ev("message", "one", null, 1), ev("turn_done", "one", { ok: true }, 2), ev("prompt", "b", null, 3), ev("message", "two", null, 4)];
+    const first = turns(events);
+    const second = turns([...events, ev("usage", "", { tokens: 3 }, 5)], first.entries, first.items);
+    expect(second.entries).toBe(first.entries);
+  });
+
+  it("replaces only the entry an event touched", () => {
+    const events = [ev("prompt", "a", null, 0), ev("message", "one", null, 1), ev("turn_done", "one", { ok: true }, 2), ev("prompt", "b", null, 3), ev("tool", "", { id: "t", name: "Read", status: "running", input: {} }, 4)];
+    const first = turns(events);
+    const second = turns([...events, ev("tool_result", "", { id: "t", status: "ok", output: "x" }, 5)], first.entries, first.items);
+    expect(second.entries).not.toBe(first.entries);
+    expect(second.entries.slice(0, 2).every((entry, i) => entry === first.entries[i])).toBe(true);
+    expect(second.entries.at(-1)).not.toBe(first.entries.at(-1));
   });
 });

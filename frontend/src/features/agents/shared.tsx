@@ -1,7 +1,7 @@
 import { Tooltip, TooltipPopup, TooltipTrigger } from "@/components/ui/tooltip";
-import { useEffect, useId, useState } from "react";
+import { useId, useMemo, useState } from "react";
 import { Check, Circle, LoaderCircle } from "lucide-react";
-import { Agents, type Session, type PermissionRequest, type ReviewDiff } from "@/mygo";
+import { Agents, type Session, type PermissionRequest } from "@/mygo";
 import { useAgents } from "@/stores/agents";
 import { useBoxes } from "@/stores/boxes";
 import { Badge } from "@/components/ui/badge";
@@ -11,7 +11,8 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { DiffView } from "@/components/diff/DiffView";
 import { toDiffFiles } from "@/lib/diff";
 import { cn } from "@/lib/utils";
-import { duration, folderOf, kindLabel, useAction, useNow, errText, isRemoteProcess } from "./format";
+import { folderOf, kindLabel, sessionDuration, useAction, useNow, isRemoteProcess } from "./format";
+import { useReviewDiff } from "./useReviewDiff";
 import { ProviderLogo } from "./ProviderLogo";
 
 export function AgentGlyph({ kind }: { kind: string }) {
@@ -22,9 +23,9 @@ export function StateGlyph({ status }: { status: string }) {
   return <Icon aria-hidden className={cn("size-3", status === "working" ? "animate-spin text-info motion-reduce:animate-none" : status === "done" ? "text-success" : status === "needs-you" ? "fill-warning text-warning" : "text-muted-foreground")} />;
 }
 export function SessionMeta({ session: s }: { session: Session }) {
-  const now = useNow();
+  const now = useNow(s.live);
   const machine = useBoxes((state) => state.machines.find((item) => item.id === (s.machine || "local"))?.name);
-  return <Tooltip><TooltipTrigger render={<p tabIndex={0} className="truncate text-[11px] text-muted-foreground"  />}>{[machine ?? s.machine, folderOf(s), s.branch, s.model, s.reasoning ? `${s.reasoning} reasoning` : "", duration(now - Date.parse(s.startedAt))].filter(Boolean).join(" · ")}</TooltipTrigger><TooltipPopup><span className="max-w-sm whitespace-pre-wrap break-words">{s.dir}</span></TooltipPopup></Tooltip>;
+  return <Tooltip><TooltipTrigger render={<p tabIndex={0} className="truncate text-[11px] text-muted-foreground"  />}>{[machine ?? s.machine, folderOf(s), s.branch, s.model, s.reasoning ? `${s.reasoning} reasoning` : "", sessionDuration(s, now)].filter(Boolean).join(" · ")}</TooltipTrigger><TooltipPopup><span className="max-w-sm whitespace-pre-wrap break-words">{s.dir}</span></TooltipPopup></Tooltip>;
 }
 export function SessionBadge({ session: s }: { session: Session }) {
   return <Badge variant={s.status === "failed" ? "error" : s.review === "approved" ? "success" : "secondary"}>{s.review === "approved" ? "Approved" : s.status === "needs-you" ? "Needs you" : s.status}</Badge>;
@@ -67,23 +68,11 @@ export function ReplyBox({ session, onSent }: { session: Session; onSent?: () =>
   </form>;
 }
 export function SessionDiff({ session }: { session: Session }) {
-  const [result, setResult] = useState<{ key: string; diff: ReviewDiff | null; error: string | null } | null>(null);
-  const [version, setVersion] = useState(0);
-  const key = `${session.id}:${session.updatedAt}:${version}`;
   const remote = isRemoteProcess(session);
-  useEffect(() => {
-    if (remote) return;
-    let active = true;
-    void Agents.diff(session.id).then(
-      (diff) => { if (active) setResult({ key, diff, error: null }); },
-      (e: unknown) => { if (active) setResult({ key, diff: null, error: errText(e) }); },
-    );
-    return () => { active = false; };
-  }, [session.id, key, remote]);
-  const diff = result?.key === key ? result.diff : null;
-  const error = result?.key === key ? result.error : null;
+  const { diff, error, retry } = useReviewDiff(session.id, session.updatedAt, !remote);
+  const files = useMemo(() => diff && !diff.error ? toDiffFiles(diff.diff) : [], [diff]);
   if (remote) return <p className="p-4 text-sm text-muted-foreground">Worktree diffs and local review are unavailable for SSH process sessions. Inspect the transcript or files on the selected box.</p>;
-  if (error || diff?.error) return <div className="flex flex-col gap-2 p-4"><ErrorNote error={error || diff?.error || null} /><Button variant="outline" size="sm" onClick={() => setVersion((v) => v + 1)}>Retry diff</Button></div>;
+  if (error || diff?.error) return <div className="flex flex-col gap-2 p-4"><ErrorNote error={error || diff?.error || null} /><Button variant="outline" size="sm" onClick={retry}>Retry diff</Button></div>;
   if (!diff) return <p role="status" className="p-4 text-muted-foreground">Loading changes…</p>;
-  return <DiffView className="min-h-64 flex-1" files={toDiffFiles(diff.diff)} truncated={diff.truncated || diff.diff.truncated} />;
+  return <DiffView className="min-h-64 flex-1" files={files} truncated={diff.truncated || diff.diff.truncated} />;
 }

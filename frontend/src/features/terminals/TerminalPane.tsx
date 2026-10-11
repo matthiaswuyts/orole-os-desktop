@@ -10,7 +10,13 @@ import { cn } from "@/lib/utils";
 import { useSettings } from "@/stores/settings";
 import { getBuiltinTheme } from "@/themes/builtin";
 
-const b64 = (s: string) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
+/** Base64 to bytes with a plain loop: `Uint8Array.from` with a mapper makes a closure call per byte. */
+function b64(s: string): Uint8Array {
+  const bin = atob(s);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
 
 function cssVar(n: string) {
   return getComputedStyle(document.documentElement).getPropertyValue(n).trim();
@@ -31,13 +37,15 @@ export function TerminalPane({ id, active, onFocus, fontSize }: { id: string; ac
   const host = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
   const search = useRef<SearchAddon | null>(null);
+  const fitRef = useRef<FitAddon | null>(null);
+  const sizeRef = useRef(fontSize); // the size a terminal created for another `id` starts with
   const [finding, setFinding] = useState(false);
   const [query, setQuery] = useState("");
   const [exited, setExited] = useState<number | null>(null);
 
   useEffect(() => {
     const term = new Terminal({
-      fontFamily: '"JetBrains Mono Variable", Consolas, monospace', fontSize, cursorBlink: true, scrollback: 10000,
+      fontFamily: '"JetBrains Mono Variable", Consolas, monospace', fontSize: sizeRef.current, cursorBlink: true, scrollback: 10000,
       allowProposedApi: true, theme: terminalTheme(),
       allowTransparency: true,
     });
@@ -47,6 +55,7 @@ export function TerminalPane({ id, active, onFocus, fontSize }: { id: string; ac
     term.unicode.activeVersion = "11";
     termRef.current = term; search.current = srch;
     term.open(host.current!);
+    fitRef.current = fit;
     fit.fit();
     // Observe the applied CSS rather than React effect order; update live sessions in place.
     const themeObserver = new MutationObserver(() => { term.options.theme = terminalTheme(); });
@@ -102,7 +111,16 @@ export function TerminalPane({ id, active, onFocus, fontSize }: { id: string; ac
     const ro = new ResizeObserver(() => { try { fit.fit(); } catch { /* host hidden */ } });
     ro.observe(host.current!);
     return () => { themeObserver.disconnect(); ro.disconnect(); onResize.dispose(); onData.dispose(); onBin.dispose(); offOut(); offChg(); disposed = true; term.dispose(); };
-  }, [id, fontSize]);
+  }, [id]);
+
+  // A font size change updates the live terminal; rebuilding it would drop the view and re-attach.
+  useEffect(() => {
+    sizeRef.current = fontSize;
+    const term = termRef.current;
+    if (!term || term.options.fontSize === fontSize) return;
+    term.options.fontSize = fontSize;
+    try { fitRef.current?.fit(); } catch { /* host hidden */ }
+  }, [fontSize]);
 
   useEffect(() => { if (active) termRef.current?.focus(); }, [active]);
 
