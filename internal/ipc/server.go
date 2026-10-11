@@ -8,6 +8,7 @@ import (
 	"errors"
 	"log/slog"
 	"net"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -44,23 +45,51 @@ func (s *Server) Handle(method string, h Handler) {
 
 // Publish sends an event to every subscribed connection. Connections whose
 // queue is full are closed (backpressure: a stuck client never blocks the daemon).
+// Events too large for one frame are dropped (a client would reject the frame
+// and drop the link) and logged; nothing is marshalled when no connection is
+// subscribed.
 func (s *Server) Publish(event string, data any) {
+	var targets []*conn
+	s.mu.RLock()
+	for c := range s.conns {
+		if c.wants(event) {
+			targets = append(targets, c)
+		}
+	}
+	s.mu.RUnlock()
+	if len(targets) == 0 {
+		return
+	}
 	raw, err := json.Marshal(data)
 	if err != nil {
+		s.Log.Warn("ipc: event not marshalled", "event", event, "err", err)
+		return
+	}
+	if !fitsFrame(len(raw) + len(event)) {
+		s.Log.Warn("ipc: oversized event dropped", "event", event, "bytes", len(raw), "max", MaxMessageBytes)
 		return
 	}
 	msg := Message{Event: event, Data: raw}
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	for c := range s.conns {
-		if c.wants(event) {
-			if !c.enqueue(msg) {
-				s.Log.Warn("ipc: slow subscriber dropped", "event", event)
-				go c.close()
-			}
+	for _, c := range targets {
+		if !c.enqueue(msg) {
+			s.Log.Warn("ipc: slow subscriber dropped", "event", event)
+			go c.close()
 		}
 	}
 }
+
+// frameEnvelope over-approximates the bytes a frame adds around its payload
+// (`{"id":<20 digits>,"result":` + `}`, or `{"event":"` + `","data":` + `}`
+// minus the event name, which callers count themselves).
+const frameEnvelope = 64
+
+// maxErrorMessage caps Error.Message so an error reply can never itself
+// exceed a frame.
+const maxErrorMessage = 16 << 10
+
+// fitsFrame reports whether a frame whose variable content is n bytes stays
+// within MaxMessageBytes (the limit the peer enforces when reading).
+func fitsFrame(n int) bool { return n+frameEnvelope <= MaxMessageBytes }
 
 // Serve accepts connections until ln is closed.
 func (s *Server) Serve(ln net.Listener) error {
@@ -226,15 +255,26 @@ func (c *conn) hello(m Message) bool {
 	return true
 }
 
+// reply queues the response for request id. A result that cannot fit in one
+// frame is replaced by a too_large error: the peer would otherwise reject the
+// frame, drop the link and (historically) re-send the request.
 func (c *conn) reply(id uint64, result any, e *Error) {
 	msg := Message{ID: id, Error: e}
 	if e == nil {
 		raw, err := json.Marshal(result)
-		if err != nil {
+		switch {
+		case err != nil:
 			msg.Error = &Error{CodeInternal, err.Error()}
-		} else {
+		case !fitsFrame(len(raw)):
+			c.s.Log.Warn("ipc: oversized reply replaced", "id", id, "bytes", len(raw), "max", MaxMessageBytes)
+			msg.Error = &Error{CodeTooLarge, "result of " + strconv.Itoa(len(raw)) + " bytes exceeds the " + strconv.Itoa(MaxMessageBytes) + " byte frame limit"}
+		default:
 			msg.Result = raw
 		}
+	}
+	if msg.Error != nil && len(msg.Error.Message) > maxErrorMessage {
+		// Copy: handlers may return a shared *Error.
+		msg.Error = &Error{msg.Error.Code, strings.ToValidUTF8(msg.Error.Message[:maxErrorMessage], "") + "…"}
 	}
 	if !c.enqueue(msg) {
 		c.close()

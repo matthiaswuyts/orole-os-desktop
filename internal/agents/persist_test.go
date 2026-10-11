@@ -195,6 +195,32 @@ func TestHotEventThatChangesStatusTakesTheFullPath(t *testing.T) {
 	}
 }
 
+// A permission-mode change is not a delta field: it must reach SQLite at once (along with any
+// debounced fields) and publish the whole session, whichever mutate path made it.
+func TestPermissionModeChangeWritesImmediatelyAndPublishesTheFullSession(t *testing.T) {
+	m, pubs, _ := persistFixture(t)
+	m.apply("s", Event{Kind: EvMessage, Text: "pending in memory"})
+	pubs.reset()
+	m.mutateHot("s", func(s *Session) { s.PermissionMode = PermAuto })
+	stored, err := m.st.GetSession("s")
+	if err != nil || stored.PermissionMode != PermAuto || stored.LastMessage != "pending in memory" {
+		t.Fatalf("permission mode not durable at once: %+v %v", stored, err)
+	}
+	if len(pubs.all("agents.delta")) != 0 {
+		t.Fatal("permission mode change was published as a delta")
+	}
+	updates := pubs.all("agents.updated")
+	if len(updates) != 1 || updates[0].(Session).PermissionMode != PermAuto {
+		t.Fatalf("updates = %+v", updates)
+	}
+	if _, err := m.mutate("s", func(s *Session) { s.PermissionMode = PermYolo }); err != nil {
+		t.Fatal(err)
+	}
+	if stored, _ = m.st.GetSession("s"); stored.PermissionMode != PermYolo {
+		t.Fatalf("mutate not durable at once: %+v", stored)
+	}
+}
+
 func TestShutdownFlushesPendingSessionAndEvents(t *testing.T) {
 	m, _, _ := persistFixture(t)
 	p := m.live["s"].proc.(*chatTestProcess)

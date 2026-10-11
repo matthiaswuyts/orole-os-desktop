@@ -193,6 +193,14 @@ export interface AutostartStatus {
   detail: string;
 }
 
+/** Availability tells the UI whether dictation can run and what limits apply. */
+export interface Availability {
+  ready: boolean;
+  provider: string;
+  maxSeconds: number;
+  maxBytes: number;
+}
+
 /** Bot is a contact: identity, brain settings and live status. */
 export interface Bot {
   id: string;
@@ -226,8 +234,8 @@ export interface BotChange {
 /** BotConfig is stored as JSON in bots.config. It never contains secrets. */
 export interface BotConfig {
   tools: BotTool[];
-  /** "<serverId>/<tool>" allow-list, default none */
-  mcpTools: string[];
+  /** ids of the MCP servers (integrations) the bot may use: every tool of each, default none */
+  mcpServers: string[];
   /** enabled registry skill names */
   skills: string[];
   /** an executive assistant may ask every other bot (ask_bot) */
@@ -240,6 +248,8 @@ export interface BotConfig {
    * tools (ask_user, save_profile) until it saves its own instructions.
    */
   setup?: boolean;
+  /** Pinned keeps the bot at the top of the bot list. It is changed only by PinBot: saving a bot never touches it. */
+  pinned?: boolean;
 }
 
 /** BotExport is portable: settings and instructions only, never memory, messages or secrets. */
@@ -414,6 +424,27 @@ export interface Choice {
   description?: string;
 }
 
+/** Status is what the UI shows for one provider. */
+export interface CliruntimeStatus {
+  id: string;
+  name: string;
+  /** Installed is true when a CLI runs; Path and Source say which one. */
+  installed: boolean;
+  path?: string;
+  source?: string;
+  version?: string;
+  /** Latest is the newest release on the vendor's channel ("" when it could not be looked up). */
+  latest?: string;
+  updateAvailable: boolean;
+  /** Auth is signed_in, signed_out or unknown; Account names who is signed in when the CLI says. */
+  auth: string;
+  account?: string;
+  /** Installable is true when Orole can download a managed copy for this computer. */
+  installable: boolean;
+  /** Problem explains what could not be read (latest version, sign-in); it never blocks the rest. */
+  problem?: string;
+}
+
 export interface Command {
   id: string;
   operationId: string;
@@ -569,6 +600,11 @@ export interface Detection {
   permissions: boolean;
   /** "stream-json" | "app-server" | "hooks" | "process" (exit only) */
   statusFeed: string;
+  /**
+   * PermissionModes says how the harness realises Manual, Auto and YOLO for structured
+   * sessions, including when Auto is only approximated and when YOLO is turned off.
+   */
+  permissionModes: PermissionModeSupport[];
 }
 
 /** Diagnostics explains the current state of a server connection. */
@@ -916,6 +952,14 @@ export interface FollowupCapabilities {
   model: boolean;
   reasoning: boolean;
   reason: string;
+  /**
+   * PermissionMode reports whether Manual/Auto/YOLO can be changed on this conversation now.
+   * PermissionModeRestarts is true when applying it resumes the conversation (only while
+   * idle); PermissionModeReason explains a refusal.
+   */
+  permissionMode: boolean;
+  permissionModeRestarts: boolean;
+  permissionModeReason: string;
 }
 
 /** GitHubChange says why GitHub data changed (login, logout, issue.create, ...). */
@@ -980,6 +1024,11 @@ export interface HarnessOption {
    * still be entered when CustomModel is set).
    */
   models: ModelOption[];
+  /**
+   * PermissionModes is how this harness realises Manual, Auto and YOLO (empty = it has its own
+   * approvals and Orole modes do not apply).
+   */
+  permissionModes: PermissionModeSupport[];
 }
 
 /** Health is the daemon's status snapshot. */
@@ -1634,6 +1683,23 @@ export interface Pending {
   canRemember: boolean;
 }
 
+/**
+ * PermissionModeSupport tells the UI how one harness realises one Orole mode, so a tooltip never
+ * claims more than the harness does.
+ */
+export interface PermissionModeSupport {
+  /** manual | auto | yolo */
+  mode: string;
+  /** Available is false when the mode cannot be used at all; Detail then says why. */
+  available: boolean;
+  /**
+   * Approximated is true when the harness has no native equivalent and Orole runs the closest
+   * sandboxed mode instead (Auto only).
+   */
+  approximated: boolean;
+  detail: string;
+}
+
 /** PermissionRequest is a tool-use approval the agent is blocked on. */
 export interface PermissionRequest {
   id: string;
@@ -1651,6 +1717,12 @@ export interface PermissionRequest {
  */
 export interface PersistentSession {
   id: string;
+}
+
+/** PinRequest pins or unpins a bot. */
+export interface PinRequest {
+  id: string;
+  pinned: boolean;
 }
 
 export interface PluginAction {
@@ -1945,6 +2017,12 @@ export interface QuestionRequest {
   expiresAt?: string;
 }
 
+/** QueueItemRef identifies one waiting message of a bot's queue. */
+export interface QueueItemRef {
+  botId: string;
+  messageId: string;
+}
+
 /**
  * QueuedPrompt is a durable follow-up, not a promise of delivery. A sending entry
  * left behind by a crash becomes uncertain and requires removal, never replay.
@@ -2175,6 +2253,8 @@ export interface RunState {
   running: boolean;
   /** the assistant message being produced */
   messageId?: string;
+  /** Paused is true while the bot's queue is on hold: messages wait and the next one starts only after Resume. */
+  paused?: boolean;
 }
 
 export interface SaveRequest {
@@ -2284,7 +2364,10 @@ export interface Session {
   mode: Mode;
   /** custom CLI command line */
   command?: string;
-  /** PermissionMode is the Claude Code permission mode the session runs with. */
+  /**
+   * PermissionMode is the Orole permission mode the session runs with: manual | auto | yolo,
+   * or plan (read-only, daemon-internal). Each harness maps it onto its own approval controls.
+   */
   permissionMode: string;
   pid: number;
   status: AgentsStatus;
@@ -2429,7 +2512,7 @@ export interface SkillProposal {
   name: string;
   description: string;
   body: string;
-  /** "pending" | "approved" | "rejected" */
+  /** "pending" | "approved" (saved and given to the bot) | "rejected" */
   status: string;
   createdAt: number;
 }
@@ -2479,8 +2562,10 @@ export interface StartSpec {
   /** custom CLI command line */
   command: string;
   title: string;
-  /** PermissionMode: "" | default | acceptEdits | plan (Claude Code). */
+  /** PermissionMode: "" (manual) | manual | auto | yolo | plan. */
   permissionMode: string;
+  /** ConfirmYolo must be true for a yolo session; the daemon rejects it otherwise. */
+  confirmYolo: boolean;
   /**
    * NewWorktree creates a fresh worktree of the repository at Dir on a new branch and
    * runs the agent there.
@@ -2629,6 +2714,22 @@ export interface ToolsRequest {
   model: string;
 }
 
+/**
+ * TranscribeRequest is one recording. DataBase64 is the raw container (webm, ogg, mp4, ...) the
+ * browser's MediaRecorder produced.
+ */
+export interface TranscribeRequest {
+  mimeType: string;
+  dataBase64: string;
+  durationMs: number;
+}
+
+/** Transcript is the recognized text. Text is empty when nothing intelligible was said. */
+export interface Transcript {
+  text: string;
+  model: string;
+}
+
 export interface Trigger {
   type: string;
   schedule: string;
@@ -2753,6 +2854,11 @@ export interface Worktree {
   unstaged: number;
   untracked: number;
   dirty: number;
+  /**
+   * StatusKnown is true when Upstream, Ahead, Behind and the change counts were read from git.
+   * List leaves it false: reading them runs `git status` per worktree, which is slow in large repos.
+   */
+  statusKnown: boolean;
   /** Error is set when git state could not be read for this worktree. */
   error?: string;
 }
@@ -2926,13 +3032,17 @@ export const Worktrees = {
   create(projectID: string, name: string, baseRef: string): Promise<Worktree> {
     return call("Worktrees.Create", projectID, name, baseRef);
   },
-  /** List returns worktrees of a project, or of every project when projectID is "". */
+  /** List returns worktrees of a project, or of every project when projectID is "", without git status (fast). */
   list(projectID: string): Promise<Worktree[]> {
     return call("Worktrees.List", projectID);
   },
   /** Remove deletes a linked worktree; force discards local changes. */
   remove(id: string, force: boolean): Promise<void> {
     return call("Worktrees.Remove", id, force);
+  },
+  /** Status is List plus ahead/behind and change counts per worktree; it runs `git status` and can be slow in large repositories. */
+  status(projectID: string): Promise<Worktree[]> {
+    return call("Worktrees.Status", projectID);
   },
 } as const;
 
@@ -3314,6 +3424,14 @@ export const Agents = {
   sendMessage(id: string, text: string, attachmentIds: string[], model: string, reasoning: string): Promise<Session> {
     return call("Agents.SendMessage", id, text, attachmentIds, model, reasoning);
   },
+  /**
+   * SetPermissionMode switches a task to manual, auto or yolo. confirmYolo must be true for yolo; the
+   * daemon enforces it and the setting that can turn YOLO off. Claude Code switches live, Codex from
+   * its next turn, Oh My Pi by resuming its conversation while idle; terminal and remote tasks refuse.
+   */
+  setPermissionMode(id: string, mode: string, confirmYolo: boolean): Promise<Session> {
+    return call("Agents.SetPermissionMode", id, mode, confirmYolo);
+  },
   /** Start launches an agent. spec.Key makes the request idempotent. */
   start(spec: StartSpec): Promise<Session> {
     return call("Agents.Start", spec);
@@ -3557,6 +3675,9 @@ export const Chat = {
   cancel(botID: string): Promise<void> {
     return call("Chat.Cancel", botID);
   },
+  cancelQueued(req: QueueItemRef): Promise<void> {
+    return call("Chat.CancelQueued", req);
+  },
   clear(botID: string): Promise<void> {
     return call("Chat.Clear", botID);
   },
@@ -3596,6 +3717,12 @@ export const Chat = {
   messages(req: MessagesRequest): Promise<MessagePage> {
     return call("Chat.Messages", req);
   },
+  pauseQueue(botID: string): Promise<void> {
+    return call("Chat.PauseQueue", botID);
+  },
+  pinBot(req: PinRequest): Promise<void> {
+    return call("Chat.PinBot", req);
+  },
   readAttachment(id: string): Promise<AttachmentData> {
     return call("Chat.ReadAttachment", id);
   },
@@ -3611,6 +3738,9 @@ export const Chat = {
   resolveSkill(req: SkillResolve): Promise<void> {
     return call("Chat.ResolveSkill", req);
   },
+  resumeQueue(botID: string): Promise<void> {
+    return call("Chat.ResumeQueue", botID);
+  },
   saveBot(in_: BotInput): Promise<Bot> {
     return call("Chat.SaveBot", in_);
   },
@@ -3620,8 +3750,8 @@ export const Chat = {
   send(req: SendRequest): Promise<Message> {
     return call("Chat.Send", req);
   },
-  skillProposals(botID: string): Promise<SkillProposal[]> {
-    return call("Chat.SkillProposals", botID);
+  skillProposal(id: string): Promise<SkillProposal> {
+    return call("Chat.SkillProposal", id);
   },
   tools(req: ToolsRequest): Promise<ChatToolInfo[]> {
     return call("Chat.Tools", req);
@@ -3671,6 +3801,43 @@ export const LLM = {
   },
   trustManifest(req: ManifestTrustRequest): Promise<ManifestRecord> {
     return call("LLM.TrustManifest", req);
+  },
+} as const;
+
+/**
+ * Dictation is a stateless bridge to the daemon's voice transcription. The recording is sent to
+ * OpenAI with the user's own OpenAI key, which stays in the daemon and the Windows credential store.
+ */
+export const Dictation = {
+  /** Status says whether an OpenAI key is connected and what recording limits apply. */
+  status(): Promise<Availability> {
+    return call("Dictation.Status");
+  },
+  /**
+   * Transcribe sends one recording (base64 of the recorded container) to OpenAI and returns the
+   * text, which is empty when nothing intelligible was said.
+   */
+  transcribe(req: TranscribeRequest): Promise<Transcript> {
+    return call("Dictation.Transcribe", req);
+  },
+} as const;
+
+/**
+ * CLIRuntimes is a stateless bridge to the Claude, ChatGPT (Codex) and Grok CLI runtimes: install state, version,
+ * updates and sign-in. Credentials stay with the CLIs.
+ */
+export const CLIRuntimes = {
+  install(id: string): Promise<CliruntimeStatus> {
+    return call("CLIRuntimes.Install", id);
+  },
+  list(): Promise<CliruntimeStatus[]> {
+    return call("CLIRuntimes.List");
+  },
+  login(id: string): Promise<CliruntimeStatus> {
+    return call("CLIRuntimes.Login", id);
+  },
+  logout(id: string): Promise<CliruntimeStatus> {
+    return call("CLIRuntimes.Logout", id);
   },
 } as const;
 

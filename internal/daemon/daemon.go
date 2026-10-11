@@ -18,6 +18,7 @@ import (
 	"github.com/rayorole/orole-os-desktop/internal/automations"
 	"github.com/rayorole/orole-os-desktop/internal/chat"
 	"github.com/rayorole/orole-os-desktop/internal/chat/memory"
+	"github.com/rayorole/orole-os-desktop/internal/cliruntime"
 	"github.com/rayorole/orole-os-desktop/internal/database"
 	"github.com/rayorole/orole-os-desktop/internal/events"
 	"github.com/rayorole/orole-os-desktop/internal/gateway"
@@ -52,6 +53,8 @@ type Daemon struct {
 	Policy      *policy.Engine
 	Machines    *machines.Manager
 	Plugins     *plugins.Manager
+	// CLI finds, installs and reads the sign-in state of the Claude, Codex and Grok CLIs (svc_cliruntime.go).
+	CLI *cliruntime.Manager
 	// LLM resolves provider credentials and models (svc_llm.go); registered before Chat.
 	LLM llm.Service
 	// LLMManifests stores declarative OpenAI-compatible providers and their trust (svc_llm_manifests.go).
@@ -203,6 +206,11 @@ func (t termSink) Output(id string, seq uint64, data []byte) {
 	t.d.IPC.Publish("terminal.output", outputEvent{id, seq, data})
 }
 func (t termSink) Changed(info terminals.Info) { t.d.IPC.Publish("terminal.changed", info) }
+
+// Removed tells the GUI that the manager reaped an exited session.
+func (t termSink) Removed(id string) {
+	t.d.IPC.Publish("terminal.removed", map[string]string{"id": id})
+}
 
 // handle registers a typed method.
 func handle[P any, R any](d *Daemon, name string, f func(ctx context.Context, p P) (R, error)) {

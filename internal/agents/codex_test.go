@@ -356,7 +356,7 @@ func TestCodexAppServer(t *testing.T) {
 		_, log := newCodexEnv(t, fake)
 		host := &agents.Host{DataDir: t.TempDir()}
 		p, err := agents.CodexApp{Bin: fake}.Start(ctx10(t), host, agents.LaunchSpec{
-			SessionID: "s2", Kind: "codex", Dir: t.TempDir(), Model: "fake-a", Mode: agents.ModeStructured, PermissionMode: "acceptEdits",
+			SessionID: "s2", Kind: "codex", Dir: t.TempDir(), Model: "fake-a", Mode: agents.ModeStructured, PermissionMode: "auto",
 			SkillsPrompt: "Skills: review, deploy",
 			Gateway:      &agents.Gateway{Command: `C:\orole\orole-daemon.exe`, Args: []string{"mcp-gateway"}, Env: map[string]string{"OROLE_SESSION": "s2"}}})
 		if err != nil {
@@ -367,6 +367,7 @@ func TestCodexAppServer(t *testing.T) {
 			Model        string `json:"model"`
 			Approval     string `json:"approvalPolicy"`
 			Sandbox      string `json:"sandbox"`
+			Reviewer     string `json:"approvalsReviewer"`
 			Instructions string `json:"developerInstructions"`
 			Config       struct {
 				MCP map[string]struct {
@@ -378,7 +379,7 @@ func TestCodexAppServer(t *testing.T) {
 			} `json:"config"`
 		}](t, cxFind(t, cxRequests(t, log), "thread/start").Params)
 		g := ts.Config.MCP["orole"]
-		if ts.Model != "fake-a" || ts.Approval != "on-request" || ts.Sandbox != "workspace-write" || ts.Instructions != "Skills: review, deploy" ||
+		if ts.Model != "fake-a" || ts.Approval != "on-request" || ts.Sandbox != "workspace-write" || ts.Reviewer != "auto_review" || ts.Instructions != "Skills: review, deploy" ||
 			g.Command != `C:\orole\orole-daemon.exe` || !slices.Equal(g.Args, []string{"mcp-gateway"}) || g.Env["OROLE_SESSION"] != "s2" || g.Mode != "approve" {
 			t.Fatalf("thread/start: %+v", ts)
 		}

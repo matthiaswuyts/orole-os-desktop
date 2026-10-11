@@ -50,6 +50,9 @@ type Config struct {
 	// SkillsPrompt returns the enabled central skills index appended to structured harnesses'
 	// instructions ("" = none). Optional.
 	SkillsPrompt func() string
+	// YoloEnabled reports whether the daemon setting allows YOLO sessions (nil = allowed). It is
+	// read on every start, switch and detection, so turning it off takes effect immediately.
+	YoloEnabled func() bool
 }
 
 // Manager owns every live agent process and the session records.
@@ -198,7 +201,7 @@ func (m *Manager) Detect(ctx context.Context, refresh bool) []Detection {
 	m.detectMu.Lock()
 	defer m.detectMu.Unlock()
 	if !refresh && m.detected != nil && time.Since(m.detectAt) < time.Minute {
-		return m.detected
+		return m.withYolo(m.detected)
 	}
 	out := make([]Detection, len(m.order))
 	var wg sync.WaitGroup
@@ -209,12 +212,15 @@ func (m *Manager) Detect(ctx context.Context, refresh bool) []Detection {
 			a := m.adapters[k]
 			d := a.Detect(ctx)
 			d.Modes, d.Resume = a.Modes(), a.CanResume()
+			if r, ok := a.(permissionModeReporter); ok {
+				d.PermissionModes = r.PermissionModes(ctx, d)
+			}
 			out[i] = d
 		}()
 	}
 	wg.Wait()
 	m.detected, m.detectAt = out, time.Now()
-	return out
+	return m.withYolo(out)
 }
 
 // ---- reading ----
@@ -589,6 +595,13 @@ func (m *Manager) Start(ctx context.Context, spec StartSpec) (Session, error) {
 	if err := validPermissionMode(spec.PermissionMode); err != nil {
 		return Session{}, err
 	}
+	spec.PermissionMode = normalizePermissionMode(spec.PermissionMode)
+	if err := permissionModesApply(spec.Kind, mode, !localMachine(spec.Machine), spec.PermissionMode); err != nil {
+		return Session{}, err
+	}
+	if err := m.gateYolo(ctx, spec.Kind+":"+spec.Dir, spec.PermissionMode, spec.ConfirmYolo); err != nil {
+		return Session{}, err
+	}
 	if spec.Kind == "custom" && strings.TrimSpace(spec.Command) == "" {
 		return Session{}, errors.New("custom agent needs a command")
 	}
@@ -677,7 +690,10 @@ func (m *Manager) Start(ctx context.Context, spec StartSpec) (Session, error) {
 	if err := m.launch(ctx, &s, s.Task, false); err != nil {
 		return m.failStart(s, err)
 	}
-	m.cfg.Audit("agent.start", s.ID, "allowed", fmt.Sprintf("%s mode=%s dir=%s", s.Kind, s.Mode, s.Dir))
+	m.cfg.Audit("agent.start", s.ID, "allowed", fmt.Sprintf("%s mode=%s permission=%s dir=%s", s.Kind, s.Mode, s.PermissionMode, s.Dir))
+	if s.PermissionMode == PermYolo {
+		m.cfg.Audit("agent.yolo", s.ID, "allowed", "started in YOLO: "+s.Kind+" in "+s.Dir)
+	}
 	return m.Get(s.ID)
 }
 
@@ -698,7 +714,7 @@ func (m *Manager) failStart(s Session, err error) (Session, error) {
 // deliver ("" = none). resume continues s.AgentSessionID.
 func (m *Manager) launch(ctx context.Context, s *Session, prompt string, resume bool) error {
 	a := m.adapters[s.Kind]
-	spec := LaunchSpec{SessionID: s.ID, Kind: s.Kind, Machine: s.Machine, Dir: s.Dir, Model: s.Model, Reasoning: s.Reasoning, Mode: s.Mode, Command: s.Command, PermissionMode: s.PermissionMode}
+	spec := LaunchSpec{SessionID: s.ID, Kind: s.Kind, Machine: s.Machine, Dir: s.Dir, Model: s.Model, Reasoning: s.Reasoning, Mode: s.Mode, Command: s.Command, PermissionMode: s.PermissionMode, AllowYolo: m.yoloEnabled()}
 	if resume {
 		spec.Resume = s.AgentSessionID
 	} else if s.Kind == "claude" {
@@ -1128,6 +1144,9 @@ func (m *Manager) relaunchLocked(ctx context.Context, id, prompt string, fresh b
 	s, err := m.st.GetSession(id)
 	if err != nil {
 		return Session{}, err
+	}
+	if s.PermissionMode == PermYolo && !m.yoloEnabled() {
+		return Session{}, errors.New("this session runs in YOLO mode, which is turned off in Orole's settings; change its permission mode first")
 	}
 	if !localMachine(s.Machine) && s.Status == StatusLost && !fresh {
 		return Session{}, errors.New("remote process termination is unconfirmed; verify the box, then explicitly restart fresh")

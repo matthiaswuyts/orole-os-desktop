@@ -10,9 +10,6 @@ import { ToastProvider } from "@/components/ui/toast";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { SettingsView } from "./SettingsView";
 
-/** Query flag the desktop shell puts on the URL of the isolated settings window. */
-export const isSettingsWindow = new URLSearchParams(window.location.search).get("window") === "settings";
-
 /** Root of the settings window: the settings sidebar and pages only, no app shell. */
 export function SettingsWindow() {
   useApplyTheme();

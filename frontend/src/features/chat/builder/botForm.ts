@@ -7,7 +7,7 @@ export const LIMITS = {
   instructions: 32 * 1024,
   steps: { min: 1, max: 30, default: 8 },
   toolCalls: { min: 1, max: 60, default: 20 },
-  mcpTools: 100,
+  mcpServers: 50,
   skills: 50,
 } as const;
 
@@ -24,7 +24,7 @@ export interface FormState {
   reasoning: string;
   /** Ids of the enabled built-in tools. */
   tools: string[];
-  mcpTools: string[];
+  mcpServers: string[];
   skills: string[];
   /** Grants beyond the bot's own memory, which every bot can always read and write. Kept as saved; not edited here. */
   memory: ScopeAccess[];
@@ -37,7 +37,7 @@ export interface FormState {
 /** A new bot starts with every built-in tool on; each can be switched off in its settings. */
 export const initialForm = (): FormState => ({
   name: "", avatar: "", color: "", description: "", instructions: "", model: "", reasoning: "",
-  tools: Object.values(TOOL_IDS), mcpTools: [], skills: [], memory: [], maxSteps: "", maxToolCalls: "", executive: false,
+  tools: Object.values(TOOL_IDS), mcpServers: [], skills: [], memory: [], maxSteps: "", maxToolCalls: "", executive: false,
 });
 
 export type Action =
@@ -77,7 +77,7 @@ export function formFromInput(bot: Pick<BotInput, "name" | "avatar" | "color" | 
     reasoning: bot.reasoning,
     // knowledge_search is retired as a setting: every bot always has it, so a saved entry is dropped.
     tools: [...new Set((config.tools ?? []).map((t) => t.id).filter((id) => id !== "knowledge_search"))],
-    mcpTools: [...(config.mcpTools ?? [])], skills: [...(config.skills ?? [])],
+    mcpServers: [...(config.mcpServers ?? [])], skills: [...(config.skills ?? [])],
     memory: (config.memory ?? []).map((a) => ({ ...a })),
     maxSteps: limit(config.limits?.maxSteps), maxToolCalls: limit(config.limits?.maxToolCalls),
     executive: config.executive ?? false,
@@ -102,7 +102,7 @@ export function toInput(form: FormState, id: string): BotInput {
     reasoning: form.reasoning,
     config: {
       tools: form.tools.map((toolId) => ({ id: toolId })),
-      mcpTools: form.mcpTools,
+      mcpServers: form.mcpServers,
       skills: form.skills,
       memory: form.memory,
       limits: { maxSteps: integer(form.maxSteps), maxToolCalls: integer(form.maxToolCalls) },
@@ -117,13 +117,11 @@ export function fingerprint(form: FormState): string {
     ...form,
     tools: form.tools.toSorted(),
     memory: form.memory.toSorted((a, b) => a.scope.localeCompare(b.scope)),
-    mcpTools: form.mcpTools.toSorted(), skills: form.skills.toSorted(),
+    mcpServers: form.mcpServers.toSorted(), skills: form.skills.toSorted(),
   });
 }
 
 /* ------------------------------------------------------------------ validation */
-
-export type TabId = "persona" | "tools";
 
 /** Problems by field key. */
 export type Problems = Partial<Record<string, string>>;
@@ -150,15 +148,9 @@ export function validate(form: FormState): Problems {
   if (steps) problems.maxSteps = steps;
   const calls = limit(form.maxToolCalls, "Max tool calls", LIMITS.toolCalls);
   if (calls) problems.maxToolCalls = calls;
-  if (form.mcpTools.length > LIMITS.mcpTools) problems.mcpTools = `At most ${LIMITS.mcpTools} MCP tools can be enabled.`;
+  if (form.mcpServers.length > LIMITS.mcpServers) problems.mcpServers = `At most ${LIMITS.mcpServers} integrations can be enabled.`;
   if (form.skills.length > LIMITS.skills) problems.skills = `At most ${LIMITS.skills} skills can be enabled.`;
   return problems;
-}
-
-/** The tab that holds the field a problem key refers to. */
-export function tabOfProblem(key: string): TabId {
-  if (key === "mcpTools" || key === "skills") return "tools";
-  return "persona";
 }
 
 /* ------------------------------------------------------------------ import */
@@ -200,7 +192,7 @@ export function parseBotExport(text: string): ParsedExport {
         id: "", name: b.name, avatar: text_("avatar"), color: text_("color"), description: text_("description"), instructions: text_("instructions"),
         provider: text_("provider"), model: text_("model"), reasoning: text_("reasoning"),
         config: {
-          tools, mcpTools: stringList(config.mcpTools), skills: stringList(config.skills), memory,
+          tools, mcpServers: stringList(config.mcpServers), skills: stringList(config.skills), memory,
           limits: { maxSteps: typeof limits.maxSteps === "number" ? limits.maxSteps : 0, maxToolCalls: typeof limits.maxToolCalls === "number" ? limits.maxToolCalls : 0 },
         },
       },
