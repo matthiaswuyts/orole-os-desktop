@@ -111,6 +111,15 @@ func TestTheCallerStaysFreeWhileTheTaskRuns(t *testing.T) {
 		h := e.history(caller.ID)
 		return len(h) == 2 && h[1].Status == StatusComplete
 	})
+	// The callee's worker starts on its own goroutine; its reply row appears once it does.
+	e.until("the callee to start", func() bool {
+		for _, m := range e.history(callee.ID) {
+			if m.Role == "assistant" {
+				return true
+			}
+		}
+		return false
+	})
 	if r := e.lastReply(callee.ID); r.Status != StatusRunning {
 		t.Fatalf("the callee should still be working: %+v", r)
 	}

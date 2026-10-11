@@ -201,6 +201,9 @@ func TestGatewayEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The gateway registers proxied tools one at a time, so wait for the last one, not the first.
+	e.waitTool("team_notes__write_note", true)
+	e.waitTool("team_notes__delete_note", true)
 	tools := e.waitTool("team_notes__echo", true)
 	byName := map[string]*sdk.Tool{}
 	for _, tl := range tools {

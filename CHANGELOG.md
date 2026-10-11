@@ -182,6 +182,8 @@ notes. See `docs/development/updates.md`.
   making the client drop the link, reconnect and re-send the request (which ran the call twice).
   Oversized events are dropped and logged, and `Client.Call` only retries a request that was never
   written to the connection.
+- IPC: when a link is dropped (end of stream, or a frame the client rejects) the client now marks itself
+  disconnected before it closes the socket, so nothing that sees the hang-up can still observe a live connection.
 - Code projects load quickly again and no longer fail with "Could not load projects: context deadline exceeded". The sidebar
   used to wait for `git status` in every worktree of every project; now projects appear immediately, worktrees fill in per
   project, and one slow or broken repository cannot hide the rest. Worktree ahead/behind and dirty counts are read on the

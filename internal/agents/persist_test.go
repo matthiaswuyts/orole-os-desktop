@@ -83,7 +83,7 @@ func persistFixture(t *testing.T) (*Manager, *pubRecorder, *writeCounter) {
 	db := persistDB(t)
 	counter := &writeCounter{DB: db}
 	pubs := &pubRecorder{}
-	m := NewManager(Config{Store: NewStore(counter), Publish: pubs.publish})
+	m := NewManager(Config{Store: NewStore(&chatFailDB{DB: counter}), Publish: pubs.publish})
 	now := time.Now().UTC()
 	s := Session{ID: "s", Kind: "claude", Machine: "local", Mode: ModeStructured, Status: StatusWorking, StartedAt: now, UpdatedAt: now}
 	ls := &liveSess{id: s.ID, s: s, proc: &chatTestProcess{}, done: make(chan struct{})}
@@ -257,8 +257,7 @@ func TestMutateHotAfterCloseWritesThrough(t *testing.T) {
 
 func TestPersistFailureRollsBackALiveMutation(t *testing.T) {
 	m, pubs, _ := persistFixture(t)
-	base := m.st.db
-	m.st.db = chatFailDB{DB: base, fail: func(s Session) bool { return s.ReviewNote == "boom" }}
+	failDB(m).arm(func(s Session) bool { return s.ReviewNote == "boom" })
 	if _, err := m.mutate("s", func(s *Session) { s.ReviewNote = "boom" }); err == nil {
 		t.Fatal("persistence failure hidden")
 	}
@@ -268,7 +267,7 @@ func TestPersistFailureRollsBackALiveMutation(t *testing.T) {
 	if len(pubs.all("agents.updated")) != 0 {
 		t.Fatal("failed change was published")
 	}
-	m.st.db = base
+	failDB(m).disarm()
 }
 
 func TestEventsAreBatchedOrderedAndVisibleToReaders(t *testing.T) {
