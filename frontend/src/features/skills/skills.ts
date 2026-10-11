@@ -54,8 +54,9 @@ export function filterSkills(list: readonly Skill[], query: string): Skill[] {
   return q ? sorted.filter((s) => s.name.toLowerCase().includes(q) || s.description.toLowerCase().includes(q)) : sorted;
 }
 
-/** "orole" -> "Orole", "imported:claude" -> "Imported from claude". */
+/** "orole" -> "Orole", "builtin" -> "Built in (bots)", "imported:claude" -> "Imported from claude". */
 export function sourceLabel(source: string): string {
+  if (source === "builtin") return "Built in (bots)";
   if (source.startsWith("imported:")) return `Imported from ${source.slice("imported:".length)}`;
   return source === "orole" || source === "" ? "Orole" : source;
 }

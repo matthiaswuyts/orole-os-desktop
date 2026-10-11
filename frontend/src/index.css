@@ -287,7 +287,8 @@
   body {
     @apply text-sm select-none;
   }
-  input, textarea, pre, code, .xterm, [data-selectable] {
+  /* The shell is not selectable, content is. `.selectable` marks content (messages, errors, URLs); descendants inherit it. */
+  input, textarea, pre, code, .xterm, .selectable, [data-selectable] {
     @apply select-text;
   }
   * {

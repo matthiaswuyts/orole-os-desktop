@@ -1,10 +1,14 @@
 import { create } from "zustand";
+import { Desktop } from "@/mygo";
+import { inDesktop } from "@/lib/backend";
 
 export type ViewId = "home" | "agents" | "review" | "issues" | "automations" | "new-task" | "settings" | "chat";
 /** The sidebar's two worlds. Settings is reachable from both and belongs to neither. */
 export type Mode = "code" | "chat";
 
 const MODE_KEY = "orole.mode";
+
+const isSettingsWindow = () => new URLSearchParams(window.location.search).get("window") === "settings";
 
 function loadMode(): Mode {
   try {
@@ -53,7 +57,15 @@ export const useUI = create<UIState>((set, get) => {
     },
     settingsSection: "customization",
     settingsTab: "",
-    openSettings: (settingsSection, settingsTab = "") => set({ settingsSection, settingsTab, view: "settings" }),
+    // The desktop app keeps settings in a window of their own; the settings window itself and the browser preview show them in place.
+    openSettings: (settingsSection, settingsTab = "") => {
+      set({ settingsSection, settingsTab });
+      if (inDesktop && !isSettingsWindow()) {
+        Desktop.openSettings(settingsSection).catch((error: unknown) => console.warn("Could not open the settings window", error));
+        return;
+      }
+      set({ view: "settings" });
+    },
     paletteOpen: false,
     sidebarOpen: true,
     toggleSidebar: () => set((s) => ({ sidebarOpen: !s.sidebarOpen })),

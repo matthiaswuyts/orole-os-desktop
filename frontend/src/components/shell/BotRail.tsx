@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
-import { Pencil, Plus, Plug, TriangleAlert } from "lucide-react";
+import { Pencil, Pin, PinOff, Plus, Plug, TriangleAlert } from "lucide-react";
 import { Chat, type Bot } from "@/mygo";
 import { cn } from "@/lib/utils";
 import { ago } from "@/features/agents/format";
@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "@/components/ui/menu";
 import { Skeleton } from "@/components/ui/skeleton";
+import { toastManager } from "@/components/ui/toast";
 import { BotAvatar } from "./BotAvatar";
 
 const note = "px-2 py-1 text-muted-foreground text-xs";
@@ -39,7 +40,8 @@ export function BotRail() {
 
   const query = filter.trim().toLocaleLowerCase();
   const visible = useMemo(
-    () => query ? bots.filter((b) => `${b.name} ${b.description}`.toLocaleLowerCase().includes(query)) : bots,
+    // Pinned bots first; the sort is stable, so each group keeps the list's own order.
+    () => (query ? bots.filter((b) => b.name.toLocaleLowerCase().includes(query)) : [...bots]).sort((a, b) => Number(!!b.config.pinned) - Number(!!a.config.pinned)),
     [bots, query],
   );
   const tabStop = visible.find((b) => b.id === focusId)?.id ?? visible.find((b) => b.id === selectedBotId)?.id ?? visible[0]?.id;
@@ -119,6 +121,12 @@ function BotRow({ bot, selected, tabStop, onFocus }: { bot: Bot; selected: boole
   const preview = bot.lastMessage;
   const awaiting = !running && (preview?.awaiting ?? false);
   const openMenu = () => menu.current?.click();
+  const pinned = !!bot.config.pinned;
+  const togglePin = () => {
+    Chat.pinBot({ id: bot.id, pinned: !pinned }).catch((cause: unknown) => {
+      toastManager.add({ title: pinned ? "Could not unpin the bot" : "Could not pin the bot", description: cause instanceof Error ? cause.message.replace(/^[a-z_]+: /, "") : String(cause), type: "error" });
+    });
+  };
   return (
     <li
       onContextMenu={(e) => { e.preventDefault(); openMenu(); }}
@@ -139,6 +147,7 @@ function BotRow({ bot, selected, tabStop, onFocus }: { bot: Bot; selected: boole
         <span className="flex min-w-0 flex-1 flex-col">
           <span className="flex items-center gap-1.5">
             <span className="min-w-0 flex-1 truncate font-medium text-[13px]">{bot.name}</span>
+            {pinned && <Pin aria-label="Pinned" className="size-3 shrink-0 -rotate-45 fill-current text-muted-foreground" />}
             {preview && <time dateTime={new Date(preview.at).toISOString()} className="shrink-0 text-[11px] text-muted-foreground">{since(preview.at)}</time>}
           </span>
           <span className="truncate text-muted-foreground text-xs">
@@ -150,6 +159,7 @@ function BotRow({ bot, selected, tabStop, onFocus }: { bot: Bot; selected: boole
       <Menu>
         <MenuTrigger ref={menu} render={<button type="button" tabIndex={-1} aria-hidden="true" aria-label={`Actions for ${bot.name}`} className="pointer-events-none absolute top-1 right-1 size-5 opacity-0" />} />
         <MenuPopup align="start" side="right" className="min-w-44">
+          <MenuItem onClick={togglePin}>{pinned ? <PinOff className="size-3.5" /> : <Pin className="size-3.5" />}{pinned ? "Unpin" : "Pin to top"}</MenuItem>
           <MenuItem onClick={() => { useChat.getState().open(bot.id); useChat.getState().setSettingsOpen(true); }}><Pencil className="size-3.5" />Bot settings</MenuItem>
           <MenuSeparator />
           <MenuItem onClick={() => setConfirm("clear")}>Clear conversation…</MenuItem>

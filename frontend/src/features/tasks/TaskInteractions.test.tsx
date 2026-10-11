@@ -97,43 +97,84 @@ describe("verified question flow", () => {
 });
 
 describe("tool permission decisions", () => {
-  it("discloses complete escaped input and requires reviewing each exact snapshot", () => {
-    const inputJSON = '{"command":' + JSON.stringify("padding ".repeat(80) + "; delete-sensitive-target") + ',"content":"<img src=x>\nreplacement\u202e","number":9007199254740993}';
-    const view = render(<TaskApprovalCard sessionId="session" request={{ ...permission, tool: "Write\u202e", inputJSON }} />);
-    expect(screen.getByLabelText("Complete tool arguments")).toHaveTextContent("delete-sensitive-target");
-    expect(screen.getByLabelText("Complete tool arguments").textContent).toContain("9007199254740993");
-    expect(screen.getByLabelText("Complete tool arguments").textContent).toContain("\\u202e");
-    expect(screen.getByLabelText("Complete tool arguments").textContent).not.toContain("\u202e");
-    expect(view.container.querySelector("img")).toBeNull();
-    expect(screen.getByRole("button", { name: "Allow once" })).toBeDisabled();
-    fireEvent.click(screen.getByRole("checkbox"));
+  const shell = (command: string, patch: Partial<PermissionRequest> = {}): PermissionRequest => ({ id: "permission-2", tool: "shell", summary: command, input: {}, inputJSON: JSON.stringify({ kind: "command", command, cwd: "C:\\work" }), at: "2026-10-09T00:00:00Z", ...patch });
+  const openDetails = () => fireEvent.click(screen.getByRole("button", { name: "Details" }));
+
+  it("is a compact card in plain words: capability, requester, the full command and folder, and just Deny / Allow once", () => {
+    const command = "echo " + "padding ".repeat(80) + "; delete-sensitive-target";
+    const { container } = render(<TaskApprovalCard sessionId="session" requester="Codex" request={shell(command)} />);
+    expect(screen.getByText("Run a command")).toBeInTheDocument();
+    expect(screen.getByText("requested by Codex")).toBeInTheDocument();
+    expect(screen.getByLabelText("Command")).toHaveTextContent("delete-sensitive-target");
+    expect(screen.getByLabelText("Folder")).toHaveTextContent("C:\\work");
     expect(screen.getByRole("button", { name: "Allow once" })).toBeEnabled();
-    view.rerender(<TaskApprovalCard sessionId="session" request={{ ...permission, inputJSON: '{"command":"changed under same ID"}' }} />);
-    expect(screen.getByRole("checkbox")).not.toBeChecked();
-    expect(screen.getByRole("button", { name: "Allow once" })).toBeDisabled();
-    view.rerender(<TaskApprovalCard sessionId="session" request={{ ...permission, inputJSON: "" }} />);
     expect(screen.getByRole("button", { name: "Deny" })).toBeEnabled();
-    expect(screen.getByRole("button", { name: "Allow once" })).toBeDisabled();
+    expect(screen.getAllByRole("button").map((button) => button.textContent)).toEqual(["Details", "Deny", "Allow once"]);
+    expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/Reason/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Tool permission|Permission request history|Decision acknowledged/)).not.toBeInTheDocument();
+    expect(container.textContent).not.toContain('"kind"');
   });
 
-  it("records acknowledged denial even when refreshing session fails", async () => {
+  it("keeps the raw request behind Details, with every control and directional character escaped and nothing interpreted", () => {
+    const inputJSON = '{"command":' + JSON.stringify("echo\u202e hi\nsecond line") + ',"content":"<img src=x>\nreplacement\u202e","number":9007199254740993}';
+    const view = render(<TaskApprovalCard sessionId="session" request={{ ...permission, tool: "Write\u202e", inputJSON }} />);
+    expect(screen.queryByLabelText("Complete tool arguments")).not.toBeInTheDocument();
+    openDetails();
+    const args = screen.getByLabelText("Complete tool arguments");
+    expect(args.textContent).toContain("9007199254740993");
+    expect(args.textContent).toContain("\\u202e");
+    expect(args.textContent).not.toContain("\u202e");
+    expect(screen.getByLabelText("Complete tool name").textContent).toContain("\\u202e");
+    expect(view.container.querySelector("img")).toBeNull();
+    view.unmount();
+    // Inline text is escaped as well; line breaks of a multi-line command stay readable.
+    render(<TaskApprovalCard sessionId="session" request={shell("echo\u202e hi\nsecond line")} />);
+    const command = screen.getByLabelText("Command");
+    expect(command.textContent).toBe("echo\\u202e hi\nsecond line");
+  });
+
+  it("binds consent to the exact snapshot: a changed request under the same ID starts over", async () => {
+    const view = render(<TaskApprovalCard sessionId="session" request={permission} />);
+    fireEvent.click(screen.getByRole("button", { name: "Allow once" }));
+    await screen.findByText("Allowed once");
+    expect(api.approve).toHaveBeenCalledWith("session", "permission-1", true, "");
+    view.rerender(<TaskApprovalCard sessionId="session" request={{ ...permission, inputJSON: '{"file_path":"changed under same ID"}' }} />);
+    expect(screen.queryByText("Allowed once")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Allow once" })).toBeEnabled();
+    expect(screen.getByLabelText("Files")).toHaveTextContent("changed under same ID");
+  });
+
+  it("cannot approve a request whose complete input is unavailable, and says why", () => {
+    render(<TaskApprovalCard sessionId="session" request={{ ...permission, inputJSON: "" }} />);
+    expect(screen.getByRole("alert")).toHaveTextContent("The complete input is unavailable. This request cannot be approved.");
+    expect(screen.getByRole("button", { name: "Allow once" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Deny" })).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", { name: "Allow once" }));
+    expect(api.approve).not.toHaveBeenCalled();
+  });
+
+  it("records acknowledged denial even when refreshing session fails, with a one-line receipt", async () => {
     api.get.mockRejectedValue(new Error("Refresh disconnected"));
     render(<TaskApprovalCard sessionId="session" request={permission} />);
-    fireEvent.change(screen.getByLabelText("Reason (optional)"), { target: { value: "Not this file" } });
     fireEvent.click(screen.getByRole("button", { name: "Deny" }));
     await screen.findByText("Denied");
-    expect(api.approve).toHaveBeenCalledWith("session", "permission-1", false, "Not this file");
-    expect(screen.getByRole("status")).toHaveTextContent("Reason: Not this file");
+    expect(api.approve).toHaveBeenCalledWith("session", "permission-1", false, "");
+    expect(screen.getByRole("status")).toHaveTextContent(/^Denied$/);
     expect(await screen.findByRole("alert")).toHaveTextContent("Refresh disconnected");
     expect(screen.queryByRole("button", { name: "Deny" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Allow once" })).not.toBeInTheDocument();
   });
 
   it("does not invent approval receipts from missing pending state or rejected APIs", async () => {
     const view = render(<TaskApprovalCard sessionId="session" request={permission} resolved />);
-    expect(screen.getByRole("status")).toHaveTextContent("No decision receipt is available");
+    expect(screen.getByRole("status")).toHaveTextContent("No longer pending");
     expect(screen.queryByText("Allowed once")).not.toBeInTheDocument();
-    view.rerender(<TaskApprovalCard sessionId="session" request={permission} resolved decision={{ allow: true, reason: "Reviewed" }} />);
-    expect(screen.getByRole("status")).toHaveTextContent("Allowed once");
+    expect(screen.queryByRole("button", { name: "Allow once" })).not.toBeInTheDocument();
+    view.rerender(<TaskApprovalCard sessionId="session" request={permission} resolved decision={{ allow: true, reason: "" }} />);
+    expect(screen.getByRole("status")).toHaveTextContent(/^Allowed once$/);
+    view.rerender(<TaskApprovalCard sessionId="session" request={permission} resolved decision={{ allow: false, reason: "Not this file" }} />);
+    expect(screen.getByRole("status")).toHaveTextContent("DeniedNot this file");
     view.unmount();
     api.approve.mockRejectedValue(new Error("Permission expired"));
     render(<TaskApprovalCard sessionId="session" request={permission} />);
@@ -141,6 +182,11 @@ describe("tool permission decisions", () => {
     await screen.findByText("Permission expired");
     expect(screen.queryByText("Denied")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Deny" })).toBeEnabled();
+  });
+
+  it("offers no session-wide or permanent grant the daemon request does not carry", () => {
+    render(<TaskApprovalCard sessionId="session" request={shell("ls")} />);
+    expect(screen.queryByRole("button", { name: /session|always/i })).not.toBeInTheDocument();
   });
 });
 

@@ -10,7 +10,7 @@ import { useTaskEvents } from "./useTaskEvents";
 export function TaskView({ session }: { session: Session }) {
   const task = useTaskEvents(session.id);
   const remote = isRemoteProcess(session);
-  return <TaskCanvas session={session} events={task.events}>
+  return <TaskCanvas session={session}>
     <div className="flex h-full min-h-0 flex-col">
       <div className="px-5"><ErrorNote error={session.error} /></div>
       {remote && <p className="px-5 py-2 text-xs text-muted-foreground">SSH process · output and exit status only. There is no interactive terminal, conversation resume, or local worktree review.</p>}

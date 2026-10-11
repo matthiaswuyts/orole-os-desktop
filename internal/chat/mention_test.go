@@ -149,3 +149,15 @@ func TestSkillMentionOnlyNamesSkillsTheAnsweringBotOwns(t *testing.T) {
 		t.Fatalf("system: %s", system)
 	}
 }
+
+func TestAnswerExtraNamesBuiltinSkillsButNotOthers(t *testing.T) {
+	bot := Bot{ID: "b1", Config: BotConfig{Skills: []string{"pdf"}}}
+	tn := turn{skills: []string{"pdf", "skill-creator", "secret"}}
+	got := answerExtra(tn, bot, bot, []string{"skill-creator"})
+	if !strings.Contains(got, "pdf, skill-creator") || strings.Contains(got, "secret") {
+		t.Fatalf("addendum = %q", got)
+	}
+	if got := answerExtra(turn{skills: []string{"skill-creator"}}, bot, bot, nil); got != "" {
+		t.Fatalf("without a built-in list the skill must not be named: %q", got)
+	}
+}
