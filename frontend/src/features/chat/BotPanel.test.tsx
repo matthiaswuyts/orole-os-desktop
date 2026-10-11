@@ -10,7 +10,7 @@ import { BotPanel } from "./BotPanel";
 import { bot, bridge, model, provider, resetBridge, toolInfo } from "./builder/testing";
 
 const saved = bridge.chat.saveBot;
-const openTab = (name: string) => fireEvent.click(screen.getByRole("tab", { name }));
+const openPage = (name: string) => fireEvent.click(screen.getByRole("button", { name: new RegExp(`^${name}`) }));
 
 beforeEach(() => {
   resetBridge();
@@ -24,38 +24,55 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("bot settings panel", () => {
-  it("has Persona and Tools tabs and shows no instructions", () => {
-    render(<BotPanel bot={bot("b1", { instructions: "Plan trips" })} />);
-    expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual(["Persona", "Tools"]);
-    expect(screen.queryByRole("textbox", { name: "Instructions" })).toBeNull();
-    expect(screen.queryByText("Instructions")).toBeNull();
+  it("shows who the bot is, how it thinks, what it knows and what it does", () => {
+    render(<BotPanel bot={bot("b1", { name: "Travel", description: "Trip planner", instructions: "Plan trips" })} />);
+    expect(screen.getByLabelText("Name")).toHaveValue("Travel");
+    expect(screen.queryByLabelText("Title")).toBeNull();
+    expect(screen.queryByLabelText("Instructions")).toBeNull();
     expect(screen.queryByText("Plan trips")).toBeNull();
+    for (const group of ["Brain", "Knows", "Does"]) expect(screen.getByRole("heading", { name: group })).toBeInTheDocument();
+    for (const row of ["Memories", "Skills", "Tools", "Integrations"]) expect(screen.getByRole("button", { name: new RegExp(`^${row}`) })).toBeInTheDocument();
   });
 
-  it("saves persona and tool changes on its own, once, keeping the instructions and the setup flag", async () => {
+  it("saves name and tool changes on its own, once, keeping the instructions and the setup flag", async () => {
     const b = bot("b1", { name: "Travel", instructions: "Plan trips", config: { ...bot("x").config, setup: true } });
     saved.mockResolvedValue(b);
     render(<BotPanel bot={b} />);
     expect(screen.queryByRole("button", { name: "Save changes" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Discard" })).toBeNull();
     fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Trips" } });
-    fireEvent.change(screen.getByLabelText("Description"), { target: { value: "Plans trips" } });
-    openTab("Tools");
+    openPage("Tools");
     fireEvent.click(await screen.findByRole("switch", { name: "Date and time" }));
+    fireEvent.click(screen.getByRole("button", { name: "Back to settings" }));
     expect(saved).not.toHaveBeenCalled();
     await waitFor(() => expect(saved).toHaveBeenCalledTimes(1), { timeout: 3000 });
     expect(saved.mock.calls[0]![0]).toMatchObject({
-      id: "b1", name: "Trips", description: "Plans trips", instructions: "Plan trips",
+      id: "b1", name: "Trips", description: "", instructions: "Plan trips",
       config: { tools: [{ id: "datetime" }], setup: true },
     });
-    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("All changes saved."));
+    await waitFor(() => expect(screen.getByText("All changes saved.")).toBeInTheDocument());
+  });
+
+  it("counts the bot's saved memories and lets the user forget one", async () => {
+    bridge.chat.memoryScopes.mockResolvedValue([{ id: "s-bot", name: "Travel", kind: "bot", count: 2, used: 0, limit: 100 }]);
+    bridge.chat.memoryEntries.mockResolvedValue([
+      { id: "e1", scope: "s-bot", kind: "fact", text: "Prefers window seats", trust: "user", author: "user", pending: false, createdAt: 1, updatedAt: 1 },
+      { id: "e2", scope: "s-bot", kind: "fact", text: "Lives in Oslo", trust: "bot", author: "bot:b1", pending: true, createdAt: 2, updatedAt: 2 },
+    ]);
+    bridge.chat.deleteMemoryEntry.mockResolvedValue(undefined);
+    render(<BotPanel bot={bot("b1", { name: "Travel" })} />);
+    expect(await screen.findByRole("button", { name: /^Memories.*2 saved/ })).toBeInTheDocument();
+    openPage("Memories");
+    expect(await screen.findByText("Prefers window seats")).toBeInTheDocument();
+    expect(screen.getByText("Waiting for approval")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Forget: Prefers window seats" }));
+    await waitFor(() => expect(bridge.chat.deleteMemoryEntry).toHaveBeenCalledWith("e1"));
   });
 
   it("does not save an invalid name and says why", async () => {
     render(<BotPanel bot={bot("b1", { name: "Travel" })} />);
     fireEvent.change(screen.getByLabelText("Name"), { target: { value: " " } });
     expect(screen.getByText("Give the bot a name.")).toBeInTheDocument();
-    expect(screen.getByRole("status")).toHaveTextContent("Fix the highlighted fields to save.");
+    expect(screen.getByText("Fix the highlighted fields to save.")).toBeInTheDocument();
     await new Promise((r) => setTimeout(r, 900));
     expect(saved).not.toHaveBeenCalled();
   });

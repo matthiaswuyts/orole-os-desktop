@@ -5,9 +5,45 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Orole OS</title>
+    <script>
+      // Runs before first paint, before the JS bundle. Applies the theme useApplyTheme cached on the
+      // last run so the splash below is already in the user's colours. First run (no cache): the
+      // default Orole Midnight base colours, matching the native window background in cmd/desktop.
+      (function () {
+        var e = document.documentElement;
+        try {
+          var t = JSON.parse(localStorage.getItem("orole.boot-theme") || "null");
+          if (t && t.tokens) {
+            for (var k in t.tokens) e.style.setProperty(k, t.tokens[k]);
+            e.classList.toggle("dark", !!t.dark);
+            e.style.colorScheme = t.dark ? "dark" : "light";
+            return;
+          }
+        } catch (_) {}
+        e.classList.add("dark");
+        e.style.colorScheme = "dark";
+        e.style.setProperty("--background", "#0f1420");
+        e.style.setProperty("--foreground", "#d7deef");
+        e.style.setProperty("--muted-foreground", "#7c8aaa");
+      })();
+    </script>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <!-- Static twin of components/shell/StartupScreen.tsx at 0%; React replaces it on mount.
+           Keep both in step so the hand-off does not shift. The settings window has no splash. -->
+      <main id="boot-splash" aria-label="Starting Orole OS" class="relative grid h-full min-h-0 place-items-center bg-background px-4 text-foreground">
+        <div aria-hidden="true" class="titlebar-drag absolute inset-x-0 top-0" style="height: var(--titlebar-h)"></div>
+        <div class="flex max-w-full flex-col items-center gap-3">
+          <h1 class="text-sm font-medium">Orole OS</h1>
+          <pre aria-hidden="true" class="m-0 whitespace-pre font-mono text-xs leading-6 sm:text-sm">[>                         ]   0%</pre>
+          <p role="status" class="text-center text-xs text-muted-foreground">Loading preferences…</p>
+        </div>
+      </main>
+      <script>
+        if (new URLSearchParams(location.search).get("window") === "settings") document.getElementById("boot-splash").remove();
+      </script>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

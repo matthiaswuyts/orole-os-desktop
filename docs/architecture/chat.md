@@ -30,30 +30,52 @@ snapshots (at most one per 50 ms plus the final). Statuses: `pending`, `running`
 (daemon restarted mid-run), `error`, `canceled`. Budgets: steps (default 8) and tool calls (default 20) per turn,
 doom-loop detection, cancellation through `chat.cancel`.
 
+### Queue
+A bot works one message at a time; messages sent meanwhile are stored `pending` and wait in the bot's queue (at most
+`maxQueued`). `chat.queue.cancel` drops one waiting message (it stays in the conversation, `canceled`),
+`chat.queue.pause` lets the active reply finish and then holds the rest, `chat.queue.resume` releases them, and
+`chat.cancel` still stops the active reply and cancels everything waiting (also when paused). The pause is announced
+as `chat.run` with `paused: true`; it lives in the run state, so it ends with the queue (pausing an idle bot is a
+no-op) and does not survive a daemon restart. The UI lists waiting messages above the composer, not in the thread.
+
+### Voice
+Every bot's system prompt carries `chatStyle` (`internal/chat/prompt.go`) after the standing rules: talk like a
+colleague in a messaging app, short and direct, one idea per paragraph, structured data in `show_*` components and long
+output in files. The thread draws each paragraph of a reply as its own bubble (`parts/bubbles.ts`; fenced code
+and a lead-in line with its list stay whole).
+
 ## Tools
 - Hosted: OpenRouter `openrouter:web_search` / `web_fetch` / `datetime`, OpenAI `web_search`. A tool is offered only
   when the provider+model can run it; `chat.tools.list` returns `available` plus a reason and what leaves the machine.
 - Client: `fetch_url` (fallback), `research`, MCP tools, `orole_get_skill`, memory tools, `ask_bot`.
-- MCP and policy: bot calls use actor `bot:<id>` and the existing approval flow.
+- MCP and policy: a bot is given whole MCP servers (`BotConfig.MCPServers`, shown as Integrations / MCP in the bot settings) and
+  may call every tool of each connected server except those the user set to "deny" in Settings > Integrations (at most 128
+  tools per model call; the user prunes with per-tool permissions). Calls use actor `bot:<id>` and the existing approval flow.
+  Migration `0099` turned the former per-tool allow-list `mcpTools` (`<serverId>/<tool>`) into the servers it named.
 
 ## Memory
 Scopes: `bot:<id>` (private), `user`, `shared:<name>`. A bot reads/writes its own scope and any granted scope
 (`BotConfig.memory`), enforced in Go for snapshots, search and recall. Core notes are bounded (2,200 / 1,400 /
 2,200 characters). Facts are invalidated, never deleted, when superseded. Consolidation runs when a conversation
 goes idle, using the cheap "memory model" from Settings > AI providers. Bot writes can be held for approval.
-Skill proposals are inert until approved in the UI. Knowledge files accept text-like files only (PDF indexing is not
+Skill proposals are inert until the user presses Add on the skill card in the conversation (see below). Knowledge files accept text-like files only (PDF indexing is not
 supported yet).
 
 ## Delegation (`ask_bot`)
-Only executive assistants get `ask_bot`. A call is a real turn on the callee, not a hidden side run: the question is
+Only executive assistants get `ask_bot`. A call is a real turn on the callee, not a hidden side run: the task is
 stored in the callee's own conversation as a user message with author `bot:<callerId>`, the turn goes through the
 callee's normal queue (one run per bot, behind anything it is already doing), and the reply is an ordinary stored,
 streamed assistant message with `chat.run` events, so the user can open the worker's chat and watch its tools and
-steps. The turn carries `RunContext.Depth` and `RunContext.Chain` (the bots waiting on it, used for cycle and depth
-limits) and a system-prompt addendum saying the task was handed off. The asking tool blocks until the callee finishes
-(`Delegator.Ask`) or its context ends; on timeout or when the executive is stopped, a still-queued turn is dropped
-(its message marked canceled) or the active turn is cancelled, never another turn of the callee. The default
-`AskTimeout` is 20 minutes. Asking a bot that is itself waiting on the caller is refused as a deadlock. Consolidation
+steps. The turn carries `RunContext.Depth` and `RunContext.Chain` (the bots that handed it off, used for cycle and
+depth limits) and a system-prompt addendum saying the task was handed off.
+
+The handoff is asynchronous (`Delegator.Handoff`): `ask_bot` returns as soon as the task is queued, so the asking bot
+answers ("on it") and stays free for the user. When the callee's turn ends, in any state, its outcome is stored in the
+asking bot's conversation as a user message with author `report:<calleeId>` and the asking bot answers it with a
+system-prompt addendum to tell the user what came back. The model sees the report fenced as untrusted data, and the UI
+draws it as a collapsed "reported back" card. While a task is out, the asking bot's system prompt lists it (name, task,
+minutes running), so the user can ask for status. Handoff state lives in memory: a daemon restart ends running tasks as
+`incomplete` and no report is delivered. A user stopping the callee reports "stopped" to the asker. Consolidation
 treats messages authored by another bot as untrusted. Delegation rows carry `MsgPart.botId` of the callee.
 
 ## @mentions and skills
@@ -69,6 +91,23 @@ another bot are rewritten as fenced `<untrusted source="reply of bot X">` user-s
 history, so no bot mistakes them for its own words. A skill mention adds an instruction to read the skill with
 `orole_get_skill`, limited to skills the answering bot owns. Regenerating a mention reply reruns the same bot.
 History summaries are keyed by the conversation, not by the answering bot.
+Built-in skills (`skill-creator`, see [skills and gateway](skills-and-gateway.md)) are listed in every bot's system prompt
+and readable with `orole_get_skill` regardless of `BotConfig.Skills`. They also appear in the `/` picker and are accepted
+as skill mentions (`Manager.SetBuiltinSkills`; the frontend's `useRegistrySkills` store feeds the picker, the send path
+and the message chips).
+
+## Skill cards (`propose_skill`)
+`propose_skill {name, description, body}` does not touch the registry. It stores a pending `skill_proposals` row and returns a
+`ui` part of kind `skill` (`{proposalId, botId, name, description, body, updates}`) that the conversation draws as a card
+(`parts/SkillProposalCard.tsx`) with the instructions behind a disclosure, **Add skill** and **Dismiss**. There is no
+proposals list in the bot settings. The skill keeps the name the bot chose (no bot prefix); a name that belongs to another
+source's registry skill (hand-written, built-in, another bot's) is refused when the bot proposes, and checked again when the
+user presses Add. A new proposal under the same name replaces the bot's earlier pending draft (the old card then reads
+"Replaced by a newer draft"); at most 10 proposals can be pending per bot; descriptions may be up to 1024 characters
+(the bot's skill list shows the first 300). The card reads the real state with `chat.skills.pending.get` and resolves with
+`chat.skills.pending.resolve`: Add saves the skill (source `chat:<botId>`, so the same bot can update it later) and
+calls `Manager.GrantSkill`, which appends it to that bot's `BotConfig.Skills`, so it works at once; a failure after saving
+leaves the proposal pending and Add can be retried. Dismiss marks it rejected.
 
 ## Structured output (`show_*` tools)
 Bots whose model can call tools get nine tools that render chat components instead of Markdown: `show_table`,

@@ -178,3 +178,57 @@ func TestSkillsPromptFlattensDescriptions(t *testing.T) {
 		t.Fatalf("prompt = %q", got)
 	}
 }
+
+// builtinFixture is the fixture plus the built-in skills, as the daemon installs them.
+func builtinFixture(t *testing.T) *skills.Store {
+	t.Helper()
+	store, _ := skillFixture(t)
+	if err := store.EnsureBuiltin(); err != nil {
+		t.Fatal(err)
+	}
+	return store
+}
+
+func TestBuiltinSkillsReachEveryBot(t *testing.T) {
+	store := builtinFixture(t)
+	tool := &SkillsTool{Store: store}
+	bot := skillsBot() // no skills configured
+
+	if specs := tool.Specs(bot, llm.Caps{Tools: true}); len(specs) != 1 {
+		t.Fatalf("a bot with no skills must still get the reader for built-in skills: %v", specNames(specs))
+	}
+	if got := SkillsPrompt(store, bot); !strings.Contains(got, "- skill-creator:") || strings.Contains(got, "alpha") {
+		t.Fatalf("prompt = %q", got)
+	}
+	res := callSkill(t, tool, bot, `{"name":"skill-creator"}`)
+	if res.IsError || !strings.Contains(res.Text, "propose_skill") || !strings.Contains(res.Text, "references/examples.md") {
+		t.Fatalf("skill-creator = %+v", res)
+	}
+	if res := callSkill(t, tool, bot, `{"name":"skill-creator","file":"references/examples.md"}`); res.IsError {
+		t.Fatalf("resource file = %+v", res)
+	}
+	// Built-in access does not widen into the rest of the registry.
+	for _, name := range []string{"alpha", "missing"} {
+		if res := callSkill(t, tool, bot, `{"name":"`+name+`"}`); !res.IsError {
+			t.Errorf("%s was readable without a grant", name)
+		}
+	}
+}
+
+func TestDisabledBuiltinSkillIsNeitherOfferedNorReadable(t *testing.T) {
+	store := builtinFixture(t)
+	if _, err := store.SetEnabled("skill-creator", false); err != nil {
+		t.Fatal(err)
+	}
+	tool := &SkillsTool{Store: store}
+	bot := skillsBot()
+	if specs := tool.Specs(bot, llm.Caps{Tools: true}); specs != nil {
+		t.Fatalf("specs = %v", specNames(specs))
+	}
+	if got := SkillsPrompt(store, bot); got != "" {
+		t.Fatalf("prompt = %q", got)
+	}
+	if res := callSkill(t, tool, bot, `{"name":"skill-creator"}`); !res.IsError {
+		t.Fatalf("disabled built-in skill was served: %+v", res)
+	}
+}

@@ -13,41 +13,112 @@ beforeEach(() => { vi.clearAllMocks(); });
 afterEach(cleanup);
 
 let seq = 0;
-const ev = (kind: string, text = "", data: unknown = null): AgentEvent => ({ id: ++seq, sessionId: "s1", at: "2026-10-08T12:00:00Z", kind, text, data });
+const ev = (kind: string, text = "", data: unknown = null, sec = 0): AgentEvent => ({ id: ++seq, sessionId: "s1", at: new Date(Date.UTC(2026, 9, 8, 12, 0, sec)).toISOString(), kind, text, data });
+/** The run's own disclosure trigger, not a step's. */
+const run = () => document.querySelector<HTMLElement>('[data-slot="run-activity"] > [data-slot="collapsible"] > [data-slot="collapsible-trigger"]')!;
 const session = (patch: Partial<Session> = {}): Session => ({ id: "s1", live: true, status: "idle", activity: "", pending: [], ...patch }) as Session;
 const show = (events: AgentEvent[], s = session()) => render(<Feed session={s} events={events} loading={false} loadingMore={false} error={null} hasMore={false} onLoadMore={() => Promise.resolve(true)} />);
 
 describe("Feed", () => {
-  it("renders one tool card for a call and its result, with server badge, status and expandable input/output", () => {
-    show([
+  it("folds a tool call and its result into one step of the run, readable without raw JSON or status clutter", () => {
+    const { container } = show([
+      ev("prompt", "look it up"),
       ev("tool", "", { id: "t1", name: "search", server: "docs", status: "running", input: { query: "hooks" } }),
       ev("tool_result", "", { id: "t1", name: "search", server: "docs", status: "ok", output: "3 results" }),
+      ev("tool", "", { id: "t2", name: "web_search", status: "ok", input: { action: null, query: "" } }),
+      ev("tool", "", { id: "t3", name: "shell", status: "ok", input: { command: `"C:\\Program Files\\PowerShell\\7\\pwsh.exe" -Command 'npm test'`, cwd: "C:\\w" } }),
+      ev("message", "Found it."),
     ]);
-    const cards = screen.getAllByTestId("tool-card");
-    expect(cards).toHaveLength(1);
-    expect(cards[0]).toHaveAttribute("data-status", "ok");
-    expect(within(cards[0]!).getByText("docs")).toBeInTheDocument();
+    expect(screen.getByText("Found it.")).toBeInTheDocument();
     expect(screen.queryByText("3 results")).toBeNull();
-    fireEvent.click(within(cards[0]!).getByRole("button"));
+    fireEvent.click(run());
+    const steps = within(screen.getByRole("list", { name: "Activity" })).getAllByRole("listitem");
+    expect(steps).toHaveLength(3);
+    expect(steps[0]).toHaveTextContent("Used");
+    expect(steps[0]).toHaveTextContent("docs · Search");
+    expect(steps[1]).toHaveTextContent("Searched the web");
+    expect(steps[1]).not.toHaveTextContent("action");
+    expect(steps[2]).toHaveTextContent(/Ran\s*npm test/);
+    expect(steps[2]).not.toHaveTextContent("pwsh");
+    expect(container).not.toHaveTextContent("Done");
+    expect(container.querySelectorAll("time")).toHaveLength(container.querySelectorAll('[data-slot="day-separator"] time').length);
+    // The technical record is one disclosure away.
+    fireEvent.click(within(steps[0]!).getByRole("button"));
+    const details = screen.getByTestId("tool-details");
+    expect(details).toHaveAttribute("data-status", "ok");
+    expect(details).toHaveTextContent("search");
     expect(screen.getByLabelText("Tool output")).toHaveTextContent("3 results");
     expect(screen.getByLabelText("Tool input")).toHaveTextContent('"query": "hooks"');
   });
 
-  it("collapses reasoning to a one-line preview and expands to the full text", () => {
-    show([ev("reasoning", "Plan the change.\nThen run the tests carefully.", { id: "r1" })]);
-    const block = screen.getByTestId("reasoning");
-    expect(block).toHaveTextContent("Plan the change. Then run the tests carefully.");
-    expect(block.querySelector("p")).toBeNull();
-    fireEvent.click(within(block).getByRole("button"));
-    expect(block.querySelectorAll("p").length).toBeGreaterThan(0);
+  it("shows a failed tool as an explicit error and keeps the time in a hover title only", () => {
+    show([ev("prompt", "go"), ev("tool", "", { id: "t1", name: "shell", status: "error", input: { command: "npm test" }, output: "exit code 1" }), ev("message", "It failed.")]);
+    fireEvent.click(run());
+    const step = within(screen.getByRole("list", { name: "Activity" })).getByRole("listitem");
+    expect(step).toHaveAttribute("data-failed", "true");
+    expect(step).toHaveTextContent("Failed");
+    expect(step.getAttribute("title")).toBeTruthy();
+  });
+
+  it("folds thoughts into the run as commentary labelled by their title, with the full text one click away", () => {
+    show([ev("prompt", "plan"), ev("reasoning", "**Planning the change**\n\nThen run the tests carefully.", { id: "r1" }), ev("message", "Ready.")]);
+    expect(screen.queryByText("Planning the change")).toBeNull();
+    fireEvent.click(run());
+    const step = screen.getByText("Planning the change");
+    expect(step.closest("li")).not.toHaveTextContent("Thought");
+    expect(screen.queryByText("Then run the tests carefully.")).toBeNull();
+    fireEvent.click(within(step.closest("li")!).getByRole("button"));
+    expect(screen.getByText("Then run the tests carefully.")).toBeInTheDocument();
+  });
+
+  it("keeps the final message outside the disclosure and labels the run by its real duration", () => {
+    show([
+      ev("prompt", "go", null, 0),
+      ev("tool", "", { id: "t1", name: "Read", status: "ok", input: { file_path: "a.go" } }, 10),
+      ev("message", "Interim note.", null, 20),
+      ev("tool", "", { id: "t2", name: "Read", status: "ok", input: { file_path: "b.go" } }, 30),
+      ev("message", "All done.", null, 133),
+      ev("turn_done", "All done.", { ok: true }, 133),
+    ]);
+    expect(run()).toHaveTextContent("Worked for");
+    expect(run()).toHaveTextContent("2m 13s");
+    expect(screen.getByText("All done.")).toBeInTheDocument();
+    expect(screen.queryByText("Interim note.")).toBeNull();
+    expect(screen.queryByRole("separator", { name: /Turn complete/ })).toBeNull();
+    fireEvent.click(run());
+    expect(screen.getAllByText("Interim note.").length).toBeGreaterThan(0);
+  });
+
+  it("omits the duration when the turn has no usable timestamps", () => {
+    show([ev("prompt", "go"), ev("tool", "", { id: "t1", name: "Read", status: "ok", input: { file_path: "a.go" } }), ev("message", "ok"), ev("turn_done", "ok", { ok: true })]);
+    expect(run()).toHaveTextContent("Completed");
+    expect(run()).not.toHaveTextContent(/\d+s/);
+  });
+
+  it("keeps a run's open state across updates and completion", () => {
+    const events = [ev("prompt", "go"), ev("tool", "", { id: "t1", name: "Read", status: "ok", input: { file_path: "a.go" } })];
+    const props = { loading: false, loadingMore: false, error: null, hasMore: false, onLoadMore: () => Promise.resolve(true) };
+    const view = render(<Feed {...props} session={session({ status: "working", activity: "Reading" })} events={events} />);
+    expect(run()).toHaveTextContent("Reading");
+    expect(screen.queryByRole("list", { name: "Activity" })).toBeNull();
+    fireEvent.click(run());
+    expect(screen.getByRole("list", { name: "Activity" })).toBeInTheDocument();
+    view.rerender(<Feed {...props} session={session({ status: "working", activity: "Reading" })} events={[...events, ev("tool", "", { id: "t2", name: "Read", status: "ok", input: { file_path: "b.go" } })]} />);
+    expect(within(screen.getByRole("list", { name: "Activity" })).getAllByRole("listitem")).toHaveLength(2);
+    view.rerender(<Feed {...props} session={session()} events={[...events, ev("message", "Done."), ev("turn_done", "Done.", { ok: true })]} />);
+    expect(run()).toHaveTextContent("Completed");
+    expect(screen.getByRole("list", { name: "Activity" })).toBeInTheDocument();
   });
 
   it("renders data-less legacy events without crashing", () => {
     show([ev("prompt", "fix it"), ev("tool", "Bash: npm test"), ev("tool_result", "passed", { error: false }), ev("message", "All good."), ev("turn_done", "All good.")]);
     expect(screen.getByText("fix it")).toBeInTheDocument();
-    expect(screen.getByTestId("tool-card")).toHaveAttribute("data-status", "ok");
     expect(screen.getByText("All good.")).toBeInTheDocument();
-    expect(screen.getByRole("separator", { name: /Turn complete/ })).toBeInTheDocument();
+    fireEvent.click(run());
+    const step = within(screen.getByRole("list", { name: "Activity" })).getByRole("listitem");
+    expect(step).toHaveTextContent(/Ran\s*npm test/);
+    fireEvent.click(within(step).getByRole("button"));
+    expect(screen.getByTestId("tool-details")).toHaveAttribute("data-status", "ok");
   });
 
   it("loads a generated image through Agents.artifact and shows it as a data URL", async () => {
@@ -81,12 +152,54 @@ describe("Feed", () => {
     expect(screen.queryByTestId("live-activity")).toBeNull();
   });
 
-  it("keeps the review checkbox rule on permission cards in the feed", () => {
-    const input = '{"command":"rm x"}';
-    show([ev("permission", "Bash: rm x", { id: "p1", tool: "Bash", summary: "rm x", input: { command: "rm x" }, inputJSON: input, at: "2026-10-08T12:00:00Z" })], session({ pending: [{ id: "p1" } as Session["pending"][number]] }));
-    expect(screen.getByRole("button", { name: "Allow once" })).toBeDisabled();
-    fireEvent.click(screen.getByRole("checkbox", { name: "I reviewed the complete tool name and arguments." }));
+  it("shows a pending approval as a compact card outside the collapsed run", () => {
+    const input = '{"kind":"command","command":"rm x","cwd":"C:\\\\work"}';
+    const { container } = show([
+      ev("prompt", "clean up"),
+      ev("tool", "", { id: "t1", name: "shell", status: "running", input: { command: "rm x" } }),
+      ev("permission", "shell", { id: "p1", tool: "shell", summary: "rm x", input: JSON.parse(input), inputJSON: input, at: "2026-10-08T12:00:00Z" }),
+    ], session({ status: "needs-you", pending: [{ id: "p1" } as Session["pending"][number]] }));
+    expect(run()).toHaveTextContent("Needs your input");
+    expect(screen.queryByRole("list", { name: "Activity" })).toBeNull();
+    expect(screen.getByText("Run a command")).toBeInTheDocument();
+    expect(screen.getByLabelText("Command")).toHaveTextContent("rm x");
+    expect(screen.queryByText(/Tool permission|Permission request history/)).toBeNull();
+    expect(container.textContent).not.toContain('"kind"');
     expect(screen.getByRole("button", { name: "Allow once" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Deny" })).toBeEnabled();
+  });
+
+  it("folds a decided approval into the run as a one-line receipt", () => {
+    show([
+      ev("prompt", "clean up"),
+      ev("permission", "shell", { id: "p1", tool: "shell", summary: "ls", input: { command: "ls" }, inputJSON: '{"command":"ls"}' }),
+      ev("decision", "", { id: "p1", allow: true, reason: "" }),
+      ev("message", "Listed."),
+    ]);
+    expect(screen.queryByRole("button", { name: "Allow once" })).toBeNull();
+    fireEvent.click(run());
+    expect(within(screen.getByRole("list", { name: "Activity" })).getByRole("listitem")).toHaveTextContent("Allowed");
+  });
+
+  it("opens a collapsed run to reveal a search match inside its interim messages", () => {
+    const { container } = show([
+      ev("prompt", "go"),
+      ev("message", "Checking the needle first."),
+      ev("tool", "", { id: "t1", name: "Read", status: "ok", input: { file_path: "a.go" } }),
+      ev("message", "Final answer."),
+    ]);
+    expect(screen.queryByText("Checking the needle first.")).toBeNull();
+    fireEvent.keyDown(screen.getByRole("log"), { key: "f", ctrlKey: true });
+    fireEvent.change(screen.getByRole("searchbox"), { target: { value: "needle" } });
+    expect(container.querySelectorAll("[data-search-hit] mark")).toHaveLength(1);
+    expect(screen.getByRole("list", { name: "Activity" })).toBeInTheDocument();
+  });
+
+  it("holds the place of a running image generation with the ImageGeneration frame", () => {
+    show([ev("prompt", "draw"), ev("image_status", "", { id: "g1", status: "running", prompt: "a calm lake" })], session({ status: "working", activity: "Working" }));
+    expect(screen.getByText("Generating")).toBeInTheDocument();
+    expect(screen.getByText("a calm lake")).toBeInTheDocument();
+    expect(api.artifact).not.toHaveBeenCalled();
   });
 });
 
@@ -97,6 +210,7 @@ describe("Feed navigation", () => {
     const load = vi.fn().mockResolvedValue(true);
     const props = { session: session(), loading: false, loadingMore: false, error: null, hasMore: true, onLoadMore: load };
     const view = render(<Feed {...props} events={loaded} />);
+    fireEvent.keyDown(screen.getByRole("log"), { key: "f", ctrlKey: true });
     const input = screen.getByRole("searchbox", { name: "Find in conversation" });
     fireEvent.change(input, { target: { value: "needle" } });
     expect(screen.getByRole("status")).toHaveTextContent("1/3");
@@ -111,21 +225,21 @@ describe("Feed navigation", () => {
     expect(view.container.querySelector('[data-search-hit][aria-current="true"]')).toHaveAttribute("data-search-hit", active);
     expect(screen.getByText("Older needle")).toBeInTheDocument();
     fireEvent.keyDown(input, { key: "Escape" });
-    expect(input).toHaveValue("");
+    expect(screen.queryByRole("searchbox")).toBeNull();
     expect(view.container.querySelectorAll("[data-search-hit]")).toHaveLength(0);
-    expect(screen.getByRole("button", { name: "Next match" })).toBeDisabled();
   });
 
   it("resets search on session switch and supports scoped keyboard find", () => {
     const props = { loading: false, loadingMore: false, error: null, hasMore: false, onLoadMore: vi.fn().mockResolvedValue(false) };
     const view = render(<Feed {...props} session={session()} events={[ev("message", "needle")]} />);
+    expect(screen.queryByRole("searchbox")).toBeNull();
     const log = screen.getByRole("log");
     fireEvent.keyDown(log, { key: "f", ctrlKey: true });
     const input = screen.getByRole("searchbox");
     expect(input).toHaveFocus();
     fireEvent.change(input, { target: { value: "needle" } });
     view.rerender(<Feed {...props} session={session({ id: "s2" })} events={[]} />);
-    expect(screen.getByRole("searchbox")).toHaveValue("");
+    expect(screen.queryByRole("searchbox")).toBeNull();
   });
 
   it("distinguishes failed loading from empty history and retries only the supplied operation", () => {

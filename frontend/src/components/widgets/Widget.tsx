@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
-import { AlertTriangle, EllipsisIcon, Loader2, PlugZap, WifiOff } from "lucide-react";
+import { AlertTriangle, EllipsisIcon, PlugZap, WifiOff } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Spinner } from "@/components/ui/spinner";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "@/components/ui/menu";
 import { cn } from "@/lib/utils";
 
@@ -52,7 +53,7 @@ export function Widget({ title, icon, status = "ready", message, action, onRemov
 
 export function WidgetState({ status, message, action }: { status: Exclude<WidgetStatus, "ready">; message?: string; action?: Props["action"] }) {
   const map = {
-    loading: { icon: <Loader2 className="animate-spin" />, text: "Loading…" },
+    loading: { icon: <Spinner size={20} />, text: "Loading…" },
     error: { icon: <AlertTriangle className="text-destructive-foreground" />, text: "Something went wrong" },
     offline: { icon: <WifiOff />, text: "Offline" },
     unconfigured: { icon: <PlugZap />, text: "Not connected" },
