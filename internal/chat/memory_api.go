@@ -12,8 +12,8 @@ package chat
 //	chat.knowledge.list         BotRef                        -> []KnowledgeFile
 //	chat.knowledge.add          KnowledgeAdd                  -> KnowledgeFile   (attachment already committed)
 //	chat.knowledge.remove       KnowledgeRef                  -> struct{}
-//	chat.skills.pending.list    BotRef (BotID may be empty)   -> []SkillProposal
-//	chat.skills.pending.resolve SkillResolve                  -> struct{}        (approve writes into internal/skills registry, bot-scoped name prefix)
+//	chat.skills.pending.get     SkillRef                      -> SkillProposal   (any state: the chat card asks what became of its proposal)
+//	chat.skills.pending.resolve SkillResolve                  -> struct{}        (approve saves into internal/skills registry and gives the skill to the proposing bot)
 //
 // Event chat.memory (MemoryChange) is published on every committed change.
 
@@ -22,6 +22,8 @@ const (
 	ScopeUser    = "user"
 	SharedPrefix = "shared:"
 	BotPrefix    = "bot:"
+	// ReportPrefix authors the message in which a bot reports the outcome of a task it was handed back to the bot that handed it off.
+	ReportPrefix = "report:"
 )
 
 // Core-memory budgets in characters (Hermes-style bounded notes).
@@ -139,8 +141,13 @@ type SkillProposal struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
 	Body        string `json:"body"`
-	Status      string `json:"status"` // "pending" | "approved" | "rejected"
+	Status      string `json:"status"` // "pending" | "approved" (saved and given to the bot) | "rejected"
 	CreatedAt   int64  `json:"createdAt"`
+}
+
+// SkillRef identifies a skill proposal.
+type SkillRef struct {
+	ID string `json:"id"`
 }
 
 // SkillResolve approves or rejects a proposal.

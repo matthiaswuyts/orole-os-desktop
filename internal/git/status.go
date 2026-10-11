@@ -39,34 +39,51 @@ type Status struct {
 
 // GetStatus runs `git status --porcelain=v2 --branch -z` in dir.
 func GetStatus(ctx context.Context, dir string) (Status, error) {
-	return getStatus(ctx, dir, 0)
+	st, _, err := getStatus(ctx, dir, 0, false)
+	return st, err
 }
 
-func getStatus(ctx context.Context, dir string, depth int) (Status, error) {
+// GetStatusUnder is GetStatus limited to dir and below: git only walks that
+// subtree and only submodules inside it are checked, which is what a directory
+// listing needs. The second result is dir's slash-separated path below the
+// repository root with a trailing slash ("" at the root), the prefix of every
+// returned Path.
+func GetStatusUnder(ctx context.Context, dir string) (Status, string, error) {
+	return getStatus(ctx, dir, 0, true)
+}
+
+func getStatus(ctx context.Context, dir string, depth int, scoped bool) (Status, string, error) {
 	if depth > 64 {
-		return Status{}, fmt.Errorf("git status: submodule nesting exceeds review limit")
+		return Status{}, "", fmt.Errorf("git status: submodule nesting exceeds review limit")
 	}
 	ctx, cancel := context.WithTimeout(ctx, DefaultTimeout)
 	defer cancel()
-	repo, err := openReviewRepo(ctx, dir)
+	repo, err := openReviewRepo(ctx, dir, true)
 	if err != nil {
-		return Status{}, err
+		return Status{}, "", err
 	}
 	defer repo.close()
-	out, truncated, err := repo.run(ctx, dir, nil, "status", "--porcelain=v2", "--branch", "-z", "--untracked-files=normal", "--no-renames", "--ignore-submodules=dirty")
+	args := []string{"status", "--porcelain=v2", "--branch", "-z", "--untracked-files=normal", "--no-renames", "--ignore-submodules=dirty"}
+	under := ""
+	if scoped {
+		// Git runs in dir, so "." is dir's subtree; paths in the output stay root-relative.
+		args = append(args, "--", ".")
+		under = repo.prefix
+	}
+	out, truncated, err := repo.run(ctx, dir, nil, args...)
 	if truncated {
-		return Status{}, fmt.Errorf("git status: output exceeds review limit")
+		return Status{}, "", fmt.Errorf("git status: output exceeds review limit")
 	}
 	if err != nil {
-		return Status{}, err
+		return Status{}, "", err
 	}
 	result, err := ParseStatus(out)
 	if err != nil {
-		return Status{}, err
+		return Status{}, "", err
 	}
-	dirty, err := repo.dirtySubmodules(ctx, depth)
+	dirty, err := repo.dirtySubmodules(ctx, depth, under)
 	if err != nil {
-		return Status{}, err
+		return Status{}, "", err
 	}
 	for _, path := range dirty {
 		found := false
@@ -85,7 +102,7 @@ func getStatus(ctx context.Context, dir string, depth int) (Status, error) {
 			result.add(path, "", ".M")
 		}
 	}
-	return result, nil
+	return result, repo.prefix, nil
 }
 
 // ParseStatus parses `git status --porcelain=v2 --branch -z` output.

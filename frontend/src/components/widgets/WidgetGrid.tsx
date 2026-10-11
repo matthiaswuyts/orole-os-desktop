@@ -1,4 +1,4 @@
-import { useCallback } from "react";
+import { Suspense, useCallback } from "react";
 import GridLayout, { WidthProvider, type Layout } from "react-grid-layout/legacy";
 import { useWorkspaces } from "@/stores/workspaces";
 import { useWidgetRegistry } from "./registry";
@@ -31,7 +31,13 @@ export function WidgetGrid() {
         const def = widgets.find((widget) => widget.type === w.type);
         if (!def) return <div key={w.id}><Widget title="Unavailable widget" status="unconfigured" message={`“${w.type}” is unavailable. Its plugin may be disabled, removed, or still loading. Your layout is unchanged.`} onRemove={() => removeWidget(w.id)} action={{ label: "Remove widget", onClick: () => removeWidget(w.id) }} /></div>;
         const C = def.component;
-        return <div key={w.id}><C widgetType={w.type} config={w.config} onConfig={(p) => configureWidget(w.id, p)} onRemove={() => removeWidget(w.id)} /></div>;
+        return (
+          <div key={w.id}>
+            <Suspense fallback={<Widget title={def.title} status="loading" onRemove={() => removeWidget(w.id)} />}>
+              <C widgetType={w.type} config={w.config} onConfig={(p) => configureWidget(w.id, p)} onRemove={() => removeWidget(w.id)} />
+            </Suspense>
+          </div>
+        );
       })}
     </Grid>
   );

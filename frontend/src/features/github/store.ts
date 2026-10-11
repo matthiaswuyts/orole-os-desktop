@@ -1,11 +1,15 @@
 import { create } from "zustand";
 import { GitHub, events, type GitHubStatus } from "@/mygo";
 import { inDesktop } from "@/lib/backend";
+import { onFocusRefresh } from "@/lib/focus";
+import { readSnapshot, writeSnapshot } from "@/lib/snapshotCache";
 
 export type GitHubTab = "repos" | "issues" | "pulls" | "notifications" | "actions";
 export interface OpenItem { kind: "issue" | "pr"; repo: string; number: number }
 
 const REPO_KEY = "orole.github.repo";
+let subscribers = 0;
+let stop: (() => void) | undefined;
 
 export const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e)).replace(/^(bad_request|not_found|not_connected|denied|internal): /, "");
 
@@ -34,7 +38,7 @@ interface State {
 
 export const useGitHub = create<State>((set, get) => ({
   available: inDesktop,
-  status: null,
+  status: inDesktop ? readSnapshot<GitHubStatus>("github-status") ?? null : null,
   loading: false,
   error: null,
   tab: "issues",
@@ -49,7 +53,9 @@ export const useGitHub = create<State>((set, get) => ({
     if (!inDesktop) return;
     set({ loading: true });
     try {
-      set({ status: await GitHub.status(), error: null, loading: false });
+      const status = await GitHub.status();
+      set({ status, error: null, loading: false });
+      writeSnapshot("github-status", status);
     } catch (e) {
       set({ error: errMsg(e), loading: false });
     }
@@ -61,9 +67,17 @@ export const useGitHub = create<State>((set, get) => ({
   logout: async () => set({ status: await GitHub.logout() }),
   startSync: () => {
     if (!inDesktop) return () => {};
-    const off = events.githubChanged.on(() => { set((s) => ({ rev: s.rev + 1 })); void get().load(); });
-    const onFocus = () => void get().load();
-    window.addEventListener("focus", onFocus);
-    return () => { off(); window.removeEventListener("focus", onFocus); };
+    // Several views mount this; one subscription serves them all so a daemon event bumps `rev` and loads once.
+    if (++subscribers === 1) {
+      const off = events.githubChanged.on(() => { set((s) => ({ rev: s.rev + 1 })); void get().load(); });
+      const offFocus = onFocusRefresh(() => void get().load());
+      stop = () => { off(); offFocus(); };
+    }
+    let stopped = false;
+    return () => {
+      if (stopped) return;
+      stopped = true;
+      if (--subscribers === 0) { stop?.(); stop = undefined; }
+    };
   },
 }));

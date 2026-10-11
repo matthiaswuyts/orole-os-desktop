@@ -33,6 +33,9 @@ func (d *Daemon) registerSkills() {
 	if err != nil {
 		d.Log.Error("skills registry unavailable", "err", err)
 	} else {
+		if err := store.EnsureBuiltin(); err != nil {
+			d.Log.Warn("built-in skills", "err", err)
+		}
 		d.Skills = store
 		d.Gateway = &gateway.Hub{MCP: d.MCP, Skills: store}
 	}

@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/rayorole/orole-os-desktop/internal/database"
 	"github.com/rayorole/orole-os-desktop/internal/diagnostics"
 	"github.com/rayorole/orole-os-desktop/internal/platform"
 	"github.com/rayorole/orole-os-desktop/internal/systemmetrics"
@@ -54,7 +55,7 @@ func (s System) DisableAutostart(ctx context.Context) (platform.AutostartStatus,
 
 // Diagnostics returns the support snapshot (versions, paths, daemon, credential store, WebView2, log tail).
 func (s System) Diagnostics(ctx context.Context) (diagnostics.Report, error) {
-	return diagnostics.Collect(ctx, AppVersion, s.L.DataDir, s.L.DaemonExe, 30), nil
+	return diagnostics.Collect(ctx, AppVersion, s.L.DataDir, s.L.DaemonExe, 30, database.ReadSchemaVersion), nil
 }
 
 // Metrics returns a real host observation sampled and cached by the daemon.

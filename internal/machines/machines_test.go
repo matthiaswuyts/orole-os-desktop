@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"unicode/utf16"
 
@@ -26,15 +27,21 @@ import (
 
 type testPolicy struct {
 	decision policy.Decision
+	mu       sync.Mutex
 	seen     []policy.Request
 }
 
-func (p *testPolicy) Check(_ context.Context, r policy.Request) (policy.Decision, error) {
+func (p *testPolicy) record(r policy.Request) {
+	p.mu.Lock()
 	p.seen = append(p.seen, r)
+	p.mu.Unlock()
+}
+func (p *testPolicy) Check(_ context.Context, r policy.Request) (policy.Decision, error) {
+	p.record(r)
 	return p.decision, nil
 }
 func (p *testPolicy) Decide(_ context.Context, r policy.Request) (policy.Evaluation, error) {
-	p.seen = append(p.seen, r)
+	p.record(r)
 	return policy.Evaluation{Decision: p.decision}, nil
 }
 func testManager(t *testing.T) (*Manager, *testPolicy) {

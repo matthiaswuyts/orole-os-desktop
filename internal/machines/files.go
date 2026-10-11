@@ -2,8 +2,6 @@ package machines
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -11,6 +9,7 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/google/uuid"
 	"github.com/pkg/sftp"
@@ -77,16 +76,12 @@ func (m *Manager) canonicalRoots(ctx context.Context, v Machine, roots []string)
 	}
 	ctx, cancel := operationContext(ctx, 20)
 	defer cancel()
-	client, err := m.connect(ctx, v)
+	lease, err := m.pool.acquire(ctx, v)
 	if err != nil {
 		return nil, err
 	}
-	defer client.Close()
-	fs, err := sftp.NewClient(client)
-	if err != nil {
-		return nil, err
-	}
-	defer fs.Close()
+	defer lease.Release()
+	fs := lease.FS
 	for _, r := range roots {
 		r, err = remotePath(r)
 		if err != nil {
@@ -165,22 +160,21 @@ func (m *Manager) fileSession(ctx context.Context, actor string, p FileRequest, 
 		return op, nil, op.finish, nil
 	}
 	ctx, cancel := operationContext(op.ctx, 30)
-	client, err := m.connect(ctx, v)
+	lease, err := m.pool.acquire(ctx, v)
 	if err != nil {
 		cancel()
 		return op, nil, nil, err
 	}
-	fs, err = sftp.NewClient(client)
-	if err != nil {
-		client.Close()
-		cancel()
-		return op, nil, nil, err
-	}
-	return op, fs, func() { fs.Close(); client.Close(); cancel(); op.finish() }, nil
+	return op, lease.FS, func() { lease.Release(); cancel(); op.finish() }, nil
 }
 
 // Remote servers are trusted endpoints, not sandboxes. Refuse symlinks and check
 // canonical paths to prevent accidental escapes; account ACLs remain authoritative.
+//
+// Every server query below is independent of the others' results, so they are
+// issued together over the shared SFTP connection and cost one round trip of
+// latency instead of one per path component. The decisions are then taken in
+// the original order, so the outcome (including which error wins) is unchanged.
 func checkedRemote(fs *sftp.Client, v Machine, input string, create bool) (string, error) {
 	p, err := remotePath(input)
 	if err != nil {
@@ -195,41 +189,67 @@ func checkedRemote(fs *sftp.Client, v Machine, input string, create bool) (strin
 	if root == "" {
 		return "", files.ErrRootNotApproved
 	}
-	current := root
-	real, err := fs.RealPath(root)
-	if err != nil {
-		return "", err
-	}
-	real, err = remotePath(real)
-	if err != nil || real != root {
-		return "", files.ErrRootNotApproved
-	}
 	parts := strings.Split(strings.TrimPrefix(strings.TrimPrefix(p, root), "/"), "/")
+	var (
+		rootReal, targetReal, parentReal string
+		rootErr, targetErr, parentErr    error
+		statErr                          error
+		lstat                            = make([]os.FileInfo, len(parts))
+		lstatErr                         = make([]error, len(parts))
+		wg                               sync.WaitGroup
+		slots                            = make(chan struct{}, 16)
+	)
+	run := func(f func()) {
+		wg.Add(1)
+		slots <- struct{}{}
+		go func() {
+			defer func() { <-slots; wg.Done() }()
+			f()
+		}()
+	}
+	run(func() { rootReal, rootErr = fs.RealPath(root) })
+	current := root
 	for i, part := range parts {
 		if part == "" {
 			continue
 		}
 		current = path.Join(current, part)
-		st, err := fs.Lstat(current)
-		if create && i == len(parts)-1 && os.IsNotExist(err) {
+		at := current
+		run(func() { lstat[i], lstatErr[i] = fs.Lstat(at) })
+	}
+	run(func() { targetReal, targetErr = fs.RealPath(p) })
+	if create {
+		run(func() { _, statErr = fs.Stat(p) })
+		run(func() { parentReal, parentErr = fs.RealPath(path.Dir(p)) })
+	}
+	wg.Wait()
+	if rootErr != nil {
+		return "", rootErr
+	}
+	rootReal, err = remotePath(rootReal)
+	if err != nil || rootReal != root {
+		return "", files.ErrRootNotApproved
+	}
+	for i, part := range parts {
+		if part == "" {
+			continue
+		}
+		if create && i == len(parts)-1 && os.IsNotExist(lstatErr[i]) {
 			break
 		}
-		if err != nil {
-			return "", err
+		if lstatErr[i] != nil {
+			return "", lstatErr[i]
 		}
-		if st.Mode()&os.ModeSymlink != 0 {
+		if lstat[i].Mode()&os.ModeSymlink != 0 {
 			return "", files.ErrRootNotApproved
 		}
 	}
-	target := p
-	if create {
-		if _, err = fs.Stat(p); os.IsNotExist(err) {
-			target = path.Dir(p)
-		}
+	real, realErr := targetReal, targetErr
+	if create && os.IsNotExist(statErr) {
+		real, realErr = parentReal, parentErr
 	}
-	real, err = fs.RealPath(target)
-	if err != nil {
-		return "", err
+	if realErr != nil {
+		return "", realErr
 	}
 	real, err = remotePath(real)
 	if err != nil || !within(root, real) {
@@ -240,33 +260,28 @@ func checkedRemote(fs *sftp.Client, v Machine, input string, create bool) (strin
 func entry(p string, st os.FileInfo) files.Entry {
 	return files.Entry{Name: st.Name(), Path: p, IsDir: st.IsDir(), Size: st.Size(), ModTime: st.ModTime(), Link: st.Mode()&os.ModeSymlink != 0, Hidden: strings.HasPrefix(st.Name(), "."), ReadOnly: st.Mode().Perm()&0200 == 0}
 }
+
+// remoteEtag is "v1:<mtime unix nanos>:<size>:" with an empty hash, the form
+// files.Info documents for versions identified by mtime and size alone. It comes
+// from attributes the server already returned: no file content is transferred.
+// SFTP v3 carries whole-second mtimes, so a same-size rewrite within the same
+// second as the previous version is not detected.
+func remoteEtag(st os.FileInfo) string {
+	return fmt.Sprintf("v1:%d:%d:", st.ModTime().UnixNano(), st.Size())
+}
+func infoFromStat(p string, st os.FileInfo) files.Info {
+	out := files.Info{Entry: entry(p, st)}
+	if !st.IsDir() {
+		out.Etag = remoteEtag(st)
+	}
+	return out
+}
 func remoteInfo(fs *sftp.Client, p string) (files.Info, error) {
 	st, err := fs.Stat(p)
 	if err != nil {
 		return files.Info{}, err
 	}
-	out := files.Info{Entry: entry(p, st)}
-	if !st.IsDir() {
-		hash := ""
-		if st.Size() <= files.MaxHashBytes {
-			f, err := fs.Open(p)
-			if err != nil {
-				return out, err
-			}
-			defer f.Close()
-			h := sha256.New()
-			n, err := io.Copy(h, io.LimitReader(f, files.MaxHashBytes+1))
-			if err != nil {
-				return out, err
-			}
-			if n > files.MaxHashBytes {
-				return out, files.ErrTooLarge
-			}
-			hash = hex.EncodeToString(h.Sum(nil))
-		}
-		out.Etag = fmt.Sprintf("v1:%d:%d:%s", st.ModTime().UnixNano(), st.Size(), hash)
-	}
-	return out, nil
+	return infoFromStat(p, st), nil
 }
 func (m *Manager) ListFiles(ctx context.Context, actor string, p FileRequest) ([]files.Entry, error) {
 	op, fs, close, err := m.fileSession(ctx, actor, p, false)
@@ -377,11 +392,13 @@ func (m *Manager) ReadFile(ctx context.Context, actor string, p FileReadRequest)
 	if err != nil {
 		return files.ReadResult{}, err
 	}
-	after, err := remoteInfo(fs, target)
+	// The handle's attributes (one fstat) show whether the file changed while it
+	// was being read; the content is never re-read to find out.
+	st, err := f.Stat()
 	if err != nil {
 		return files.ReadResult{}, err
 	}
-	if after.Etag != info.Etag {
+	if after := infoFromStat(target, st); after.Etag != info.Etag {
 		return files.ReadResult{}, &files.ConflictError{Path: p.Path, Current: after}
 	}
 	return files.ReadResult{Data: data, Offset: opt.Offset, Size: info.Size, Truncated: opt.Offset > 0 || int64(len(data)) < info.Size, Info: info}, nil
@@ -454,6 +471,7 @@ func (m *Manager) WriteFile(ctx context.Context, actor string, p FileWriteReques
 		return files.Info{}, err
 	}
 	if exists {
+		// One stat serves both the mode to preserve and the final conflict check.
 		st, e := fs.Stat(target)
 		if e != nil {
 			return files.Info{}, e
@@ -461,11 +479,7 @@ func (m *Manager) WriteFile(ctx context.Context, actor string, p FileWriteReques
 		if err = fs.Chmod(temp, st.Mode().Perm()); err != nil {
 			return files.Info{}, err
 		}
-		current, e := remoteInfo(fs, target)
-		if e != nil {
-			return files.Info{}, e
-		}
-		if current.Etag != before.Etag {
+		if current := infoFromStat(target, st); current.Etag != before.Etag {
 			return files.Info{}, &files.ConflictError{Path: p.Path, Current: current}
 		}
 	}

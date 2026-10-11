@@ -26,6 +26,7 @@ type fakeMCP struct {
 	invoked  []invocation
 
 	gen          atomic.Uint64
+	perm         atomic.Uint64
 	listCalls    atomic.Int32
 	catalogCalls atomic.Int32
 }
@@ -54,7 +55,8 @@ func (f *fakeMCP) Catalog(_ context.Context, id string) (*mcp.Catalog, error) {
 	return &mcp.Catalog{ServerID: id, Tools: tools}, nil
 }
 
-func (f *fakeMCP) Generation() uint64 { return f.gen.Load() }
+func (f *fakeMCP) Generation() uint64        { return f.gen.Load() }
+func (f *fakeMCP) PermissionVersion() uint64 { return f.perm.Load() }
 
 // change mutates the fake's state the way a real change does: state first, then the generation.
 func (f *fakeMCP) change(fn func()) {
@@ -62,6 +64,15 @@ func (f *fakeMCP) change(fn func()) {
 	fn()
 	f.mu.Unlock()
 	f.gen.Add(1)
+}
+
+// changePermissions mutates the fake's state the way a per-tool permission write does: state first,
+// then the permission version (the generation does not move).
+func (f *fakeMCP) changePermissions(fn func()) {
+	f.mu.Lock()
+	fn()
+	f.mu.Unlock()
+	f.perm.Add(1)
 }
 
 func (f *fakeMCP) InvokeChecked(ctx context.Context, id, tool string, args map[string]any, opts mcp.CallOptions) (*mcp.CallResult, error) {
@@ -85,10 +96,17 @@ func server(id string, status mcp.Status, enabled bool) mcp.ServerState {
 	return mcp.ServerState{ServerConfig: mcp.ServerConfig{ID: id, Name: "Server " + id, Enabled: enabled}, Status: status}
 }
 
-func mcpBot(id string, allow ...string) chat.Bot {
+func mcpBot(id string, servers ...string) chat.Bot {
 	b := chat.Bot{ID: id}
-	b.Config.MCPTools = allow
+	b.Config.MCPServers = servers
 	return b
+}
+
+// liveSearch is a connected server "live" that offers one tool, "search".
+func liveSearch(f *fakeMCP) *fakeMCP {
+	f.servers = []mcp.ServerState{server("live", mcp.StatusConnected, true)}
+	f.catalogs = map[string][]mcp.ToolInfo{"live": {{Name: "search", Description: "Find things"}}}
+	return f
 }
 
 func specNames(specs []llm.ToolSpec) []string {
@@ -101,7 +119,7 @@ func specNames(specs []llm.ToolSpec) []string {
 
 const objSchema = `{"type":"object","properties":{"q":{"type":"string"}},"required":["q"]}`
 
-func TestMCPSpecsOnlyAllowListedLiveTools(t *testing.T) {
+func TestMCPSpecsAreTheLiveServersToolsMinusDeniedOnes(t *testing.T) {
 	f := &fakeMCP{
 		servers: []mcp.ServerState{
 			server("live", mcp.StatusConnected, true),
@@ -109,13 +127,13 @@ func TestMCPSpecsOnlyAllowListedLiveTools(t *testing.T) {
 			server("off", mcp.StatusConnected, false),
 		},
 		catalogs: map[string][]mcp.ToolInfo{
-			"live": {{Name: "search", Description: "Find things", InputSchema: json.RawMessage(objSchema)}, {Name: "secret", Description: "not allowed"}},
+			"live": {{Name: "search", Description: "Find things", InputSchema: json.RawMessage(objSchema)}, {Name: "secret", Description: "denied by the user", Permission: "deny"}},
 			"down": {{Name: "t"}},
 			"off":  {{Name: "t"}},
 		},
 	}
 	tool := &MCPTools{Client: f}
-	bot := mcpBot("b1", "live/search", "down/t", "off/t", "gone/t", "live/missing", "malformed")
+	bot := mcpBot("b1", "live", "down", "off", "gone")
 	specs := tool.Specs(bot, llm.Caps{Tools: true})
 	if got := specNames(specs); len(got) != 1 || got[0] != "mcp__live__search" {
 		t.Fatalf("spec names = %v, want only mcp__live__search", got)
@@ -130,7 +148,7 @@ func TestMCPSpecsOnlyAllowListedLiveTools(t *testing.T) {
 		t.Fatalf("specs for a model without tools = %v", got)
 	}
 	if got := tool.Specs(mcpBot("b2"), llm.Caps{Tools: true}); got != nil {
-		t.Fatalf("specs for a bot with no allow-list = %v", got)
+		t.Fatalf("specs for a bot with no integrations = %v", got)
 	}
 	if got := (&MCPTools{}).Specs(bot, llm.Caps{Tools: true}); got != nil {
 		t.Fatalf("specs without a client = %v", got)
@@ -142,7 +160,7 @@ func TestMCPSchemaFallsBackToObject(t *testing.T) {
 		servers:  []mcp.ServerState{server("s", mcp.StatusConnected, true)},
 		catalogs: map[string][]mcp.ToolInfo{"s": {{Name: "a", InputSchema: json.RawMessage(`{"type":"string"}`)}, {Name: "b"}}},
 	}
-	specs := (&MCPTools{Client: f}).Specs(mcpBot("b", "s/a", "s/b"), llm.Caps{Tools: true})
+	specs := (&MCPTools{Client: f}).Specs(mcpBot("b", "s"), llm.Caps{Tools: true})
 	if len(specs) != 2 {
 		t.Fatalf("specs = %v", specNames(specs))
 	}
@@ -155,18 +173,18 @@ func TestMCPSchemaFallsBackToObject(t *testing.T) {
 
 func TestMCPNamesSanitisedBoundedAndCollisionSafe(t *testing.T) {
 	long := strings.Repeat("x", 80)
-	allow := []string{
+	var entries []mcpEntry
+	for _, a := range []string{
 		"my.server/do thing", // sanitised to my_server / do_thing
 		"my_server/do_thing", // collides with the above after sanitising
 		"s/" + long,
 		"s/" + long + "y", // shares the 64-char prefix with the previous one
 		"s/plain",
-		"s/plain", // duplicate entry is dropped
+	} {
+		server, tool, _ := strings.Cut(a, "/")
+		entries = append(entries, mcpEntry{Server: server, Tool: tool})
 	}
-	entries := mcpNames(allow)
-	if len(entries) != 5 {
-		t.Fatalf("entries = %d, want 5 (duplicate dropped)", len(entries))
-	}
+	nameEntries(entries)
 	seen := map[string]bool{}
 	for _, e := range entries {
 		if len(e.Name) > maxFunctionLen {
@@ -188,17 +206,20 @@ func TestMCPNamesSanitisedBoundedAndCollisionSafe(t *testing.T) {
 	if entries[4].Name != "mcp__s__plain" {
 		t.Errorf("an uncontended name must stay readable, got %q", entries[4].Name)
 	}
-	again := mcpNames(allow)
+	again := make([]mcpEntry, len(entries))
+	for i, e := range entries {
+		again[i] = mcpEntry{Server: e.Server, Tool: e.Tool}
+	}
+	nameEntries(again)
 	for i := range entries {
-		if entries[i] != again[i] {
+		if entries[i].Name != again[i].Name {
 			t.Fatalf("mapping is not deterministic: %v vs %v", entries[i], again[i])
 		}
 	}
 }
 
 func TestMCPCallInvokesCheckedWithBotActor(t *testing.T) {
-	f := &fakeMCP{
-		servers: []mcp.ServerState{server("live", mcp.StatusConnected, true)},
+	f := liveSearch(&fakeMCP{
 		invokeFn: func(context.Context, string, string, map[string]any, mcp.CallOptions) (*mcp.CallResult, error) {
 			return &mcp.CallResult{Content: []mcp.ContentBlock{
 				{Type: "text", Text: "hello \x1b[31mworld\x1b[0m"},
@@ -206,9 +227,9 @@ func TestMCPCallInvokesCheckedWithBotActor(t *testing.T) {
 				{Type: "resource_link", URI: "https://example.com/x"},
 			}}, nil
 		},
-	}
+	})
 	tool := &MCPTools{Client: f}
-	bot := mcpBot("b1", "live/search")
+	bot := mcpBot("b1", "live")
 	rc := chat.RunContext{BotID: "b1", Bot: bot, Actor: "bot:b1"}
 	res, err := tool.Call(context.Background(), rc, "mcp__live__search", json.RawMessage(`{"q":"x"}`))
 	if err != nil || res.IsError {
@@ -243,20 +264,22 @@ func TestMCPCallInvokesCheckedWithBotActor(t *testing.T) {
 	}
 }
 
-func TestMCPCallRejectsToolsOutsideAllowList(t *testing.T) {
-	f := &fakeMCP{servers: []mcp.ServerState{server("live", mcp.StatusConnected, true)}}
+func TestMCPCallRejectsToolsOutsideTheBotsServers(t *testing.T) {
+	f := liveSearch(&fakeMCP{})
+	f.catalogs["other"] = []mcp.ToolInfo{{Name: "search"}}
+	f.servers = append(f.servers, server("other", mcp.StatusConnected, true))
 	tool := &MCPTools{Client: f}
-	rc := chat.RunContext{BotID: "b1", Bot: mcpBot("b1", "live/search"), Actor: "bot:b1"}
+	rc := chat.RunContext{BotID: "b1", Bot: mcpBot("b1", "live"), Actor: "bot:b1"}
 	for _, name := range []string{"mcp__live__other", "mcp__other__search", "search", ""} {
 		res, err := tool.Call(context.Background(), rc, name, json.RawMessage(`{}`))
 		if err != nil || !res.IsError {
 			t.Errorf("%q: got %+v, %v; want an error result", name, res, err)
 		}
 	}
-	// Another bot's list does not authorise this bot's name either.
-	other := chat.RunContext{BotID: "b2", Bot: mcpBot("b2", "live/different"), Actor: "bot:b2"}
+	// Another bot's servers do not authorise this bot's tool names either.
+	other := chat.RunContext{BotID: "b2", Bot: mcpBot("b2", "other"), Actor: "bot:b2"}
 	if res, _ := tool.Call(context.Background(), other, "mcp__live__search", nil); !res.IsError {
-		t.Error("a tool outside the calling bot's allow-list ran")
+		t.Error("a tool of a server the calling bot was not given ran")
 	}
 	if n := len(f.calls()); n != 0 {
 		t.Fatalf("%d tool calls reached the manager", n)
@@ -264,9 +287,9 @@ func TestMCPCallRejectsToolsOutsideAllowList(t *testing.T) {
 }
 
 func TestMCPCallBadArguments(t *testing.T) {
-	f := &fakeMCP{servers: []mcp.ServerState{server("live", mcp.StatusConnected, true)}}
+	f := liveSearch(&fakeMCP{})
 	tool := &MCPTools{Client: f}
-	rc := chat.RunContext{BotID: "b1", Bot: mcpBot("b1", "live/search"), Actor: "bot:b1"}
+	rc := chat.RunContext{BotID: "b1", Bot: mcpBot("b1", "live"), Actor: "bot:b1"}
 	for _, args := range []string{`[1,2]`, `"text"`, `{`} {
 		res, err := tool.Call(context.Background(), rc, "mcp__live__search", json.RawMessage(args))
 		if err != nil || !res.IsError {
@@ -293,10 +316,10 @@ func TestMCPCallPolicyOutcomes(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			f := &fakeMCP{invokeFn: func(context.Context, string, string, map[string]any, mcp.CallOptions) (*mcp.CallResult, error) {
+			f := liveSearch(&fakeMCP{invokeFn: func(context.Context, string, string, map[string]any, mcp.CallOptions) (*mcp.CallResult, error) {
 				return nil, tc.err
-			}}
-			rc := chat.RunContext{BotID: "b1", Bot: mcpBot("b1", "live/search"), Actor: "bot:b1"}
+			}})
+			rc := chat.RunContext{BotID: "b1", Bot: mcpBot("b1", "live"), Actor: "bot:b1"}
 			res, err := (&MCPTools{Client: f}).Call(context.Background(), rc, "mcp__live__search", json.RawMessage(`{}`))
 			if err != nil {
 				t.Fatalf("a policy/availability outcome must be an error result, got Go error %v", err)
@@ -313,11 +336,11 @@ func TestMCPCallPolicyOutcomes(t *testing.T) {
 
 func TestMCPCallHonoursCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
-	f := &fakeMCP{invokeFn: func(ctx context.Context, _, _ string, _ map[string]any, _ mcp.CallOptions) (*mcp.CallResult, error) {
+	f := liveSearch(&fakeMCP{invokeFn: func(ctx context.Context, _, _ string, _ map[string]any, _ mcp.CallOptions) (*mcp.CallResult, error) {
 		cancel()
 		return nil, ctx.Err()
-	}}
-	rc := chat.RunContext{BotID: "b1", Bot: mcpBot("b1", "live/search"), Actor: "bot:b1"}
+	}})
+	rc := chat.RunContext{BotID: "b1", Bot: mcpBot("b1", "live"), Actor: "bot:b1"}
 	_, err := (&MCPTools{Client: f}).Call(ctx, rc, "mcp__live__search", json.RawMessage(`{}`))
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("err = %v, want context.Canceled", err)

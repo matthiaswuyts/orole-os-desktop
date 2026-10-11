@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/rayorole/orole-os-desktop/internal/daemon"
+	"github.com/rayorole/orole-os-desktop/internal/daemon/api"
 	"github.com/rayorole/orole-os-desktop/internal/daemon/control"
 	"github.com/rayorole/orole-os-desktop/internal/database"
 	"github.com/rayorole/orole-os-desktop/internal/ipc"
@@ -156,7 +157,7 @@ func BenchmarkDaemonHealthRoundTrip(b *testing.B) {
 		b.Fatal(err)
 	}
 	defer c.Close()
-	var h daemon.Health
+	var h api.Health
 	for b.Loop() {
 		if err := c.Call(ctx, "daemon.health", struct{}{}, &h); err != nil {
 			b.Fatal(err)

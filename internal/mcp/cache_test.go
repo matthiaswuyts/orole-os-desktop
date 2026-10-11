@@ -135,12 +135,15 @@ func TestToolPermissionChangeLeavesGenerationAlone(t *testing.T) {
 	st := h.add(t, srv, AddParams{AuthKind: AuthNone})
 	h.wait(t, st.ID, StatusConnected)
 	h.rec.settle(t)
-	before := h.m.Generation()
+	before, permBefore := h.m.Generation(), h.m.PermissionVersion()
 	if err := h.m.SetToolPermission(ctx, st.ID, "echo", "deny"); err != nil {
 		t.Fatal(err)
 	}
 	if h.m.Generation() != before {
 		t.Fatal("a permission change must not rebuild tool indexes: it never alters the tool list")
+	}
+	if h.m.PermissionVersion() == permBefore {
+		t.Fatal("a permission change must move PermissionVersion: bots' offered tools depend on it")
 	}
 }
 

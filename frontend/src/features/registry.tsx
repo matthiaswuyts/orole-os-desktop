@@ -1,14 +1,13 @@
 import { lazy, type ComponentType } from "react";
 import type { ViewId } from "@/stores/ui";
 import "@/features/palette";
-import { HomeView } from "@/features/home/HomeView";
 
 /**
  * One entry per built view. A view missing here renders NotImplemented, so unbuilt modules never
  * show sample data. Each feature owns a features/<name>/ directory and adds exactly one line here.
  */
 export const views: Partial<Record<ViewId, ComponentType>> = {
-  home: HomeView,
+  home: lazy(() => import("@/features/home/HomeView").then((m) => ({ default: m.HomeView }))),
   agents: lazy(() => import("@/features/agents/AgentsView").then((m) => ({ default: m.AgentsView }))),
   review: lazy(() => import("@/features/review/ReviewView").then((m) => ({ default: m.ReviewView }))),
   issues: lazy(() => import("@/features/issues/IssuesView").then((m) => ({ default: m.IssuesView }))),

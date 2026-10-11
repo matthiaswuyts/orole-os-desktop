@@ -90,7 +90,8 @@ type Session struct {
 	Task          string `json:"task"`
 	Mode          Mode   `json:"mode"`
 	Command       string `json:"command,omitempty"` // custom CLI command line
-	// PermissionMode is the Claude Code permission mode the session runs with.
+	// PermissionMode is the Orole permission mode the session runs with: manual | auto | yolo,
+	// or plan (read-only, daemon-internal). Each harness maps it onto its own approval controls.
 	PermissionMode string `json:"permissionMode"`
 	Pid            int    `json:"pid"`
 	Status         Status `json:"status"`
@@ -132,6 +133,26 @@ type Session struct {
 	StartedAt time.Time           `json:"startedAt"`
 	EndedAt   *time.Time          `json:"endedAt,omitempty"`
 	UpdatedAt time.Time           `json:"updatedAt"`
+}
+
+// SessionDelta is the "agents.delta" payload: the display fields a live session changed on a
+// hot path (a message, tool call, activity line, usage or diff-stat update). A field is
+// present only when it changed; everything else is unchanged since the last "agents.updated"
+// or delta. Status changes, requests, queue and review changes always publish the full
+// Session as "agents.updated" instead. Clients drop a delta older than the session they hold.
+type SessionDelta struct {
+	ID             string        `json:"id"`
+	UpdatedAt      time.Time     `json:"updatedAt"`
+	Activity       *string       `json:"activity,omitempty"`
+	Tail           *string       `json:"tail,omitempty"`
+	LastMessage    *string       `json:"lastMessage,omitempty"`
+	AgentSessionID *string       `json:"agentSessionId,omitempty"`
+	Model          *string       `json:"model,omitempty"`
+	TranscriptRef  *string       `json:"transcriptRef,omitempty"`
+	Files          *int          `json:"files,omitempty"`
+	Additions      *int          `json:"additions,omitempty"`
+	Deletions      *int          `json:"deletions,omitempty"`
+	Usage          *ContextUsage `json:"usage,omitempty"`
 }
 
 // Event kinds.
@@ -205,6 +226,9 @@ type Detection struct {
 	Resume      bool   `json:"resume"`      // can continue a session by the CLI's session id
 	Permissions bool   `json:"permissions"` // permission requests can be approved from the dashboard
 	StatusFeed  string `json:"statusFeed"`  // "stream-json" | "app-server" | "hooks" | "process" (exit only)
+	// PermissionModes says how the harness realises Manual, Auto and YOLO for structured
+	// sessions, including when Auto is only approximated and when YOLO is turned off.
+	PermissionModes []PermissionModeSupport `json:"permissionModes"`
 }
 
 // StartSpec is a request to start an agent.
@@ -220,8 +244,10 @@ type StartSpec struct {
 	Mode          Mode     `json:"mode"`                    // "" = adapter default
 	Command       string   `json:"command"`                 // custom CLI command line
 	Title         string   `json:"title"`
-	// PermissionMode: "" | default | acceptEdits | plan (Claude Code).
+	// PermissionMode: "" (manual) | manual | auto | yolo | plan.
 	PermissionMode string `json:"permissionMode"`
+	// ConfirmYolo must be true for a yolo session; the daemon rejects it otherwise.
+	ConfirmYolo bool `json:"confirmYolo"`
 	// NewWorktree creates a fresh worktree of the repository at Dir on a new branch and
 	// runs the agent there.
 	NewWorktree bool   `json:"newWorktree"`

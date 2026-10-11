@@ -482,7 +482,7 @@ func hasPair(args []string, flag, value string) bool {
 func TestOmpLaunchArgsResumeAndGateway(t *testing.T) {
 	gw := filepath.Join(t.TempDir(), "orole-daemon.exe")
 	r := startOmp(t, agents.LaunchSpec{
-		Model: "anthropic/claude-fable-5", Reasoning: "high", PermissionMode: "acceptEdits", Resume: "omp-session-9",
+		Model: "anthropic/claude-fable-5", Reasoning: "high", PermissionMode: "auto", Resume: "omp-session-9",
 		SkillsPrompt: "## Skills\n- alpha: does alpha",
 		Gateway: &agents.Gateway{Command: gw, Args: []string{"mcp-gateway"},
 			Env: map[string]string{"OROLE_DATA_DIR": `C:\Users\me\AppData\Local\Orole`, "OROLE_SESSION_ID": "sess-omp"}},
@@ -503,7 +503,7 @@ func TestOmpLaunchArgsResumeAndGateway(t *testing.T) {
 		}
 	}
 	if slices.Contains(args, "--tools") {
-		t.Errorf("acceptEdits must not restrict tools: %v", args)
+		t.Errorf("auto must not restrict tools: %v", args)
 	}
 	seen := readJSONFile[map[string]string](t, filepath.Join(r.dir, "fakeomp-seen.json"))
 	if strings.TrimSpace(seen["prompt"]) != "## Skills\n- alpha: does alpha" {
@@ -541,6 +541,11 @@ func TestOmpLaunchArgsDefaultsAndPlan(t *testing.T) {
 			t.Errorf("unexpected %s in %v", flag, args)
 		}
 	}
+	yolo := startOmp(t, agents.LaunchSpec{PermissionMode: "yolo"})
+	untilKind(t, yolo.p, agents.EvInit)
+	if yargs := readJSONFile[[]string](t, filepath.Join(yolo.dir, "fakeomp-argv.json")); !hasPair(yargs, "--approval-mode", "yolo") {
+		t.Fatalf("yolo mode args: %v", yargs)
+	}
 	plan := startOmp(t, agents.LaunchSpec{PermissionMode: "plan"})
 	untilKind(t, plan.p, agents.EvInit)
 	pargs := readJSONFile[[]string](t, filepath.Join(plan.dir, "fakeomp-argv.json"))
@@ -559,6 +564,7 @@ func TestOmpStartRejectsUnsafeLaunches(t *testing.T) {
 		"remote machine":      {Machine: "box"},
 		"terminal mode":       {Mode: agents.ModeTerminal},
 		"unknown permission":  {PermissionMode: "bypassPermissions"},
+		"legacy permission":   {PermissionMode: "acceptEdits"},
 		"unknown reasoning":   {Reasoning: "ultra"},
 		"model injection":     {Model: "x\n--auto-approve"},
 		"resume injection":    {Resume: "a b"},

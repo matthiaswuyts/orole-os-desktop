@@ -18,6 +18,8 @@ import (
 	"github.com/rayorole/orole-os-desktop/internal/automations"
 	"github.com/rayorole/orole-os-desktop/internal/chat"
 	"github.com/rayorole/orole-os-desktop/internal/chat/memory"
+	"github.com/rayorole/orole-os-desktop/internal/cliruntime"
+	"github.com/rayorole/orole-os-desktop/internal/daemon/api"
 	"github.com/rayorole/orole-os-desktop/internal/database"
 	"github.com/rayorole/orole-os-desktop/internal/events"
 	"github.com/rayorole/orole-os-desktop/internal/gateway"
@@ -52,6 +54,8 @@ type Daemon struct {
 	Policy      *policy.Engine
 	Machines    *machines.Manager
 	Plugins     *plugins.Manager
+	// CLI finds, installs and reads the sign-in state of the Claude, Codex and Grok CLIs (svc_cliruntime.go).
+	CLI *cliruntime.Manager
 	// LLM resolves provider credentials and models (svc_llm.go); registered before Chat.
 	LLM llm.Service
 	// LLMManifests stores declarative OpenAI-compatible providers and their trust (svc_llm_manifests.go).
@@ -77,15 +81,6 @@ type Daemon struct {
 	started                     time.Time
 	stop                        chan struct{}
 	stopOnce                    sync.Once
-}
-
-// TokenPath returns where the IPC auth token lives.
-func TokenPath(dataDir string) string { return filepath.Join(dataDir, "ipc.token") }
-
-// ReadToken loads the token written by a running daemon.
-func ReadToken(dataDir string) (string, error) {
-	b, err := os.ReadFile(TokenPath(dataDir))
-	return string(b), err
 }
 
 // New opens state and registers services. Call Run to serve.
@@ -122,7 +117,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 		return fmt.Errorf("listen %s (is another daemon running?): %w", d.Endpoint, err)
 	}
 	// Token is written only after we own the endpoint, readable by this user only.
-	if err := os.WriteFile(TokenPath(d.DataDir), []byte(d.Token), 0o600); err != nil {
+	if err := os.WriteFile(api.TokenPath(d.DataDir), []byte(d.Token), 0o600); err != nil {
 		ln.Close()
 		return err
 	}
@@ -183,7 +178,7 @@ func (d *Daemon) cleanup(ln interface{ Close() error }) {
 		d.Machines.Close()
 	}
 	d.Terminals.Shutdown()
-	os.Remove(TokenPath(d.DataDir))
+	os.Remove(api.TokenPath(d.DataDir))
 	d.DB.Close()
 	d.Log.Info("daemon stopped")
 }
@@ -203,6 +198,11 @@ func (t termSink) Output(id string, seq uint64, data []byte) {
 	t.d.IPC.Publish("terminal.output", outputEvent{id, seq, data})
 }
 func (t termSink) Changed(info terminals.Info) { t.d.IPC.Publish("terminal.changed", info) }
+
+// Removed tells the GUI that the manager reaped an exited session.
+func (t termSink) Removed(id string) {
+	t.d.IPC.Publish("terminal.removed", map[string]string{"id": id})
+}
 
 // handle registers a typed method.
 func handle[P any, R any](d *Daemon, name string, f func(ctx context.Context, p P) (R, error)) {

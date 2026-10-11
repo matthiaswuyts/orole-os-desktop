@@ -219,8 +219,20 @@ func remoteAgentArgs(p AgentProcessRequest, help string) ([]string, error) {
 			return nil, errors.New("remote Claude does not advertise print/text mode")
 		}
 		args = []string{"--print", "--output-format", "text"}
-		if p.PermissionMode != "" && p.PermissionMode != "default" {
-			args = append(args, "--permission-mode", p.PermissionMode)
+		// Passed explicitly: the CLI's built-in default can be auto. A print-mode run cannot
+		// answer prompts, so manual means what the harness's default mode denies.
+		switch p.PermissionMode {
+		case "", "manual":
+			args = append(args, "--permission-mode", "default")
+		case "auto":
+			if !strings.Contains(help, `"auto"`) {
+				return nil, errors.New("remote Claude does not advertise auto mode")
+			}
+			args = append(args, "--permission-mode", "auto")
+		case "plan":
+			args = append(args, "--permission-mode", "plan")
+		default:
+			return nil, fmt.Errorf("remote Claude cannot run in %s mode", p.PermissionMode)
 		}
 		if p.Reasoning != "" {
 			if !strings.Contains(help, "--effort") || !strings.Contains(help, p.Reasoning) {

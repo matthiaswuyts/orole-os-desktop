@@ -13,12 +13,22 @@ import (
 // registry on every call. Generation moves whenever a server is added, edited, enabled, disabled,
 // removed, changes status, or its catalog content changes, i.e. exactly when a status event is
 // published or a server is removed. Per-tool permissions are not part of it: they only decorate
-// Catalog results, and policy decisions read the permissions table directly.
+// Catalog results (see PermissionVersion), and policy decisions read the permissions table directly.
 
 // Generation returns a counter that increases whenever the server list, a server's status or a
 // catalog changed. A cache built after reading generation g is current for as long as Generation
 // still returns g; read it before building so a concurrent change is never masked.
 func (m *Manager) Generation() uint64 { return m.gen.Load() }
+
+// PermissionVersion returns a counter that increases on every per-tool permission write (including
+// failed ones) and every server removal. Permissions decorate Catalog results (a tool set to "deny"
+// is not offered to bots), so caches of those results key on it next to Generation. It is separate
+// from Generation because the gateway's tool index does not depend on permissions.
+func (m *Manager) PermissionVersion() uint64 {
+	m.permMu.RLock()
+	defer m.permMu.RUnlock()
+	return m.permEpoch
+}
 
 // publishStatus publishes mcp.status for st, but only when st differs from what was last
 // published for that server (or force is set because the catalog behind it changed without

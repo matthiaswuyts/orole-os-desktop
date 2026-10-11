@@ -30,56 +30,48 @@ type MCPClient interface {
 	List(ctx context.Context) ([]mcp.ServerState, error)
 	Catalog(ctx context.Context, id string) (*mcp.Catalog, error)
 	InvokeChecked(ctx context.Context, id, tool string, args map[string]any, opts mcp.CallOptions) (*mcp.CallResult, error)
-	// Generation changes whenever the server list, a server's status or a catalog changes; the
-	// specs derived from them are cached until it does.
+	// Generation changes whenever the server list, a server's status or a catalog changes, and
+	// PermissionVersion whenever a per-tool permission is written or a server removed; the tools
+	// derived from them (permissions decide which tools are offered) are cached until either moves.
 	Generation() uint64
+	PermissionVersion() uint64
 }
 
-// MCPTools exposes the MCP tools a bot's allow-list names (BotConfig.MCPTools, "<serverId>/<tool>").
-// Calls go through mcp.Manager.InvokeChecked with the actor "bot:<id>", so Orole's policy engine
-// decides every call and approvals appear in the normal approval UI; a denied call never reaches
-// the server. Results are untrusted.
+// MCPTools exposes the tools of the MCP servers (integrations) a bot was given (BotConfig.MCPServers):
+// every tool of each connected server, except the ones the user set to "deny" in the server's own
+// tool permissions. Calls go through mcp.Manager.InvokeChecked with the actor "bot:<id>", so Orole's
+// policy engine decides every call and approvals appear in the normal approval UI; a denied call
+// never reaches the server. Results are untrusted.
 type MCPTools struct {
 	Client MCPClient
 
 	mu       sync.Mutex // guards the per-generation cache below
 	gen      uint64
+	perm     uint64
 	have     bool
 	live     map[string]mcp.ServerState // enabled, connected servers; nil until listed for gen
-	cats     map[string]*mcp.Catalog
-	resolved map[mcpKey]*mcpResolved // nil value: the tool is not in the server's catalog
+	byServer map[string][]mcpEntry      // offered tools (denied ones dropped) of a server whose catalog was read
 }
 
-type mcpKey struct{ server, tool string }
+// maxBotMCPTools bounds the tools offered to one model call; providers reject far fewer than a large
+// server (Vercel has well over a hundred) can list. The user prunes with per-tool permissions.
+const maxBotMCPTools = 128
 
-// mcpResolved is what a model is told about one tool, derived once per generation.
-type mcpResolved struct {
-	description string
-	schema      json.RawMessage
-}
-
-// mcpEntry is one allow-list entry with its stable function name.
+// mcpEntry is one callable tool with its stable function name.
 type mcpEntry struct {
 	Server, Tool string
+	ServerName   string
+	Description  string          // what the model is told, derived once per generation
+	Schema       json.RawMessage // object schema, derived once per generation
 	Name         string
 }
 
 func (*MCPTools) ID() string { return "mcp" }
 
-// mcpNames maps the allow-list to function names ("mcp__<server>__<tool>"). The mapping
-// depends on the list alone, so Specs and Call always agree. Names are limited to [A-Za-z0-9_-] and
-// 64 characters; names that would collide (or were shortened) get a short hash of "server/tool".
-func mcpNames(allow []string) []mcpEntry {
-	var entries []mcpEntry
-	seen := map[string]bool{}
-	for _, a := range allow {
-		server, tool, ok := strings.Cut(a, "/")
-		if !ok || server == "" || tool == "" || seen[a] {
-			continue
-		}
-		seen[a] = true
-		entries = append(entries, mcpEntry{Server: server, Tool: tool})
-	}
+// nameEntries gives each entry its function name ("mcp__<server>__<tool>"). The mapping depends on the
+// list alone, so Specs and Call always agree. Names are limited to [A-Za-z0-9_-] and 64 characters;
+// names that would collide (or were shortened) get a short hash of "server/tool".
+func nameEntries(entries []mcpEntry) {
 	base := make([]string, len(entries))
 	count := map[string]int{}
 	for i, e := range entries {
@@ -103,7 +95,6 @@ func mcpNames(allow []string) []mcpEntry {
 		used[name] = true
 		entries[i].Name = name
 	}
-	return entries
 }
 
 func sanitizeName(s string) string {
@@ -119,23 +110,21 @@ func sanitizeName(s string) string {
 	return b.String()
 }
 
-func (t *MCPTools) Specs(bot chat.Bot, caps llm.Caps) []llm.ToolSpec {
-	if t.Client == nil || !caps.Tools || len(bot.Config.MCPTools) == 0 {
+// toolsOf lists what the bot may call right now: the tools of its connected, enabled servers minus the
+// ones set to "deny". It reads cached state, so it never blocks a run for long.
+func (t *MCPTools) toolsOf(ctx context.Context, bot chat.Bot) []mcpEntry {
+	if t.Client == nil || len(bot.Config.MCPServers) == 0 {
 		return nil
 	}
-	entries := mcpNames(bot.Config.MCPTools)
-	if len(entries) == 0 {
-		return nil
-	}
-	// Specs has no context; the lookups read cached state and must never hang a run.
-	ctx, cancel := context.WithTimeout(context.Background(), mcpLookupLimit)
+	ctx, cancel := context.WithTimeout(ctx, mcpLookupLimit)
 	defer cancel()
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	// Read the generation first: a change during the lookups below leaves the cache stale-marked.
-	if gen := t.Client.Generation(); !t.have || gen != t.gen {
-		t.gen, t.have = gen, true
-		t.live, t.cats, t.resolved = nil, map[string]*mcp.Catalog{}, map[mcpKey]*mcpResolved{}
+	// Read the versions first: a change during the lookups below leaves the cache stale-marked.
+	gen, perm := t.Client.Generation(), t.Client.PermissionVersion()
+	if !t.have || gen != t.gen || perm != t.perm {
+		t.gen, t.perm, t.have = gen, perm, true
+		t.live, t.byServer = nil, map[string][]mcpEntry{}
 	}
 	if t.live == nil {
 		servers, err := t.Client.List(ctx)
@@ -149,36 +138,42 @@ func (t *MCPTools) Specs(bot chat.Bot, caps llm.Caps) []llm.ToolSpec {
 			}
 		}
 	}
-	var specs []llm.ToolSpec
-	for _, e := range entries {
-		srv, ok := t.live[e.Server]
+	var entries []mcpEntry
+	for _, id := range bot.Config.MCPServers {
+		srv, ok := t.live[id]
 		if !ok {
 			continue
 		}
-		key := mcpKey{e.Server, e.Tool}
-		r, seen := t.resolved[key]
+		offered, seen := t.byServer[id]
 		if !seen {
-			cat, ok := t.cats[e.Server]
-			if !ok {
-				var err error
-				if cat, err = t.Client.Catalog(ctx, e.Server); err != nil {
-					continue // not cached: retried on the next call
-				}
-				t.cats[e.Server] = cat
+			cat, err := t.Client.Catalog(ctx, id)
+			if err != nil || cat == nil {
+				continue // not cached: retried on the next call
 			}
-			if cat != nil {
-				for i := range cat.Tools {
-					if ti := &cat.Tools[i]; ti.Name == e.Tool {
-						r = &mcpResolved{description: mcpDescription(srv.Name, ti), schema: objectSchema(ti.InputSchema)}
-						break
-					}
+			for i := range cat.Tools {
+				if ti := &cat.Tools[i]; ti.Permission != "deny" {
+					offered = append(offered, mcpEntry{Server: id, Tool: ti.Name, ServerName: srv.Name,
+						Description: mcpDescription(srv.Name, ti), Schema: objectSchema(ti.InputSchema)})
 				}
 			}
-			t.resolved[key] = r
+			t.byServer[id] = offered
 		}
-		if r != nil {
-			specs = append(specs, llm.ToolSpec{Name: e.Name, Description: r.description, Schema: r.schema})
-		}
+		entries = append(entries, offered...)
+	}
+	if len(entries) > maxBotMCPTools {
+		entries = entries[:maxBotMCPTools]
+	}
+	nameEntries(entries)
+	return entries
+}
+
+func (t *MCPTools) Specs(bot chat.Bot, caps llm.Caps) []llm.ToolSpec {
+	if !caps.Tools {
+		return nil
+	}
+	var specs []llm.ToolSpec
+	for _, e := range t.toolsOf(context.Background(), bot) {
+		specs = append(specs, llm.ToolSpec{Name: e.Name, Description: e.Description, Schema: e.Schema})
 	}
 	return specs
 }
@@ -208,7 +203,7 @@ func (t *MCPTools) Call(ctx context.Context, rc chat.RunContext, name string, ar
 		return errResult("MCP is not available")
 	}
 	var entry *mcpEntry
-	entries := mcpNames(rc.Bot.Config.MCPTools)
+	entries := t.toolsOf(ctx, rc.Bot)
 	for i := range entries {
 		if entries[i].Name == name {
 			entry = &entries[i]
