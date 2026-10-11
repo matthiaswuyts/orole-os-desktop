@@ -494,6 +494,13 @@ export interface Config {
   webhookEnabled: boolean;
   webhookPort: number;
   hasSecret: boolean;
+  /**
+   * RetentionDays and RetentionMaxRuns bound the finished run history. Runs
+   * that are queued, running or waiting for approval are never removed.
+   * RetentionMaxRuns applies per automation. Zero means the default.
+   */
+  retentionDays: number;
+  retentionMaxRuns: number;
 }
 
 /** ConnectRequest carries a pasted API key. The key is never echoed back or logged. */
