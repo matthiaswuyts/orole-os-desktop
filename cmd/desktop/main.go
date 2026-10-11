@@ -65,6 +65,7 @@ func main() {
 			BackgroundColor: "#070b14", StateKey: "main", URL: "/",
 			TitleBarStyle: mygo.TitleBarHidden, TitleBarHeight: 40,
 		})
+			Page: mygo.PageOptions{DevTools: devTools()},
 		if err := win.SetIcon(windowIcon); err != nil {
 			log.Printf("window icon: %v", err)
 		}
