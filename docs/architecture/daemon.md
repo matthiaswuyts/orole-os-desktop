@@ -49,8 +49,11 @@ orole daemon install | uninstall      # start at logon via Task Scheduler (see w
 ```
 
 `diagnostics` prints app/Go versions, data dir, pipe name, daemon exe, daemon health, DB schema version
-(from the daemon, else read-only from `orole.db`), whether the credential store round-trips, the WebView2
+(from the daemon, else read-only from `orole.db` in the desktop app; the CLI reports it unavailable), whether the credential store round-trips, the WebView2
 runtime version, autostart state and the last 20 log lines. The same report backs Settings > Diagnostics.
+
+`orole-cli` is a thin IPC client: it must not link the daemon, sqlite, sftp/ssh or the MCP SDK. Wire types it needs
+(`Health`, token path) live in the leaf package `internal/daemon/api`; `scripts/check-cli-linkage.sh` enforces this in CI.
 
 ## Logging
 

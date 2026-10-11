@@ -6,6 +6,15 @@ Each release needs a `## X.Y.Z - YYYY-MM-DD` section matching `version` in `mygo
 workflow refuses to build without it, and the in-app update window shows that section as the release
 notes. See `docs/development/updates.md`.
 
+## Unreleased
+
+### Changed
+- `orole-cli` no longer links the daemon, sqlite, sftp/ssh or the MCP SDK: `daemon.Health` and the IPC
+  token helpers moved to the leaf package `internal/daemon/api`, and `diagnostics.Collect` takes an
+  injected offline schema reader. Offline `doctor` in the CLI reports the DB schema version as
+  unavailable when the daemon is not running (the desktop app still reads it). CI guards this with
+  `scripts/check-cli-linkage.sh`.
+
 ## 0.1.0 - 2026-10-10
 
 First tagged release. Windows only.

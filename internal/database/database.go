@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"fmt"
 	"io/fs"
+	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -81,4 +83,22 @@ func (d *DB) Version() (int, error) {
 	var v sql.NullInt64
 	err := d.QueryRow(`SELECT MAX(version) FROM schema_migrations`).Scan(&v)
 	return int(v.Int64), err
+}
+
+// ReadSchemaVersion opens the database read-only (never migrating) and returns
+// the highest applied migration.
+func ReadSchemaVersion(path string) (int, error) {
+	if _, err := os.Stat(path); err != nil {
+		return -1, err
+	}
+	db, err := sql.Open("sqlite", "file:"+filepath.ToSlash(path)+"?mode=ro&_pragma=busy_timeout(2000)")
+	if err != nil {
+		return -1, err
+	}
+	defer db.Close()
+	var v sql.NullInt64
+	if err := db.QueryRow(`SELECT MAX(version) FROM schema_migrations`).Scan(&v); err != nil {
+		return -1, err
+	}
+	return int(v.Int64), nil
 }

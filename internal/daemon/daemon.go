@@ -18,6 +18,7 @@ import (
 	"github.com/rayorole/orole-os-desktop/internal/automations"
 	"github.com/rayorole/orole-os-desktop/internal/chat"
 	"github.com/rayorole/orole-os-desktop/internal/chat/memory"
+	"github.com/rayorole/orole-os-desktop/internal/daemon/api"
 	"github.com/rayorole/orole-os-desktop/internal/database"
 	"github.com/rayorole/orole-os-desktop/internal/events"
 	"github.com/rayorole/orole-os-desktop/internal/gateway"
@@ -79,15 +80,6 @@ type Daemon struct {
 	stopOnce                    sync.Once
 }
 
-// TokenPath returns where the IPC auth token lives.
-func TokenPath(dataDir string) string { return filepath.Join(dataDir, "ipc.token") }
-
-// ReadToken loads the token written by a running daemon.
-func ReadToken(dataDir string) (string, error) {
-	b, err := os.ReadFile(TokenPath(dataDir))
-	return string(b), err
-}
-
 // New opens state and registers services. Call Run to serve.
 func New(dataDir string, log *slog.Logger) (*Daemon, error) {
 	db, err := database.Open(filepath.Join(dataDir, "orole.db"), migrations.FS)
@@ -122,7 +114,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 		return fmt.Errorf("listen %s (is another daemon running?): %w", d.Endpoint, err)
 	}
 	// Token is written only after we own the endpoint, readable by this user only.
-	if err := os.WriteFile(TokenPath(d.DataDir), []byte(d.Token), 0o600); err != nil {
+	if err := os.WriteFile(api.TokenPath(d.DataDir), []byte(d.Token), 0o600); err != nil {
 		ln.Close()
 		return err
 	}
@@ -183,7 +175,7 @@ func (d *Daemon) cleanup(ln interface{ Close() error }) {
 		d.Machines.Close()
 	}
 	d.Terminals.Shutdown()
-	os.Remove(TokenPath(d.DataDir))
+	os.Remove(api.TokenPath(d.DataDir))
 	d.DB.Close()
 	d.Log.Info("daemon stopped")
 }
