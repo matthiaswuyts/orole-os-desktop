@@ -28,6 +28,8 @@ interface State {
   selectedId: string | null;
   select: (id: string | null) => void;
   load: () => Promise<void>;
+  /** Reads ahead/behind and change counts per worktree (runs `git status`; slow in big repos), one project at a time. */
+  loadStatus: () => Promise<void>;
   /** Whether the New project dialog is open (one instance, mounted in App). */
   newProjectOpen: boolean;
   setNewProjectOpen: (open: boolean) => void;
@@ -73,12 +75,39 @@ export const useProjects = create<State>((set, get) => ({
     set({ loading: true });
     try {
       const projects = await Projects.list();
-      const lists = await Promise.all(projects.filter((p) => !p.missing && p.isGit).map(async (p) => [p.id, await Worktrees.list(p.id)] as const));
-      set({ projects, worktrees: Object.fromEntries(lists), loaded: true, loading: false, error: null });
+      const git = projects.filter((p) => !p.missing && p.isGit);
+      // The project list is one cheap query: show it at once. Worktrees fill in per project below.
+      set((s) => ({ projects, loaded: true, error: null, worktrees: Object.fromEntries(git.flatMap((p) => s.worktrees[p.id] ? [[p.id, s.worktrees[p.id]!] as const] : [])) }));
+      await Promise.all(git.map(async (p) => {
+        try {
+          const fresh = await Worktrees.list(p.id);
+          set((s) => {
+            if (!s.projects.some((x) => x.id === p.id)) return s;
+            const known = new Map((s.worktrees[p.id] ?? []).filter((w) => w.statusKnown).map((w) => [w.id, w]));
+            const merged = fresh.map((w) => { const old = known.get(w.id); return old && !w.error ? { ...w, upstream: old.upstream, ahead: old.ahead, behind: old.behind, staged: old.staged, unstaged: old.unstaged, untracked: old.untracked, dirty: old.dirty, statusKnown: true } : w; });
+            return { worktrees: { ...s.worktrees, [p.id]: merged } };
+          });
+        } catch {
+          // One unreadable repository must not hide every other project; its previous worktrees stay.
+        }
+      }));
+      set({ loading: false });
     } catch (e) {
       set({ loaded: true, loading: false, error: msg(e) });
     }
     if (reloadQueued) { reloadQueued = false; await get().load(); }
+  },
+
+  async loadStatus() {
+    if (!inDesktop) return;
+    await Promise.all(get().projects.filter((p) => !p.missing && p.isGit).map(async (p) => {
+      try {
+        const list = await Worktrees.status(p.id);
+        set((s) => s.projects.some((x) => x.id === p.id) ? { worktrees: { ...s.worktrees, [p.id]: list } } : s);
+      } catch (e) {
+        set((s) => ({ worktrees: { ...s.worktrees, [p.id]: (s.worktrees[p.id] ?? []).map((w) => ({ ...w, error: msg(e) })) } }));
+      }
+    }));
   },
 
   async create(name, path) {

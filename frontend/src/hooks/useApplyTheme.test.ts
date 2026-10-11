@@ -36,6 +36,7 @@ it("restores a saved light palette without retaining dark mode", async () => {
 });
 
 it("removes expanded palette tokens when returning to defaults or custom themes", () => {
+  useSettings.setState({ loaded: true });
   renderHook(useApplyTheme);
   act(() => useSettings.setState({ appearance: { ...defaults.appearance, theme: "catppuccin-mocha" } }));
   expect(document.documentElement.style.getPropertyValue("--chart-1")).toBe("#89b4fa");
@@ -46,4 +47,15 @@ it("removes expanded palette tokens when returning to defaults or custom themes"
   act(() => useSettings.setState({ appearance: { ...defaults.appearance, theme: "light" } }));
   for (const key of BUILTIN_TOKEN_KEYS) expect(document.documentElement.style.getPropertyValue(key)).toBe("");
   expect(document.documentElement.classList.contains("dark")).toBe(false);
+});
+
+it("leaves the boot-cached theme alone until settings load, then caches the resolved one", () => {
+  document.documentElement.style.setProperty("--background", "#123456");
+  renderHook(useApplyTheme);
+  expect(document.documentElement.style.getPropertyValue("--background")).toBe("#123456");
+  expect(localStorage.getItem("orole.boot-theme")).toBeNull();
+  act(() => useSettings.setState({ loaded: true, appearance: { ...defaults.appearance, theme: "catppuccin-mocha" } }));
+  const cached = JSON.parse(localStorage.getItem("orole.boot-theme") ?? "{}");
+  expect(cached.dark).toBe(true);
+  expect(cached.tokens["--background"]).toBe(document.documentElement.style.getPropertyValue("--background"));
 });
