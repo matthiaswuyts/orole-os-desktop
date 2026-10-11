@@ -57,6 +57,11 @@ notes. See `docs/development/updates.md`.
   `propose_skill` for your approval. Built-in skills are for bots only and are never synced to coding agents.
 
 ### Changed
+- `orole-cli` no longer links the daemon, sqlite, sftp/ssh or the MCP SDK: `daemon.Health` and the IPC
+  token helpers moved to the leaf package `internal/daemon/api`, and `diagnostics.Collect` takes an
+  injected offline schema reader. Offline `doctor` in the CLI reports the DB schema version as
+  unavailable when the daemon is not running (the desktop app still reads it). CI guards this with
+  `scripts/check-cli-linkage.sh`.
 - SQLite: transactions take the write lock up front (`_txlock=immediate`), 4 idle connections,
   `temp_store`/`cache_size`/`journal_size_limit` pragmas, and `PRAGMA optimize` plus a WAL checkpoint on close.
   Migration 0101 adds a partial index on in-flight `messages.status` for startup recovery.
@@ -109,6 +114,15 @@ notes. See `docs/development/updates.md`.
   the run state are read once per thread, and composer drafts live in their own store.
 
 ### Fixed
+- Terminals: a program that floods its terminal (`cat` of a huge file, a runaway build log) no longer gets
+  the desktop's daemon connection closed. Output is coalesced (about 12 ms, 64 KiB per event) and capped
+  per session; when the window cannot keep up the oldest undelivered output is skipped and the terminal
+  view re-syncs from the daemon's scrollback instead of the connection being dropped.
+- Terminals: scrollback is a fixed ring, so a busy terminal no longer allocates and copies ~1 MiB per read,
+  and attaching to a terminal no longer stalls its output while the scrollback is copied.
+- Terminals: exited sessions no longer count toward the 64-session limit and are forgotten after 30 minutes
+  (at most 16 are kept). Agents running in a terminal learn about exit through a notification instead of
+  polling every 250 ms.
 - IPC: a daemon reply larger than the 4 MiB frame limit now returns a `too_large` error instead of
   making the client drop the link, reconnect and re-send the request (which ran the call twice).
   Oversized events are dropped and logged, and `Client.Call` only retries a request that was never

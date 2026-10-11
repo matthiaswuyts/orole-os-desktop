@@ -51,7 +51,7 @@ func (m *Manager) Restore(id string, cols, rows int) (Info, error) {
 			return info, nil
 		}
 	}
-	if len(m.sess) >= m.max {
+	if m.running >= m.max {
 		return Info{}, errors.New("terminals: session limit reached")
 	}
 	if cols <= 0 {
@@ -66,8 +66,9 @@ func (m *Manager) Restore(id string, cols, rows int) (Info, error) {
 	}
 	info := Info{ID: uuid.NewString(), Title: "tmux", Shell: "tmux", Cols: cols, Rows: rows,
 		Pid: p.Pid(), State: Running, StartedAt: time.Now().UTC(), PersistentID: id}
-	s := &Session{m: m, p: p, info: info}
+	s := m.newSession(p, info)
 	m.sess[info.ID] = s
+	m.running++
 	go s.pump()
 	return info, nil
 }

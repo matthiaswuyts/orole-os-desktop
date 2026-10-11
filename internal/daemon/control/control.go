@@ -11,18 +11,18 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/rayorole/orole-os-desktop/internal/daemon"
+	"github.com/rayorole/orole-os-desktop/internal/daemon/api"
 	"github.com/rayorole/orole-os-desktop/internal/ipc"
 )
 
 // NewClient builds a client for the daemon in dataDir. It reads the token on
 // every dial so it keeps working across daemon restarts (new token each run).
 func NewClient(dataDir, name string) *ipc.Client {
-	return ipc.NewClientFunc(ipc.Dial(ipc.Endpoint(dataDir)), func() string { t, _ := daemon.ReadToken(dataDir); return t }, name)
+	return ipc.NewClientFunc(ipc.Dial(ipc.Endpoint(dataDir)), func() string { t, _ := api.ReadToken(dataDir); return t }, name)
 }
 
 // Running reports whether a daemon answers hello and returns its health.
-func Running(ctx context.Context, dataDir string) (*daemon.Health, error) {
+func Running(ctx context.Context, dataDir string) (*api.Health, error) {
 	c := NewClient(dataDir, "probe")
 	defer c.Close()
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
@@ -30,7 +30,7 @@ func Running(ctx context.Context, dataDir string) (*daemon.Health, error) {
 	if err := c.Connect(ctx); err != nil {
 		return nil, err
 	}
-	var h daemon.Health
+	var h api.Health
 	if err := c.Call(ctx, "daemon.health", struct{}{}, &h); err != nil {
 		return nil, err
 	}
