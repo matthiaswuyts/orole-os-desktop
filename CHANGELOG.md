@@ -6,6 +6,14 @@ Each release needs a `## X.Y.Z - YYYY-MM-DD` section matching `version` in `mygo
 workflow refuses to build without it, and the in-app update window shows that section as the release
 notes. See `docs/development/updates.md`.
 
+## Unreleased
+
+### Changed
+- Remote machine file operations reuse one SSH/SFTP session per machine (closed when idle, or when
+  the machine's access is edited or the machine is removed) instead of reconnecting for every call,
+  and remote file etags use size and modification time instead of downloading and hashing the file.
+  Reading a remote file no longer downloads it twice.
+
 ## 0.1.0 - 2026-10-10
 
 First tagged release. Windows only.
