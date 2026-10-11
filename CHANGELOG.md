@@ -57,6 +57,9 @@ notes. See `docs/development/updates.md`.
   `propose_skill` for your approval. Built-in skills are for bots only and are never synced to coding agents.
 
 ### Changed
+- SQLite: transactions take the write lock up front (`_txlock=immediate`), 4 idle connections,
+  `temp_store`/`cache_size`/`journal_size_limit` pragmas, and `PRAGMA optimize` plus a WAL checkpoint on close.
+  Migration 0101 adds a partial index on in-flight `messages.status` for startup recovery.
 - Code task conversations read like a conversation: each assistant turn collapses into one line (`Working`, then
   `Worked for 2m 13s`) that opens into its thoughts and tool steps, while the final answer, pending approvals and questions,
   errors, files and images stay visible. Tool steps use plain words (`Ran npm test`, `Searched the web`, `Read main.go`,
@@ -93,6 +96,14 @@ notes. See `docs/development/updates.md`.
 - Integrations and MCP servers are one Settings > Integrations page: company logos, one-click Add for Vercel,
   Cloudflare, Notion, Linear, Stripe, Netlify, Railway, Supabase, Neon, Prisma, Sentry, Zapier, Intercom, PayPal
   and Mixpanel, and a Custom connector button that needs only a name and a server URL.
+- Faster startup: the Home view, home widgets, command palette and the settings window's pages now load
+  on demand. The entry chunk drops from 929 kB to 592 kB (gzip 266 kB to 163 kB). Widgets show a
+  per-widget loading card while their code loads.
+- Only the Latin subsets of Inter and JetBrains Mono are bundled.
+
+### Removed
+- Unused frontend dependencies: `@tanstack/react-query`, `cn`, `@fontsource-variable/dm-sans`,
+  `@fontsource-variable/geist`.
 
 ### Fixed
 - Terminals: a program that floods its terminal (`cat` of a huge file, a runaway build log) no longer gets
@@ -104,6 +115,10 @@ notes. See `docs/development/updates.md`.
 - Terminals: exited sessions no longer count toward the 64-session limit and are forgotten after 30 minutes
   (at most 16 are kept). Agents running in a terminal learn about exit through a notification instead of
   polling every 250 ms.
+- IPC: a daemon reply larger than the 4 MiB frame limit now returns a `too_large` error instead of
+  making the client drop the link, reconnect and re-send the request (which ran the call twice).
+  Oversized events are dropped and logged, and `Client.Call` only retries a request that was never
+  written to the connection.
 - Code projects load quickly again and no longer fail with "Could not load projects: context deadline exceeded". The sidebar
   used to wait for `git status` in every worktree of every project; now projects appear immediately, worktrees fill in per
   project, and one slow or broken repository cannot hide the rest. Worktree ahead/behind and dirty counts are read on the
