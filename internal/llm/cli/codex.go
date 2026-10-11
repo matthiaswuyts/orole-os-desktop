@@ -191,9 +191,13 @@ func (p *Codex) Stream(ctx context.Context, req llm.Request) (<-chan llm.Delta, 
 		defer os.RemoveAll(dir)
 		for _, d := range p.read(ctx, out, wait, req) {
 			select {
-			case ch <- d:
-			case <-ctx.Done():
-				return
+			case ch <- d: // a free slot always takes the delta, so a cancellation error is never dropped
+			default:
+				select {
+				case ch <- d:
+				case <-ctx.Done():
+					return
+				}
 			}
 		}
 	}()

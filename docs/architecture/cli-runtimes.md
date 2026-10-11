@@ -47,3 +47,15 @@ malformed block, or one naming a tool that was not offered, is ordinary text), s
 
 Limits: `codex exec` prints whole messages, so replies appear at once instead of streaming; every step of a tool loop is a
 new CLI start (a few seconds); images and PDFs are not forwarded (vision is off for these models).
+
+## Claude as a model for bots
+The provider `claude` (`internal/llm/cli/claude.go`) works like the Codex one, with two differences. Claude Code streams,
+so text appears as it is written: `replyStream` holds back only a possible start of a `tool_calls` block, so a tool call
+never flashes its raw fence. Models are the aliases the CLI documents for `--model` (`opus`, `sonnet`, `haiku`, each the
+newest of its family), because the CLI has no model list. Each call is
+`claude -p --output-format stream-json --include-partial-messages --no-session-persistence --tools "" --strict-mcp-config --setting-sources "" --disable-slash-commands`:
+no built-in tool, user setting, MCP server or skill is loaded, and Claude Code's own system prompt is replaced. The bot's
+instructions and the conversation go on stdin, never on the command line.
+
+Anthropic's terms limit subscription sign-in to ordinary individual use of the unmodified CLI; bots that work in the
+background on a plan can go past that. The Accounts page says so next to the Claude row.
