@@ -10,6 +10,9 @@ export interface Option {
   value: string;
   label: string;
   provider: string;
+  /** id of the provider that serves it, and whether that is an "account" (a signed-in CLI) or an API provider */
+  providerId: string;
+  providerKind: string;
   /** the AI company that makes the model, which differs from the provider for aggregators */
   company: string;
   caps: Caps | null;
@@ -30,7 +33,10 @@ export interface ModelOptions {
   catalogs: Record<string, ModelCatalog>;
 }
 
-const entry = (over: Partial<Option>): Option => ({ value: "", label: "", provider: "", company: "", caps: null, reasoning: [], curated: null, kind: "model", ...over });
+/** The company behind an account provider's models: the CLI's own aliases ("opus") say nothing about it. */
+const ACCOUNT_COMPANY: Record<string, string> = { claude: "Anthropic", codex: "OpenAI", grok: "xAI" };
+
+const entry = (over: Partial<Option>): Option => ({ value: "", label: "", provider: "", providerId: "", providerKind: "", company: "", caps: null, reasoning: [], curated: null, kind: "model", ...over });
 
 /**
  * The models a bot can use. Each connected provider contributes its handpicked models (`lib/modelCatalog`), one per
@@ -63,7 +69,7 @@ export function useModelOptions(selected: string): ModelOptions {
         if (curated && (!have || model.id.length < have.model.id.length)) best.set(curated.id, { curated, model });
       }
       const option = (model: Model, curated: CuratedModel | null) => entry({
-        value: `${p.id}/${model.id}`, label: curated?.name ?? (model.name || model.id), provider: p.name, company: curated?.company ?? companyOf(model),
+        value: `${p.id}/${model.id}`, label: curated?.name ?? (model.name || model.id), provider: p.name, providerId: p.id, providerKind: p.kind, company: curated?.company ?? ACCOUNT_COMPANY[p.id] ?? companyOf(model),
         caps: model.caps, reasoning: model.reasoning ?? [], curated,
       });
       for (const { curated, model } of best.values()) picks.push(option(model, curated));
