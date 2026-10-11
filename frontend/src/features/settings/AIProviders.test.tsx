@@ -1,10 +1,11 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { Model, ProviderStatus } from "@/mygo";
+import type { CliruntimeStatus, Model, ProviderStatus } from "@/mygo";
 
 const bridge = vi.hoisted(() => ({
   providers: vi.fn(), defaults: vi.fn(), models: vi.fn(), connect: vi.fn(), disconnect: vi.fn(), test: vi.fn(),
   setDefaults: vi.fn(), authStart: vi.fn(), authFinish: vi.fn(), openExternal: vi.fn(),
+  cliList: vi.fn(), cliInstall: vi.fn(), cliLogin: vi.fn(), cliLogout: vi.fn(),
 }));
 vi.mock("@/lib/backend", () => ({ inDesktop: true }));
 vi.mock("@/mygo", () => ({
@@ -12,11 +13,13 @@ vi.mock("@/mygo", () => ({
     providers: bridge.providers, defaults: bridge.defaults, models: bridge.models, connect: bridge.connect, disconnect: bridge.disconnect,
     test: bridge.test, setDefaults: bridge.setDefaults, openRouterAuthStart: bridge.authStart, openRouterAuthFinish: bridge.authFinish,
   },
+  CLIRuntimes: { list: bridge.cliList, install: bridge.cliInstall, login: bridge.cliLogin, logout: bridge.cliLogout },
   Shell: { openExternal: bridge.openExternal },
   Daemon: { health: vi.fn() },
   events: { llmChanged: { on: () => () => {} }, daemonState: { on: () => () => {} } },
 }));
 import { AIProviders } from "@/features/settings/AIProviders";
+import { useCLIRuntimes } from "@/stores/cliRuntimes";
 import { useLLM } from "@/stores/llm";
 import { useDaemon } from "@/stores/daemon";
 
@@ -39,12 +42,16 @@ beforeEach(() => {
   bridge.providers.mockResolvedValue([openrouter, openai]);
   bridge.defaults.mockResolvedValue({ chatModel: "", memoryModel: "" });
   bridge.models.mockResolvedValue(models);
+  bridge.cliList.mockResolvedValue([]);
+  useCLIRuntimes.setState({ statuses: [], ready: false, loading: false, error: null, busy: {}, problems: {} });
   useDaemon.setState({ link: "connected" });
   useLLM.setState({ providers: [], defaults: null, models: {}, busy: {}, ready: false, loading: false, error: null });
 });
 afterEach(cleanup);
 
 const row = (name: string) => screen.getByRole("listitem", { name });
+
+const cli = (over: Partial<CliruntimeStatus> & { id: string; name: string }): CliruntimeStatus => ({ installed: false, updateAvailable: false, auth: "unknown", installable: true, ...over });
 
 describe("AI providers settings", () => {
   it("shows unconnected providers and where keys live", async () => {
@@ -179,5 +186,41 @@ describe("AI providers settings", () => {
     render(<AIProviders />);
     expect(within(row("Custom")).getByText("Manifest")).toBeInTheDocument();
     expect(within(row("Custom")).getByRole("button", { name: "Connect" })).toBeEnabled();
+  });
+});
+
+describe("account CLIs", () => {
+  it("shows what is installed, its version, the account and an update", async () => {
+    seed([openrouter]);
+    bridge.cliList.mockResolvedValue([
+      cli({ id: "claude", name: "Claude", installed: true, version: "2.1.289", latest: "2.1.296", updateAvailable: true, auth: "signed_in", account: "ray@example.com", source: "system" }),
+      cli({ id: "codex", name: "ChatGPT" }),
+      cli({ id: "grok", name: "Grok", installable: false }),
+    ]);
+    render(<AIProviders />);
+    const claude = await screen.findByRole("listitem", { name: "Claude" });
+    expect(within(claude).getByText(/v2\.1\.289 · ray@example\.com · Your installed copy/)).toBeInTheDocument();
+    expect(within(claude).getByText("Update available")).toBeInTheDocument();
+    expect(within(claude).getByRole("button", { name: "Update" })).toBeEnabled();
+    expect(within(claude).getByRole("button", { name: "Sign out" })).toBeEnabled();
+    expect(within(claude).queryByRole("button", { name: "Sign in" })).toBeNull();
+    expect(within(row("ChatGPT")).getByText("Not installed on this computer")).toBeInTheDocument();
+    expect(within(row("ChatGPT")).getByRole("button", { name: "Download" })).toBeEnabled();
+    expect(within(row("Grok")).getByText("Not available for this computer")).toBeInTheDocument();
+    expect(within(row("Grok")).queryByRole("button")).toBeNull();
+  });
+
+  it("downloads, then signs in, and shows a failed sign-in", async () => {
+    seed([openrouter]);
+    bridge.cliList.mockResolvedValue([cli({ id: "codex", name: "ChatGPT" })]);
+    bridge.cliInstall.mockResolvedValue(cli({ id: "codex", name: "ChatGPT", installed: true, version: "0.162.1", auth: "signed_out", source: "managed" }));
+    bridge.cliLogin.mockRejectedValue(new Error("internal: could not sign in ChatGPT: browser closed"));
+    render(<AIProviders />);
+    fireEvent.click(await screen.findByRole("button", { name: "Download" }));
+    await waitFor(() => expect(bridge.cliInstall).toHaveBeenCalledWith("codex"));
+    const signIn = await screen.findByRole("button", { name: "Sign in" });
+    expect(within(row("ChatGPT")).getByText(/v0\.162\.1 · Not signed in · Orole's copy/)).toBeInTheDocument();
+    fireEvent.click(signIn);
+    expect(await within(row("ChatGPT")).findByRole("alert")).toHaveTextContent("could not sign in ChatGPT: browser closed");
   });
 });
