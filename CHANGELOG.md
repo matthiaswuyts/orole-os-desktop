@@ -57,6 +57,9 @@ notes. See `docs/development/updates.md`.
   `propose_skill` for your approval. Built-in skills are for bots only and are never synced to coding agents.
 
 ### Changed
+- SQLite: transactions take the write lock up front (`_txlock=immediate`), 4 idle connections,
+  `temp_store`/`cache_size`/`journal_size_limit` pragmas, and `PRAGMA optimize` plus a WAL checkpoint on close.
+  Migration 0101 adds a partial index on in-flight `messages.status` for startup recovery.
 - Code task conversations read like a conversation: each assistant turn collapses into one line (`Working`, then
   `Worked for 2m 13s`) that opens into its thoughts and tool steps, while the final answer, pending approvals and questions,
   errors, files and images stay visible. Tool steps use plain words (`Ran npm test`, `Searched the web`, `Read main.go`,
