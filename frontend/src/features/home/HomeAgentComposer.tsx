@@ -6,6 +6,7 @@ import { InputGroup, InputGroupAddon, InputGroupTextarea } from "@/components/ui
 import { Tooltip, TooltipPopup, TooltipTrigger } from "@/components/ui/tooltip";
 import { ComposerAttachmentChip, ComposerAttachments } from "@/components/assistant-ui/elements/composer-attachments";
 import { cn } from "@/lib/utils";
+import { PermissionModeSelect } from "@/features/tasks/PermissionModeSelect";
 import { ProjectMenu, SystemMenu, WorktreeMenu } from "./HomeTaskMenus";
 import { AgentModelPicker } from "./AgentModelPicker";
 import { useHomeTaskLaunch, type HomeTaskLaunch, type TaskLaunchOptions } from "./useHomeTaskLaunch";
@@ -61,6 +62,7 @@ export function HomeComposerView({ task, autoFocus = false, placeholder = DEFAUL
             <Tooltip><TooltipTrigger render={<Button type="button" variant="ghost" size="icon-sm" className="rounded-full" aria-label="Add attachment" disabled={!task.attachments.canAdd} onClick={() => picker.current?.click()}><PlusIcon /></Button>} />
               <TooltipPopup>Add photos &amp; files · up to 8 files, 2 MB each</TooltipPopup></Tooltip>
             {!hideProjectMenu && <ProjectMenu task={task} />}<SystemMenu task={task} /><WorktreeMenu task={task} />
+            <PermissionModeSelect value={task.permissionMode} support={task.permissionSupport} disabled={task.busy} onChange={task.choosePermissionMode} />
             <div className="ml-auto flex min-w-0 items-center gap-2">
               <AgentModelPicker task={task} />
               <Button type="submit" disabled={!task.canStart} loading={task.busy} size="icon" className="shrink-0 rounded-full" aria-label="Start task"><ArrowUpIcon /></Button>

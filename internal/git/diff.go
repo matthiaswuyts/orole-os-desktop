@@ -96,7 +96,7 @@ func Diff(ctx context.Context, dir string, o DiffOptions) (DiffResult, error) {
 	}
 	ctx, cancel := context.WithTimeout(ctx, DefaultTimeout)
 	defer cancel()
-	repo, err := openReviewRepo(ctx, dir)
+	repo, err := openReviewRepo(ctx, dir, !(o.From != "" && o.To != ""))
 	if err != nil {
 		return DiffResult{}, err
 	}

@@ -4,11 +4,11 @@ import { useUI } from "@/stores/ui";
 
 const api = vi.hoisted(() => ({
   projects: vi.fn(), agents: vi.fn(), agent: vi.fn(), settings: vi.fn(),
-  openProjectTasks: vi.fn(), openTask: vi.fn(), upsertAgent: vi.fn(),
+  openProjectTasks: vi.fn(), openTask: vi.fn(), upsertAgent: vi.fn(), openSettings: vi.fn().mockResolvedValue(undefined),
 }));
 vi.mock("@/lib/backend", () => ({ inDesktop: true }));
 vi.mock("@/mygo", () => ({
-  Projects: { list: api.projects }, Agents: { list: api.agents, get: api.agent }, Search: { query: api.settings },
+  Projects: { list: api.projects }, Agents: { list: api.agents, get: api.agent }, Search: { query: api.settings }, Desktop: { openSettings: api.openSettings },
 }));
 vi.mock("@/features/projects/tasks", () => ({ openProjectTasks: api.openProjectTasks, openTask: api.openTask }));
 vi.mock("@/stores/agents", () => ({ useAgents: { getState: () => ({ upsert: api.upsertAgent }) } }));
@@ -37,12 +37,12 @@ it.each(["skills", "mcp"])("opens %s configuration inside Settings", async (sect
   api.settings.mockResolvedValue({ results: [{ id: `settings/${section}/`, title: section, action: { view: "settings", section, tab: "" } }] });
   const [hit] = await provider("settings").search(section, signal());
   hit!.run();
-  expect(useUI.getState()).toMatchObject({ view: "settings", settingsSection: section, settingsTab: "" });
+  expect(api.openSettings).toHaveBeenCalledWith(section); // settings open in their own window
 });
 
 it("keeps ordinary configuration results in their Settings section", async () => {
   api.settings.mockResolvedValue({ results: [{ id: "settings/customization/appearance", title: "Settings: Theme and density", action: { view: "settings", section: "customization", tab: "appearance" } }] });
   const [hit] = await provider("settings").search("theme", signal());
   hit!.run();
-  expect(useUI.getState().view).toBe("settings");
+  expect(api.openSettings).toHaveBeenCalledWith("customization");
 });

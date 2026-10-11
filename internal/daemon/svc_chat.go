@@ -81,8 +81,20 @@ func (d *Daemon) registerChat() {
 		out, err := m.Send(ctx, p)
 		return out, chatError(err)
 	})
+	handle(d, "chat.bots.pin", func(ctx context.Context, p chat.PinRequest) (none, error) {
+		return none{}, chatError(m.PinBot(ctx, p.ID, p.Pinned))
+	})
 	handle(d, "chat.cancel", func(ctx context.Context, p chat.BotRef) (none, error) {
 		return none{}, chatError(m.Cancel(ctx, p.ID))
+	})
+	handle(d, "chat.queue.pause", func(ctx context.Context, p chat.BotRef) (none, error) {
+		return none{}, chatError(m.PauseQueue(ctx, p.ID))
+	})
+	handle(d, "chat.queue.resume", func(ctx context.Context, p chat.BotRef) (none, error) {
+		return none{}, chatError(m.ResumeQueue(ctx, p.ID))
+	})
+	handle(d, "chat.queue.cancel", func(ctx context.Context, p chat.QueueItemRef) (none, error) {
+		return none{}, chatError(m.CancelQueued(ctx, p.BotID, p.MessageID))
 	})
 	handle(d, "chat.regenerate", func(ctx context.Context, p chat.RegenerateRequest) (none, error) {
 		return none{}, chatError(m.Regenerate(ctx, p))

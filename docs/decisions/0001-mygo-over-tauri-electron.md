@@ -14,7 +14,7 @@ built-in NSIS packaging, hidden-title-bar windows, deep links, single instance a
 
 ## Consequences
 - One language for shell, daemon and CLI; the bound services in `internal/app` share types with the daemon
-  (`daemon.Health`, `terminals.Info`), so the frontend types cannot drift.
+  (`api.Health`, `terminals.Info`), so the frontend types cannot drift.
 - Small output: measured 15.1 MB app exe, 7.8 MB installer (`docs/development/packaging.md`); no Chromium or Rust
   toolchain to ship or build.
 - Dependency on a young project (0.x): API changes and gaps are our risk. `docs/research/mygo-compatibility.md`

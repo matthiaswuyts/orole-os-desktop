@@ -211,7 +211,7 @@ func defaultFor(req Request) Evaluation {
 	// their normal policy. Never trust an external effect hint for this default.
 	if req.Actor == "user" && !req.FromHint {
 		switch req.Action {
-		case "agent.start", "agent.prompt", "agent.restart":
+		case "agent.start", "agent.prompt", "agent.restart", "agent.permissionMode":
 			return Evaluation{Allow, "default", "user-requested task submission"}
 		}
 	}

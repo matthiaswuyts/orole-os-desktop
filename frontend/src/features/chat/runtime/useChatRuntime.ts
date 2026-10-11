@@ -1,8 +1,9 @@
 import { useExternalStoreRuntime, type AppendMessage, type AssistantRuntime } from "@assistant-ui/react";
 import { useCallback, useEffect, useMemo } from "react";
 import type { Bot } from "@/mygo";
-import { selectConversation, useBotRunning, useChatMessages } from "@/stores/chatMessages";
+import { selectConversation, useChatMessages } from "@/stores/chatMessages";
 import { useChat } from "@/stores/chat";
+import { useChatDrafts } from "@/stores/chatDrafts";
 import { mentionsOf, targetsFor } from "../mentions";
 import { ATTACHMENT_PART, createAttachmentAdapter } from "./attachments";
 import { convertMessage } from "./convert";
@@ -24,16 +25,16 @@ export function sendInputOf(message: Pick<AppendMessage, "content" | "attachment
  * assistant-ui's view of one bot's conversation. The daemon owns everything: sending stores the message there and
  * the reply arrives by event; there are no branches, edits or thread list because the daemon cannot honour them.
  */
-export function useChatRuntime(bot: Pick<Bot, "id" | "provider" | "model">): AssistantRuntime {
+export function useChatRuntime(bot: Pick<Bot, "id" | "provider" | "model">, running: boolean): AssistantRuntime {
   const botId = bot.id;
   const conversation = useChatMessages(selectConversation(botId));
-  const running = useBotRunning(botId);
   const { caps } = useBotModel(bot);
   const attachments = useMemo(() => createAttachmentAdapter(), []);
   useEffect(() => attachments.setSupport(caps), [attachments, caps]);
 
   const onNew = useCallback(async (message: AppendMessage) => {
-    const { send, drafts, setDraft } = useChatMessages.getState();
+    const { send } = useChatMessages.getState();
+    const { drafts, setDraft } = useChatDrafts.getState();
     const { text, attachmentIds } = sendInputOf(message);
     const mode = drafts[botId]?.research ? "research" : "";
     const { bots, skills } = mentionsOf(text, targetsFor(useChat.getState().bots, botId));

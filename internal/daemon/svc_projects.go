@@ -34,11 +34,11 @@ func mapProjectErr(err error) error {
 // dir resolves a target to a directory the daemon knows about.
 func (d *Daemon) gitDir(ctx context.Context, t gitTarget) (string, error) {
 	if t.WorktreeID != "" {
-		wt, err := d.Projects.Worktrees.Get(ctx, t.WorktreeID)
+		path, err := d.Projects.Worktrees.Path(ctx, t.WorktreeID)
 		if err != nil {
 			return "", mapProjectErr(err)
 		}
-		return wt.Path, nil
+		return path, nil
 	}
 	if t.ProjectID == "" {
 		return "", &ipc.Error{Code: ipc.CodeBadRequest, Message: "projectId or worktreeId is required"}
@@ -176,11 +176,10 @@ func (d *Daemon) registerProjects() {
 		return none{}, nil
 	})
 
-	handle(d, "worktrees.list", func(ctx context.Context, p struct {
-		ProjectID string `json:"projectId"` // empty = every project
-	}) ([]projects.Worktree, error) {
-		ids := []string{p.ProjectID}
-		if p.ProjectID == "" {
+	// worktrees.list is the fast path (no per-worktree git status); worktrees.status adds ahead/behind and dirty counts.
+	listWorktrees := func(ctx context.Context, projectID string, withStatus bool) ([]projects.Worktree, error) {
+		ids := []string{projectID}
+		if projectID == "" {
 			all, err := d.Projects.List(ctx)
 			if err != nil {
 				return nil, err
@@ -194,9 +193,15 @@ func (d *Daemon) registerProjects() {
 		}
 		out := []projects.Worktree{}
 		for _, id := range ids {
-			wts, err := d.Projects.Worktrees.List(ctx, id)
+			var wts []projects.Worktree
+			var err error
+			if withStatus {
+				wts, err = d.Projects.Worktrees.ListStatus(ctx, id)
+			} else {
+				wts, err = d.Projects.Worktrees.List(ctx, id)
+			}
 			if err != nil {
-				if p.ProjectID == "" {
+				if projectID == "" {
 					d.Log.Warn("listing worktrees", "project", id, "err", err)
 					continue
 				}
@@ -205,6 +210,15 @@ func (d *Daemon) registerProjects() {
 			out = append(out, wts...)
 		}
 		return out, nil
+	}
+	type worktreesQuery struct {
+		ProjectID string `json:"projectId"` // empty = every project
+	}
+	handle(d, "worktrees.list", func(ctx context.Context, p worktreesQuery) ([]projects.Worktree, error) {
+		return listWorktrees(ctx, p.ProjectID, false)
+	})
+	handle(d, "worktrees.status", func(ctx context.Context, p worktreesQuery) ([]projects.Worktree, error) {
+		return listWorktrees(ctx, p.ProjectID, true)
 	})
 	handle(d, "worktrees.create", func(ctx context.Context, p struct {
 		ProjectID string `json:"projectId"`

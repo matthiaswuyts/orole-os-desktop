@@ -10,24 +10,10 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/rayorole/orole-os-desktop/internal/daemon/api"
 	"github.com/rayorole/orole-os-desktop/internal/ipc"
 	"github.com/rayorole/orole-os-desktop/internal/terminals"
 )
-
-// Health is the daemon's status snapshot.
-type Health struct {
-	Version     string    `json:"version"`
-	PID         int       `json:"pid"`
-	StartedAt   time.Time `json:"startedAt"`
-	UptimeSec   int64     `json:"uptimeSec"`
-	DBVersion   int       `json:"dbVersion"`
-	Platform    string    `json:"platform"`
-	GoVersion   string    `json:"goVersion"`
-	Goroutines  int       `json:"goroutines"`
-	MemAllocMB  float64   `json:"memAllocMB"`
-	Terminals   int       `json:"terminals"`
-	ProtocolVer int       `json:"protocolVersion"`
-}
 
 // Workspace is a named layout.
 type Workspace struct {
@@ -55,21 +41,23 @@ func (d *Daemon) registerServices() {
 	d.registerAgents()
 	d.registerImages()
 	d.registerPublish()
-	d.registerLLM()        // first of the chat services: registerChat resolves providers through d.LLM
-	d.registerChat()       // after registerLLM; registerChatMemory and registerChatTools attach to d.Chat
-	d.registerChatMemory() // after registerChat: memory, knowledge and skill proposals; before registerChatTools
-	d.registerChatTools()  // last of the chat services: lists knowledge_search only if registerChatMemory (before it) added it
+	d.registerDictation()   // reads the OpenAI key through llmCredentialStore; independent of registerLLM
+	d.registerCLIRuntimes() // before registerLLM: the CLI providers resolve through d.CLI
+	d.registerLLM()         // first of the chat services: registerChat resolves providers through d.LLM
+	d.registerChat()        // after registerLLM; registerChatMemory and registerChatTools attach to d.Chat
+	d.registerChatMemory()  // after registerChat: memory, knowledge and skill proposals; before registerChatTools
+	d.registerChatTools()   // last of the chat services: lists knowledge_search only if registerChatMemory (before it) added it
 }
 
 func (d *Daemon) registerCore() {
-	handle(d, "daemon.health", func(ctx context.Context, _ none) (Health, error) {
+	handle(d, "daemon.health", func(ctx context.Context, _ none) (api.Health, error) {
 		var ms runtime.MemStats
 		runtime.ReadMemStats(&ms)
 		v, err := d.DB.Version()
 		if err != nil {
-			return Health{}, err
+			return api.Health{}, err
 		}
-		return Health{Version: Version, PID: os.Getpid(), StartedAt: d.started, UptimeSec: int64(time.Since(d.started).Seconds()),
+		return api.Health{Version: Version, PID: os.Getpid(), StartedAt: d.started, UptimeSec: int64(time.Since(d.started).Seconds()),
 			DBVersion: v, Platform: runtime.GOOS + "/" + runtime.GOARCH, GoVersion: runtime.Version(), Goroutines: runtime.NumGoroutine(),
 			MemAllocMB: float64(ms.Alloc) / (1 << 20), Terminals: len(d.Terminals.List()), ProtocolVer: ipc.ProtocolVersion}, nil
 	})

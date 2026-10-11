@@ -132,7 +132,7 @@ func TestChatMemoryHandlers(t *testing.T) {
 	must("chat.memory.scopes.delete", chat.MemoryScopeRef{ID: team.ID}, nil)
 	nextChange()
 
-	// Knowledge and skill proposals (nothing to list yet; bad references are user errors).
+	// Knowledge and skill proposals (bad references are user errors).
 	var files []chat.KnowledgeFile
 	must("chat.knowledge.list", chat.BotRef{ID: bot.ID}, &files)
 	if files == nil || len(files) != 0 {
@@ -140,10 +140,6 @@ func TestChatMemoryHandlers(t *testing.T) {
 	}
 	fails("chat.knowledge.add", chat.KnowledgeAdd{BotID: bot.ID, AttachmentID: "nope"}, "attachment not found")
 	fails("chat.knowledge.remove", chat.KnowledgeRef{BotID: bot.ID, AttachmentID: "nope"}, "not found")
-	var props []chat.SkillProposal
-	must("chat.skills.pending.list", chat.BotRef{}, &props)
-	if props == nil || len(props) != 0 {
-		t.Fatalf("proposals = %#v", props)
-	}
+	fails("chat.skills.pending.get", chat.SkillRef{ID: "nope"}, "not found")
 	fails("chat.skills.pending.resolve", chat.SkillResolve{ID: "nope", Approve: true}, "not found")
 }

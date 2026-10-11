@@ -54,13 +54,13 @@ describe("new bot", () => {
     expect(bridge.chat.send).not.toHaveBeenCalled(); // the daemon starts the bot's first message itself
   });
 
-  it("uses the default model when none is picked", async () => {
+  it("starts on the default chat model, explicitly, when none is picked", async () => {
     saved.mockResolvedValue(bot("new1", { name: "Quick" }));
     render(<NewBot />);
     fireEvent.change(nameField(), { target: { value: "Quick" } });
     fireEvent.click(screen.getByRole("button", { name: "Create bot" }));
     await waitFor(() => expect(saved).toHaveBeenCalled());
-    expect(saved.mock.calls[0]![0]).toMatchObject({ provider: "", model: "" });
+    expect(saved.mock.calls[0]![0]).toMatchObject({ provider: "openrouter", model: "gpt-x" });
   });
 
   it("needs a name before it calls the daemon", () => {
