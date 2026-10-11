@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { create } from "zustand";
 import { LLM, events, type Defaults, type ManifestRecord, type Model, type ProviderManifest, type ProviderStatus } from "@/mygo";
 import { inDesktop } from "@/lib/backend";
+import { onFocusRefresh } from "@/lib/focus";
 import { useDaemon } from "@/stores/daemon";
 
 /** A failed action carries a message the UI can show verbatim; a successful one carries its result. */
@@ -255,9 +256,9 @@ export const useLLM = create<State>((set, get) => ({
           set({ ready: false, loading: false, error: OFFLINE, manifestsReady: false, manifestsError: OFFLINE });
         }
       });
-      window.addEventListener("focus", refresh);
+      const offFocus = onFocusRefresh(refresh);
       refresh();
-      stop = () => { offChanged(); offDaemon(); window.removeEventListener("focus", refresh); };
+      stop = () => { offChanged(); offDaemon(); offFocus(); };
     }
     let stopped = false;
     return () => {

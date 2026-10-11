@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Agents, type Mode, type StartSpec } from "@/mygo";
 import { inDesktop } from "@/lib/backend";
 import { useAgents } from "@/stores/agents";
@@ -35,6 +35,9 @@ export function useHomeTaskLaunch({ initialProjectId, initialPrompt = "", onStar
   const project = choices.find((p) => p.id === (remoteProject || selectedId || savedProject)) ?? choices.find((p) => !p.missing);
   const [worktreeChoice, setWorktreeChoice] = useState<{ project: string; value: string } | null>(null);
   const canIsolate = Boolean(project?.isGit && source.options?.worktree);
+  const needsTrees = Boolean(project?.isGit);
+  // Worktrees cost a git call per project, so they are fetched only while the picked project can use them.
+  useEffect(() => needsTrees ? useProjects.getState().watchWorktrees() : undefined, [needsTrees]);
   const trees = project ? worktrees[project.id] ?? [] : [];
   const preferredTree = worktreeChoice?.project === project?.id ? worktreeChoice?.value : undefined;
   const tree = preferredTree && trees.find((w) => w.id === preferredTree && !w.error);

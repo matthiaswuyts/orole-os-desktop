@@ -6,6 +6,15 @@ Each release needs a `## X.Y.Z - YYYY-MM-DD` section matching `version` in `mygo
 workflow refuses to build without it, and the in-app update window shows that section as the release
 notes. See `docs/development/updates.md`.
 
+## Unreleased
+
+### Changed
+- Window focus now triggers one shared refresh, at most every 30 seconds, instead of every store reloading
+  on every focus. Chat messages refresh only the open conversation, and projects load their worktrees
+  only while a view that shows them is open (cached for a minute), not on every project reload.
+- Daemon health polling no longer notifies the UI when the status is unchanged, and the status bar,
+  sidebar and shell subscribe to the fields they show, so the 5 second poll does not re-render them.
+
 ## 0.1.0 - 2026-10-10
 
 First tagged release. Windows only.

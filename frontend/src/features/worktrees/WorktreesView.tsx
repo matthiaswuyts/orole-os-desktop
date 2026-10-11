@@ -15,18 +15,27 @@ import { NeedsDesktop } from "@/features/shared/States";
 import { ConfirmDialog, CreateWorktreeDialog } from "@/features/projects/dialogs";
 
 export function WorktreesView() {
-  const { projects, worktrees, loaded, loading, error, load, removeWorktree } = useProjects();
+  const { projects, worktrees, worktreesError, loaded, error, load, loadWorktrees, watchWorktrees, removeWorktree } = useProjects();
   const [creatingIn, setCreatingIn] = useState<string | null>(null);
   const [removing, setRemoving] = useState<Worktree | null>(null);
   const [force, setForce] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
 
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    void load();
+    return watchWorktrees();
+  }, [load, watchWorktrees]);
 
   const rows = useMemo(() => projects.flatMap((p) => (worktrees[p.id] ?? []).map((w) => ({ p, w }))), [projects, worktrees]);
+  const pending = projects.some((p) => !p.missing && p.isGit && !(p.id in worktrees));
+  const refresh = () => {
+    setRefreshing(true);
+    void Promise.all([load(), loadWorktrees(true)]).finally(() => setRefreshing(false));
+  };
 
   if (!inDesktop) return <NeedsDesktop what="Worktrees" />;
-  if (!loaded) return <div role="status" className="flex flex-1 items-center justify-center gap-2 text-muted-foreground text-sm"><Spinner className="size-4" />Loading worktrees…</div>;
-  if (error) return <div className="m-auto flex max-w-md flex-col items-center gap-2 text-center"><p role="alert" className="text-destructive-foreground text-sm">Could not load worktrees: {error}</p><Button variant="outline" onClick={() => void load()}>Retry</Button></div>;
+  if (!loaded || (pending && !worktreesError && !error)) return <div role="status" className="flex flex-1 items-center justify-center gap-2 text-muted-foreground text-sm"><Spinner className="size-4" />Loading worktrees…</div>;
+  if (error || worktreesError) return <div className="m-auto flex max-w-md flex-col items-center gap-2 text-center"><p role="alert" className="text-destructive-foreground text-sm">Could not load worktrees: {error ?? worktreesError}</p><Button variant="outline" onClick={refresh}>Retry</Button></div>;
   if (projects.length === 0) {
     return (
       <Empty>
@@ -40,7 +49,7 @@ export function WorktreesView() {
       <div className="flex h-9 shrink-0 items-center gap-2 border-b px-3">
         <span className="text-muted-foreground text-xs">{rows.length} {rows.length === 1 ? "worktree" : "worktrees"}</span>
         <span className="flex-1" />
-        <Button size="xs" variant="outline" onClick={() => void load()} disabled={loading} aria-label="Refresh">{loading ? <Spinner className="size-3.5" /> : <RefreshCw />}</Button>
+        <Button size="xs" variant="outline" onClick={refresh} disabled={refreshing} aria-label="Refresh">{refreshing ? <Spinner className="size-3.5" /> : <RefreshCw />}</Button>
         <Menu>
           <MenuTrigger render={<Button size="xs" />}><Plus />New worktree</MenuTrigger>
           <MenuPopup align="end" className="min-w-44">

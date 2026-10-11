@@ -16,7 +16,10 @@ import { BotActions, BotTitle } from "@/features/chat/BotHeader";
 import { useChat, useSelectedBot } from "@/stores/chat";
 
 export function AppShell({ children }: { children: ReactNode }) {
-  const { setFocused, sidebarOpen, toggleSidebar, view } = useUI();
+  const setFocused = useUI((s) => s.setFocused);
+  const sidebarOpen = useUI((s) => s.sidebarOpen);
+  const toggleSidebar = useUI((s) => s.toggleSidebar);
+  const view = useUI((s) => s.view);
   useEffect(() => {
     const f = () => setFocused(document.hasFocus() && !document.hidden);
     window.addEventListener("focus", f); window.addEventListener("blur", f); document.addEventListener("visibilitychange", f);
