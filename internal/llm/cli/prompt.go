@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/rayorole/orole-os-desktop/internal/llm"
 )
@@ -132,4 +133,45 @@ func splitReply(reply string, tools []llm.ToolSpec) (text string, calls []llm.To
 		return strings.TrimSpace(reply), nil
 	}
 	return strings.TrimSpace(reply[:m[0]]), calls
+}
+
+const fenceMarker = "```tool_calls"
+
+// replyStream releases a reply's text as it arrives but holds back anything that could be the start of a tool_calls
+// block, so the user never sees the block's raw fence flash by.
+type replyStream struct {
+	full    strings.Builder
+	emitted int // bytes of full already released
+	fenced  bool
+}
+
+// Push adds streamed text and returns what is safe to show now.
+func (r *replyStream) Push(s string) string {
+	r.full.WriteString(s)
+	if r.fenced {
+		return ""
+	}
+	text := r.full.String()
+	safe := len(text)
+	if i := strings.Index(text, fenceMarker); i >= 0 {
+		r.fenced, safe = true, i
+	} else {
+		safe = max(r.emitted, len(text)-(len(fenceMarker)-1))
+		for safe > r.emitted && !utf8.RuneStart(text[safe]) { // never cut a character in half
+			safe--
+		}
+	}
+	out := text[r.emitted:safe]
+	r.emitted = safe
+	return out
+}
+
+// Finish returns the text not yet released and the tool calls the complete reply asks for. When the reply holds
+// calls, everything before the block was released already.
+func (r *replyStream) Finish(tools []llm.ToolSpec) (rest string, calls []llm.ToolCall) {
+	full := r.full.String()
+	if _, calls = splitReply(full, tools); len(calls) > 0 {
+		return "", calls
+	}
+	return strings.TrimRight(full[r.emitted:], " \t\r\n"), nil
 }
