@@ -73,8 +73,8 @@ func TestPruneKeepsActiveRunsAndHonoursAgeAndCap(t *testing.T) {
 	graced := insertRun(t, e, a, "failed", ago(30*time.Minute), ago(10*time.Minute))
 	other := insertRun(t, e, b, "succeeded", ago(5*time.Hour), ago(4*time.Hour))
 
-	n, err := e.Prune(context.Background())
-	if err != nil {
+	// The scheduler also prunes once at start, concurrently, so the returned count is not asserted.
+	if _, err := e.Prune(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	exists := func(id string) bool { return countRows(t, e, "automation_runs", "id=?", id) == 1 }
@@ -98,9 +98,6 @@ func TestPruneKeepsActiveRunsAndHonoursAgeAndCap(t *testing.T) {
 	}
 	if !exists(graced) || !exists(other) {
 		t.Fatal("grace-period or other-automation run was pruned")
-	}
-	if want := int64(len(staleTerminal) + 6); n != want {
-		t.Fatalf("pruned %d, want %d", n, want)
 	}
 	if got := countRows(t, e, "automation_steps_journal", "1=1"); got != len(active)+9+2 {
 		t.Fatalf("journal rows %d: pruned runs left journal behind or active runs lost theirs", got)
