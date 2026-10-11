@@ -24,18 +24,45 @@ type SkillStore interface {
 	Enabled() ([]skills.Skill, error)
 }
 
-// SkillsTool lets a bot read the enabled registry skills listed in BotConfig.Skills, and nothing
-// else. Skill text is installed by the user, so it is returned as instructions (not Untrusted), the
-// same way the MCP gateway serves it to coding agents.
+// SkillsTool lets a bot read the enabled registry skills it has been given, and nothing else: the
+// ones listed in BotConfig.Skills plus the built-in skills, which every bot has. Skill text is
+// installed by the user or shipped with Orole, so it is returned as instructions (not Untrusted),
+// the same way the MCP gateway serves it to coding agents.
 type SkillsTool struct {
 	Store SkillStore
 }
 
 func (*SkillsTool) ID() string { return GetSkillName }
 
-func (t *SkillsTool) Specs(bot chat.Bot, caps llm.Caps) []llm.ToolSpec {
-	if t.Store == nil || !caps.Tools || len(bot.Config.Skills) == 0 {
+// builtinGranted reports whether a registry skill is a built-in one, which every bot may read.
+func builtinGranted(sk skills.Skill) bool { return sk.Source == skills.SourceBuiltin }
+
+// BuiltinSkillNames lists the enabled built-in skills, which every bot may read and use.
+func BuiltinSkillNames(store interface {
+	Enabled() ([]skills.Skill, error)
+}) []string {
+	list, err := store.Enabled()
+	if err != nil {
 		return nil
+	}
+	var names []string
+	for _, sk := range list {
+		if builtinGranted(sk) {
+			names = append(names, sk.Name)
+		}
+	}
+	return names
+}
+
+func (t *SkillsTool) Specs(bot chat.Bot, caps llm.Caps) []llm.ToolSpec {
+	if t.Store == nil || !caps.Tools {
+		return nil
+	}
+	if len(bot.Config.Skills) == 0 {
+		list, err := t.Store.Enabled()
+		if err != nil || !slices.ContainsFunc(list, builtinGranted) {
+			return nil
+		}
 	}
 	return []llm.ToolSpec{{
 		Name:        GetSkillName,
@@ -58,10 +85,10 @@ func (t *SkillsTool) Call(_ context.Context, rc chat.RunContext, name string, ar
 	if err := json.Unmarshal(args, &a); err != nil || a.Name == "" {
 		return errResult("invalid arguments: name is required")
 	}
-	if !slices.Contains(rc.Bot.Config.Skills, a.Name) {
+	sk, err := t.Store.Get(a.Name)
+	if !slices.Contains(rc.Bot.Config.Skills, a.Name) && (err != nil || !builtinGranted(sk)) {
 		return errResult("this bot has no skill named %q", untrusted.Line(a.Name, 64))
 	}
-	sk, err := t.Store.Get(a.Name)
 	if err != nil {
 		return errResult("skill unavailable: %s", skillErr(err))
 	}
@@ -97,12 +124,13 @@ func skillErr(err error) string {
 }
 
 // SkillsPrompt lists the bot's skills (name and one-line description) for the engine to append to the
-// system prompt. Only enabled registry skills named in bot.Config.Skills appear; it is empty when
-// there are none. The instructions themselves are read on demand with orole_get_skill.
+// system prompt: the enabled registry skills named in bot.Config.Skills plus every enabled built-in
+// skill. It is empty when there are none. The instructions themselves are read on demand with
+// orole_get_skill.
 func SkillsPrompt(store interface {
 	Enabled() ([]skills.Skill, error)
 }, bot chat.Bot) string {
-	if store == nil || len(bot.Config.Skills) == 0 {
+	if store == nil {
 		return ""
 	}
 	list, err := store.Enabled()
@@ -113,7 +141,7 @@ func SkillsPrompt(store interface {
 	var b strings.Builder
 	n := 0
 	for _, sk := range list {
-		if !slices.Contains(bot.Config.Skills, sk.Name) {
+		if !slices.Contains(bot.Config.Skills, sk.Name) && !builtinGranted(sk) {
 			continue
 		}
 		if n == 0 {

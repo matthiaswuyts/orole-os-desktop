@@ -2,6 +2,9 @@ import { useEffect } from "react";
 import { create } from "zustand";
 import { CLIRuntimes, type CliruntimeStatus } from "@/mygo";
 import { inDesktop } from "@/lib/backend";
+import { readSnapshot, writeSnapshot } from "@/lib/snapshotCache";
+
+const CACHE_KEY = "cli-runtimes";
 
 /** What is running for a provider: a download, a sign-in or a sign-out. */
 export type CLIBusy = "install" | "login" | "logout";
@@ -29,7 +32,12 @@ const describe = (cause: unknown) => (cause instanceof Error ? cause.message : S
  * regains focus (a sign-in finishes in the browser).
  */
 export const useCLIRuntimes = create<State>((set, get) => {
-  const replace = (status: CliruntimeStatus) => set((s) => ({ statuses: s.statuses.map((x) => (x.id === status.id ? status : x)) }));
+  // Last known list: painted at once on open and replaced by the daemon's answer.
+  const cached = inDesktop ? readSnapshot<CliruntimeStatus[]>(CACHE_KEY) : undefined;
+  const replace = (status: CliruntimeStatus) => {
+    set((s) => ({ statuses: s.statuses.map((x) => (x.id === status.id ? status : x)) }));
+    writeSnapshot(CACHE_KEY, get().statuses);
+  };
   const act = async (id: string, kind: CLIBusy, run: () => Promise<CliruntimeStatus>) => {
     if (get().busy[id]) return;
     set((s) => ({ busy: { ...s.busy, [id]: kind }, problems: { ...s.problems, [id]: "" } }));
@@ -46,12 +54,14 @@ export const useCLIRuntimes = create<State>((set, get) => {
     }
   };
   return {
-    statuses: [], ready: false, loading: false, error: null, busy: {}, problems: {},
+    statuses: cached ?? [], ready: cached !== undefined, loading: false, error: null, busy: {}, problems: {},
     async load() {
       if (!inDesktop || get().loading) return;
       set({ loading: true });
       try {
-        set({ statuses: (await CLIRuntimes.list()) ?? [], ready: true, error: null });
+        const statuses = (await CLIRuntimes.list()) ?? [];
+        set({ statuses, ready: true, error: null });
+        writeSnapshot(CACHE_KEY, statuses);
       } catch (cause) {
         set({ error: describe(cause), ready: true });
       } finally {

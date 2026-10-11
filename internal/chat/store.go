@@ -23,7 +23,7 @@ const (
 	maxDescriptionLen  = 500
 	maxReasoningLen    = 32
 	maxModelIDLen      = 200
-	maxMCPTools        = 100
+	maxMCPServers      = 50
 	maxSkills          = 50
 	maxToolParamsBytes = 4 << 10
 	maxStepsLimit      = 25
@@ -63,8 +63,8 @@ func normalizeConfig(c BotConfig) BotConfig {
 	if c.Tools == nil {
 		c.Tools = []BotTool{}
 	}
-	if c.MCPTools == nil {
-		c.MCPTools = []string{}
+	if c.MCPServers == nil {
+		c.MCPServers = []string{}
 	}
 	if c.Skills == nil {
 		c.Skills = []string{}
@@ -263,20 +263,19 @@ func (s *store) validateConfig(ctx context.Context, selfID string, c BotConfig) 
 	}
 	c.Tools = tools
 
-	mcp := make([]string, 0, len(c.MCPTools))
-	for _, id := range c.MCPTools {
-		server, tool, ok := strings.Cut(id, "/")
-		if !ok || server == "" || tool == "" || len(id) > 200 || strings.ContainsFunc(id, func(r rune) bool { return r < 0x20 }) {
-			return c, invalidf("MCP tool %q must look like <server>/<tool>.", id)
+	servers := make([]string, 0, len(c.MCPServers))
+	for _, id := range c.MCPServers {
+		if id == "" || len(id) > 200 || strings.ContainsFunc(id, func(r rune) bool { return r < 0x20 || r == '/' }) {
+			return c, invalidf("MCP server %q is not a valid server id.", id)
 		}
-		if !slices.Contains(mcp, id) {
-			mcp = append(mcp, id)
+		if !slices.Contains(servers, id) {
+			servers = append(servers, id)
 		}
 	}
-	if len(mcp) > maxMCPTools {
-		return c, invalidf("At most %d MCP tools can be enabled.", maxMCPTools)
+	if len(servers) > maxMCPServers {
+		return c, invalidf("At most %d integrations can be enabled.", maxMCPServers)
 	}
-	c.MCPTools = mcp
+	c.MCPServers = servers
 
 	skills := make([]string, 0, len(c.Skills))
 	for _, n := range c.Skills {
@@ -333,10 +332,6 @@ func (s *store) saveBot(ctx context.Context, in BotInput) (Bot, error) {
 	if err != nil {
 		return Bot{}, err
 	}
-	cfg, err := json.Marshal(in.Config)
-	if err != nil {
-		return Bot{}, err
-	}
 	now := s.now().UnixMilli()
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -347,20 +342,12 @@ func (s *store) saveBot(ctx context.Context, in BotInput) (Bot, error) {
 		var n int
 		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM bots WHERE archived_at IS NULL`).Scan(&n); err != nil {
 			return Bot{}, err
-		in.Config.Pinned = false
-		cfg, err := json.Marshal(in.Config)
-		if err != nil {
-			return Bot{}, err
-		}
 		}
 		if n >= MaxBots {
 			return Bot{}, invalidf("You can have at most %d bots. Archive one to add another.", MaxBots)
 		}
 		in.ID = newID()
-		// Pinning is not part of a save: keep what is stored.
-		var pinned sql.NullInt64
-		_ = tx.QueryRowContext(ctx, `SELECT json_extract(config,'$.pinned') FROM bots WHERE id=? AND archived_at IS NULL`, in.ID).Scan(&pinned)
-		in.Config.Pinned = pinned.Valid && pinned.Int64 == 1
+		in.Config.Pinned = false
 		cfg, err := json.Marshal(in.Config)
 		if err != nil {
 			return Bot{}, err
@@ -370,6 +357,14 @@ func (s *store) saveBot(ctx context.Context, in BotInput) (Bot, error) {
 			return Bot{}, err
 		}
 	} else {
+		// Pinning is not part of a save: keep what is stored.
+		var pinned sql.NullInt64
+		_ = tx.QueryRowContext(ctx, `SELECT json_extract(config,'$.pinned') FROM bots WHERE id=? AND archived_at IS NULL`, in.ID).Scan(&pinned)
+		in.Config.Pinned = pinned.Valid && pinned.Int64 == 1
+		cfg, err := json.Marshal(in.Config)
+		if err != nil {
+			return Bot{}, err
+		}
 		res, err := tx.ExecContext(ctx, `UPDATE bots SET name=?, avatar=?, color=?, description=?, instructions=?, provider=?, model=?, reasoning=?, config=?, updated_at=?
 			WHERE id=? AND archived_at IS NULL`,
 			in.Name, in.Avatar, in.Color, in.Description, in.Instructions, in.Provider, in.Model, in.Reasoning, string(cfg), now, in.ID)
@@ -662,6 +657,11 @@ func (s *store) putSummary(ctx context.Context, botID string, sm summary) error 
 func (s *store) markInterrupted(ctx context.Context) error {
 	if _, err := s.db.ExecContext(ctx, `UPDATE messages SET status=? WHERE status=?`, StatusIncomplete, StatusRunning); err != nil {
 		return err
+	}
+	_, err := s.db.ExecContext(ctx, `UPDATE messages SET status=?, error=? WHERE status=?`,
+		StatusCanceled, "Not sent: Orole was closed before this message was processed.", StatusPending)
+	return err
+}
 
 // setPinned pins or unpins a bot without touching the rest of its configuration.
 func (s *store) setPinned(ctx context.Context, id string, pinned bool) error {
@@ -677,9 +677,4 @@ func (s *store) setPinned(ctx context.Context, id string, pinned bool) error {
 		return notFoundf("Bot not found.")
 	}
 	return nil
-}
-	}
-	_, err := s.db.ExecContext(ctx, `UPDATE messages SET status=?, error=? WHERE status=?`,
-		StatusCanceled, "Not sent: Orole was closed before this message was processed.", StatusPending)
-	return err
 }

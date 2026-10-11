@@ -17,11 +17,10 @@ vi.mock("@/components/ascii/AsciiMark", () => ({
 
 import { ChatView } from "@/features/chat/ChatView";
 import { useChat } from "@/stores/chat";
-import { useUI } from "@/stores/ui";
 
 const bot = (id: string, name = id): Bot => ({
   id, name, avatar: "", color: "blue", description: "", instructions: "", provider: "", model: "", reasoning: "",
-  config: { tools: [], mcpTools: [], skills: [], memory: [], limits: { maxSteps: 0, maxToolCalls: 0 } },
+  config: { tools: [], mcpServers: [], skills: [], memory: [], limits: { maxSteps: 0, maxToolCalls: 0 } },
   createdAt: 1, updatedAt: 1, running: false,
 });
 const state = (over: Partial<ReturnType<typeof useChat.getState>> = {}) =>

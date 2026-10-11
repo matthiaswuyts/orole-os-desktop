@@ -335,3 +335,121 @@ export function toolInputJSON(call: ToolCall): string {
   if (call.input === undefined || call.input === null) return "";
   try { return JSON.stringify(call.input, null, 2); } catch { return String(call.input); }
 }
+
+// ---- assistant turns ----
+
+/** The label of a reasoning/commentary block: its `**title**`, else its first line, without markdown markers. */
+export function reasoningTitle(text: string, fallback = "Thinking"): string {
+  const bold = /\*\*([^*\n]+?)\*\*/.exec(text)?.[1] ?? "";
+  const line = text.split(/\r?\n/).map((l) => l.replace(/^[\s>#*_\-`]+/, "").replace(/\*\*|__|`/g, "").trim()).find(Boolean) ?? "";
+  const title = clip((bold || line).replace(/\*\*|__|`/g, ""), 80);
+  return title || fallback;
+}
+
+export type RunState = "running" | "requires-action" | "complete" | "cancelled" | "error" | "incomplete";
+
+/**
+ * One assistant turn, from a user message to the next: `steps` (reasoning, tool calls, interim messages...) fold into a single
+ * collapsed disclosure; `attention` (pending approvals and questions, errors, notices) and `answer` (the closing message and any
+ * files or images) always stay visible, each in original order.
+ */
+export interface TurnRun {
+  type: "run";
+  key: string;
+  at: string;
+  status: RunState;
+  /** First to last event of the turn in ms; null when unknown or under a second. */
+  durationMs: number | null;
+  steps: FeedItem[];
+  attention: FeedItem[];
+  answer: FeedItem[];
+}
+export type TurnEntry = { type: "item"; key: string; at: string; item: FeedItem } | TurnRun;
+
+export interface RunContext {
+  /** The session is working right now: the last turn is in flight. */
+  running: boolean;
+  /** The agent process is alive: a turn that never reported completion is `incomplete` once it is not. */
+  live: boolean;
+  pendingPermissions: ReadonlySet<string>;
+  pendingQuestions: ReadonlySet<string>;
+}
+
+const CANCELLED = /\b(cancel+ed|interrupted|aborted|stopped)\b/i;
+
+function closeTurn(entries: TurnEntry[], user: Extract<FeedItem, { type: "user" }> | null, buffer: FeedItem[], last: boolean, ctx: RunContext) {
+  if (!buffer.length) {
+    // A prompt the agent has not answered yet still shows that it is working.
+    if (user && last && ctx.running) entries.push({ type: "run", key: `run:${user.key}`, at: user.at, status: "running", durationMs: null, steps: [], attention: [], answer: [] });
+    return;
+  }
+  const steps: FeedItem[] = [], attention: FeedItem[] = [], media: FeedItem[] = [];
+  const messages: { item: FeedItem; at: number }[] = [];
+  let turn: Extract<FeedItem, { type: "turn" }> | null = null;
+  let pending = false;
+  let lastStep = -1;
+  for (const [index, item] of buffer.entries()) {
+    switch (item.type) {
+      case "assistant": messages.push({ item, at: index }); break;
+      case "reasoning": case "tool": case "sources": case "subagent": steps.push(item); lastStep = index; break;
+      case "note":
+        if (item.kind === "needs_input") attention.push(item); else { steps.push(item); lastStep = index; }
+        break;
+      case "permission":
+        if (!item.decision && ctx.pendingPermissions.has(item.request.id)) { attention.push(item); pending = true; } else { steps.push(item); lastStep = index; }
+        break;
+      case "question":
+        if (!item.answers && !item.cancelled && ctx.pendingQuestions.has(item.request.id)) { attention.push(item); pending = true; } else { steps.push(item); lastStep = index; }
+        break;
+      case "guardrail": case "error": attention.push(item); break;
+      case "image": case "file": case "generation": media.push(item); break;
+      case "turn": turn = item; break;
+      case "user": break;
+    }
+  }
+  const answer: FeedItem[] = [...media];
+  for (const message of messages) {
+    if (message.at > lastStep) answer.push(message.item); else steps.push(message.item);
+  }
+  const order = new Map(buffer.map((item, index) => [item, index]));
+  const byOrder = (a: FeedItem, b: FeedItem) => order.get(a)! - order.get(b)!;
+  steps.sort(byOrder); answer.sort(byOrder);
+
+  let status: RunState;
+  if (pending) status = "requires-action";
+  else if (turn) status = turn.ok ? "complete" : CANCELLED.test(turn.result) ? "cancelled" : "error";
+  else if (last && ctx.running) status = "running";
+  else if (last && !ctx.live) status = "incomplete";
+  else if (attention.some((item) => item.type === "error")) status = "error";
+  else status = "complete";
+  if (turn && !turn.ok && status !== "requires-action") attention.push(turn);
+
+  const first = Date.parse((user ?? buffer[0]!).at), end = Date.parse(buffer[buffer.length - 1]!.at);
+  const span = end - first;
+  const durationMs = status !== "running" && Number.isFinite(span) && span >= 1000 ? span : null;
+  const at = buffer[0]!.at;
+  if (!steps.length && !attention.length && status === "complete") {
+    for (const item of answer) entries.push({ type: "item", key: item.key, at: item.at, item });
+    return;
+  }
+  entries.push({ type: "run", key: `run:${user?.key ?? buffer[0]!.key}`, at, status, durationMs, steps, attention, answer });
+}
+
+/**
+ * Groups feed items into one entry per user message and one run per assistant turn. The closing assistant message(s) of a turn,
+ * meaning those after its last piece of activity, are its answer; earlier interim messages are commentary inside the run.
+ */
+export function groupRuns(items: readonly FeedItem[], ctx: RunContext): TurnEntry[] {
+  const entries: TurnEntry[] = [];
+  let user: Extract<FeedItem, { type: "user" }> | null = null;
+  let buffer: FeedItem[] = [];
+  for (const item of items) {
+    if (item.type !== "user") { buffer.push(item); continue; }
+    closeTurn(entries, user, buffer, false, ctx);
+    entries.push({ type: "item", key: item.key, at: item.at, item });
+    user = item;
+    buffer = [];
+  }
+  closeTurn(entries, user, buffer, true, ctx);
+  return entries;
+}

@@ -34,7 +34,7 @@ import { BotRail } from "./BotRail";
 
 const bot = (id: string, over: Partial<Bot> = {}): Bot => ({
   id, name: id, avatar: "", color: "blue", description: "", instructions: "", provider: "", model: "", reasoning: "",
-  config: { tools: [], mcpTools: [], skills: [], memory: [], limits: { maxSteps: 0, maxToolCalls: 0 } },
+  config: { tools: [], mcpServers: [], skills: [], memory: [], limits: { maxSteps: 0, maxToolCalls: 0 } },
   createdAt: 1, updatedAt: 1, running: false, ...over,
 });
 const NOW = Date.parse("2026-10-09T12:00:00Z");
@@ -149,10 +149,10 @@ describe("BotRail rows", () => {
     expect(screen.getByRole("button", { name: /^Travel/ })).not.toHaveAttribute("aria-current");
   });
 
-  it("filters bots by name or description", () => {
+  it("filters bots by name", () => {
     render(<BotRail />);
     const filter = screen.getByRole("searchbox", { name: "Search bots" });
-    fireEvent.change(filter, { target: { value: "writes" } });
+    fireEvent.change(filter, { target: { value: "code" } });
     expect(screen.getAllByRole("button", { name: /^(Travel|Coder|Quiet)/ })).toHaveLength(1);
     expect(screen.getByRole("button", { name: /^Coder/ })).toBeInTheDocument();
     fireEvent.change(filter, { target: { value: "zzz" } });

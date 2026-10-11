@@ -29,6 +29,7 @@ prefixes (0010, 0020, ...) so concurrent work does not collide; `DB.Version()` i
 | `notifications(id, at, source, title, body, read, dismissed)` + `level` | 0001, 0050 | notification inbox |
 | `file_roots(id, provider, path, label, created_at, UNIQUE(provider,path))` | 0050 | approved roots for the files providers; paths stored fully resolved |
 | `agent_sessions(id, kind, status, ..., data JSON)`, `agent_events`, `agent_journal`, `agent_runs` | 0020 | agent runtime state and an at-most-once orchestration journal |
+| `agent_sessions.data.permissionMode` | 0100 | renamed to `manual \| auto \| yolo` (`default`/empty → `manual`, `acceptEdits` → `auto`; `plan` unchanged) |
 
 Tables for agents, MCP, policy and notifications exist ahead of the daemon services that use them; see
 `daemon.md` for what is actually registered.

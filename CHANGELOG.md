@@ -9,6 +9,25 @@ notes. See `docs/development/updates.md`.
 ## Unreleased
 
 ### Added
+- Code tasks have three permission modes, chosen before launch and switchable while the task runs: **Manual** asks before
+  anything not known to be safe, **Auto** lets the agent decide which actions are safe, and **YOLO** never asks. Auto uses
+  Claude Code's own auto mode and Codex's auto-review agent; Oh My Pi has no such mode, so Auto approves file edits there and
+  still asks before commands (the picker says so). YOLO needs an explicit confirmation, can be turned off in Settings > System >
+  Task permissions, is never available on remote machines, and Orole's MCP tool policy still applies in it. Switching applies
+  immediately in Claude Code, from the next turn in Codex, and by resuming the conversation (while idle) in Oh My Pi; terminal and
+  remote tasks cannot switch. Existing tasks keep working: stored `default` became Manual and `acceptEdits` became Auto.
+- The Code composer is one rounded surface with a single toolbar: attach and permission mode on the left; model, dictation,
+  context and send on the right. The folder and branch moved to a quiet line underneath.
+- Dictation in the Code composer works in the desktop app. The WebView's Web Speech API had no speech service behind it
+  ("Speech recognition could not reach its service"), so Dictate now records the microphone and the daemon transcribes the
+  recording with OpenAI (`gpt-4o-mini-transcribe`, falling back to `whisper-1`) using the OpenAI API key you connected under
+  Settings > AI providers. The consent text says the audio is sent to OpenAI; without a key, Dictate explains this and opens
+  AI providers. Recordings stop at 2 minutes, the text lands in an editable draft and is never sent automatically, the key stays
+  in Windows Credential Manager, and neither audio nor transcript is logged or saved. Each transcription is audited without its text.
+- Settings > Integrations and AI providers open instantly: the last known connections, accounts, API-key providers and GitHub status
+  show at once and refresh in the background, so the loading spinner no longer blocks the page. Listing the Claude, ChatGPT and
+  Grok accounts also runs each tool's version, sign-in and update checks in parallel.
+- App loading states use the Snake spinner from loading.dev. AI progress glyphs are unchanged.
 - Bots can be pinned: "Pin to top" in a bot's menu in the sidebar keeps it above the others, marked with a pin; "Unpin" puts it back.
 - Select text in a bot's reply and a small menu appears below it: Shorten, Improve or Explain. The bot gets the selected passage quoted
   (drawn as a quote in your message) with the request.
@@ -38,6 +57,21 @@ notes. See `docs/development/updates.md`.
   `propose_skill` for your approval. Built-in skills are for bots only and are never synced to coding agents.
 
 ### Changed
+- Code task conversations read like a conversation: each assistant turn collapses into one line (`Working`, then
+  `Worked for 2m 13s`) that opens into its thoughts and tool steps, while the final answer, pending approvals and questions,
+  errors, files and images stay visible. Tool steps use plain words (`Ran npm test`, `Searched the web`, `Read main.go`,
+  `Edited a.ts +12 -3`, `Used docs · search`) instead of raw tool names and JSON; the technical input/output is behind a
+  disclosure in the row. Thoughts are no longer separate dashed boxes, and the per-row `Done` label and right-aligned
+  timestamps are gone (hover a row for its time; day separators stay). Searching with `Ctrl+F` opens a run that holds a match.
+- Tool permission requests are a compact card: what is being asked for in plain words (`Run a command`, `Edit files`,
+  `Use <server>`), who is asking, and the full command, folder or file paths it covers, with `Deny` and `Allow once`. The
+  review checkbox and the optional reason field are gone because the whole request is visible in the card; the raw JSON
+  (control characters escaped) is behind `Details`, and a request without its complete input still cannot be approved.
+  A decided request is a single `Allowed once` / `Denied` badge.
+- Running image generations show a dot-grid placeholder with a shimmering `Generating` label and the prompt.
+- Code task chrome is quieter: the titlebar now contains only the provider logo and task title. Stop, status,
+  task-file and canvas-change controls no longer compete with the conversation; files still open from their feed cards.
+- Conversation search stays hidden until `Ctrl+F`/`Cmd+F`, then opens as a compact panel in the top-right corner.
 - Status bar: the MCP count opens Settings > Integrations (every "open settings" link in the app now opens the settings window), a connected
   daemon shows a green dot, and the host popover is a compact card with the OS logo, architecture, status and memory.
 - Model picker: the company filter is a row of chips shown only for All and aggregators like OpenRouter (an account serves only its own
@@ -61,6 +95,10 @@ notes. See `docs/development/updates.md`.
   and Mixpanel, and a Custom connector button that needs only a name and a server URL.
 
 ### Fixed
+- Code projects load quickly again and no longer fail with "Could not load projects: context deadline exceeded". The sidebar
+  used to wait for `git status` in every worktree of every project; now projects appear immediately, worktrees fill in per
+  project, and one slow or broken repository cannot hide the rest. Worktree ahead/behind and dirty counts are read on the
+  Worktrees page only (shown as "…" until ready).
 - AI-generated text, errors and URLs can be selected and copied again in Bots and Code. The `selectable` class used in
   98 places was never defined, so only inputs and code blocks were selectable.
 - Connecting services with large OAuth token sets (Cloudflare) no longer fails with "credential store: The stub

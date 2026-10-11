@@ -55,6 +55,7 @@ func (d *Daemon) registerServices() {
 	d.registerAgents()
 	d.registerImages()
 	d.registerPublish()
+	d.registerDictation()   // reads the OpenAI key through llmCredentialStore; independent of registerLLM
 	d.registerCLIRuntimes() // before registerLLM: the CLI providers resolve through d.CLI
 	d.registerLLM()         // first of the chat services: registerChat resolves providers through d.LLM
 	d.registerChat()        // after registerLLM; registerChatMemory and registerChatTools attach to d.Chat

@@ -17,6 +17,7 @@ import { Integrations } from "@/features/integrations/Integrations";
 import { NotificationSettings } from "@/features/notifications/NotificationSettings";
 import { AutomationSettings } from "@/features/automations/AutomationSettings";
 import { SoundSettings } from "@/features/settings/SoundSettings";
+import { AgentSafetySettings } from "@/features/settings/AgentSafetySettings";
 import { UpdateSettings } from "@/features/settings/UpdateSettings";
 import { useUI } from "@/stores/ui";
 import { WorkspaceSettings } from "@/features/settings/WorkspaceSettings";
@@ -186,6 +187,7 @@ function System() {
   return (
     <>
       <Group id="settings-updates" title="Updates"><UpdateSettings /></Group>
+      <SettingsSection id="settings-task-permissions" title="Task permissions" description="Manual, Auto and YOLO are chosen per task."><AgentSafetySettings /></SettingsSection>
       <div id="settings-diagnostics" className="scroll-mt-2"><Diagnostics /><AutostartPanel /></div>
     </>
   );

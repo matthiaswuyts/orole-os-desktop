@@ -66,7 +66,7 @@ describe("filterSkills", () => {
 });
 
 describe("sourceLabel", () => {
-  it.each([["orole", "Orole"], ["", "Orole"], ["imported:codex", "Imported from codex"]])("%j -> %j", (s, want) => expect(sourceLabel(s)).toBe(want));
+  it.each([["orole", "Orole"], ["", "Orole"], ["imported:codex", "Imported from codex"], ["builtin", "Built in (bots)"]])("%j -> %j", (s, want) => expect(sourceLabel(s)).toBe(want));
 });
 
 describe("groupDiscovered", () => {

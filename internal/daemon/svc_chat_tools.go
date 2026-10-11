@@ -34,6 +34,7 @@ func (d *Daemon) registerChatTools() {
 	if d.Skills != nil {
 		list = append(list, &tools.SkillsTool{Store: d.Skills})
 		m.AddPromptSection(func(b chat.Bot) string { return tools.SkillsPrompt(d.Skills, b) })
+		m.SetBuiltinSkills(func() []string { return tools.BuiltinSkillNames(d.Skills) })
 	}
 	list = append(list, tools.Show{})
 	m.AddPromptSection(func(chat.Bot) string { return tools.ShowPrompt })

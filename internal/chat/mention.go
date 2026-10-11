@@ -47,9 +47,9 @@ func (m *Manager) checkMentions(ctx context.Context, req SendRequest) (mentions,
 }
 
 // answerExtra is the system prompt addendum of a turn: why this bot is answering in someone else's
-// conversation, and which of its skills the user asked for. Only skills the answering bot owns are
-// named, so a request can never widen what the bot may read.
-func answerExtra(t turn, answering, convo Bot) string {
+// conversation, and which skills the user asked for. Only skills the answering bot owns, or that are
+// built in (every bot has those), are named, so a request can never widen what the bot may read.
+func answerExtra(t turn, answering, convo Bot, builtin []string) string {
 	var b strings.Builder
 	if answering.ID != convo.ID {
 		fmt.Fprintf(&b, "The user @mentioned you in their conversation with %s. The conversation so far is your context: "+
@@ -58,7 +58,7 @@ func answerExtra(t turn, answering, convo Bot) string {
 	}
 	var use []string
 	for _, s := range t.skills {
-		if slices.Contains(answering.Config.Skills, s) {
+		if slices.Contains(answering.Config.Skills, s) || slices.Contains(builtin, s) {
 			use = append(use, s)
 		}
 	}
