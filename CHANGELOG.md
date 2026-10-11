@@ -98,6 +98,10 @@ notes. See `docs/development/updates.md`.
   and Mixpanel, and a Custom connector button that needs only a name and a server URL.
 
 ### Fixed
+- IPC: a daemon reply larger than the 4 MiB frame limit now returns a `too_large` error instead of
+  making the client drop the link, reconnect and re-send the request (which ran the call twice).
+  Oversized events are dropped and logged, and `Client.Call` only retries a request that was never
+  written to the connection.
 - Code projects load quickly again and no longer fail with "Could not load projects: context deadline exceeded". The sidebar
   used to wait for `git status` in every worktree of every project; now projects appear immediately, worktrees fill in per
   project, and one slow or broken repository cannot hide the rest. Worktree ahead/behind and dirty counts are read on the
