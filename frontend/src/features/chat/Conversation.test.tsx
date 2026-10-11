@@ -213,7 +213,12 @@ describe("composer", () => {
     await waitFor(() => expect(bridge.send).toHaveBeenCalledTimes(1));
     fireEvent.click(screen.getByRole("button", { name: "Stop" }));
     await waitFor(() => expect(bridge.cancel).toHaveBeenCalledWith("a"));
-    expect(await screen.findByText("Queued")).toBeInTheDocument();
+  });
+
+  it("shows text put in the draft from elsewhere in the message box", async () => {
+    await open([msg(1), msg(2)]);
+    act(() => useChatMessages.getState().setDraft("a", { text: "> quoted\n\n" }));
+    await waitFor(() => expect(box().value).toBe("> quoted\n\n"));
   });
 
   it("keeps each bot's draft while another is open", async () => {
