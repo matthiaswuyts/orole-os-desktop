@@ -41,10 +41,12 @@ func (d *Daemon) registerServices() {
 	d.registerAgents()
 	d.registerImages()
 	d.registerPublish()
-	d.registerLLM()        // first of the chat services: registerChat resolves providers through d.LLM
-	d.registerChat()       // after registerLLM; registerChatMemory and registerChatTools attach to d.Chat
-	d.registerChatMemory() // after registerChat: memory, knowledge and skill proposals; before registerChatTools
-	d.registerChatTools()  // last of the chat services: lists knowledge_search only if registerChatMemory (before it) added it
+	d.registerDictation()   // reads the OpenAI key through llmCredentialStore; independent of registerLLM
+	d.registerCLIRuntimes() // before registerLLM: the CLI providers resolve through d.CLI
+	d.registerLLM()         // first of the chat services: registerChat resolves providers through d.LLM
+	d.registerChat()        // after registerLLM; registerChatMemory and registerChatTools attach to d.Chat
+	d.registerChatMemory()  // after registerChat: memory, knowledge and skill proposals; before registerChatTools
+	d.registerChatTools()   // last of the chat services: lists knowledge_search only if registerChatMemory (before it) added it
 }
 
 func (d *Daemon) registerCore() {

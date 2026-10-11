@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { GitHub, events, type GitHubStatus } from "@/mygo";
 import { inDesktop } from "@/lib/backend";
+import { readSnapshot, writeSnapshot } from "@/lib/snapshotCache";
 
 export type GitHubTab = "repos" | "issues" | "pulls" | "notifications" | "actions";
 export interface OpenItem { kind: "issue" | "pr"; repo: string; number: number }
@@ -34,7 +35,7 @@ interface State {
 
 export const useGitHub = create<State>((set, get) => ({
   available: inDesktop,
-  status: null,
+  status: inDesktop ? readSnapshot<GitHubStatus>("github-status") ?? null : null,
   loading: false,
   error: null,
   tab: "issues",
@@ -49,7 +50,9 @@ export const useGitHub = create<State>((set, get) => ({
     if (!inDesktop) return;
     set({ loading: true });
     try {
-      set({ status: await GitHub.status(), error: null, loading: false });
+      const status = await GitHub.status();
+      set({ status, error: null, loading: false });
+      writeSnapshot("github-status", status);
     } catch (e) {
       set({ error: errMsg(e), loading: false });
     }

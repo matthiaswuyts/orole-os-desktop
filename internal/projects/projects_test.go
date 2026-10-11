@@ -141,8 +141,11 @@ func TestWorktreeLifecycle(t *testing.T) {
 	if got, _ = s.Worktrees.Get(ctx, wt.ID); got.Dirty != 1 || got.Untracked != 1 {
 		t.Fatalf("dirty state: %+v", got)
 	}
-	if list, _ = s.Worktrees.List(ctx, p.ID); len(list) != 2 || !list[0].IsMain {
-		t.Fatalf("list after create: %+v", list)
+	if list, _ = s.Worktrees.List(ctx, p.ID); len(list) != 2 || !list[0].IsMain || list[0].StatusKnown || list[1].Dirty != 0 {
+		t.Fatalf("fast list must not read git status: %+v", list)
+	}
+	if list, _ = s.Worktrees.ListStatus(ctx, p.ID); len(list) != 2 || !list[0].IsMain || !list[0].StatusKnown || list[1].Dirty != 1 {
+		t.Fatalf("status list: %+v", list)
 	}
 	if _, err := s.Worktrees.Create(ctx, p.ID, "fix login", ""); !errors.Is(err, projects.ErrConflict) {
 		t.Fatalf("duplicate create: %v", err)

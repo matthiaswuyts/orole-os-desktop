@@ -19,18 +19,30 @@ type DB struct{ *sql.DB }
 
 // Open opens (creating if needed) the database at path and migrates it using migs.
 func Open(path string, migs fs.FS) (*DB, error) {
-	dsn := "file:" + path + "?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(1)&_pragma=synchronous(NORMAL)"
+	dsn := "file:" + path + "?_txlock=immediate&_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(1)&_pragma=synchronous(NORMAL)" +
+		"&_pragma=temp_store(MEMORY)&_pragma=cache_size(-16000)&_pragma=journal_size_limit(67108864)"
 	sdb, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, err
 	}
+	// _txlock=immediate makes every Begin take the write lock up front, so read-then-write
+	// transactions wait on busy_timeout instead of failing with SQLITE_BUSY_SNAPSHOT.
 	sdb.SetMaxOpenConns(4)
+	sdb.SetMaxIdleConns(4) // default of 2 would churn connections (and their page caches) under 4 concurrent users
 	db := &DB{sdb}
 	if err := db.Migrate(migs); err != nil {
 		sdb.Close()
 		return nil, err
 	}
 	return db, nil
+}
+
+// Close refreshes planner statistics, folds the WAL back into the main file and closes the pool.
+// The maintenance steps are best effort: a failure must not prevent closing.
+func (d *DB) Close() error {
+	_, _ = d.Exec(`PRAGMA optimize`)
+	_, _ = d.Exec(`PRAGMA wal_checkpoint(TRUNCATE)`)
+	return d.DB.Close()
 }
 
 // Migrate applies every NNNN_name.sql not yet recorded, each in a transaction.

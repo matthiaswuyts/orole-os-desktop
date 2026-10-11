@@ -19,6 +19,7 @@ GitHub #7. Versions below are declared direct dependencies; `go.mod`, `go.sum`, 
 | MCP | modelcontextprotocol/go-sdk v1.8.0, x/oauth2 v0.35.0 | Daemon | Real SDK Streamable HTTP; discovery, OAuth, policy and cancellation |
 | SSH/SFTP | x/crypto and pkg/sftp (versions in go.mod) | Daemon machine transport | Independently supplied host fingerprint; pinned key; external-host acceptance still required |
 | Git / GitHub | Installed Git and gh executables; GitHub REST API | Daemon | No token returned to React; mutations require Go policy |
+| Brand marks | simple-icons ^16.35.0 (CC0) | Frontend only, bundled paths | Marks identify the services they connect to; vendors own their trademarks |
 | Audio and charts | @web-kits/audio ^0.2.0; attributed Dither Kit chart source | Frontend/native notification bridge | Real samples only; native acceptance is not proof of acoustic audibility |
 
 ## Integration prerequisites and acceptance boundaries
@@ -27,6 +28,7 @@ GitHub #7. Versions below are declared direct dependencies; `go.mod`, `go.sum`, 
 |---|---|---|---|
 | Local Windows | WebView2; installed desktop/daemon | Authenticated pipe, ConPTY, files, projects, settings, launcher | OS-dependent toast/tray behavior must be observed, not inferred |
 | GitHub | Existing gh authentication or reviewed credential setup; Git for repository operations | Repositories/issues/PRs/actions; issue-to-agent provenance and explicit publication approvals | Successful push/PR workflow requires a reviewed real change and approval; never auto-merge |
+| Connector directory (Vercel, Cloudflare, Notion, Linear, Stripe, Netlify, Railway, Supabase, Neon, Prisma, Sentry, Zapier, Intercom, PayPal, Mixpanel) | Browser sign-in at the vendor; no client registration | One-click add through the generic MCP path; live discovery and dynamic client registration checked for every entry | Browser consent and tool calls need a real account; Vercel only approves reviewed MCP clients, so its consent step is unverified |
 | Generic MCP | User-configured endpoint and supported auth | Discovery, tools/resources/prompts, checked invocation, diagnostics | Server-specific schemas and permissions are authoritative |
 | Orole Mail | https://mail.orole.be/api/mcp; administrator-registered OAuth public client | Typed capability-derived adapter and setup/application UI | Dynamic registration rejected; authenticated catalog/data/send acceptance blocked until authorized |
 | Orole Drive | https://drive.orole.be/api/mcp; administrator-registered OAuth public client | Typed capability-derived file adapter and scoped content handoff | Dynamic registration rejected; live file capabilities not claimed before discovery |

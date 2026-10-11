@@ -44,6 +44,12 @@ export function Composer({ bot }: { bot: Bot }) {
     if (text) aui.composer.setText(text);
   }, [aui, bot.id]);
 
+  // Text put in the draft from elsewhere (Add to chat on a selected passage) shows up in the box.
+  const draftText = useChatMessages((s) => s.drafts[bot.id]?.text ?? "");
+  useEffect(() => {
+    if (draftText !== aui.composer.getState().text) aui.composer.setText(draftText);
+  }, [aui, draftText]);
+
   const send = () => { if (canSend) aui.composer.send(); };
   const setResearch = (on: boolean) => useChatMessages.getState().setDraft(bot.id, { research: on });
   const addDictation = (value: string) => {
@@ -86,7 +92,7 @@ export function Composer({ bot }: { bot: Bot }) {
           <MentionHighlight text={text} targets={targets} mirrorRef={mirror} />
           <ComposerPrimitive.Input
             aria-label={`Message ${bot.name}`}
-            placeholder={research ? "What should I research?" : `Message ${bot.name}`}
+            placeholder={research ? "What should I research?" : running ? `Queue a message for ${bot.name}` : `Message ${bot.name}`}
             submitMode="none"
             rows={1}
             maxRows={8}
@@ -103,12 +109,9 @@ export function Composer({ bot }: { bot: Bot }) {
             }}
           />
         </div>
-        {running
-          ? <Button type="button" size="icon-lg" className="rounded-full" aria-label="Stop" onClick={() => void useChatMessages.getState().cancel(bot.id)}><SquareIcon aria-hidden className="fill-current" /></Button>
-          : <>
-            {(!hasContent || dictating) && <ComposerVoice compact disabled={false} onActiveChange={setDictating} onTranscript={addDictation} />}
-            {hasContent && !dictating && <Button type="button" size="icon-lg" className="rounded-full" aria-label="Send message" disabled={!canSend} onClick={send}><ArrowUpIcon aria-hidden /></Button>}
-          </>}
+        {running && <Button type="button" size="icon-lg" className="rounded-full" aria-label="Stop" variant={hasContent ? "secondary" : "default"} onClick={() => void useChatMessages.getState().cancel(bot.id)}><SquareIcon aria-hidden className="fill-current" /></Button>}
+        {!running && (!hasContent || dictating) && <ComposerVoice compact disabled={false} onActiveChange={setDictating} onTranscript={addDictation} />}
+        {hasContent && !dictating && <Button type="button" size="icon-lg" className="rounded-full" aria-label={running ? "Queue message" : "Send message"} disabled={!canSend} onClick={send}><ArrowUpIcon aria-hidden /></Button>}
       </div>
     </ComposerPrimitive.AttachmentDropzone>
     {failed && <p role="status" className="px-1 text-xs text-muted-foreground">Remove files that could not be attached to send your message.</p>}

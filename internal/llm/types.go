@@ -1,7 +1,9 @@
 // Package llm is the single seam between Orole's chat engine and model APIs.
 //
-// Providers talk to a vendor API directly with the user's API key. They never
-// shell out to a harness and never read subscription credentials of other tools.
+// Providers talk to a vendor API directly with the user's API key. They never read
+// subscription credentials of other tools. The one exception to "no harness" is the
+// account providers in llm/cli, which run the vendor's own CLI as the user, so the CLI signs
+// in and keeps the credentials.
 // The chat engine depends only on the types in this file.
 package llm
 

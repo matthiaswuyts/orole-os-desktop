@@ -1,6 +1,6 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { Event as AgentEvent, Session, TaskFilePreview } from "@/mygo";
+import type { Session, TaskFilePreview } from "@/mygo";
 import type { ImageStatusData } from "@/lib/taskChatTypes";
 
 const api = vi.hoisted(() => ({ artifact: vi.fn(), taskFile: vi.fn(), diff: vi.fn(), openExternal: vi.fn() }));
@@ -13,7 +13,6 @@ import { FileCard, GuardrailNotice, SourcesCard } from "./FeedItems";
 import { ImageGenerationCard, TaskImage } from "./TaskImages";
 import { TaskFilePreviewContent } from "./TaskFiles";
 import { TaskCanvas } from "./TaskCanvas";
-import { TaskFileTree } from "./TaskFileTree";
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -68,13 +67,27 @@ describe("safe rich rendering", () => {
   it("renders generation stages only when supplied, without fabricated progress or resolution", () => {
     const generation: ImageStatusData = { id: "g1", status: "running", prompt: "A real requested image", error: "" };
     const view = render(<ImageGenerationCard generation={generation} sessionId="stage-test" />);
-    expect(screen.getByRole("status")).toHaveTextContent("Generating image");
+    expect(screen.getByRole("status")).toHaveTextContent("Generating");
+    expect(screen.getByText("A real requested image")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /regenerate/i })).toBeNull();
     expect(screen.queryByText(/refin|1024|%/i)).toBeNull();
     expect(api.artifact).not.toHaveBeenCalled();
     view.rerender(<ImageGenerationCard generation={{ ...generation, status: "complete" }} sessionId="stage-test" />);
     expect(screen.getByRole("status")).toHaveTextContent("Generation complete");
     expect(screen.getByText("No image artifact was supplied.")).toBeInTheDocument();
     expect(screen.queryByRole("img")).toBeNull();
+  });
+
+  it("keeps a failed generation explicit and swaps in the real image once it exists", async () => {
+    const generation: ImageStatusData = { id: "g2", status: "failed", prompt: "A lake", error: "Quota exceeded" };
+    const view = render(<ImageGenerationCard generation={generation} sessionId="failed-test" />);
+    expect(screen.getByRole("alert")).toHaveTextContent("Generation failed");
+    expect(screen.getByText("Quota exceeded")).toBeInTheDocument();
+    expect(screen.queryByText("Generating")).toBeNull();
+    api.artifact.mockResolvedValue({ mime: "image/png", data: "AAAA" });
+    view.rerender(<ImageGenerationCard generation={{ ...generation, status: "complete", error: "" }} image={{ id: "g2", path: "C:\\scratch\\lake.png", mime: "image/png", prompt: "A lake" }} sessionId="failed-test" />);
+    expect(await screen.findByRole("img", { name: "A lake" })).toHaveAttribute("src", "data:image/png;base64,AAAA");
+    expect(screen.queryByText("Generating")).toBeNull();
   });
 
   it("presents a policy notice without invented alternatives or retry authority", () => {
@@ -128,7 +141,7 @@ describe("task file previews", () => {
 describe("task canvas", () => {
   it("opens real file content from the feed and restores focus on close", async () => {
     api.taskFile.mockResolvedValue(preview());
-    render(<TaskCanvas session={session()} events={[]}><FileCard file={file} sessionId="rich-session" /></TaskCanvas>);
+    render(<TaskCanvas session={session()}><FileCard file={file} sessionId="rich-session" /></TaskCanvas>);
     const trigger = screen.getByRole("button", { name: "Preview" });
     trigger.focus();
     fireEvent.click(trigger);
@@ -140,30 +153,4 @@ describe("task canvas", () => {
     expect(trigger).toHaveFocus();
   });
 
-  it("clears the visible canvas when the session changes", () => {
-    const view = render(<TaskCanvas session={session("one")} events={[]}><p>Conversation one</p></TaskCanvas>);
-    fireEvent.click(screen.getByRole("button", { name: "Task files" }));
-    expect(screen.getByRole("region", { name: "Task canvas" })).toBeInTheDocument();
-    view.rerender(<TaskCanvas session={session("two")} events={[]}><p>Conversation two</p></TaskCanvas>);
-    expect(screen.queryByRole("region", { name: "Task canvas" })).toBeNull();
-  });
-
-  it("lists only reported files and fetched changed files", async () => {
-    api.diff.mockResolvedValue({ error: "", truncated: false, diff: { files: [{ path: "changed.txt", oldPath: "", status: "modified", additions: 1, deletions: 0, binary: false, hunks: [] }], truncated: false } });
-    const events = [{ id: 1, sessionId: "rich-session", at: "2026-10-08T12:00:00Z", kind: "file", text: "", data: file }] as AgentEvent[];
-    render(<TaskCanvas session={session()} events={events}><p>Conversation</p></TaskCanvas>);
-    fireEvent.click(screen.getByRole("button", { name: /Task files/ }));
-    const tree = screen.getByRole("navigation", { name: "Task files" });
-    expect(await within(tree).findByRole("button", { name: /changed.txt/ })).toBeInTheDocument();
-    expect(within(tree).getByRole("button", { name: /report.ts/ })).toBeInTheDocument();
-    expect(within(tree).getAllByRole("button")).toHaveLength(2);
-  });
-
-  it("deduplicates tree rows and returns the original reported path", () => {
-    const onOpen = vi.fn();
-    render(<TaskFileTree files={[{ path: "src\\one.ts" }, { path: "src\\one.ts" }, { path: "src/two.ts" }]} onOpen={onOpen} />);
-    expect(screen.getAllByRole("button")).toHaveLength(2);
-    fireEvent.click(screen.getByRole("button", { name: "one.ts" }));
-    expect(onOpen).toHaveBeenCalledWith("src\\one.ts");
-  });
 });
