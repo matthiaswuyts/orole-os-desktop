@@ -4,4 +4,5 @@ package cliruntime
 
 import "os/exec"
 
-func hide(*exec.Cmd) {}
+// HideWindow keeps a console window from flashing up for a background CLI call (Windows only).
+func HideWindow(*exec.Cmd) {}

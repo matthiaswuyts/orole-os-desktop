@@ -109,6 +109,8 @@ export function AIProviders() {
   useEffect(() => useLLM.getState().startSync(), []);
   if (!inDesktop) return <NeedsDesktop what="AI providers" />;
   const target = providers.find((p) => p.id === connecting);
+  // Account providers (Claude, ChatGPT) are managed in the Accounts section above.
+  const keyed = providers.filter((p) => p.kind !== "account");
 
   return (
     <div className="flex min-w-0 flex-col gap-5">
@@ -124,9 +126,9 @@ export function AIProviders() {
               <h2 id="ai-providers-title" className="text-sm font-medium">API keys</h2>
               <p className="text-muted-foreground text-xs">Pay per use with a key from the provider.</p>
             </div>
-            {providers.length === 0
+            {keyed.length === 0
               ? <p role="status" className="rounded-lg border bg-card p-3 text-muted-foreground">The daemon reports no providers.</p>
-              : <ul className="divide-y rounded-lg border bg-card">{providers.map((p) => <ProviderRow key={p.id} provider={p} onConnect={() => setConnecting(p.id)} />)}</ul>}
+              : <ul className="divide-y rounded-lg border bg-card">{keyed.map((p) => <ProviderRow key={p.id} provider={p} onConnect={() => setConnecting(p.id)} />)}</ul>}
           </section>
           <ProviderManifests />
         </>

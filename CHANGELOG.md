@@ -9,6 +9,8 @@ notes. See `docs/development/updates.md`.
 ## Unreleased
 
 ### Added
+- Bots can use your ChatGPT plan: once the ChatGPT account is signed in under Settings > AI providers > Accounts, its models appear in the
+  bot model picker. The Codex CLI runs as a plain model in an empty scratch folder; replies arrive whole rather than streaming.
 - Settings > AI providers has an Accounts section for Claude, ChatGPT (Codex) and Grok: it shows which are installed, their version,
   whether a newer release exists and who is signed in, with Download, Update, Sign in and Sign out. Orole downloads the
   vendor's own CLI (hash-checked where published) and never sees the credentials. Providers now show their logos.

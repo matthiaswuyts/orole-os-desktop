@@ -11,7 +11,7 @@ type Runner func(ctx context.Context, path string, args ...string) (string, erro
 
 func execRunner(ctx context.Context, path string, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, path, args...)
-	hide(cmd)
+	HideWindow(cmd)
 	out, err := cmd.CombinedOutput()
 	return string(out), err
 }

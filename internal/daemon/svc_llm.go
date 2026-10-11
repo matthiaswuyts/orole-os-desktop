@@ -10,6 +10,7 @@ import (
 	"github.com/rayorole/orole-os-desktop/internal/database"
 	"github.com/rayorole/orole-os-desktop/internal/llm"
 	"github.com/rayorole/orole-os-desktop/internal/llm/builtin"
+	"github.com/rayorole/orole-os-desktop/internal/llm/cli"
 	"github.com/rayorole/orole-os-desktop/internal/llm/openaicompat"
 )
 
@@ -39,6 +40,12 @@ func (s settingsKV) Set(ctx context.Context, key, value string) error {
 // and audited without the key.
 func (d *Daemon) registerLLM() {
 	reg, store := builtin.Registry(), llmCredentialStore()
+	if d.CLI != nil {
+		// Account providers: the user's own ChatGPT plan through the Codex CLI. They need no key.
+		if err := reg.Register(cli.CodexDescriptor(d.CLI)); err != nil {
+			d.Log.Error("codex provider unavailable", "err", err)
+		}
+	}
 	mgr, err := llm.NewManager(llm.ManagerConfig{
 		Registry:    reg,
 		Credentials: store,

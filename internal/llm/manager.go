@@ -165,6 +165,14 @@ func (m *Manager) status(d Descriptor) ProviderStatus {
 	st := ProviderStatus{ID: d.ID, Name: d.Name, Kind: d.Kind}
 	if d.NoKey {
 		st.Connected = true
+		if d.Ready != nil {
+			ok, detail := d.Ready()
+			st.Connected = ok
+			if !ok {
+				st.Error = detail
+				return st
+			}
+		}
 	} else {
 		key, err := m.readKey(d.ID)
 		switch {
