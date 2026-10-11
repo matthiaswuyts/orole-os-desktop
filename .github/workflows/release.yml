@@ -1,9 +1,9 @@
 name: release
 
-# Tag desktop-vX.Y.Z -> verify -> build, sign updates, upload to a DRAFT GitHub release.
-# Nothing here publishes: a human reviews the draft and runs the `gh release edit` command printed
-# at the end of the run. Runs on tag pushes only (no pull_request, no manual dispatch), and the
-# update signing key is only ever given to the final build step of the `release` job.
+# Tag desktop-vX.Y.Z -> verify (Go and frontend in parallel) -> build, sign updates, upload to a DRAFT
+# GitHub release. Nothing here publishes: a human reviews the draft and runs the `gh release edit`
+# command printed at the end of the run. Runs on tag pushes only (no pull_request, no manual dispatch),
+# and the update signing key is only ever given to the final build step of the `release` job.
 on:
   push:
     tags: ["desktop-v*"]
@@ -17,7 +17,7 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  verify:
+  verify-go:
     runs-on: windows-latest
     timeout-minutes: 30
     steps:
@@ -29,7 +29,6 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
       - name: Tag matches mygo.json version and CHANGELOG.md
         shell: pwsh
         run: ./scripts/check-release.ps1 -Tag $env:GITHUB_REF_NAME
@@ -37,18 +36,39 @@ jobs:
         run: go vet ./...
       - name: Go test (race)
         run: go test -race ./...
-      - name: Frontend install
-        run: bun install --cwd frontend --frozen-lockfile
-      - name: Frontend check (tsc, lint, vitest)
-        run: bun run --cwd frontend check
       - name: Bindings are up to date
         shell: pwsh
         run: |
           go tool mygo generate
           git diff --exit-code -- frontend/src/mygo.ts
 
+  verify-web:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+      # Same bun cache as ci.yml. Only this job uses it: the `release` job holds the signing key and
+      # its toolchain is never restored from a cache.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~\.bun\install\cache
+          key: bun-${{ runner.os }}-${{ hashFiles('frontend/bun.lock') }}
+          restore-keys: bun-${{ runner.os }}-
+      - name: Frontend install
+        run: bun install --cwd frontend --frozen-lockfile
+      - name: Frontend check (tsc, lint, vitest)
+        run: bun run --cwd frontend check
+      - name: Entry chunk is within its size budget
+        run: |
+          bun run --cwd frontend build
+          bun scripts/check-bundle-size.mjs
+
   release:
-    needs: verify
+    needs: [verify-go, verify-web]
     runs-on: windows-latest
     timeout-minutes: 45
     environment: release

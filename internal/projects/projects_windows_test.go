@@ -11,6 +11,7 @@ import (
 )
 
 func TestProjectRegistrationExpandsShortNames(t *testing.T) {
+	t.Parallel()
 	s := newService(t)
 	dir := repo(t, t.TempDir(), "repository with a long name")
 	canonical, err := files.CanonicalRoot(dir)

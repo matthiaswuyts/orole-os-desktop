@@ -1,18 +1,68 @@
 name: ci
 
-# Pull requests only, read-only token, no secrets. Nothing here publishes or signs anything.
+# Pull requests and pushes to main, read-only token, no secrets. Nothing here publishes or signs anything.
+# The push run on main exists to prime the Go, bun and NSIS caches: GitHub only lets a pull request
+# restore caches that were saved on the base branch, so with `pull_request` alone no PR ever got a hit.
 on:
+  push:
+    branches: [main]
   pull_request:
 
 permissions:
   contents: read
 
+# A new push to a PR cancels its older run; runs on main always finish so they can save the caches.
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  windows:
+  # Go verification. `go test -race` dominates the wall time here, so nothing else waits behind it.
+  go:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Go vet
+        run: go vet ./...
+      - name: Go test (race)
+        run: go test -race ./...
+      - name: Bindings are up to date
+        shell: pwsh
+        run: |
+          go tool mygo generate
+          git diff --exit-code -- frontend/src/mygo.ts
+
+  # Frontend verification. No Go needed: it runs next to the go job instead of behind it.
+  web:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+      # bun's package cache, keyed on the lockfile; `bun install` still links node_modules from it.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~\.bun\install\cache
+          key: bun-${{ runner.os }}-${{ hashFiles('frontend/bun.lock') }}
+          restore-keys: bun-${{ runner.os }}-
+      - name: Frontend install
+        run: bun install --cwd frontend --frozen-lockfile
+      - name: Frontend check (tsc, lint, vitest)
+        run: bun run --cwd frontend check
+      - name: Frontend build
+        run: bun run --cwd frontend build
+      # Fails when the entry chunk grows past scripts/bundle-budget.json; see docs/development/testing.md.
+      - name: Entry chunk is within its size budget
+        run: bun scripts/check-bundle-size.mjs
+
+  # Daemon, CLI and the packaged app with its NSIS installer. Independent of the test jobs, so the
+  # slowest step (mygo build) overlaps them instead of following them.
+  package:
     runs-on: windows-latest
     timeout-minutes: 30
     steps:
@@ -22,19 +72,19 @@ jobs:
           go-version-file: go.mod
           cache: true
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
-      - name: Go vet
-        run: go vet ./...
-      - name: Go test (race)
-        run: go test -race ./...
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~\.bun\install\cache
+          key: bun-${{ runner.os }}-${{ hashFiles('frontend/bun.lock') }}
+          restore-keys: bun-${{ runner.os }}-
+      # mygo downloads NSIS into %LOCALAPPDATA%\mygo\nsis-<version> on first use and reuses it after.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~\AppData\Local\mygo
+          key: nsis-${{ runner.os }}-${{ hashFiles('go.mod') }}
+          restore-keys: nsis-${{ runner.os }}-
       - name: Frontend install
         run: bun install --cwd frontend --frozen-lockfile
-      - name: Frontend check (tsc, lint, vitest)
-        run: bun run --cwd frontend check
-      - name: Bindings are up to date
-        shell: pwsh
-        run: |
-          go tool mygo generate
-          git diff --exit-code -- frontend/src/mygo.ts
       - name: Build daemon, CLI and packaged app (mygo build)
         shell: pwsh
         run: ./scripts/build.ps1

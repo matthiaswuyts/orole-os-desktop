@@ -100,19 +100,7 @@ func TestFilesNotificationsSearchIPC(t *testing.T) {
 
 func projectFileRepo(t *testing.T, path string) string {
 	t.Helper()
-	if err := os.MkdirAll(path, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	for _, args := range [][]string{
-		{"init", "-b", "main"},
-		{"-c", "user.name=T", "-c", "user.email=t@e.c", "-c", "commit.gpgsign=false", "commit", "--allow-empty", "-m", "init"},
-	} {
-		cmd := exec.Command("git", args...)
-		cmd.Dir = path
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("git %v: %v: %s", args, err, out)
-		}
-	}
+	copyEmptyRepo(t, path)
 	if err := os.WriteFile(filepath.Join(path, "note.txt"), []byte("repository note"), 0o600); err != nil {
 		t.Fatal(err)
 	}

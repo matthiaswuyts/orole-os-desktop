@@ -6,6 +6,15 @@ Each release needs a `## X.Y.Z - YYYY-MM-DD` section matching `version` in `mygo
 workflow refuses to build without it, and the in-app update window shows that section as the release
 notes. See `docs/development/updates.md`.
 
+## Unreleased
+
+### Changed
+- CI also runs on pushes to `main` (so the Go, bun and NSIS caches are primed for pull requests) and is
+  split into parallel `go`, `web` and `package` jobs; `release.yml` verifies Go and the frontend in
+  parallel too. The frontend entry chunk size is checked against `scripts/bundle-budget.json`.
+- Git-heavy tests in `internal/{git,agents,daemon,projects}` copy a repository built once per package
+  (`internal/testrepo`) instead of running `git init` and `git commit` per test; the isolated ones run in parallel.
+
 ## 0.1.0 - 2026-10-10
 
 First tagged release. Windows only.

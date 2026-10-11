@@ -12,6 +12,7 @@ import (
 
 	"github.com/rayorole/orole-os-desktop/internal/agents"
 	"github.com/rayorole/orole-os-desktop/internal/agents/orchestrate"
+	"github.com/rayorole/orole-os-desktop/internal/testrepo"
 )
 
 func TestJournalPreventsDuplicateDispatch(t *testing.T) {
@@ -61,17 +62,34 @@ func gitTest(t *testing.T, dir string, args ...string) string {
 	return strings.TrimSpace(string(out))
 }
 
+// buildBaseRepo creates the repository every git-backed agent test starts from: one commit,
+// a committer identity in its configuration.
+func buildBaseRepo(dir string) error {
+	for _, args := range [][]string{
+		{"init"},
+		{"config", "user.email", "test@example.invalid"},
+		{"config", "user.name", "Agent Test"},
+	} {
+		if err := testrepo.Git(dir, args...); err != nil {
+			return err
+		}
+	}
+	if err := os.WriteFile(filepath.Join(dir, "README.txt"), []byte("base\n"), 0600); err != nil {
+		return err
+	}
+	if err := testrepo.Git(dir, "add", "."); err != nil {
+		return err
+	}
+	return testrepo.Git(dir, "commit", "-m", "base")
+}
+
+// repoTemplate is built once per test binary; repoTest copies it (see internal/testrepo).
+var repoTemplate = testrepo.New(buildBaseRepo)
+
 func repoTest(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
-	gitTest(t, dir, "init")
-	gitTest(t, dir, "config", "user.email", "test@example.invalid")
-	gitTest(t, dir, "config", "user.name", "Agent Test")
-	if err := os.WriteFile(filepath.Join(dir, "README.txt"), []byte("base\n"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	gitTest(t, dir, "add", ".")
-	gitTest(t, dir, "commit", "-m", "base")
+	repoTemplate.Copy(t, dir)
 	return dir
 }
 
