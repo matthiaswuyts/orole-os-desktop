@@ -63,22 +63,38 @@ export function TerminalPane({ id, active, onFocus, fontSize }: { id: string; ac
 
     let seq = 0;
     let ready = false;
+    let disposed = false;
     const pending: { seq: number; data: Uint8Array }[] = [];
+    // Output arrives coalesced. Under a flood the daemon drops the oldest undelivered bytes, which shows up as a
+    // chunk that starts past the end of the previous one; the daemon's scrollback still holds them, so re-attach.
+    const attach = () => {
+      ready = false;
+      void Terminals.attach(id).then((a) => {
+        if (disposed) return;
+        term.reset();
+        term.write(b64(a.data));
+        seq = a.seq;
+        ready = true;
+        const queued = pending.splice(0);
+        for (const p of queued) applyChunk(p.seq, p.data);
+        if (a.info.state === "exited") setExited(a.info.exitCode ?? 0);
+        void Terminals.resize(id, term.cols, term.rows).catch(() => {});
+      }).catch((e) => term.write(`\r\n\x1b[31m[attach failed: ${String(e)}]\x1b[0m\r\n`));
+    };
+    const applyChunk = (end: number, d: Uint8Array) => {
+      if (!ready) { pending.push({ seq: end, data: d }); return; }
+      if (end <= seq) return;
+      if (end - d.length > seq) { pending.push({ seq: end, data: d }); attach(); return; }
+      seq = end;
+      term.write(d);
+    };
     const offOut = events.terminalOutput.on((c) => {
       if (c.id !== id) return;
       const d = b64(c.data);
-      if (!ready) pending.push({ seq: c.seq, data: d });
-      else if (c.seq > seq) { seq = c.seq; term.write(d); }
+      applyChunk(c.seq, d);
     });
     const offChg = events.terminalChanged.on((i) => { if (i.id === id && i.state === "exited") setExited(i.exitCode ?? 0); });
-    void Terminals.attach(id).then((a) => {
-      term.write(b64(a.data));
-      seq = a.seq;
-      ready = true;
-      for (const p of pending) if (p.seq > seq) { seq = p.seq; term.write(p.data); }
-      if (a.info.state === "exited") setExited(a.info.exitCode ?? 0);
-      void Terminals.resize(id, term.cols, term.rows).catch(() => {});
-    }).catch((e) => term.write(`\r\n\x1b[31m[attach failed: ${String(e)}]\x1b[0m\r\n`));
+    attach();
 
     const onData = term.onData((d) => void Terminals.write(id, d).catch(() => {}));
     const onBin = term.onBinary((d) => void Terminals.write(id, d).catch(() => {}));
@@ -94,7 +110,7 @@ export function TerminalPane({ id, active, onFocus, fontSize }: { id: string; ac
     const onResize = term.onResize(({ cols, rows }) => void Terminals.resize(id, cols, rows).catch(() => {}));
     const ro = new ResizeObserver(() => { try { fit.fit(); } catch { /* host hidden */ } });
     ro.observe(host.current!);
-    return () => { themeObserver.disconnect(); ro.disconnect(); onResize.dispose(); onData.dispose(); onBin.dispose(); offOut(); offChg(); term.dispose(); };
+    return () => { themeObserver.disconnect(); ro.disconnect(); onResize.dispose(); onData.dispose(); onBin.dispose(); offOut(); offChg(); disposed = true; term.dispose(); };
   }, [id]);
 
   // A font size change updates the live terminal; rebuilding it would drop the view and re-attach.

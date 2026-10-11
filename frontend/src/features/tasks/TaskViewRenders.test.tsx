@@ -3,11 +3,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Event as AgentEvent, Session } from "@/mygo";
 import type * as TaskEventsModule from "@/lib/taskEvents";
 import type * as FeedItemsModule from "./FeedItems";
+import type * as RunActivityModule from "@/components/assistant-ui/elements/run-activity";
 
 const api = vi.hoisted(() => ({
   transcript: vi.fn(),
   listeners: new Set<(e: AgentEvent) => void>(),
-  renders: { assistant: 0, tool: 0 },
+  renders: { assistant: 0, run: 0 },
   groups: 0,
 }));
 vi.mock("@/mygo", () => ({
@@ -28,8 +29,11 @@ vi.mock("./FeedItems", async (original) => {
   return {
     ...actual,
     AssistantMessage: (props: Parameters<typeof actual.AssistantMessage>[0]) => { api.renders.assistant++; return actual.AssistantMessage(props); },
-    ToolCard: (props: Parameters<typeof actual.ToolCard>[0]) => { api.renders.tool++; return actual.ToolCard(props); },
   };
+});
+vi.mock("@/components/assistant-ui/elements/run-activity", async (original) => {
+  const actual = await original<typeof RunActivityModule>();
+  return { ...actual, RunActivity: (props: Parameters<typeof actual.RunActivity>[0]) => { api.renders.run++; return actual.RunActivity(props); } };
 });
 import { TaskView } from "./TaskView";
 
@@ -52,7 +56,7 @@ function history(): AgentEvent[] {
 beforeEach(() => {
   seq = 0;
   api.listeners.clear();
-  api.renders.assistant = api.renders.tool = api.groups = 0;
+  api.renders.assistant = api.renders.run = api.groups = 0;
   // jsdom has no layout: an 800px viewport and 120px rows give the virtualizer a window to compute.
   vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
   vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockImplementation(function (this: HTMLElement) { return this.dataset.index === undefined ? 800 : 120; });
@@ -76,7 +80,7 @@ describe("task view under an event flood", () => {
     let s = session();
     const view = render(<TaskView session={s} />);
     await act(async () => { await Promise.resolve(); });
-    api.groups = api.renders.assistant = api.renders.tool = 0;
+    api.groups = api.renders.assistant = api.renders.run = 0;
 
     const started = performance.now();
     for (let i = 0; i < 100; i++) {
@@ -87,9 +91,9 @@ describe("task view under an event flood", () => {
     }
     const elapsed = Math.round(performance.now() - started);
     console.log("FLOOD", JSON.stringify({ groups: api.groups, ...api.renders, ms: elapsed }));
-    // origin/main measured on this scenario: 200 groupings (feed and canvas each), 21683 assistant and 11650 tool renders.
+    // origin/main measured on this scenario: 200 groupings (feed and canvas each), 21683 assistant and 11650 tool renders (before assistant turns folded into runs).
     expect(api.groups).toBe(100);
     expect(api.renders.assistant).toBeLessThan(100);
-    expect(api.renders.tool).toBeLessThan(100);
+    expect(api.renders.run).toBeLessThan(100);
   });
 });

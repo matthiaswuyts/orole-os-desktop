@@ -12,10 +12,23 @@ The daemon's `terminals.Manager` owns every session; the UI is a view.
   make the entire desktop or credential stack portable to Linux/macOS.
 - Shells detected on `PATH`/known locations: Windows PowerShell (`powershell`), PowerShell 7 (`pwsh`),
   Command Prompt (`cmd`), Git Bash (`git-bash`, from `%ProgramFiles%\Git`).
-- Limits: 64 sessions per manager; per-session scrollback ring of 1 MiB (`ScrollbackBytes`).
-- Each output chunk gets a sequence number. `terminals.attach` returns the scrollback plus the current `seq`;
-  live `terminal.output` events with `seq <=` that value are already included, so a reattaching window neither
-  loses nor duplicates output.
+- Limits: 64 *running* sessions per manager; per-session scrollback of 1 MiB (`ScrollbackBytes`), a fixed
+  ring of 64 KiB pages that is reused once full, so reading a flooding PTY allocates nothing.
+- Exited sessions do not count against the 64. They stay attachable (final screen, exit code) for 30 minutes
+  and at most 16 are kept; older ones are forgotten and the daemon publishes `terminal.removed` for them.
+- Output is coalesced per session: the first bytes after an idle gap go out immediately (keystroke echo is
+  not delayed), then at most one `terminal.output` event every ~12 ms, each at most 64 KiB, and at most
+  ~2 MiB/s of event payload. `seq` is the stream offset (total bytes) at the end of the event, so an event
+  covers `[seq-len(data), seq)`.
+- Flood policy: a terminal cannot close the GUI's IPC connection. When more than 256 KiB is waiting to be
+  delivered the oldest undelivered bytes are skipped (they stay in the scrollback), which a client sees as an
+  event starting past the end of the previous one. The terminal view then calls `terminals.attach` again
+  and resumes from the returned `seq`.
+- `terminals.attach` returns the scrollback plus the current `seq`; live `terminal.output` events with
+  `seq <=` that value are already included, so a reattaching window neither loses nor duplicates output.
+  The session lock is held only to snapshot page headers; the ~1 MiB copy happens outside it.
+- In-process consumers (agents) use `Manager.Wait(ctx, id)` to block until a session exits instead of
+  polling `List`.
 - `Close` kills the shell process and releases the pseudoconsole exactly once (`winProc.once`): closing a
   pseudoconsole twice corrupts the heap.
 - `init()` calls `SetConsoleCtrlHandler(NULL, FALSE)` so Ctrl-C (`0x03`) works even if a parent started the
@@ -57,8 +70,8 @@ Agent Dashboard and Review subscribe to the same persisted sessions through `sto
 |---|---|---|
 | Claude Code, structured | `claude -p --output-format stream-json --input-format stream-json --verbose --permission-prompt-tool stdio`; prompts and replies use stdin/stdout JSON, not terminal parsing. Per-session `--mcp-config` JSON registers the central `orole` gateway regardless of selected model; `--append-system-prompt-file` adds the enabled-skills index without putting JSON or large/multiline prompts on the command line. Native harness configuration is not modified. Completed thinking becomes reasoning; tool calls/results carry linked IDs, names, MCP server, status, input and bounded output | Saves CLI session ID; resumes with `--resume` and refreshed gateway/skills files. `--system-prompt-snapshot off` ensures current central skills replace the original prompt snapshot on resume. `can_use_tool` requests become Needs you; daemon validates the pending request, sends allow/deny and audits the decision |
 | Claude Code, terminal | Interactive ConPTY with a per-session `--settings` file; SessionStart, UserPromptSubmit, PreToolUse, PostToolUse, Notification, Stop and SessionEnd hooks invoke `orole-daemon agent-hook` over authenticated IPC | Saves CLI session ID; resumes with `--resume`. Permission notifications say Needs you, but the user answers in the terminal, not a fabricated dashboard permission request |
-| Oh My Pi (`omp`), structured | `omp --mode rpc --cwd <dir> --session-dir <session>/omp/sessions --approval-mode <mode> [--model m] [--thinking level]`; newline-delimited JSON on stdio (ready frame, protocol v2 `rpc_chunk` framing, `set_event_filter` delta projection). Completed thinking blocks, assistant text, tool calls/results and generated images become transcript items; `agent_end` closes the turn. A prompt sent mid-turn is queued as steering (`prompt` with `streamingBehavior: "steer"`). Model list comes from `omp models --json` (only models the user has credentials for), reasoning levels are `off`…`max` | Saves omp's session id; resumes with `--resume <id> --session-dir`. omp defaults to never asking, so Orole passes `--approval-mode`: default and `plan` → `always-ask`, `acceptEdits` → `write` (`plan` also narrows tools to `read,glob,grep,web_search,todo`; omp's `write` tool stays, behind approval). Approval `select` (Approve/Deny) and `confirm` dialogs become Needs you and are answered with `extension_ui_response`; any other dialog (free-form questions) is cancelled and noted in the transcript. The central `orole` MCP gateway and skills prompt are injected per session, never into the user's omp config or the repo: a generated extension package in the session directory (`package.json`, no-op `index.js`, `.mcp.json`) is loaded with `-e`, and `--append-system-prompt <file>` carries the skills index. Stop sends `abort`, closes stdin (omp drains and exits 0) and falls back to the job-object kill |
-| Codex, structured (default) | `codex app-server` (JSON-RPC lines on stdio): `initialize`, then `thread/start` (`cwd`, `model`, `approvalPolicy`, `sandbox`, `developerInstructions` = enabled-skills index, and a per-thread `config` override that defines the stdio MCP server `orole` = the Orole gateway with `default_tools_approval_mode = "approve"`; `~/.codex/config.toml` is never read for this or modified) and `turn/start` per prompt (`effort` = chosen reasoning level, `summary: auto`). A prompt sent mid-turn is `turn/steer`; Stop sends `turn/interrupt`, closes stdin and kills the job. Completed items become transcript events: reasoning (summary + content), agent messages, `commandExecution` → tool `shell`, `fileChange` → tool `apply_patch` (changed paths and truncated diffs), `mcpToolCall` (server + tool), web search, and `imageGeneration` → an image event whose base64 result is validated by magic bytes and saved to `<data>/agents/<id>/images/<item id>.<ext>`. Streamed text only updates the activity line (throttled). Permission mode maps to Codex policy: default = `untrusted` + `workspace-write`, acceptEdits = `on-request` + `workspace-write`, plan = `on-request` + `read-only`. Model list and per-model reasoning levels come from `model/list` | Saves the Codex thread id; resumes with `thread/resume` (skills/gateway config is re-sent). Approvals are server requests: command, file-change (paths and diff shown from the started item; declined if Codex sent none), permissions, legacy `execCommandApproval`/`applyPatchApproval`, and MCP tool-call approvals (`mcpServer/elicitation/request` forms without fields) become Needs you with the exact request JSON; deny = `decline`. Forms that need typed input, URL elicitations and `item/tool/requestUserInput` questions are declined with a visible system note because the dashboard cannot collect answers yet |
+| Oh My Pi (`omp`), structured | `omp --mode rpc --cwd <dir> --session-dir <session>/omp/sessions --approval-mode <mode> [--model m] [--thinking level]`; newline-delimited JSON on stdio (ready frame, protocol v2 `rpc_chunk` framing, `set_event_filter` delta projection). Completed thinking blocks, assistant text, tool calls/results and generated images become transcript items; `agent_end` closes the turn. A prompt sent mid-turn is queued as steering (`prompt` with `streamingBehavior: "steer"`). Model list comes from `omp models --json` (only models the user has credentials for), reasoning levels are `off`…`max` | Saves omp's session id; resumes with `--resume <id> --session-dir`. omp defaults to never asking, so Orole passes `--approval-mode`: Manual and `plan` → `always-ask`, Auto → `write`, YOLO → `yolo` (`plan` also narrows tools to `read,glob,grep,web_search,todo`; omp's `write` tool stays, behind approval). Approval `select` (Approve/Deny) and `confirm` dialogs become Needs you and are answered with `extension_ui_response`; any other dialog (free-form questions) is cancelled and noted in the transcript. The central `orole` MCP gateway and skills prompt are injected per session, never into the user's omp config or the repo: a generated extension package in the session directory (`package.json`, no-op `index.js`, `.mcp.json`) is loaded with `-e`, and `--append-system-prompt <file>` carries the skills index. Stop sends `abort`, closes stdin (omp drains and exits 0) and falls back to the job-object kill |
+| Codex, structured (default) | `codex app-server` (JSON-RPC lines on stdio): `initialize`, then `thread/start` (`cwd`, `model`, `approvalPolicy`, `sandbox`, `developerInstructions` = enabled-skills index, and a per-thread `config` override that defines the stdio MCP server `orole` = the Orole gateway with `default_tools_approval_mode = "approve"`; `~/.codex/config.toml` is never read for this or modified) and `turn/start` per prompt (`effort` = chosen reasoning level, `summary: auto`). A prompt sent mid-turn is `turn/steer`; Stop sends `turn/interrupt`, closes stdin and kills the job. Completed items become transcript events: reasoning (summary + content), agent messages, `commandExecution` → tool `shell`, `fileChange` → tool `apply_patch` (changed paths and truncated diffs), `mcpToolCall` (server + tool), web search, and `imageGeneration` → an image event whose base64 result is validated by magic bytes and saved to `<data>/agents/<id>/images/<item id>.<ext>`. Streamed text only updates the activity line (throttled). Permission mode maps to Codex policy: Manual = `untrusted` + `workspace-write`, Auto = `on-request` + `workspace-write` + `approvalsReviewer: auto_review`, YOLO = `never` + `danger-full-access`, plan = `on-request` + `read-only`. Model list and per-model reasoning levels come from `model/list` | Saves the Codex thread id; resumes with `thread/resume` (skills/gateway config is re-sent). Approvals are server requests: command, file-change (paths and diff shown from the started item; declined if Codex sent none), permissions, legacy `execCommandApproval`/`applyPatchApproval`, and MCP tool-call approvals (`mcpServer/elicitation/request` forms without fields) become Needs you with the exact request JSON; deny = `decline`. Forms that need typed input, URL elicitations and `item/tool/requestUserInput` questions are declined with a visible system note because the dashboard cannot collect answers yet |
 | Codex, terminal | `codex [-m model] [prompt]` in ConPTY (opt-in second mode of the same kind) | Process running/exited only; approvals in terminal; no inferred CLI session ID |
 | OpenCode | `opencode [--model model] [--prompt prompt]` in ConPTY | Process running/exited only; approvals in terminal |
 | Gemini CLI | `gemini [-m model] [-i prompt]` in ConPTY | Process running/exited only; approvals in terminal |
@@ -144,7 +157,47 @@ Each step appends a system event and an audit record, and the session is publish
 Publishing is refused for remote-machine sessions, for sessions whose agent is mid-turn, and when
 invoked by an automation.
 
-Runtime IPC: `agents.detect/list/get/start/stop/restart/prompt/approve/events/transcript/remove/diff/review/check/hook`,
+### Permission modes
+
+A task runs in one of three Orole modes, chosen at launch and changeable mid-task. The stored value is
+`manual`, `auto` or `yolo`; `plan` is a fourth, read-only mode the daemon uses for reviewer and image
+sessions and the UI never offers. Each adapter maps the mode onto its harness's own approval controls
+(inspected on Claude Code 2.1.289, Codex CLI 0.156.1 and Oh My Pi 18.9.0):
+
+| Mode | Claude Code | Codex | Oh My Pi |
+|---|---|---|---|
+| Manual (ask before anything not known safe) | `--permission-mode default` (always passed: the CLI's built-in default can be `auto`) | `untrusted` + `workspace-write` | `--approval-mode always-ask` |
+| Auto (the AI decides which actions are safe) | `--permission-mode auto`, Claude Code's own classifier, when `claude --help` lists it; otherwise `acceptEdits` | `on-request` + `workspace-write` + `approvalsReviewer: auto_review` (Codex's auto-review subagent) | **Approximated**: omp has no AI reviewer, so `--approval-mode write` (file edits run, commands still ask) |
+| YOLO (never ask) | `bypassPermissions` | `never` + `danger-full-access` | `--approval-mode yolo` |
+
+`Detection.permissionModes` and `HarnessOption.permissionModes` report, per harness, whether each mode is
+available, whether it is `approximated` and a one-line `detail`; the UI shows that text instead of claiming
+more than the harness does. Claude Code starts in Manual when auto mode is unavailable to the session, so
+the adapter compares the mode in its `init` message with the requested one and records a system note on a
+mismatch; Codex's reply to `thread/start` is checked the same way for the reviewer.
+
+**YOLO is enforced in Go.** Starting in or switching to YOLO is rejected unless the request carries
+`confirmYolo: true`, the `agents` daemon setting (`{"yoloDisabled": true}`; Settings > System > Task
+permissions) has not turned it off, and the caller is not an automation. Rejections and grants are
+audited as `agent.yolo`. A disabled setting also marks YOLO unavailable in detection at once, and a
+YOLO session cannot be resumed until its mode is changed. YOLO removes the harness's prompts only: Orole's
+own MCP gateway still decides every `mcp.tool.call` through the policy engine. Remote machines never run
+YOLO; remote Claude passes `--permission-mode default|auto|plan` explicitly and remote Codex `exec` always
+runs in its workspace sandbox without prompts, so only Manual is offered there. Non-Claude terminal CLIs
+keep their own approvals and reject Orole modes.
+
+**Changing the mode mid-task** (`agents.setPermissionMode {id, mode, confirmYolo}`, audited as
+`agent.permissionMode`, persisted on the session, recorded as a system event):
+
+| Harness | How it applies |
+|---|---|
+| Claude Code | `set_permission_mode` control request, acknowledged by the CLI, effective immediately. YOLO needs the process to have been launched with `--allow-dangerously-skip-permissions` (passed for structured sessions while the YOLO setting is on); otherwise the conversation is resumed with the new mode |
+| Codex | the next `turn/start` carries `approvalPolicy`, `approvalsReviewer` and `sandboxPolicy` overrides, which Codex keeps for later turns; a running turn finishes under the old policy |
+| Oh My Pi | no live setter (`--approval-mode` is a launch flag), so the conversation is resumed with the new mode, only while idle with no pending request |
+| Ended session | only recorded; the next launch uses it |
+| Terminal, remote SSH, read-only review | refused, with the reason in `followup.permissionModeReason` |
+
+Runtime IPC: `agents.detect/list/get/start/stop/restart/prompt/setPermissionMode/approve/events/transcript/remove/diff/review/check/hook`,
 `agents.publish`, `agents.handoff/reviewWith/loopUntil/tryN/runs/cancelRun`. Live topics: `agents.updated`,
 `agents.event`, `agents.removed`, `agents.run`.
 

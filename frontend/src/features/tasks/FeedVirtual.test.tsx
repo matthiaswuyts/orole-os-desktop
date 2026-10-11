@@ -6,12 +6,7 @@ vi.mock("@/mygo", () => ({ Agents: { approve: vi.fn(), get: vi.fn(), artifact: v
 vi.mock("@/lib/backend", () => ({ inDesktop: true }));
 vi.mock("@/stores/agents", () => ({ useAgents: { getState: () => ({ upsert: vi.fn() }) } }));
 vi.mock("@/stores/boxes", () => ({ useBoxes: vi.fn() }));
-import { Feed as FeedView, VIRTUALIZE_FROM, type FeedProps } from "./Feed";
-import { useFeedItems } from "./useFeedItems";
-
-function Feed(props: Omit<FeedProps, "items">) {
-  return <FeedView {...props} items={useFeedItems(props.events, props.session.live)} />;
-}
+import { Feed, VIRTUALIZE_FROM } from "./Feed";
 
 let seq = 0;
 const at = "2026-10-08T12:00:00Z";
@@ -76,11 +71,34 @@ describe("virtualized feed", () => {
     layout();
     layout();
     expect(screen.queryByText("the needle")).toBeNull();
+    fireEvent.keyDown(log(), { key: "f", ctrlKey: true }); // the search opens on Ctrl+F
     fireEvent.change(screen.getByRole("searchbox", { name: "Find in conversation" }), { target: { value: "needle" } });
     layout();
     expect(screen.getByText("the needle")).toBeInTheDocument();
     expect(log().querySelector("[data-search-active]")).toHaveTextContent("the needle");
     expect(screen.queryByText("message 399")).toBeNull();
+  });
+
+  it("opens a collapsed run far outside the window to show the search match inside it", () => {
+    // 100 turns: a prompt, interim commentary, a tool call and its result, then the closing reply, folded into one run each.
+    const turns = Array.from({ length: 100 }, (_, i) => [
+      { id: ++seq, sessionId: "s1", at, kind: "prompt", text: `prompt ${i}`, data: null },
+      message(`interim note ${i}`),
+      { id: ++seq, sessionId: "s1", at, kind: "tool", text: "", data: { id: `t${i}`, name: "Read", status: "running", input: { path: `f${i}.ts` } } },
+      { id: ++seq, sessionId: "s1", at, kind: "tool_result", text: "", data: { id: `t${i}`, name: "Read", status: "ok", output: "ok" } },
+      message(`closing ${i}`),
+    ] as AgentEvent[]).flat();
+    openWith(turns);
+    layout();
+    layout();
+    expect(screen.queryByText("interim note 3")).toBeNull();
+    fireEvent.keyDown(log(), { key: "f", ctrlKey: true });
+    fireEvent.change(screen.getByRole("searchbox", { name: "Find in conversation" }), { target: { value: "interim note 3" } });
+    layout();
+    layout();
+    const match = log().querySelector("[data-search-active]");
+    expect(match).toHaveTextContent("interim note 3");
+    expect(match?.closest('[data-slot="run-activity"]')?.querySelector('[data-slot="collapsible-trigger"]')).toHaveAttribute("aria-expanded", "true");
   });
 
   it("keeps the reader's place when older history is prepended and the row they read is no longer in the rendered window", () => {
@@ -94,8 +112,8 @@ describe("virtualized feed", () => {
     const reading = log().querySelector<HTMLElement>("[data-scroll-anchor]")!.dataset.scrollAnchor;
     expect(reading).toBe(String(all[100]!.id));
     view.rerender(<Feed {...props} events={all} />);
-    // The row now sits below 100 new rows (96px estimate + 12px gap each) that are not rendered; the viewport follows it there.
-    expect(log().scrollTop).toBe(100 * (96 + 12));
+    // The row now sits below 100 new rows (96px estimate + 16px gap each) that are not rendered; the viewport follows it there.
+    expect(log().scrollTop).toBe(100 * (96 + 16));
     layout();
     expect(log().querySelector(`[data-scroll-anchor="${reading}"]`)).not.toBeNull();
   });

@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { Notifications, events } from "@/mygo";
 import type { NotificationList, Prefs, SourcePref } from "@/mygo";
 import { inDesktop } from "@/lib/backend";
+import { onFocusRefresh } from "@/lib/focus";
 import { useDaemon } from "@/stores/daemon";
 
 const message = (error: unknown) => error instanceof Error ? error.message : String(error);
@@ -142,9 +143,9 @@ export const useNotifications = create<State>((set, get) => {
             set({ loading: false, prefsLoading: false, error: "The daemon is offline. Showing the last loaded notifications." });
           }
         });
-        window.addEventListener("focus", refresh);
+        const offFocus = onFocusRefresh(refresh);
         refresh();
-        stopSync = () => { offChanged(); offSettings(); offNative(); offDaemon(); window.removeEventListener("focus", refresh); };
+        stopSync = () => { offChanged(); offSettings(); offNative(); offDaemon(); offFocus(); };
       }
       let stopped = false;
       return () => {

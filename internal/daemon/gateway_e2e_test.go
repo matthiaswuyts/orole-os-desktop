@@ -166,7 +166,8 @@ func TestGatewayEndToEnd(t *testing.T) {
 	}
 	var list []skills.Skill
 	e.call(ctx, "skills.list", struct{}{}, &list)
-	if len(list) != 2 {
+	// The two saved skills plus the built-in skill-creator, which the UI lists but harnesses never see.
+	if len(list) != 3 {
 		t.Fatalf("skills.list = %+v", list)
 	}
 
@@ -174,8 +175,12 @@ func TestGatewayEndToEnd(t *testing.T) {
 	if err != nil || res.IsError {
 		t.Fatalf("list skills: %v %+v", err, res)
 	}
-	if txt := firstText(t, res); !strings.Contains(txt, "release-notes: Write release notes") || strings.Contains(txt, "off-skill") {
-		t.Fatalf("gateway skill list = %q (disabled skills must not be listed)", txt)
+	if txt := firstText(t, res); !strings.Contains(txt, "release-notes: Write release notes") || strings.Contains(txt, "off-skill") || strings.Contains(txt, "skill-creator") {
+		t.Fatalf("gateway skill list = %q (disabled and built-in skills must not be listed)", txt)
+	}
+	res, _ = e.cs.CallTool(ctx, &sdk.CallToolParams{Name: gateway.ToolGetSkill, Arguments: map[string]any{"name": "skill-creator"}})
+	if !res.IsError {
+		t.Fatalf("a harness could read the bots-only skill-creator: %+v", res)
 	}
 	res, _ = e.cs.CallTool(ctx, &sdk.CallToolParams{Name: gateway.ToolGetSkill, Arguments: map[string]any{"name": "release-notes"}})
 	if res.IsError || !strings.Contains(firstText(t, res), "Use the changelog.") {

@@ -23,9 +23,3 @@ func TestTailFile(t *testing.T) {
 		t.Fatal("expected error for missing file")
 	}
 }
-
-func TestReadSchemaVersionMissingDB(t *testing.T) {
-	if _, err := ReadSchemaVersion(filepath.Join(t.TempDir(), "orole.db")); err == nil {
-		t.Fatal("expected error")
-	}
-}

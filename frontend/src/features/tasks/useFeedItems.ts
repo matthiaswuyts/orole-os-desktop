@@ -1,6 +1,6 @@
 import { useState } from "react";
-import type { Event as AgentEvent } from "@/mygo";
-import { groupEvents, shareItems, type FeedItem } from "@/lib/taskEvents";
+import type { Event as AgentEvent, Session } from "@/mygo";
+import { groupEvents, groupRuns, shareEntries, shareItems, type FeedItem, type RunContext, type TurnEntry } from "@/lib/taskEvents";
 
 interface Grouped { events: AgentEvent[]; live: boolean; items: FeedItem[] }
 
@@ -16,4 +16,23 @@ export function useFeedItems(events: AgentEvent[], live: boolean): FeedItem[] {
   const items = shareItems(grouped.items, groupEvents(events, { live }));
   setGrouped({ events, live, items });
   return items;
+}
+
+interface Turns { items: readonly FeedItem[]; running: boolean; live: boolean; pending: Session["pending"]; questions: Session["questions"]; entries: TurnEntry[] }
+
+const buildEntries = (items: readonly FeedItem[], running: boolean, live: boolean, pending: Session["pending"], questions: Session["questions"]): TurnEntry[] => {
+  const context: RunContext = { running, live, pendingPermissions: new Set(pending?.map((request) => request.id)), pendingQuestions: new Set(questions?.map((request) => request.id)) };
+  return groupRuns(items, context);
+};
+
+/**
+ * One entry per user message and per assistant turn, regrouped when the items or the session's pending requests change.
+ * Entries an update did not touch keep their identity, so memoized rows of a long conversation skip rendering.
+ */
+export function useTurnEntries(items: readonly FeedItem[], running: boolean, live: boolean, pending: Session["pending"], questions: Session["questions"]): TurnEntry[] {
+  const [turns, setTurns] = useState<Turns>(() => ({ items, running, live, pending, questions, entries: buildEntries(items, running, live, pending, questions) }));
+  if (turns.items === items && turns.running === running && turns.live === live && turns.pending === pending && turns.questions === questions) return turns.entries;
+  const entries = shareEntries(turns.entries, buildEntries(items, running, live, pending, questions));
+  setTurns({ items, running, live, pending, questions, entries });
+  return entries;
 }
