@@ -1,6 +1,7 @@
-import { LightbulbIcon, MinimizeIcon, SparklesIcon, type LucideIcon } from "lucide-react";
-import { useEffect, useState, type RefObject } from "react";
+import { LightbulbIcon, MessageSquarePlusIcon, MinimizeIcon, SparklesIcon, type LucideIcon } from "lucide-react";
+import { Fragment, useEffect, useState, type RefObject } from "react";
 import { Button } from "@/components/ui/button";
+import { Group, GroupSeparator } from "@/components/ui/group";
 import { useChatMessages } from "@/stores/chatMessages";
 import { withQuote } from "./quote";
 
@@ -27,8 +28,9 @@ export function selectedReplyText(root: HTMLElement | null): Selected | null {
 }
 
 /**
- * A small menu below text selected in a bot's reply: Shorten, Improve or Explain. Choosing one sends the bot a message
- * that quotes the selection. Pressing the buttons keeps the selection until the click lands.
+ * A small menu below text selected in a bot's reply, fading in under the selection: Add to chat (quotes the passage into
+ * the message box without sending), or Shorten, Improve and Explain, which send the bot the quoted passage with that
+ * request. Pressing the buttons keeps the selection until the click lands.
  */
 export function SelectionMenu({ botId, root }: { botId: string; root: RefObject<HTMLElement | null> }) {
   const [selected, setSelected] = useState<Selected | null>(null);
@@ -54,15 +56,31 @@ export function SelectionMenu({ botId, root }: { botId: string; root: RefObject<
     window.getSelection()?.removeAllRanges();
     setSelected(null);
   };
-  const width = 264;
+  const addToChat = () => {
+    const store = useChatMessages.getState();
+    const draft = store.drafts[botId]?.text ?? "";
+    store.setDraft(botId, { text: `${draft ? `${draft.trimEnd()}\n\n` : ""}${withQuote(selected.text, "")}` });
+    window.getSelection()?.removeAllRanges();
+    setSelected(null);
+    requestAnimationFrame(() => {
+      const box = document.querySelector<HTMLTextAreaElement>("[data-slot=composer] textarea");
+      box?.focus();
+      box?.setSelectionRange(box.value.length, box.value.length);
+    });
+  };
+  const width = 372;
   const left = Math.max(8, Math.min(window.innerWidth - width - 8, selected.x - width / 2));
   return (
-    <div role="toolbar" aria-label="Ask about the selected text" data-slot="selection-menu" style={{ position: "fixed", left, top: selected.y + 8, width }}
-      className="z-50 flex items-center gap-1 rounded-xl border bg-popover p-1 text-popover-foreground shadow-lg/10"
-      onMouseDown={(event) => event.preventDefault()}>
-      {ACTIONS.map(({ label, ask, icon: Icon }) => (
-        <Button key={label} type="button" variant="ghost" size="sm" className="flex-1" onClick={() => run(ask)}><Icon aria-hidden />{label}</Button>
-      ))}
+    <div data-slot="selection-menu" style={{ position: "fixed", left, top: selected.y + 8 }} className="z-50" onMouseDown={(event) => event.preventDefault()}>
+      <Group aria-label="Ask about the selected text" className="fade-in-0 slide-in-from-top-1 zoom-in-95 animate-in rounded-lg bg-popover shadow-lg/10 duration-150 ease-out motion-reduce:animate-none">
+        <Button type="button" variant="outline" size="sm" onClick={addToChat}><MessageSquarePlusIcon aria-hidden />Add to chat</Button>
+        {ACTIONS.map(({ label, ask, icon: Icon }) => (
+          <Fragment key={label}>
+            <GroupSeparator />
+            <Button type="button" variant="outline" size="sm" onClick={() => run(ask)}><Icon aria-hidden />{label}</Button>
+          </Fragment>
+        ))}
+      </Group>
     </div>
   );
 }

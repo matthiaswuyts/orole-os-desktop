@@ -44,6 +44,12 @@ export function Composer({ bot }: { bot: Bot }) {
     if (text) aui.composer.setText(text);
   }, [aui, bot.id]);
 
+  // Text put in the draft from elsewhere (Add to chat on a selected passage) shows up in the box.
+  const draftText = useChatMessages((s) => s.drafts[bot.id]?.text ?? "");
+  useEffect(() => {
+    if (draftText !== aui.composer.getState().text) aui.composer.setText(draftText);
+  }, [aui, draftText]);
+
   const send = () => { if (canSend) aui.composer.send(); };
   const setResearch = (on: boolean) => useChatMessages.getState().setDraft(bot.id, { research: on });
   const addDictation = (value: string) => {

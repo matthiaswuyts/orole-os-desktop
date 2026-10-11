@@ -40,32 +40,42 @@ afterEach(() => { cleanup(); window.getSelection()?.removeAllRanges(); });
 describe("selection menu", () => {
   it("appears under text selected in a bot reply and sends the quoted passage with the chosen request", () => {
     mount();
-    expect(screen.queryByRole("toolbar")).toBeNull();
+    expect(screen.queryByRole("group")).toBeNull();
     select("p1");
-    const bar = screen.getByRole("toolbar", { name: "Ask about the selected text" });
-    expect(bar.style.top).toBe("66px"); // just below the selection
-    for (const name of ["Shorten", "Improve", "Explain"]) expect(screen.getByRole("button", { name })).toBeInTheDocument();
+    const bar = screen.getByRole("group", { name: "Ask about the selected text" });
+    expect((bar.parentElement as HTMLElement).style.top).toBe("66px"); // just below the selection
+    for (const name of ["Add to chat", "Shorten", "Improve", "Explain"]) expect(screen.getByRole("button", { name })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Explain" }));
     expect(send).toHaveBeenCalledWith("a", { text: "> first\n\nExplain this selected text." });
-    expect(screen.queryByRole("toolbar")).toBeNull();
+    expect(screen.queryByRole("group")).toBeNull();
     expect(window.getSelection()!.isCollapsed).toBe(true);
+  });
+
+  it("adds the quoted passage to the message box without sending, keeping what is already typed", () => {
+    mount();
+    useChatMessages.setState({ drafts: { a: { text: "Regarding this:", research: false } } });
+    select("p1");
+    fireEvent.click(screen.getByRole("button", { name: "Add to chat" }));
+    expect(send).not.toHaveBeenCalled();
+    expect(useChatMessages.getState().drafts.a?.text).toBe("Regarding this:\n\n> first\n\n");
+    expect(screen.queryByRole("group")).toBeNull();
   });
 
   it("stays away from the user's own messages and from selections that cross replies", () => {
     mount();
     select("p3");
-    expect(screen.queryByRole("toolbar")).toBeNull();
+    expect(screen.queryByRole("group")).toBeNull();
     select("p1", "p2");
-    expect(screen.queryByRole("toolbar")).toBeNull();
+    expect(screen.queryByRole("group")).toBeNull();
   });
 
   it("goes away when the selection is cleared or Escape is pressed", () => {
     mount();
     select("p1");
     act(() => { window.getSelection()!.removeAllRanges(); document.dispatchEvent(new Event("selectionchange")); });
-    expect(screen.queryByRole("toolbar")).toBeNull();
+    expect(screen.queryByRole("group")).toBeNull();
     select("p1");
     fireEvent.keyDown(document, { key: "Escape" });
-    expect(screen.queryByRole("toolbar")).toBeNull();
+    expect(screen.queryByRole("group")).toBeNull();
   });
 });
