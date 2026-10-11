@@ -2,14 +2,17 @@ import { useId, useMemo, useRef, useState } from "react";
 import { BrainIcon, ChevronsUpDownIcon, CoinsIcon, EyeIcon, FileTextIcon, FunnelIcon, SearchIcon, StarIcon, TrophyIcon, WrenchIcon, ZapIcon, type LucideIcon } from "lucide-react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { CompanyLogo } from "@/components/CompanyLogo";
+import { ProviderLogo } from "@/components/ProviderLogo";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Menu, MenuCheckboxItem, MenuGroup, MenuGroupLabel, MenuItem, MenuPopup, MenuRadioGroup, MenuRadioItem, MenuSeparator, MenuTrigger } from "@/components/ui/menu";
+import { Menu, MenuCheckboxItem, MenuGroup, MenuGroupLabel, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "@/components/ui/menu";
 import { Popover, PopoverPopup, PopoverTrigger } from "@/components/ui/popover";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "@/components/ui/tooltip";
 import { STRENGTH_LABEL, type Strength } from "@/lib/modelCatalog";
 import { cn } from "@/lib/utils";
+import { useUI } from "@/stores/ui";
 import type { ModelOptions, Option } from "./modelOptions";
+import { ProviderTabs, type ProviderChoice } from "./ProviderTabs";
 
 const ROW = 60;
 const ALL = "all";
@@ -49,10 +52,9 @@ function Row({ option, label, selected, active, id, showProvider, onPick, style 
 }) {
   const strengths = STRENGTHS.filter((s) => option.curated?.strengths.includes(s.id));
   const caps = option.caps ? CAPABILITIES.filter((c) => option.caps![c.key]) : [];
-  const where = option.company === option.provider ? "" : ` · ${option.provider}`;
   const note = option.kind === "missing" ? "Not offered by a connected provider"
     : option.kind === "default" ? "Follows the default in AI settings"
-      : (option.curated?.blurb ?? option.company) + (showProvider ? where : "");
+      : (option.curated?.blurb ?? option.company) + (showProvider ? ` · via ${option.provider}` : "");
   return (
     <div id={id} role="option" aria-selected={selected} onClick={onPick} style={style}
       className={cn("absolute inset-x-0 flex cursor-pointer items-center gap-3 rounded-xl px-3 hover:bg-accent", active && "ring-1 ring-ring/50")}>
@@ -78,9 +80,9 @@ function Row({ option, label, selected, active, id, showProvider, onPick, style 
   );
 }
 
-/** The funnel button and its menu: strength filters and, with several providers connected, a provider filter. */
-function FilterMenu({ strengths, onStrengths, provider, onProvider, providers, active, onClear }: {
-  strengths: Strength[]; onStrengths: (next: Strength[]) => void; provider: string; onProvider: (next: string) => void; providers: string[]; active: boolean; onClear: () => void;
+/** The funnel button and its menu: filters by what a model is best at. */
+function FilterMenu({ strengths, onStrengths, active, onClear }: {
+  strengths: Strength[]; onStrengths: (next: Strength[]) => void; active: boolean; onClear: () => void;
 }) {
   return (
     <Menu>
@@ -101,16 +103,6 @@ function FilterMenu({ strengths, onStrengths, provider, onProvider, providers, a
             </MenuCheckboxItem>
           ))}
         </MenuGroup>
-        {providers.length > 1 && <>
-          <MenuSeparator />
-          <MenuGroup>
-            <MenuGroupLabel>Provider</MenuGroupLabel>
-            <MenuRadioGroup value={provider} onValueChange={(v) => onProvider(String(v))}>
-              <MenuRadioItem value={ALL}>All providers</MenuRadioItem>
-              {providers.map((name) => <MenuRadioItem key={name} value={name}>{name}</MenuRadioItem>)}
-            </MenuRadioGroup>
-          </MenuGroup>
-        </>}
         {active && <>
           <MenuSeparator />
           <MenuItem onClick={onClear}>Clear filters</MenuItem>
@@ -146,14 +138,14 @@ function Panel({ models, labelOf, onPick }: { models: ModelOptions; labelOf: (o:
 
   const real = useMemo(() => options.filter((o) => o.kind === "model"), [options]);
   const companies = useMemo(() => [...new Set(real.map((o) => o.company))], [real]);
-  const providerNames = useMemo(() => [...new Set(real.map((o) => o.provider))].sort(), [real]);
-  const menuActive = provider !== ALL || strengths.length > 0;
-  const filtering = menuActive || query !== "" || company !== "";
+  const choices = useMemo<ProviderChoice[]>(() => models.connected.map((p) => ({ id: p.id, name: p.name, kind: p.kind, count: real.filter((o) => o.providerId === p.id).length })).filter((c) => c.count > 0), [models.connected, real]);
+  const menuActive = strengths.length > 0;
+  const filtering = menuActive || provider !== ALL || query !== "" || company !== "";
 
   // "Use default" and a stray current choice only answer the search; any other filter narrows to real models.
   const shown = useMemo(() => options.filter((o) => o.kind !== "model"
-    ? !menuActive && company === "" && matches(o, query)
-    : (provider === ALL || o.provider === provider) && (company === "" || o.company === company)
+    ? !menuActive && provider === ALL && company === "" && matches(o, query)
+    : (provider === ALL || o.providerId === provider) && (company === "" || o.company === company)
       && (strengths.length === 0 || strengths.some((s) => o.curated?.strengths.includes(s))) && matches(o, query)),
   [options, query, provider, company, strengths, menuActive]);
 
@@ -181,9 +173,9 @@ function Panel({ models, labelOf, onPick }: { models: ModelOptions; labelOf: (o:
             value={query} onChange={(e) => refilter(() => setQuery(e.target.value))} onKeyDown={onKeyDown}
             placeholder="Search models…" aria-label="Search models" className="ps-9" />
         </div>
-        <FilterMenu strengths={strengths} onStrengths={(next) => refilter(() => setStrengths(next))} provider={provider} onProvider={(next) => refilter(() => setProvider(next))}
-          providers={providerNames} active={menuActive} onClear={clear} />
+        <FilterMenu strengths={strengths} onStrengths={(next) => refilter(() => setStrengths(next))} active={menuActive} onClear={clear} />
       </div>
+      {choices.length > 1 && <ProviderTabs choices={choices} value={provider} total={real.length} onChange={(id) => refilter(() => setProvider(id))} />}
 
       <div className="flex min-h-0 gap-1 px-1.5 pb-1.5">
         {companies.length > 1 && (
@@ -208,12 +200,15 @@ function Panel({ models, labelOf, onPick }: { models: ModelOptions; labelOf: (o:
               {virtual.getVirtualItems().map((row) => {
                 const option = shown[row.index]!;
                 return <Row key={option.value || "default"} id={`${listId}-${row.index}`} option={option} label={labelOf(option)} selected={option.value === current.value}
-                  active={row.index === clamped} showProvider={providerNames.length > 1} onPick={() => onPick(option)} style={{ height: row.size, transform: `translateY(${row.start}px)` }} />;
+                  active={row.index === clamped} showProvider={choices.length > 1} onPick={() => onPick(option)} style={{ height: row.size, transform: `translateY(${row.start}px)` }} />;
               })}
             </div>
           )}
         </div>
       </div>
+      <button type="button" onClick={() => useUI.getState().openSettings("ai")} className="border-t px-3 py-2 text-start text-muted-foreground text-xs outline-none hover:bg-accent hover:text-foreground focus-visible:bg-accent">
+        Use a Claude, ChatGPT or Grok account, or add an API key, in Settings &gt; AI providers
+      </button>
     </div>
   );
 }
@@ -223,19 +218,21 @@ function Panel({ models, labelOf, onPick }: { models: ModelOptions; labelOf: (o:
  * filter menu for what each model is best at and (with several providers) which provider. The list is virtualized, so
  * even a provider that falls back to its whole catalogue stays fast. "Use default" follows the default chat model in AI settings.
  */
-export function ModelPicker({ id, describedBy, models, onPick }: { id: string; describedBy?: string; models: ModelOptions; onPick: (option: Option | null) => void }) {
+export function ModelPicker({ id, describedBy, models, onPick, compact }: { id: string; describedBy?: string; models: ModelOptions; onPick: (option: Option | null) => void; /** a one-line trigger for a settings row */ compact?: boolean }) {
   const { options, current, defaultModel } = models;
   const [open, setOpen] = useState(false);
   const defaultLabel = defaultModel ? (options.find((o) => o.value === defaultModel)?.label ?? defaultModel) : null;
   const labelOf = (o: Option) => o.kind === "default" ? (defaultLabel ? `Use default (${defaultLabel})` : "Use default") : o.label;
   return (
     <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger render={<Button id={id} aria-describedby={describedBy} variant="outline" className="h-auto min-h-14 w-full justify-between gap-3 px-3.5 py-2.5 font-normal sm:h-auto" />}>
+      <PopoverTrigger render={<Button id={id} aria-describedby={describedBy} variant={compact ? "ghost" : "outline"} className={compact ? "h-7 min-w-0 max-w-full justify-end gap-1.5 px-1.5 font-normal text-muted-foreground sm:h-7" : "h-auto min-h-14 w-full justify-between gap-3 px-3.5 py-2.5 font-normal sm:h-auto"} />}>
         <span className="flex min-w-0 items-center gap-3">
-          <CompanyLogo company={current.company} className="size-6" />
+          {current.kind === "model" && current.providerId
+            ? <ProviderLogo id={current.providerId} name={current.provider} className={compact ? "size-5 rounded-md" : "size-9"} />
+            : <CompanyLogo company={current.company} className={compact ? "size-4" : "size-6"} />}
           <span className="flex min-w-0 flex-col items-start gap-0.5 text-left leading-snug">
-            <span className="w-full truncate text-[15px] font-medium">{labelOf(current)}</span>
-            {current.kind === "model" && <span className="w-full truncate text-muted-foreground text-xs">{current.company === current.provider ? current.company : `${current.company} · ${current.provider}`}</span>}
+            <span className={compact ? "w-full truncate text-sm" : "w-full truncate text-[15px] font-medium"}>{labelOf(current)}</span>
+            {!compact && current.kind === "model" && <span className="w-full truncate text-muted-foreground text-xs">via {current.provider}{current.providerKind === "account" ? " account" : ""}</span>}
           </span>
         </span>
         <ChevronsUpDownIcon aria-hidden className="size-4 shrink-0 opacity-60" />
