@@ -14,6 +14,10 @@
 //	chat.messages.list    MessagesRequest          -> MessagePage
 //	chat.send             SendRequest              -> Message   (the stored user message; reply streams via events)
 //	chat.cancel           BotRef                   -> struct{}
+//	chat.bots.pin         PinRequest               -> struct{}  (pin a bot to the top of the list)
+//	chat.queue.pause      BotRef                   -> struct{}  (the next queued message waits until resume)
+//	chat.queue.resume     BotRef                   -> struct{}
+//	chat.queue.cancel     QueueItemRef             -> struct{}  (drops one waiting message)
 //	chat.regenerate       RegenerateRequest        -> struct{}
 //	chat.clear            BotRef                   -> struct{}  (deletes the conversation + summary; memory is kept)
 //	chat.draft.send       DraftRequest             -> Message   (bot-builder preview: ephemeral, nothing persisted)
@@ -78,15 +82,17 @@ type BotLimits struct {
 
 // BotConfig is stored as JSON in bots.config. It never contains secrets.
 type BotConfig struct {
-	Tools     []BotTool     `json:"tools"`
-	MCPTools  []string      `json:"mcpTools"`            // "<serverId>/<tool>" allow-list, default none
-	Skills    []string      `json:"skills"`              // enabled registry skill names
-	Executive bool          `json:"executive,omitempty"` // an executive assistant may ask every other bot (ask_bot)
-	Memory    []ScopeAccess `json:"memory"`              // grants beyond the private scope
-	Limits    BotLimits     `json:"limits"`
+	Tools      []BotTool     `json:"tools"`
+	MCPServers []string      `json:"mcpServers"`          // ids of the MCP servers (integrations) the bot may use: every tool of each, default none
+	Skills     []string      `json:"skills"`              // enabled registry skill names
+	Executive  bool          `json:"executive,omitempty"` // an executive assistant may ask every other bot (ask_bot)
+	Memory     []ScopeAccess `json:"memory"`              // grants beyond the private scope
+	Limits     BotLimits     `json:"limits"`
 	// Setup marks a freshly created bot that still has to learn its purpose: it is offered the setup
 	// tools (ask_user, save_profile) until it saves its own instructions.
 	Setup bool `json:"setup,omitempty"`
+	// Pinned keeps the bot at the top of the bot list. It is changed only by PinBot: saving a bot never touches it.
+	Pinned bool `json:"pinned,omitempty"`
 }
 
 // Bot is a contact: identity, brain settings and live status.
@@ -131,6 +137,12 @@ type BotInput struct {
 	Config       BotConfig `json:"config"`
 }
 
+// PinRequest pins or unpins a bot.
+type PinRequest struct {
+	ID     string `json:"id"`
+	Pinned bool   `json:"pinned"`
+}
+
 // BotRef identifies a bot.
 type BotRef struct {
 	ID string `json:"id"`
@@ -168,6 +180,14 @@ type RunState struct {
 	BotID     string `json:"botId"`
 	Running   bool   `json:"running"`
 	MessageID string `json:"messageId,omitempty"` // the assistant message being produced
+	// Paused is true while the bot's queue is on hold: messages wait and the next one starts only after Resume.
+	Paused bool `json:"paused,omitempty"`
+}
+
+// QueueItemRef identifies one waiting message of a bot's queue.
+type QueueItemRef struct {
+	BotID     string `json:"botId"`
+	MessageID string `json:"messageId"`
 }
 
 // Part types.

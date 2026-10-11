@@ -97,6 +97,12 @@ func (g GitWorktrees) Diff(ctx context.Context, dir, base string) (Diff, error) 
 	return git.DiffWorktree(ctx, dir, base)
 }
 
+// DiffStat counts changed files and lines through the same isolated review runner as Diff,
+// without building the patch.
+func (g GitWorktrees) DiffStat(ctx context.Context, dir, base string) (files, additions, deletions int, err error) {
+	return git.DiffStatWorktree(ctx, dir, base)
+}
+
 // branchSlug turns free text into a lower-case branch-name part of at most 40 characters
 // ("" when no ASCII letter or digit remains).
 func branchSlug(s string) string {

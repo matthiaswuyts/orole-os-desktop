@@ -164,10 +164,13 @@ func (op *accessOperation) guard() (func(), error) {
 
 // invalidateLocked also cancels pending SetAccess requests so approval of one
 // transition cannot later overwrite a different transition the user approved.
+// It closes the machine's pooled SSH/SFTP session too: access edits and removal
+// revoke the transport as well as in-flight operations.
 func (m *Manager) invalidateLocked(id string, except *accessOperation) {
 	for op := range m.operations {
 		if op != except && op.machine.ID == id {
 			op.cancel(ErrAccessChanged)
 		}
 	}
+	m.pool.drop(id)
 }

@@ -25,13 +25,14 @@ export function emit(name: "chatMessage" | "chatMessageDelta" | "chatRun" | "cha
 }
 
 export const bridge = {
+  desktop: { openSettings: vi.fn() },
   chat: {
     bot: vi.fn(), bots: vi.fn(), saveBot: vi.fn(), archiveBot: vi.fn(), exportBot: vi.fn(), importBot: vi.fn(), draftSend: vi.fn(), cancel: vi.fn(), send: vi.fn(),
     beginAttachment: vi.fn(), attachmentChunk: vi.fn(), commitAttachment: vi.fn(), discardAttachment: vi.fn(),
     memoryScopes: vi.fn(), createMemoryScope: vi.fn(), deleteMemoryScope: vi.fn(), memoryEntries: vi.fn(), saveMemoryEntry: vi.fn(), deleteMemoryEntry: vi.fn(), resolveMemory: vi.fn(),
-    knowledgeFiles: vi.fn(), addKnowledge: vi.fn(), removeKnowledge: vi.fn(), skillProposals: vi.fn(), resolveSkill: vi.fn(), tools: vi.fn(),
+    knowledgeFiles: vi.fn(), addKnowledge: vi.fn(), removeKnowledge: vi.fn(), skillProposal: vi.fn(), resolveSkill: vi.fn(), tools: vi.fn(),
   },
-  mcp: { list: vi.fn(), tools: vi.fn() },
+  mcp: { list: vi.fn() },
   skills: { list: vi.fn() },
   llm: { providers: vi.fn(), defaults: vi.fn(), models: vi.fn() },
 };
@@ -42,6 +43,7 @@ export const mygoMock = {
   Skills: bridge.skills,
   LLM: bridge.llm,
   Daemon: { health: vi.fn() },
+  Desktop: bridge.desktop,
   events: {
     chatMessage: event("chatMessage"), chatMessageDelta: event("chatMessageDelta"), chatRun: event("chatRun"), chatMemory: event("chatMemory"), chatBot: event("chatBot"),
     llmChanged: event("llmChanged"), daemonState: event("daemonState"),
@@ -55,7 +57,7 @@ export const provider = (over: Partial<ProviderStatus> = {}): ProviderStatus => 
 export const model = (id: string, over: Partial<Model> = {}): Model => ({ id, name: id, caps: caps(), reasoning: [], ...over });
 
 export const config = (over: Partial<BotConfig> = {}): BotConfig => ({
-  tools: [], mcpTools: [], skills: [], memory: [], limits: { maxSteps: 0, maxToolCalls: 0 }, ...over,
+  tools: [], mcpServers: [], skills: [], memory: [], limits: { maxSteps: 0, maxToolCalls: 0 }, ...over,
 });
 
 export const bot = (id: string, over: Partial<Bot> = {}): Bot => ({
@@ -73,8 +75,8 @@ export function resetBridge() {
   bridge.chat.memoryScopes.mockResolvedValue([]);
   bridge.chat.memoryEntries.mockResolvedValue([]);
   bridge.chat.knowledgeFiles.mockResolvedValue([]);
-  bridge.chat.skillProposals.mockResolvedValue([]);
   bridge.chat.cancel.mockResolvedValue(undefined);
+  bridge.desktop.openSettings.mockResolvedValue(undefined);
   bridge.mcp.list.mockResolvedValue([]);
   bridge.skills.list.mockResolvedValue([]);
   bridge.llm.providers.mockResolvedValue([provider()]);

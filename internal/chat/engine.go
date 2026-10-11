@@ -154,6 +154,9 @@ func messageText(parts []MsgPart) string {
 
 func (m *Manager) executeTurn(ctx context.Context, bot, convo Bot, rc RunContext, user Message, t turn, s *sink) (string, string) {
 	text := messageText(user.Parts)
+	if strings.HasPrefix(user.Author, ReportPrefix) {
+		text = fenceReport(text)
+	}
 	if t.mode == ModeResearch {
 		return m.runResearch(ctx, bot, rc, text, s)
 	}
@@ -163,7 +166,7 @@ func (m *Manager) executeTurn(ctx context.Context, bot, convo Bot, rc RunContext
 			atts = append(atts, p)
 		}
 	}
-	env, err := m.prepare(ctx, prep{bot: bot, convo: convo.ID, rc: rc, sink: s, text: text, attachments: atts, userSeq: user.Seq, memory: true, extra: answerExtra(t, bot, convo)})
+	env, err := m.prepare(ctx, prep{bot: bot, convo: convo.ID, rc: rc, sink: s, text: text, attachments: atts, userSeq: user.Seq, memory: true, extra: strings.TrimSpace(answerExtra(t, bot, convo, m.builtinSkills()) + "\n\n" + m.handoffsNote(convo.ID))})
 	if err != nil {
 		if ctx.Err() != nil {
 			return StatusCanceled, ""
@@ -347,11 +350,18 @@ func (m *Manager) loop(ctx context.Context, env *turnEnv) (string, string) {
 			asst.Parts = append(asst.Parts, llm.Part{Kind: llm.PartToolCall, ToolCallID: c.ID, ToolName: c.Name, Args: c.Args})
 		}
 		results := llm.Message{Role: llm.RoleTool}
+		asked := false
 		for _, c := range res.calls {
 			key := callKey(c)
 			if seen[key]++; seen[key] >= doomLoopRepeats {
 				env.sink.addPart(MsgPart{Type: PartNotice, Text: fmt.Sprintf("Stopped: the model kept repeating the same %s call without making progress.", c.Name)})
 				return StatusComplete, ""
+			}
+			if asked {
+				// One question at a time: the user answers before anything else happens.
+				results.Parts = append(results.Parts, llm.Part{Kind: llm.PartToolResult, ToolCallID: c.ID, ToolName: c.Name, IsError: true,
+					Text: "A question is already waiting for the user's answer; this call was not executed."})
+				continue
 			}
 			if used >= maxCalls {
 				results.Parts = append(results.Parts, llm.Part{Kind: llm.PartToolResult, ToolCallID: c.ID, ToolName: c.Name, IsError: true,
@@ -359,13 +369,18 @@ func (m *Manager) loop(ctx context.Context, env *turnEnv) (string, string) {
 				continue
 			}
 			used++
-			results.Parts = append(results.Parts, m.runTool(ctx, env, step, c))
+			part, q := m.runTool(ctx, env, step, c)
+			results.Parts = append(results.Parts, part)
+			asked = q
 			if ctx.Err() != nil {
 				return StatusCanceled, ""
 			}
 		}
 		if err := env.sink.checkpoint(); err != nil {
 			m.log.Warn("chat: checkpoint failed", "err", err)
+		}
+		if asked {
+			return StatusComplete, "" // the answer arrives as the next message
 		}
 		msgs = append(msgs, asst, results)
 	}
@@ -484,7 +499,8 @@ func drain(ch <-chan llm.Delta) {
 }
 
 // runTool executes one client tool call and records its row and parts on the message.
-func (m *Manager) runTool(ctx context.Context, env *turnEnv, step int, c llm.ToolCall) llm.Part {
+// A tool that shows the user a question reports it as asked: the turn must then end and wait for the answer.
+func (m *Manager) runTool(ctx context.Context, env *turnEnv, step int, c llm.ToolCall) (llm.Part, bool) {
 	row := MsgPart{Type: PartTool, ID: fmt.Sprintf("s%d-%s", step, c.ID), Name: c.Name, Status: "running"}
 	env.sink.upsertTool(row)
 	start := time.Now()
@@ -526,10 +542,12 @@ func (m *Manager) runTool(ctx context.Context, env *turnEnv, step int, c llm.Too
 		row.Summary = untrusted.Line(res.Text, toolSummaryBytes)
 	}
 	env.sink.upsertTool(row)
+	asked := false
 	for _, p := range res.Parts {
 		env.sink.addPart(p)
+		asked = asked || p.Type == PartQuestion
 	}
-	return part
+	return part, asked
 }
 
 // callTool runs a tool and converts a panic into an error: one broken tool must not take the daemon down.

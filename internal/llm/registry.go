@@ -29,6 +29,9 @@ type Descriptor struct {
 	// NoKey marks a provider that needs no API key (manifest auth "none"): it counts as
 	// connected while registered, nothing is stored, and Connect only validates.
 	NoKey bool
+	// Ready, when set on a NoKey provider, says whether it can be used right now (an account CLI that is installed
+	// and signed in) and, when not, what the user must do. It must be cheap and never block.
+	Ready func() (ok bool, detail string)
 	// Revision changes whenever the provider's configuration does (manifest digest). Cached
 	// model lists and test results from another revision are discarded.
 	Revision string

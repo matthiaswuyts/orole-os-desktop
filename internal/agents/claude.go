@@ -42,12 +42,37 @@ func (c Claude) Detect(ctx context.Context) Detection {
 	return d
 }
 
-func validPermissionMode(m string) error {
-	switch m {
-	case "", "default", "acceptEdits", "plan":
-		return nil
+// PermissionModes: Manual and YOLO map one to one. Auto is Claude Code's own classifier mode
+// when the installed build lists it, otherwise acceptEdits, which Orole reports as approximated.
+func (c Claude) PermissionModes(ctx context.Context, d Detection) []PermissionModeSupport {
+	auto := modeSupport(PermAuto, true, "This Claude Code has no auto mode; Auto approves file edits in the workspace and asks for everything else.")
+	if d.Installed && claudeSupportsAuto(ctx, d.Path) {
+		auto = modeSupport(PermAuto, false, "Claude Code's own classifier decides which actions are safe to run without asking.")
 	}
-	return fmt.Errorf("unsupported permission mode %q", m)
+	return []PermissionModeSupport{
+		modeSupport(PermManual, false, "Claude Code asks before anything that is not read-only."),
+		auto,
+		modeSupport(PermYolo, false, "Claude Code runs everything without asking."),
+	}
+}
+
+// claudePermissionMode maps an Orole mode onto a --permission-mode value. Manual is passed
+// explicitly: the CLI's built-in default can otherwise be auto.
+func claudePermissionMode(mode string, autoNative bool) (string, error) {
+	switch mode {
+	case "", PermManual:
+		return "default", nil
+	case PermAuto:
+		if autoNative {
+			return "auto", nil
+		}
+		return "acceptEdits", nil
+	case PermYolo:
+		return "bypassPermissions", nil
+	case PermPlan:
+		return "plan", nil
+	}
+	return "", fmt.Errorf("unsupported permission mode %q", mode)
 }
 
 func (c Claude) Start(ctx context.Context, h *Host, spec LaunchSpec) (Process, error) {
@@ -82,11 +107,18 @@ func (c Claude) Start(ctx context.Context, h *Host, spec LaunchSpec) (Process, e
 	if spec.Reasoning != "" {
 		args = append(args, "--effort", spec.Reasoning)
 	}
-	if spec.PermissionMode != "" && spec.PermissionMode != "default" {
-		args = append(args, "--permission-mode", spec.PermissionMode)
+	autoNative := spec.PermissionMode == PermAuto && claudeSupportsAuto(ctx, path)
+	permission, err := claudePermissionMode(spec.PermissionMode, autoNative)
+	if err != nil {
+		return nil, err
 	}
+	args = append(args, "--permission-mode", permission)
 	if spec.Mode == ModeTerminal {
 		return c.startTerminal(h, spec, path, args)
+	}
+	if spec.AllowYolo && spec.PermissionMode != PermYolo {
+		// Lets set_permission_mode reach bypassPermissions later; it does not activate it.
+		args = append(args, "--allow-dangerously-skip-permissions")
 	}
 	args, err = claudeStructuredArgs(h, spec, args)
 	if err != nil {
@@ -94,7 +126,7 @@ func (c Claude) Start(ctx context.Context, h *Host, spec LaunchSpec) (Process, e
 	}
 	args = append([]string{"-p", "--output-format", "stream-json", "--input-format", "stream-json", "--verbose",
 		"--permission-prompt-tool", "stdio"}, args...)
-	decoder := claudeDecoder{tools: make(map[string]ToolData)}
+	decoder := claudeDecoder{tools: make(map[string]ToolData), wantMode: permission}
 	p, err := startPipe(spec.Dir, path, args, decoder.decode)
 	if err != nil {
 		return nil, err
@@ -104,7 +136,22 @@ func (c Claude) Start(ctx context.Context, h *Host, spec LaunchSpec) (Process, e
 		return append(b, '\n')
 	}
 	p.encodeReply = encodeClaudeReply
-	return &claudeProc{pipeProc: p, decoder: &decoder}, nil
+	return &claudeProc{pipeProc: p, decoder: &decoder, autoNative: claudeSupportsAuto(ctx, path)}, nil
+}
+
+// SetPermissionMode is the stream-json set_permission_mode control request, acknowledged by the
+// CLI. bypassPermissions only works when the process was launched with
+// --allow-dangerously-skip-permissions; otherwise the conversation has to be resumed.
+func (p *claudeProc) SetPermissionMode(mode string) (bool, error) {
+	claudeMode, err := claudePermissionMode(mode, p.autoNative)
+	if err != nil {
+		return false, err
+	}
+	err = p.controlCall(map[string]any{"subtype": "set_permission_mode", "mode": claudeMode}, true, nil)
+	if err != nil && strings.Contains(err.Error(), "was not launched with") {
+		return false, ErrRestartRequired
+	}
+	return false, err
 }
 
 // Files keep arbitrary JSON, multiline prompts and large skill indexes out of command
@@ -220,7 +267,9 @@ type claudeMsg struct {
 	Subtype   string `json:"subtype"`
 	SessionID string `json:"session_id"`
 	Model     string `json:"model"`
-	Message   struct {
+	// PermissionMode is the mode Claude Code actually started in (system init).
+	PermissionMode string `json:"permissionMode"`
+	Message        struct {
 		ID         string          `json:"id"`
 		Role       string          `json:"role"`
 		Model      string          `json:"model"`
@@ -269,6 +318,8 @@ type claudeInput struct {
 type claudeProc struct {
 	*pipeProc
 	decoder *claudeDecoder
+	// autoNative is true when this Claude Code build has its own auto mode.
+	autoNative bool
 }
 
 func (p *claudeProc) AnswerInput(id string, answers []QuestionAnswer, cancel bool) error {
@@ -382,6 +433,8 @@ type claudeDecoder struct {
 	inputs    map[string]claudeInput // guarded by pipeProc.pmu
 	model     string
 	subagents map[string]SubagentData
+	// wantMode is the --permission-mode requested at launch; init reports what Claude Code did.
+	wantMode string
 }
 
 func (d *claudeDecoder) decode(p *pipeProc, line []byte) []Event {
@@ -420,6 +473,10 @@ func (d *claudeDecoder) decode(p *pipeProc, line []byte) []Event {
 		return d.askInput(p, m)
 	}
 	events := append(canceled, decodeClaudeMessage(p, m)...)
+	if m.Type == "system" && m.Subtype == "init" && m.PermissionMode != "" && d.wantMode != "" && m.PermissionMode != d.wantMode {
+		// Claude Code starts in Manual when auto mode is unavailable to the session.
+		events = append(events, Event{Kind: EvSystem, Text: fmt.Sprintf("Claude Code started in %s mode instead of the requested %s.", m.PermissionMode, d.wantMode)})
+	}
 	if m.Type == "system" && m.TaskID != "" && !m.Ambient {
 		switch m.Subtype {
 		case "task_started":

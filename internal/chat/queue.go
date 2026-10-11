@@ -53,6 +53,18 @@ type runState struct {
 	active string             // user message id of the active turn
 	queue  []turn
 	done   chan struct{} // closed when the worker exits
+	// paused holds the queue: the worker finishes the active turn, then waits instead of starting the next one.
+	paused bool
+	// wake nudges a worker that is waiting on a paused queue to look again (resume, cancel, a drained queue).
+	wake chan struct{}
+}
+
+// poke wakes the worker if it is waiting. It never blocks and may be called without m.mu.
+func (st *runState) poke() {
+	select {
+	case st.wake <- struct{}{}:
+	default:
+	}
 }
 
 // Send stores the user message immediately and starts a run, or queues the message behind the
@@ -202,7 +214,7 @@ func containsString(s []string, v string) bool {
 // startLocked launches the worker for a bot, first answering turns in order. The caller holds m.mu
 // and has verified there is no run.
 func (m *Manager) startLocked(botID string, turns ...turn) {
-	st := &runState{done: make(chan struct{}), queue: turns}
+	st := &runState{done: make(chan struct{}), wake: make(chan struct{}, 1), queue: turns}
 	m.runs[botID] = st
 	m.wg.Add(1)
 	go m.pump(botID, st)
@@ -214,6 +226,15 @@ func (m *Manager) pump(botID string, st *runState) {
 	ran := false
 	for {
 		m.mu.Lock()
+		if st.paused && len(st.queue) > 0 && !m.closed && m.ctx.Err() == nil {
+			m.mu.Unlock()
+			m.emit("chat.run", RunState{BotID: botID, Paused: true})
+			select {
+			case <-st.wake:
+			case <-m.ctx.Done():
+			}
+			continue
+		}
 		if len(st.queue) == 0 || m.closed {
 			left := st.queue // only after a shutdown: these turns will never run
 			st.queue = nil
@@ -298,8 +319,9 @@ func (m *Manager) Cancel(ctx context.Context, botID string) error {
 		return nil
 	}
 	dropped, cancel := st.queue, st.cancel
-	st.queue = nil
+	st.queue, st.paused = nil, false
 	m.mu.Unlock()
+	st.poke()
 	m.dropQueued(ctx, dropped)
 	if cancel != nil {
 		cancel()
@@ -312,6 +334,66 @@ func (m *Manager) dropQueued(ctx context.Context, turns []turn) {
 	for _, t := range turns {
 		m.cancelQueued(ctx, t, "Not sent: the reply before it was stopped.")
 	}
+}
+
+// PauseQueue holds the bot's waiting messages: the active reply finishes, then nothing new starts until
+// ResumeQueue. Pausing a bot that is idle is a no-op: there is nothing to hold.
+func (m *Manager) PauseQueue(_ context.Context, botID string) error {
+	m.mu.Lock()
+	st := m.runs[botID]
+	if st == nil || st.paused {
+		m.mu.Unlock()
+		return nil
+	}
+	st.paused = true
+	running := st.cancel != nil
+	m.mu.Unlock()
+	m.emit("chat.run", RunState{BotID: botID, Running: running, Paused: true})
+	return nil
+}
+
+// ResumeQueue lets a paused queue run again.
+func (m *Manager) ResumeQueue(_ context.Context, botID string) error {
+	m.mu.Lock()
+	st := m.runs[botID]
+	if st == nil || !st.paused {
+		m.mu.Unlock()
+		return nil
+	}
+	st.paused = false
+	running := st.cancel != nil
+	m.mu.Unlock()
+	st.poke()
+	m.emit("chat.run", RunState{BotID: botID, Running: running})
+	return nil
+}
+
+// CancelQueued drops one message that is still waiting in the bot's queue; the message is kept in the
+// conversation, marked canceled. A message that already started, or never waited, is left alone.
+func (m *Manager) CancelQueued(ctx context.Context, botID, messageID string) error {
+	m.mu.Lock()
+	st := m.runs[botID]
+	if st == nil {
+		m.mu.Unlock()
+		return notFoundf("That message is no longer waiting.")
+	}
+	var dropped []turn
+	st.queue = slices.DeleteFunc(st.queue, func(t turn) bool {
+		if t.userMsgID != messageID {
+			return false
+		}
+		dropped = append(dropped, t)
+		return true
+	})
+	m.mu.Unlock()
+	if len(dropped) == 0 {
+		return notFoundf("That message is no longer waiting.")
+	}
+	st.poke()
+	for _, t := range dropped {
+		m.cancelQueued(ctx, t, "Canceled before it was sent.")
+	}
+	return nil
 }
 
 // cancelQueued marks the user message of a turn that will never run as canceled, publishes it and
@@ -327,33 +409,6 @@ func (m *Manager) cancelQueued(ctx context.Context, t turn, reason string) {
 	}
 	if msg, err := m.store.getMessage(ctx, t.userMsgID); err == nil {
 		m.publishMessage(msg)
-	}
-}
-
-// abandonDelegated stops a delegated turn whose asker stopped waiting. A turn still in the queue is
-// removed and its message marked canceled; the active turn is canceled. It looks the turn up by
-// its user message id, so it never touches any other turn of the bot.
-func (m *Manager) abandonDelegated(ctx context.Context, botID, userMsgID string) {
-	m.mu.Lock()
-	st := m.runs[botID]
-	if st == nil {
-		m.mu.Unlock()
-		return
-	}
-	var cancel context.CancelFunc
-	queued, wasQueued := turn{}, false
-	if i := slices.IndexFunc(st.queue, func(t turn) bool { return t.userMsgID == userMsgID }); i >= 0 {
-		queued, wasQueued = st.queue[i], true
-		st.queue = slices.Delete(st.queue, i, i+1)
-	} else if st.active == userMsgID {
-		cancel = st.cancel
-	}
-	m.mu.Unlock()
-	if wasQueued {
-		m.cancelQueued(ctx, queued, "Not sent: the bot that asked stopped waiting for the result.")
-	}
-	if cancel != nil {
-		cancel()
 	}
 }
 
@@ -379,9 +434,10 @@ func (m *Manager) whenIdle(ctx context.Context, botID string, fn func() error) e
 			return fn()
 		}
 		dropped, cancel, done := st.queue, st.cancel, st.done
-		st.queue = nil
+		st.queue, st.paused = nil, false
 		m.mu.Unlock()
 		unlock()
+		st.poke()
 		m.dropQueued(ctx, dropped)
 		if cancel != nil {
 			cancel()

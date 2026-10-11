@@ -12,7 +12,7 @@ import { useProjects } from "@/stores/projects";
 import { useBoxes } from "@/stores/boxes";
 import { HomeAgentComposer } from "./HomeAgentComposer";
 const project: Project = { id: "notes", name: "Research", machineId: "local", path: "", remoteUrl: "", lastOpened: 0, createdAt: 0, worktreeRoot: "", worktreeRootCustom: false, missing: false, isGit: false };
-const harness: HarnessOption = { id: "codex", name: "Codex", available: true, executable: "codex", version: "1", reasoning: ["low", "high"], customModel: true, modes: ["structured"], structured: true, interactive: false, unavailableReason: "", models: [{ id: "model-a", name: "Model A", reasoning: ["low", "high"], default: true }, { id: "model-b", name: "Model B", reasoning: [], default: false }] };
+const harness: HarnessOption = { id: "codex", name: "Codex", available: true, executable: "codex", version: "1", reasoning: ["low", "high"], customModel: true, modes: ["structured"], structured: true, interactive: false, unavailableReason: "", permissionModes: [], models: [{ id: "model-a", name: "Model A", reasoning: ["low", "high"], default: true }, { id: "model-b", name: "Model B", reasoning: [], default: false }] };
 const options: LaunchOptions = { machine: "local", harnesses: [harness], projects: [], directories: [], worktree: true, unavailableReason: "" };
 beforeEach(() => {
  useDaemon.setState({ link: "connected", connectEpoch: 0 }); useHarnessOptionsCache.setState({ machines: {} });
@@ -146,4 +146,40 @@ it("retains preferred effort through unsupported models but remembers an explici
  fireEvent.change(screen.getByRole("slider", { name: "Reasoning effort" }), { target: { value: "0" } });
  view.unmount(); render(<HomeAgentComposer />); const start = await fill(); fireEvent.click(start);
  await waitFor(() => expect(api.start).toHaveBeenCalledWith(expect.objectContaining({ reasoning: "" })));
+});
+// Base UI ignores a release that follows the opening press too closely, so settle before choosing.
+async function pick(name: RegExp) {
+ const option = await screen.findByRole("option", { name }); await new Promise((resolve) => setTimeout(resolve, 400));
+ fireEvent.pointerUp(option, { button: 0, pointerType: "mouse" }); fireEvent.mouseUp(option, { button: 0 }); fireEvent.click(option);
+}
+it("launches in Manual by default and remembers Auto but never YOLO", async () => {
+ const modes = [{ mode: "manual", available: true, approximated: false, detail: "" }, { mode: "auto", available: true, approximated: false, detail: "Codex's auto-review decides." }, { mode: "yolo", available: true, approximated: false, detail: "" }];
+ api.options.mockResolvedValue({ ...options, harnesses: [{ ...harness, permissionModes: modes }] });
+ const { unmount } = render(<HomeAgentComposer />); const start = await fill();
+ expect(screen.getByRole("combobox", { name: "Permission mode: Manual" })).toBeVisible();
+ fireEvent.click(start);
+ await waitFor(() => expect(api.start).toHaveBeenLastCalledWith(expect.objectContaining({ permissionMode: "manual", confirmYolo: false })));
+ fireEvent.change(screen.getByLabelText("Task for your agent"), { target: { value: "Second task" } });
+ fireEvent.click(screen.getByRole("combobox", { name: "Permission mode: Manual" }));
+ await pick(/Auto/);
+ fireEvent.click(screen.getByRole("button", { name: "Start task" }));
+ await waitFor(() => expect(api.start).toHaveBeenLastCalledWith(expect.objectContaining({ permissionMode: "auto", confirmYolo: false })));
+ expect(localStorage.getItem("orole.task.permissionMode")).toBe("auto");
+ unmount(); render(<HomeAgentComposer />); await fill();
+ expect(await screen.findByRole("combobox", { name: "Permission mode: Auto" })).toBeVisible();
+ fireEvent.click(screen.getByRole("combobox", { name: "Permission mode: Auto" }));
+ await pick(/YOLO/);
+ expect(api.start).toHaveBeenCalledTimes(2);
+ fireEvent.click(await screen.findByRole("button", { name: "Enable YOLO" }));
+ await waitFor(() => expect(screen.getByRole("combobox", { name: "Permission mode: YOLO" })).toBeVisible());
+ fireEvent.click(screen.getByRole("button", { name: "Start task" }));
+ await waitFor(() => expect(api.start).toHaveBeenLastCalledWith(expect.objectContaining({ permissionMode: "yolo", confirmYolo: true })));
+ expect(localStorage.getItem("orole.task.permissionMode")).toBe("auto");
+});
+it("offers only Manual for an agent that reports no permission modes", async () => {
+ render(<HomeAgentComposer />); const start = await fill();
+ fireEvent.click(screen.getByRole("combobox", { name: "Permission mode: Manual" }));
+ expect(await screen.findByRole("option", { name: /Auto.*keeps its own approvals/ })).toHaveAttribute("aria-disabled", "true");
+ fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" }); fireEvent.click(start);
+ await waitFor(() => expect(api.start).toHaveBeenCalledWith(expect.objectContaining({ permissionMode: "manual", confirmYolo: false })));
 });

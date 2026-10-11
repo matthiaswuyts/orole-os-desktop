@@ -19,7 +19,7 @@ func (d *Daemon) registerChatMemory() {
 		return
 	}
 	store, err := memory.New(memory.Config{
-		DB: d.DB.DB, DataDir: d.DataDir, LLM: d.LLM, Skills: d.Skills, Delegator: m, Log: d.Log,
+		DB: d.DB.DB, DataDir: d.DataDir, LLM: d.LLM, Skills: d.Skills, Grants: m, Delegator: m, Log: d.Log,
 		Publish: func(event string, payload any) { d.IPC.Publish(event, payload) },
 		Audit:   d.audit,
 	})
@@ -94,26 +94,17 @@ func (d *Daemon) registerChatMemory() {
 		return none{}, chatError(err)
 	})
 
-	handle(d, "chat.skills.pending.list", func(ctx context.Context, p chat.BotRef) ([]chat.SkillProposal, error) {
-		out, err := store.Proposals(ctx, p.ID)
+	handle(d, "chat.skills.pending.get", func(ctx context.Context, p chat.SkillRef) (chat.SkillProposal, error) {
+		out, err := store.Proposal(ctx, p.ID)
 		return out, chatError(err)
 	})
 	handle(d, "chat.skills.pending.resolve", func(ctx context.Context, p chat.SkillResolve) (none, error) {
 		// The store audits approval and rejection. An approval changes the central registry, so
 		// subscribers of skills.changed (the skills page) are told as for any other save.
-		name := ""
-		if p.Approve {
-			if pending, err := store.Proposals(ctx, ""); err == nil {
-				for _, sp := range pending {
-					if sp.ID == p.ID {
-						name = sp.Name
-					}
-				}
-			}
-		}
+		proposal, _ := store.Proposal(ctx, p.ID)
 		err := store.ResolveSkill(ctx, p.ID, p.Approve)
-		if err == nil && p.Approve && name != "" {
-			d.skillsChanged("save", name)
+		if err == nil && p.Approve && proposal.Name != "" {
+			d.skillsChanged("save", proposal.Name)
 		}
 		return none{}, chatError(err)
 	})

@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
-import { Check, ImageOff, LoaderCircle } from "lucide-react";
+import { ImageOff } from "lucide-react";
 import { Agents } from "@/mygo";
 import type { ImageStatusData } from "@/lib/taskChatTypes";
 import { Dialog, DialogDescription, DialogHeader, DialogPanel, DialogPopup, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { ImageGeneration } from "@/components/assistant-ui/elements/image-generation";
 import { errText } from "@/features/agents/format";
 import type { FeedItem, ImageInfo } from "@/lib/taskEvents";
 import { useTaskCanvas } from "./TaskCanvasContext";
@@ -59,20 +60,23 @@ export function ImageCard({ sessionId, item }: { sessionId: string; item: Extrac
   return <TaskImage sessionId={sessionId} image={item.image} />;
 }
 
-// Adapted from BeUI image-generation, MIT © 2026 Saurabh Chauhan.
-// starc007/ui-components@cbc23255f962098a93a2c103d39e11f93b61d059,
-// components/agents/image-generation.tsx. Only observed stages; no demo timers,
-// refinement, synthetic pixels, default resolution, or unsupported regeneration.
+/**
+ * An image-generation tool call. While it runs the assistant-ui ImageGeneration frame holds the place (dot grid, shimmering
+ * "Generating", the prompt); once the artifact exists the real `TaskImage` takes over, since the element never takes an image.
+ * Only observed stages: no timers, synthetic pixels, resolution label, or regenerate button (there is no regenerate action).
+ * The status/media/footer composition is adapted from BeUI image-generation, MIT © 2026 Saurabh Chauhan,
+ * starc007/ui-components@cbc23255f962098a93a2c103d39e11f93b61d059, components/agents/image-generation.tsx.
+ */
 export function ImageGenerationCard({ generation, image, sessionId }: { generation: ImageStatusData; image?: ImageInfo; sessionId: string }) {
   const running = generation.status === "running";
   const failed = generation.status === "failed";
-  const label = running ? "Generating image" : failed ? "Generation failed" : "Generation complete";
-  const Icon = running ? LoaderCircle : failed ? ImageOff : Check;
-  return <div data-slot="image-generation" data-state={generation.status} aria-busy={running} className="w-full max-w-sm space-y-2">
-    {image ? <TaskImage sessionId={sessionId} image={image} /> : <div className="flex aspect-square max-w-72 items-center justify-center rounded-xl bg-muted"><Icon aria-hidden className={running ? "size-6 animate-spin text-muted-foreground motion-reduce:animate-none" : "size-6 text-muted-foreground"} /></div>}
-    <p role={failed ? "alert" : "status"} className="text-sm font-medium">{label}</p>
-    {!image && generation.prompt && <p className="selectable break-words text-xs text-muted-foreground">{generation.prompt}</p>}
-    {generation.error && <p className="selectable whitespace-pre-wrap break-words text-xs text-destructive-foreground">{generation.error}</p>}
-    {!running && !failed && !image && <p className="text-xs text-muted-foreground">No image artifact was supplied.</p>}
+  return <div data-slot="image-generation-card" data-state={generation.status} aria-busy={running} className="w-full max-w-sm space-y-2">
+    {image ? <TaskImage sessionId={sessionId} image={image} /> : running ? <ImageGeneration prompt={generation.prompt} generating /> : <>
+      <div aria-hidden className="flex aspect-square max-w-72 items-center justify-center rounded-xl bg-muted"><ImageOff className="size-6 text-muted-foreground" /></div>
+      <p role={failed ? "alert" : "status"} className="text-sm font-medium">{failed ? "Generation failed" : "Generation complete"}</p>
+      {generation.prompt && <p className="selectable break-words text-xs text-muted-foreground">{generation.prompt}</p>}
+      {!failed && <p className="text-xs text-muted-foreground">No image artifact was supplied.</p>}
+    </>}
+    {generation.error && <p role={failed ? undefined : "alert"} className="selectable whitespace-pre-wrap break-words text-xs text-destructive-foreground">{generation.error}</p>}
   </div>;
 }

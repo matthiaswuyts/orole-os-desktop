@@ -81,8 +81,9 @@ type Manager struct {
 	memory   Memory
 	tools    []Tool
 	sections []func(Bot) string
-	runs     map[string]*runState // active runs by bot id or "draft:<id>"
-	waits    map[string][]string  // bot id -> bots whose delegated answer its active run is blocked on
+	builtin  func() []string       // enabled built-in skill names every bot may use; nil when there is no registry
+	runs     map[string]*runState  // active runs by bot id or "draft:<id>"
+	handoffs map[string][]*handoff // bot id -> tasks it handed to other bots that have not reported back
 	idle     map[string]*idleJob
 	nonces   nonceCache
 	closed   bool
@@ -125,13 +126,13 @@ func New(cfg Config) (*Manager, error) {
 		cfg.IdleConsolidateAfter = defaultIdleAfter
 	}
 	m := &Manager{
-		cfg:     cfg,
-		log:     cfg.Log,
-		store:   &store{db: cfg.DB, now: cfg.Clock},
-		runs:    map[string]*runState{},
-		waits:   map[string][]string{},
-		idle:    map[string]*idleJob{},
-		catalog: map[string]catalogEntry{},
+		cfg:      cfg,
+		log:      cfg.Log,
+		store:    &store{db: cfg.DB, now: cfg.Clock},
+		runs:     map[string]*runState{},
+		handoffs: map[string][]*handoff{},
+		idle:     map[string]*idleJob{},
+		catalog:  map[string]catalogEntry{},
 	}
 	m.ctx, m.cancel = context.WithCancel(context.Background())
 	up, err := newUploads(cfg.DataDir, m.store, cfg.Clock)
@@ -173,6 +174,25 @@ func (m *Manager) AddPromptSection(fn func(bot Bot) string) {
 	m.mu.Lock()
 	m.sections = append(m.sections, fn)
 	m.mu.Unlock()
+}
+
+// SetBuiltinSkills registers the source of the built-in skill names: skills shipped with Orole that
+// every bot may use without being granted them (see tools.SkillsTool). It is used to accept them
+// when the user picks one with `/` in the composer.
+func (m *Manager) SetBuiltinSkills(fn func() []string) {
+	m.mu.Lock()
+	m.builtin = fn
+	m.mu.Unlock()
+}
+
+func (m *Manager) builtinSkills() []string {
+	m.mu.Lock()
+	fn := m.builtin
+	m.mu.Unlock()
+	if fn == nil {
+		return nil
+	}
+	return fn()
 }
 
 func (m *Manager) promptSections(bot Bot) []string {
@@ -284,6 +304,15 @@ func (m *Manager) SaveBot(ctx context.Context, in BotInput) (Bot, error) {
 	return m.Bot(ctx, b.ID)
 }
 
+// PinBot pins a bot to the top of the bot list, or unpins it.
+func (m *Manager) PinBot(ctx context.Context, id string, pinned bool) error {
+	if err := m.store.setPinned(ctx, id, pinned); err != nil {
+		return err
+	}
+	m.publishBot(id, "saved")
+	return nil
+}
+
 // setupKickoff is the hidden first message of a new bot: the model reads it, the user never sees it.
 const setupKickoff = "(The user just created you. Start the setup now: greet them and ask your first question.)"
 
@@ -333,6 +362,24 @@ func (m *Manager) isClosed() bool {
 	return m.closed
 }
 
+// GrantSkill adds a registry skill to a bot's own skills so the bot can read it, and does nothing when
+// it already has it. The bot's other settings are kept exactly as they are.
+func (m *Manager) GrantSkill(ctx context.Context, botID, name string) error {
+	b, err := m.store.getBot(ctx, botID, false)
+	if err != nil {
+		return err
+	}
+	if slices.Contains(b.Config.Skills, name) {
+		return nil
+	}
+	b.Config.Skills = append(slices.Clone(b.Config.Skills), name)
+	_, err = m.SaveBot(ctx, BotInput{
+		ID: b.ID, Name: b.Name, Avatar: b.Avatar, Color: b.Color, Description: b.Description, Instructions: b.Instructions,
+		Provider: b.Provider, Model: b.Model, Reasoning: b.Reasoning, Config: b.Config,
+	})
+	return err
+}
+
 // ArchiveBot stops the bot's run, then hides it. The conversation and memory are kept.
 func (m *Manager) ArchiveBot(ctx context.Context, id string) error {
 	err := m.whenIdle(ctx, id, func() error { return m.store.archiveBot(ctx, id) })
@@ -369,7 +416,7 @@ func (m *Manager) ImportBot(ctx context.Context, in BotExport) (Bot, error) {
 
 func portableInput(in BotInput) BotInput {
 	in.ID = ""
-	in.Config.MCPTools = nil
+	in.Config.MCPServers = nil
 	in.Config.Skills = nil
 	in.Config.Executive = false
 	in.Config.Memory = nil

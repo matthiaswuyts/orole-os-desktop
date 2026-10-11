@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { LIMITS, TOOL_IDS, copyName, fingerprint, formFromBot, initialForm, parseBotExport, tabOfProblem, toInput, validate, type FormState } from "./botForm";
+import { LIMITS, TOOL_IDS, copyName, fingerprint, formFromBot, initialForm, parseBotExport, toInput, validate, type FormState } from "./botForm";
 import { bot, config } from "./testing";
 
 const valid = (over: Partial<FormState> = {}): FormState => ({ ...initialForm(), name: "Planner", ...over });
@@ -30,11 +30,11 @@ describe("validate", () => {
     expect(validate(valid({ maxToolCalls: "2.5" })).maxToolCalls).toBeDefined();
   });
 
-  it("maps problems to the tab that holds the field", () => {
-    expect(tabOfProblem("name")).toBe("persona");
-    expect(tabOfProblem("maxSteps")).toBe("persona");
-    expect(tabOfProblem("mcpTools")).toBe("tools");
-    expect(tabOfProblem("skills")).toBe("tools");
+  it("limits integrations and skills to 50 each", () => {
+    const ids = (n: number) => Array.from({ length: n }, (_, i) => `id${i}`);
+    expect(validate(valid({ mcpServers: ids(LIMITS.mcpServers), skills: ids(LIMITS.skills) }))).toEqual({});
+    expect(validate(valid({ mcpServers: ids(LIMITS.mcpServers + 1) })).mcpServers).toBeDefined();
+    expect(validate(valid({ skills: ids(LIMITS.skills + 1) })).skills).toBeDefined();
   });
 });
 
@@ -67,7 +67,7 @@ describe("toInput", () => {
     const saved = bot("b1", {
       name: "Researcher", provider: "openrouter", model: "gpt-x", reasoning: "low",
       config: config({
-        tools: [{ id: "web_search" }], mcpTools: ["srv/tool"], skills: ["s"],
+        tools: [{ id: "web_search" }], mcpServers: ["srv"], skills: ["s"],
         memory: [{ scope: "user", read: true, write: false }], limits: { maxSteps: 5, maxToolCalls: 12 }, executive: true,
       }),
     });
@@ -95,6 +95,13 @@ describe("parseBotExport", () => {
       expect(parsed.value.bot.config.memory).toEqual([{ scope: "user", read: true, write: false }]);
       expect(parsed.value.bot.config.limits).toEqual({ maxSteps: 0, maxToolCalls: 0 });
     }
+  });
+
+  it("reads integrations and skills as plain id lists and skips anything else", () => {
+    const parsed = parseBotExport(doc({ bot: { name: "Imported", config: { mcpServers: ["srv", 3, "other"], skills: ["s", null] } } }));
+    if (!parsed.ok) throw new Error(parsed.error);
+    expect(parsed.value.bot.config.mcpServers).toEqual(["srv", "other"]);
+    expect(parsed.value.bot.config.skills).toEqual(["s"]);
   });
 
   it("rejects other versions, missing names and malformed input", () => {

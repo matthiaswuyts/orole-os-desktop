@@ -1,11 +1,15 @@
 import { create } from "zustand";
+import { useStoreWithEqualityFn } from "zustand/traditional";
 import { Chat, events, type Bot, type Message, type MessagePreview } from "@/mygo";
 import { inDesktop } from "@/lib/backend";
+import { onFocusRefresh } from "@/lib/focus";
 import { useDaemon } from "@/stores/daemon";
 import { useUI } from "@/stores/ui";
 
 const SELECTED_KEY = "orole.chat.selected";
 const PREVIEW_MAX = 160;
+/** Longest a streaming reply's rail preview may lag behind it. */
+const PREVIEW_INTERVAL = 1000;
 
 interface BuilderState {
   open: boolean;
@@ -70,6 +74,48 @@ let stop: (() => void) | undefined;
 /** Bots whose live state arrived by event while a list request was in flight; the (older) response must not overwrite them. */
 const touched = new Set<string>();
 
+/** Newest preview per bot not yet applied; a streaming reply sends a snapshot every ~50 ms but the rail only needs one a second. */
+const pending = new Map<string, MessagePreview>();
+let previewTimer: ReturnType<typeof setTimeout> | undefined;
+
+/** Applies every pending preview in one update that keeps untouched bots (and the array, if nothing changed) by reference. */
+function flushPreviews() {
+  if (pending.size === 0) return;
+  const batch = [...pending];
+  pending.clear();
+  useChat.setState((state) => {
+    let changed = false;
+    const bots = state.bots.map((bot) => {
+      const preview = batch.find(([id]) => id === bot.id)?.[1];
+      const shown = bot.lastMessage;
+      if (!preview || (shown && (shown.at > preview.at || (shown.at === preview.at && shown.role === preview.role && shown.text === preview.text)))) return bot;
+      changed = true;
+      return { ...bot, lastMessage: preview };
+    });
+    return changed ? { bots: sortBots(bots) } : state;
+  });
+}
+
+/** A settled message applies at once; streaming snapshots apply immediately when idle, then at most once per `PREVIEW_INTERVAL`. */
+function queuePreview(botId: string, preview: MessagePreview, settled: boolean) {
+  pending.set(botId, preview);
+  if (settled) { flushPreviews(); return; }
+  if (previewTimer !== undefined) return;
+  flushPreviews();
+  const tick = () => {
+    if (pending.size === 0) { previewTimer = undefined; return; }
+    flushPreviews();
+    previewTimer = setTimeout(tick, PREVIEW_INTERVAL);
+  };
+  previewTimer = setTimeout(tick, PREVIEW_INTERVAL);
+}
+
+function dropPreviews() {
+  clearTimeout(previewTimer);
+  previewTimer = undefined;
+  pending.clear();
+}
+
 /** The daemon owns bots and conversations. This is a disposable, event-synchronized snapshot for the rail. */
 export const useChat = create<ChatState>((set, get) => ({
   bots: [], selectedBotId: readSelected(), running: {}, builder: { open: false, botId: null }, settingsOpen: false,
@@ -111,15 +157,11 @@ export const useChat = create<ChatState>((set, get) => ({
       const offMessage = events.chatMessage.on((message) => {
         touched.add(message.botId);
         const preview = previewOf(message);
-        if (!preview) return;
-        set((state) => {
-          const bot = state.bots.find((b) => b.id === message.botId);
-          if (!bot || (bot.lastMessage && bot.lastMessage.at > preview.at)) return state;
-          return { bots: sortBots(state.bots.map((b) => b === bot ? { ...b, lastMessage: preview } : b)) };
-        });
+        if (preview) queuePreview(message.botId, preview, message.status !== "running");
       });
       const offBot = events.chatBot.on(({ id, action }) => {
         if (action === "archived") {
+          pending.delete(id);
           set((state) => {
             if (state.selectedBotId === id) writeSelected(null);
             const running = { ...state.running };
@@ -131,6 +173,7 @@ export const useChat = create<ChatState>((set, get) => ({
             };
           });
         } else if (action === "cleared") {
+          pending.delete(id);
           set((state) => ({ bots: sortBots(state.bots.map((b) => b.id === id ? { ...b, lastMessage: undefined } : b)) }));
         }
         refresh();
@@ -142,9 +185,9 @@ export const useChat = create<ChatState>((set, get) => ({
           set({ ready: false, loading: false, error: "The daemon is offline. Reconnect to chat with your bots." });
         }
       });
-      window.addEventListener("focus", refresh);
+      const offFocus = onFocusRefresh(refresh);
       refresh();
-      stop = () => { offRun(); offMessage(); offBot(); offDaemon(); window.removeEventListener("focus", refresh); };
+      stop = () => { offRun(); offMessage(); offBot(); offDaemon(); offFocus(); dropPreviews(); };
     }
     let stopped = false;
     return () => {
@@ -171,7 +214,16 @@ export const useChat = create<ChatState>((set, get) => ({
   setSettingsOpen: (settingsOpen) => set({ settingsOpen }),
 }));
 
-/** The bot whose conversation is open, if it still exists. */
+/** Fields a conversation depends on; `running` and the rail preview are derived and change while a reply streams. */
+const sameBot = (a: Bot | undefined, b: Bot | undefined): boolean => {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  const { running: _ar, lastMessage: _al, ...restA } = a;
+  const { running: _br, lastMessage: _bl, ...restB } = b;
+  return (Object.keys(restA) as (keyof typeof restA)[]).every((key) => restA[key] === restB[key]);
+};
+
+/** The bot whose conversation is open, if it still exists. Stable while only its rail preview or running flag changes. */
 export function useSelectedBot(): Bot | undefined {
-  return useChat((state) => state.bots.find((b) => b.id === state.selectedBotId));
+  return useStoreWithEqualityFn(useChat, (state) => state.bots.find((b) => b.id === state.selectedBotId), sameBot);
 }
