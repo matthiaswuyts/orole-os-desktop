@@ -38,10 +38,16 @@ export const Composer = memo(function Composer({ bot, running }: { bot: Bot; run
   const targets = useMentionTargets(bot);
   const mirror = useRef<HTMLDivElement>(null);
 
-  // The composer lives and dies with the bot's conversation; its text is kept per bot in the store.
+  // The composer lives and dies with the bot's conversation; its text is kept per bot in the store, and text put in
+  // the draft from elsewhere (Add to chat on a selected passage) shows up in the box.
+  // Subscribed outside render: every keystroke changes the draft, and it would otherwise cost a second render each.
   useEffect(() => {
-    const text = useChatDrafts.getState().drafts[bot.id]?.text;
-    if (text) aui.composer.setText(text);
+    const sync = (text: string) => { if (text !== aui.composer.getState().text) aui.composer.setText(text); };
+    sync(useChatDrafts.getState().drafts[bot.id]?.text ?? "");
+    return useChatDrafts.subscribe((state, previous) => {
+      const text = state.drafts[bot.id]?.text ?? "";
+      if (text !== (previous.drafts[bot.id]?.text ?? "")) sync(text);
+    });
   }, [aui, bot.id]);
 
   const send = () => { if (canSend) aui.composer.send(); };
@@ -86,7 +92,7 @@ export const Composer = memo(function Composer({ bot, running }: { bot: Bot; run
           <MentionHighlight text={text} targets={targets} mirrorRef={mirror} />
           <ComposerPrimitive.Input
             aria-label={`Message ${bot.name}`}
-            placeholder={research ? "What should I research?" : `Message ${bot.name}`}
+            placeholder={research ? "What should I research?" : running ? `Queue a message for ${bot.name}` : `Message ${bot.name}`}
             submitMode="none"
             rows={1}
             maxRows={8}
@@ -103,12 +109,9 @@ export const Composer = memo(function Composer({ bot, running }: { bot: Bot; run
             }}
           />
         </div>
-        {running
-          ? <Button type="button" size="icon-lg" className="rounded-full" aria-label="Stop" onClick={() => void useChatMessages.getState().cancel(bot.id)}><SquareIcon aria-hidden className="fill-current" /></Button>
-          : <>
-            {(!hasContent || dictating) && <ComposerVoice compact disabled={false} onActiveChange={setDictating} onTranscript={addDictation} />}
-            {hasContent && !dictating && <Button type="button" size="icon-lg" className="rounded-full" aria-label="Send message" disabled={!canSend} onClick={send}><ArrowUpIcon aria-hidden /></Button>}
-          </>}
+        {running && <Button type="button" size="icon-lg" className="rounded-full" aria-label="Stop" variant={hasContent ? "secondary" : "default"} onClick={() => void useChatMessages.getState().cancel(bot.id)}><SquareIcon aria-hidden className="fill-current" /></Button>}
+        {!running && (!hasContent || dictating) && <ComposerVoice compact disabled={false} onActiveChange={setDictating} onTranscript={addDictation} />}
+        {hasContent && !dictating && <Button type="button" size="icon-lg" className="rounded-full" aria-label={running ? "Queue message" : "Send message"} disabled={!canSend} onClick={send}><ArrowUpIcon aria-hidden /></Button>}
       </div>
     </ComposerPrimitive.AttachmentDropzone>
     {failed && <p role="status" className="px-1 text-xs text-muted-foreground">Remove files that could not be attached to send your message.</p>}

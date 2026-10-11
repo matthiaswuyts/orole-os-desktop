@@ -4,6 +4,7 @@ import type { Bot, BotChange, Message, RunState, SendRequest } from "@/mygo";
 
 const bridge = vi.hoisted(() => ({
   messages: vi.fn(), send: vi.fn(), cancel: vi.fn(), regenerate: vi.fn(), clear: vi.fn(), exportBot: vi.fn(),
+  pauseQueue: vi.fn(), resumeQueue: vi.fn(), cancelQueued: vi.fn(),
   begin: vi.fn(), chunk: vi.fn(), commit: vi.fn(), discard: vi.fn(),
   run: null as ((s: RunState) => void) | null,
   message: null as ((m: Message) => void) | null,
@@ -13,10 +14,11 @@ vi.mock("@/lib/backend", () => ({ inDesktop: true }));
 vi.mock("@/mygo", () => ({
   Chat: {
     messages: bridge.messages, send: bridge.send, cancel: bridge.cancel, regenerate: bridge.regenerate, clear: bridge.clear, exportBot: bridge.exportBot,
+    pauseQueue: bridge.pauseQueue, resumeQueue: bridge.resumeQueue, cancelQueued: bridge.cancelQueued,
     beginAttachment: bridge.begin, attachmentChunk: bridge.chunk, commitAttachment: bridge.commit, discardAttachment: bridge.discard,
   },
   LLM: { models: vi.fn() },
-  Skills: { list: () => Promise.resolve([{ name: "pdf", description: "Read PDFs", enabled: true }]) },
+  Skills: { list: () => Promise.resolve([{ name: "pdf", description: "Read PDFs", enabled: true }, { name: "skill-creator", description: "Make skills", enabled: true, source: "builtin" }]) },
   Daemon: { health: vi.fn() },
   Shell: { openExternal: vi.fn() },
   events: {
@@ -36,7 +38,7 @@ import { useLLM } from "@/stores/llm";
 
 const bot = (over: Partial<Bot> = {}): Bot => ({
   id: "a", name: "Atlas", avatar: "", color: "blue", description: "Plans trips", instructions: "", provider: "openrouter", model: "claude", reasoning: "",
-  config: { tools: [], mcpTools: [], skills: [], memory: [], limits: { maxSteps: 0, maxToolCalls: 0 } },
+  config: { tools: [], mcpServers: [], skills: [], memory: [], limits: { maxSteps: 0, maxToolCalls: 0 } },
   createdAt: 1, updatedAt: 1, running: false, ...over,
 });
 const withTools = (...ids: string[]) => bot({ config: { ...bot().config, tools: ids.map((id) => ({ id })) } });
@@ -53,7 +55,7 @@ beforeEach(() => {
   vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
   useDaemon.setState({ link: "connected" });
   useChat.setState({ bots: [bot()], selectedBotId: "a", running: {}, builder: { open: false, botId: null }, settingsOpen: false, available: true, ready: true, loading: false, error: null });
-  useChatMessages.setState({ byBot: {}, runs: {}, problems: {} });
+  useChatMessages.setState({ byBot: {}, runs: {}, paused: {}, problems: {} });
   useChatDrafts.setState({ drafts: {} });
   Element.prototype.scrollTo = () => {};
   useLLM.setState({
@@ -77,11 +79,11 @@ const box = () => screen.getByRole("textbox", { name: "Message Atlas" }) as HTML
 const type = (text: string) => fireEvent.change(box(), { target: { value: text } });
 
 describe("conversation rendering", () => {
-  it("shows the bot, its description and a plain prompt when there are no messages", async () => {
+  it("shows the bot and a plain prompt when there are no messages", async () => {
     await open();
     const empty = document.querySelector("[data-slot=conversation-empty]") as HTMLElement;
     expect(within(empty).getByText("Atlas")).toBeInTheDocument();
-    expect(within(empty).getByText("Plans trips")).toBeInTheDocument();
+    expect(within(empty).queryByText("Plans trips")).toBeNull();
     expect(within(empty).getByText("Say hello to start the conversation.")).toBeInTheDocument();
   });
 
@@ -94,12 +96,29 @@ describe("conversation rendering", () => {
     expect(screen.getByText("Atlas said:")).toBeInTheDocument();
   });
 
-  it("dims a queued user message and labels it", async () => {
+  it("lists a waiting message in the queue above the composer instead of the thread", async () => {
     await open([msg(1), msg(2), msg(3, { status: "pending" })]);
-    const queued = screen.getByText("question 3").closest("[data-slot=chat-user]")!;
-    expect(queued).toHaveAttribute("data-queued", "true");
-    expect(within(queued as HTMLElement).getByText("Queued")).toBeInTheDocument();
-    expect(screen.getByText("question 1").closest("[data-slot=chat-user]")).not.toHaveAttribute("data-queued");
+    const queue = screen.getByRole("region", { name: "Queued messages" });
+    expect(within(queue).getByText("question 3")).toBeInTheDocument();
+    expect(screen.getAllByText("question 3")).toHaveLength(1);
+    expect(screen.getByText("question 1")).toBeInTheDocument();
+  });
+
+  it("cancels one waiting message, and pauses and resumes the queue", async () => {
+    bridge.cancelQueued.mockResolvedValue(undefined);
+    bridge.pauseQueue.mockResolvedValue(undefined);
+    bridge.resumeQueue.mockResolvedValue(undefined);
+    await open([msg(1), msg(2), msg(3, { status: "pending" }), msg(5, { status: "pending", parts: [{ type: "text", text: "question 5" }] })]);
+    const queue = screen.getByRole("region", { name: "Queued messages" });
+    fireEvent.click(within(queue).getByRole("button", { name: "Cancel queued message: question 5" }));
+    await waitFor(() => expect(bridge.cancelQueued).toHaveBeenCalledWith({ botId: "a", messageId: "m5" }));
+
+    fireEvent.click(within(queue).getByRole("button", { name: "Pause" }));
+    await waitFor(() => expect(bridge.pauseQueue).toHaveBeenCalledWith("a"));
+    act(() => bridge.run!({ botId: "a", running: false, paused: true }));
+    expect(await within(queue).findByText(/Paused/)).toBeInTheDocument();
+    fireEvent.click(within(queue).getByRole("button", { name: "Resume" }));
+    await waitFor(() => expect(bridge.resumeQueue).toHaveBeenCalledWith("a"));
   });
 
   it("replaces a streaming reply in place as snapshots arrive", async () => {
@@ -203,19 +222,25 @@ describe("composer", () => {
     expect(bridge.send).not.toHaveBeenCalled();
   });
 
-  it("shows only Stop while a reply runs, and Enter still queues a message", async () => {
+  it("offers Stop and Queue while a reply runs, and Enter queues a message", async () => {
     bridge.send.mockResolvedValue(msg(3, { status: "pending" }));
     await open([msg(1), msg(2, { status: "running", parts: [{ type: "text", text: "thinking" }] })]);
     act(() => bridge.run!({ botId: "a", running: true }));
-    type("one more thing");
     expect(await screen.findByRole("button", { name: "Stop" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Send message" })).toBeNull();
+    type("one more thing");
+    expect(await screen.findByRole("button", { name: "Queue message" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Dictate a message" })).toBeNull();
     fireEvent.keyDown(box(), { key: "Enter" });
     await waitFor(() => expect(bridge.send).toHaveBeenCalledTimes(1));
+    expect(within(await screen.findByRole("region", { name: "Queued messages" })).getByText("question 3")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Stop" }));
     await waitFor(() => expect(bridge.cancel).toHaveBeenCalledWith("a"));
-    expect(await screen.findByText("Queued")).toBeInTheDocument();
+  });
+
+  it("shows text put in the draft from elsewhere in the message box", async () => {
+    await open([msg(1), msg(2)]);
+    act(() => useChatDrafts.getState().setDraft("a", { text: "> quoted\n\n" }));
+    await waitFor(() => expect(box().value).toBe("> quoted\n\n"));
   });
 
   it("keeps each bot's draft while another is open", async () => {
@@ -414,6 +439,17 @@ describe("mentions, structured output and search", () => {
     await waitFor(() => expect(bridge.send).toHaveBeenCalledTimes(1));
     expect(bridge.send.mock.calls[0]![0]).toMatchObject({ text: "/pdf summarise this", skills: ["pdf"] });
     expect(bridge.send.mock.calls[0]![0]).not.toHaveProperty("mentions");
+  });
+
+  it("offers the built-in skill-creator to a bot that was given no skills", async () => {
+    withCoach();
+    bridge.send.mockResolvedValue(msg(3));
+    await open();
+    await act(async () => {}); // let the registry list arrive: built-in skills come from it, not from the bot
+    type("/skill-creator make me a skill");
+    fireEvent.keyDown(box(), { key: "Enter" });
+    await waitFor(() => expect(bridge.send).toHaveBeenCalledTimes(1));
+    expect(bridge.send.mock.calls[0]![0]).toMatchObject({ skills: ["skill-creator"] });
   });
 
   it("draws mentions in a sent message as chips with the bot's avatar and no raw trigger", async () => {

@@ -45,6 +45,8 @@ type Config struct {
 	LLM llm.Service
 	// Skills is the central registry proposals are saved into on approval; nil disables propose_skill.
 	Skills *skills.Store
+	// Grants gives a bot an approved skill; nil leaves the skill in the registry only.
+	Grants SkillGranter
 	// Delegator runs ask_bot; it may be attached later with SetDelegator. Without one ask_bot is not offered.
 	Delegator chat.Delegator
 	// Publish delivers the chat.memory event. Must not block.
@@ -53,9 +55,6 @@ type Config struct {
 	Audit func(action, target, outcome, detail string)
 	Log   *slog.Logger
 	Now   func() time.Time
-	// AskTimeout bounds one ask_bot call, which covers the whole delegated run including any time
-	// it waits behind the callee's other work (default 20 minutes: a researcher legitimately takes minutes).
-	AskTimeout time.Duration
 }
 
 // Store is the memory subsystem. It implements chat.Memory.
@@ -92,9 +91,6 @@ func New(cfg Config) (*Store, error) {
 	}
 	if s.now == nil {
 		s.now = time.Now
-	}
-	if s.cfg.AskTimeout <= 0 {
-		s.cfg.AskTimeout = 20 * time.Minute
 	}
 	s.base, s.cancel = context.WithCancel(context.Background())
 	s.retriever = ftsRetriever{db: cfg.DB}
@@ -173,19 +169,10 @@ type querier interface {
 	QueryRowContext(ctx context.Context, q string, args ...any) *sql.Row
 }
 
-// writeTx starts a transaction that holds SQLite's write lock from the first statement. A deferred
-// transaction that reads first and writes later can fail with SQLITE_BUSY_SNAPSHOT when another
-// writer committed in between; taking the lock up front makes the busy timeout apply instead.
+// writeTx starts a write transaction. The pool opens transactions with _txlock=immediate, so the
+// write lock is held from BEGIN and the busy timeout applies instead of SQLITE_BUSY_SNAPSHOT.
 func (s *Store) writeTx(ctx context.Context) (*sql.Tx, error) {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return nil, err
-	}
-	if _, err := tx.ExecContext(ctx, `UPDATE memory_scopes SET name = name WHERE 0`); err != nil {
-		_ = tx.Rollback()
-		return nil, err
-	}
-	return tx, nil
+	return s.db.BeginTx(ctx, nil)
 }
 
 func placeholders(n int) string {

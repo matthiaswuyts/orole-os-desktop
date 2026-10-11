@@ -140,8 +140,71 @@ describe("message parts", () => {
     expect(screen.getByText("2 KB")).toBeInTheDocument();
   });
 
-  it("shows typing dots for a running reply that has produced nothing", () => {
-    view(message([], { status: "running" }));
-    expect(document.querySelector("[data-slot=typing-indicator]")).not.toBeNull();
+  describe("working line", () => {
+    const working = () => document.querySelector("[data-slot=working-status]");
+
+    it("says what a running reply is doing, from the first moment to the last", () => {
+      const { unmount } = view(message([], { status: "running" }));
+      expect(working()).toHaveTextContent("Thinking…");
+      unmount();
+      view(message([{ type: "tool", id: "t1", name: "web_search", status: "running", summary: "q" }], { status: "running" }));
+      expect(working()).toHaveTextContent("Searching the web…");
+    });
+
+    it("keeps saying it is thinking between tool calls, then that it is writing", () => {
+      const done = { type: "tool", id: "t1", name: "orole_get_skill", status: "done", summary: "grill-me" } as const;
+      const { unmount } = view(message([done], { status: "running" }));
+      expect(working()).toHaveTextContent("Thinking…");
+      unmount();
+      view(message([done, { type: "text", text: "Here is" }], { status: "running" }));
+      expect(working()).toHaveTextContent("Writing the reply…");
+    });
+
+    it("names the bot a reply is waiting for, and a queued reply as starting", () => {
+      const { unmount } = view(message([{ type: "delegation", id: "d1", name: "Coder", status: "running" }], { status: "running" }));
+      expect(working()).toHaveTextContent("Waiting for Coder…");
+      unmount();
+      view(message([], { status: "pending" }));
+      expect(working()).toHaveTextContent("Starting…");
+    });
+
+    it("adds the elapsed time once the work has gone on for a few seconds", () => {
+      const { unmount } = view(message([], { status: "running", createdAt: Date.now() - 1000 }));
+      expect(document.querySelector("[data-slot=working-elapsed]")).toBeNull();
+      unmount();
+      view(message([], { status: "running", createdAt: Date.now() - 75_000 }));
+      expect(document.querySelector("[data-slot=working-elapsed]")).toHaveTextContent("1m 15s");
+    });
+
+    it("is gone once the reply has settled", () => {
+      view(message([{ type: "text", text: "Done." }], { status: "complete" }));
+      expect(working()).toBeNull();
+    });
+
+    it("labels skill and visual tools in plain words", () => {
+      view(message([{ type: "tool", id: "t1", name: "orole_get_skill", status: "done", summary: "x" }, { type: "tool", id: "t2", name: "show_table", status: "running" }], { status: "running" }));
+      expect(working()).toHaveTextContent("Preparing a visual…");
+    });
+  });
+});
+
+describe("report-back messages", () => {
+  it("draws what another bot reported back as a collapsed card naming that bot", () => {
+    const report = message([{ type: "text", text: "Grok Bot is a new app from Acme." }], { role: "user", author: "report:r" });
+    render(<ChatMessageView message={report} botName="Atlas" botAvatar="" bots={[{ id: "r", name: "Researcher", avatar: "" }]} />);
+    expect(screen.getByText("Researcher reported back")).toBeInTheDocument();
+    expect(screen.queryByText(/Handoff by/)).toBeNull();
+    expect(screen.getByText("Grok Bot is a new app from Acme.")).toBeInTheDocument();
+  });
+});
+
+describe("quoted user messages", () => {
+  it("draws the quoted passage as a quote above the request", () => {
+    const sent = message([{ type: "text", text: "> I wrote this in a neutral register.\n\nExplain this selected text." }], { role: "user", author: "user" });
+    render(<ChatMessageView message={sent} botName="Atlas" botAvatar="" />);
+    const quote = document.querySelector("[data-slot=chat-quote]") as HTMLElement;
+    expect(quote).toHaveTextContent("I wrote this in a neutral register.");
+    expect(screen.getByText("Explain this selected text.")).toBeInTheDocument();
+    expect(screen.queryByText(/^>/)).toBeNull();
   });
 });

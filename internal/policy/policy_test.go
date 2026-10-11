@@ -91,7 +91,7 @@ func TestDefaults(t *testing.T) {
 func TestTaskSubmissionPermissions(t *testing.T) {
 	e, _, _ := newEngine(t)
 	ctx := context.Background()
-	for _, action := range []string{"agent.start", "agent.prompt", "agent.restart"} {
+	for _, action := range []string{"agent.start", "agent.prompt", "agent.restart", "agent.permissionMode"} {
 		for _, actor := range []string{"user", "agent:1", "automation:1", "system"} {
 			req := Request{Actor: actor, Action: action, Resource: "local:project", Effect: EffectDestructive}
 			ev, err := e.Decide(ctx, req)

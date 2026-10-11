@@ -66,14 +66,13 @@ type Memory interface {
 	Consolidate(ctx context.Context, botID string) error
 }
 
-// Delegator lets ask_bot hand work to another bot without importing the engine.
+// Delegator lets ask_bot hand off work to another bot without importing the engine.
 type Delegator interface {
-	// Ask makes the callee bot carry out question as a real turn of its own conversation (stored
-	// messages, live events, its own memory and tools, queued behind anything it is already doing)
-	// and returns its final text. from.Chain must hold the chain of the delegating run plus the
-	// delegating bot. Ask blocks until the callee finishes or ctx ends; when ctx ends first it stops
-	// the delegated turn and returns ctx.Err().
-	Ask(ctx context.Context, from RunContext, calleeID, question string) (string, error)
+	// Handoff gives task to the callee bot as a real turn of its own conversation (stored messages, live events, its
+	// own memory and tools, queued behind anything it is already doing) and returns once it is queued: the delegating
+	// run is not blocked. When the callee finishes, its outcome is delivered to the delegating bot as a report.
+	// from.Chain must hold the chain of the delegating run plus the delegating bot.
+	Handoff(ctx context.Context, from RunContext, calleeID, task string) error
 }
 
 // Fence wraps untrusted text so the model treats it as data. Engines and tools use this one function.

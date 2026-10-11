@@ -9,9 +9,10 @@ import { MathBlock, type MathStep } from "@/components/assistant-ui/elements/mat
 import { SpecSheet, type SpecRow } from "@/components/assistant-ui/elements/spec-sheet";
 import { Timeline, type TimelineEvent } from "@/components/assistant-ui/elements/timeline";
 import type { MsgPart } from "@/mygo";
+import { SkillProposalCard, type SkillProposalSpec } from "./SkillProposalCard";
 
-/** The component kinds the daemon's show_* tools emit (internal/chat/tools/show.go). */
-export const UI_KINDS = ["table", "chart", "diagram", "flow", "math", "spec", "comparison", "timeline", "job"] as const;
+/** The component kinds the daemon's show_* tools emit (internal/chat/tools/show.go) plus `skill`, the proposal card of the propose_skill tool. */
+export const UI_KINDS = ["table", "chart", "diagram", "flow", "math", "spec", "comparison", "timeline", "job", "skill"] as const;
 export type UIKind = (typeof UI_KINDS)[number];
 
 interface DiagramNode { id: string; label: string; x: number; y: number; width: number; height: number; shape?: "box" | "round" | "pill" }
@@ -111,6 +112,8 @@ function View({ kind, spec }: { kind: string; spec: Record<string, any> }) { // 
     }
     case "job":
       return <JobProgress title={spec.title} stages={spec.stages as JobStage[]} stageIndex={spec.stageIndex} stageProgress={spec.stageProgress} eta={spec.eta ?? ""} elapsedMs={spec.elapsedMs} outcome={spec.outcome} />;
+    case "skill":
+      return <SkillProposalCard spec={spec as SkillProposalSpec} />;
     default:
       return null;
   }

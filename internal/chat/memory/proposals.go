@@ -13,39 +13,16 @@ import (
 	"github.com/rayorole/orole-os-desktop/internal/skills"
 )
 
-// Skill proposals: a bot may suggest a reusable skill, but the proposal is only a database row until
-// the user approves it. Approval writes it into the central registry (which syncs it to coding
-// agents), under a name prefixed with the bot's slug, with the source "chat:<bot id>".
+// Skill proposals: a bot may offer a reusable skill, shown to the user as a card in the conversation.
+// The proposal is only a database row until the user presses Add on the card; then ResolveSkill saves
+// it into the central registry (which syncs it to coding agents) and gives it to the proposing bot, so
+// the bot can use it at once. Dismissing the card rejects it. The registry skill carries the source
+// "chat:<bot id>", which lets the same bot update its own skill later and nobody else's.
 const (
-	maxPendingProposals = 3
+	maxPendingProposals = 10
 	maxProposalBody     = 32 << 10
-	maxProposalDesc     = 300
-	maxBotSlug          = 20
+	maxProposalDesc     = 1024
 )
-
-// botSlug turns a bot name into a registry-safe prefix.
-func botSlug(name string) string {
-	var b strings.Builder
-	dash := true
-	for _, r := range strings.ToLower(name) {
-		switch {
-		case r >= 'a' && r <= 'z' || r >= '0' && r <= '9':
-			b.WriteRune(r)
-			dash = false
-		case !dash:
-			b.WriteByte('-')
-			dash = true
-		}
-		if b.Len() >= maxBotSlug {
-			break
-		}
-	}
-	s := strings.Trim(b.String(), "-")
-	if s == "" {
-		return "bot"
-	}
-	return s
-}
 
 func skillSource(botID string) string { return "chat:" + botID }
 
@@ -55,104 +32,106 @@ func composeSkill(name, description, body string) string {
 	return "---\nname: " + name + "\ndescription: '" + strings.ReplaceAll(description, "'", "''") + "'\n---\n\n" + strings.TrimSpace(body) + "\n"
 }
 
-// Propose validates and stores a pending proposal for bot.
-func (s *Store) Propose(ctx context.Context, bot chat.Bot, name, description, body string) (chat.SkillProposal, error) {
+// SkillGranter gives a bot a registry skill it can read. chat.Manager implements it.
+type SkillGranter interface {
+	GrantSkill(ctx context.Context, botID, name string) error
+}
+
+// checkNameFree rejects a name that belongs to someone else's registry skill and reports whether the
+// bot is updating a skill it created before.
+func (s *Store) checkNameFree(name, botID string) (updates bool, err error) {
+	existing, err := s.cfg.Skills.Get(name)
+	switch {
+	case errors.Is(err, skills.ErrNotFound):
+		return false, nil
+	case err != nil:
+		return false, invalidf("%s", err)
+	case existing.Source != skillSource(botID):
+		return false, invalidf("a skill named %q already exists and was not created by you; choose a different name", name)
+	}
+	return true, nil
+}
+
+// Propose validates and stores a pending proposal for bot. A newer proposal under the same name
+// replaces the bot's earlier pending one, so a revised draft never conflicts with itself. The result
+// says whether it updates a skill the bot created before.
+func (s *Store) Propose(ctx context.Context, bot chat.Bot, name, description, body string) (p chat.SkillProposal, updates bool, err error) {
 	if s.cfg.Skills == nil {
-		return chat.SkillProposal{}, invalidf("the skills registry is unavailable")
+		return p, false, invalidf("the skills registry is unavailable")
 	}
-	slug := botSlug(bot.Name)
-	short := strings.ToLower(strings.TrimSpace(name))
-	short = strings.TrimPrefix(short, slug+"-")
-	if err := skills.ValidName(short); err != nil {
-		return chat.SkillProposal{}, invalidf("%s", strings.TrimPrefix(err.Error(), skills.ErrInvalid.Error()+": "))
-	}
-	full := slug + "-" + short
+	full := strings.ToLower(strings.TrimSpace(name))
 	if err := skills.ValidName(full); err != nil {
-		return chat.SkillProposal{}, invalidf("name is too long once prefixed with %q; use at most %d characters", slug+"-", skills.MaxNameLen-len(slug)-1)
+		return p, false, invalidf("%s", strings.TrimPrefix(err.Error(), skills.ErrInvalid.Error()+": "))
 	}
 	desc := oneLine(description)
 	body = strings.TrimSpace(body)
 	switch {
 	case desc == "":
-		return chat.SkillProposal{}, invalidf("description is required")
+		return p, false, invalidf("description is required")
 	case len([]rune(desc)) > maxProposalDesc:
-		return chat.SkillProposal{}, invalidf("description is longer than %d characters", maxProposalDesc)
+		return p, false, invalidf("description is longer than %d characters; the first 300 are what you see in your skill list, so put the trigger there", maxProposalDesc)
 	case body == "":
-		return chat.SkillProposal{}, invalidf("body is required")
+		return p, false, invalidf("body is required")
 	case len(body) > maxProposalBody:
-		return chat.SkillProposal{}, invalidf("body is larger than %d KiB", maxProposalBody>>10)
+		return p, false, invalidf("body is larger than %d KiB", maxProposalBody>>10)
 	case strings.HasPrefix(body, "---"):
-		return chat.SkillProposal{}, invalidf("body must be plain Markdown instructions without a frontmatter block; name and description are added for you")
+		return p, false, invalidf("body must be plain Markdown instructions without a frontmatter block; name and description are added for you")
 	}
 	if err := checkUnsafe(desc, true); err != nil {
-		return chat.SkillProposal{}, invalidf("description %s", err)
+		return p, false, invalidf("description %s", err)
 	}
 	if err := checkUnsafe(body, true); err != nil {
-		return chat.SkillProposal{}, invalidf("body %s", err)
+		return p, false, invalidf("body %s", err)
 	}
 	text := composeSkill(full, desc, body)
 	meta, _, err := skills.ParseFrontmatter(text)
 	if err != nil || meta.Name != full || meta.Description != desc || len(text) > skills.MaxSkillMD {
-		return chat.SkillProposal{}, invalidf("the skill could not be rendered as a valid SKILL.md")
+		return p, false, invalidf("the skill could not be rendered as a valid SKILL.md")
+	}
+	if updates, err = s.checkNameFree(full, bot.ID); err != nil {
+		return p, false, err
 	}
 
 	tx, err := s.writeTx(ctx)
 	if err != nil {
-		return chat.SkillProposal{}, err
+		return p, false, err
 	}
 	defer tx.Rollback()
-	var pending, same int
-	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*), COALESCE(SUM(name = ?), 0) FROM skill_proposals WHERE bot_id = ? AND status = 'pending'`, full, bot.ID).Scan(&pending, &same); err != nil {
-		return chat.SkillProposal{}, err
+	if _, err := tx.ExecContext(ctx, `DELETE FROM skill_proposals WHERE bot_id = ? AND name = ? AND status = 'pending'`, bot.ID, full); err != nil {
+		return p, false, err
 	}
-	if same > 0 {
-		return chat.SkillProposal{}, invalidf("a proposal named %q is already waiting for the user's approval", full)
+	var pending int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM skill_proposals WHERE bot_id = ? AND status = 'pending'`, bot.ID).Scan(&pending); err != nil {
+		return p, false, err
 	}
 	if pending >= maxPendingProposals {
-		return chat.SkillProposal{}, invalidf("%d skill proposals are already waiting for the user's approval; wait for a decision before proposing more", pending)
+		return p, false, invalidf("%d skill proposals are already waiting for the user's decision; wait before proposing more", pending)
 	}
-	p := chat.SkillProposal{ID: newID(), BotID: bot.ID, Name: full, Description: desc, Body: body, Status: "pending", CreatedAt: s.nowMs()}
+	p = chat.SkillProposal{ID: newID(), BotID: bot.ID, Name: full, Description: desc, Body: body, Status: "pending", CreatedAt: s.nowMs()}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO skill_proposals(id, bot_id, name, description, body, status, created_at) VALUES (?,?,?,?,?,'pending',?)`,
 		p.ID, p.BotID, p.Name, p.Description, p.Body, p.CreatedAt); err != nil {
-		return chat.SkillProposal{}, err
+		return p, false, err
 	}
-	return p, tx.Commit()
+	return p, updates, tx.Commit()
 }
 
-// Proposals lists pending proposals, newest first; botID "" lists every bot's.
-func (s *Store) Proposals(ctx context.Context, botID string) ([]chat.SkillProposal, error) {
-	q := `SELECT id, bot_id, name, description, body, status, created_at FROM skill_proposals WHERE status = 'pending'`
-	var args []any
-	if botID != "" {
-		q += ` AND bot_id = ?`
-		args = append(args, botID)
-	}
-	rows, err := s.db.QueryContext(ctx, q+` ORDER BY created_at DESC, id`, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := []chat.SkillProposal{}
-	for rows.Next() {
-		var p chat.SkillProposal
-		if err := rows.Scan(&p.ID, &p.BotID, &p.Name, &p.Description, &p.Body, &p.Status, &p.CreatedAt); err != nil {
-			return nil, err
-		}
-		out = append(out, p)
-	}
-	return out, rows.Err()
-}
-
-// ResolveSkill approves (saving into the registry) or rejects a pending proposal.
-func (s *Store) ResolveSkill(ctx context.Context, id string, approve bool) error {
-	s.skillMu.Lock()
-	defer s.skillMu.Unlock()
+// Proposal returns one proposal in any state, which is how a card in the conversation learns what became of it.
+func (s *Store) Proposal(ctx context.Context, id string) (chat.SkillProposal, error) {
 	var p chat.SkillProposal
 	err := s.db.QueryRowContext(ctx, `SELECT id, bot_id, name, description, body, status, created_at FROM skill_proposals WHERE id = ?`, id).
 		Scan(&p.ID, &p.BotID, &p.Name, &p.Description, &p.Body, &p.Status, &p.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
-		return notFoundf("skill proposal not found")
+		return p, notFoundf("skill proposal not found")
 	}
+	return p, err
+}
+
+// ResolveSkill adds a pending proposal to the registry and gives it to the proposing bot (approve), or
+// rejects it.
+func (s *Store) ResolveSkill(ctx context.Context, id string, approve bool) error {
+	s.skillMu.Lock()
+	defer s.skillMu.Unlock()
+	p, err := s.Proposal(ctx, id)
 	if err != nil {
 		return err
 	}
@@ -168,10 +147,8 @@ func (s *Store) ResolveSkill(ctx context.Context, id string, approve bool) error
 		if err := checkUnsafe(p.Body, true); err != nil {
 			return invalidf("proposal %s", err)
 		}
-		if existing, err := s.cfg.Skills.Get(p.Name); err == nil && existing.Source != skillSource(p.BotID) {
-			return invalidf("a skill named %q already exists in the registry and was not created by this bot; reject this proposal and ask the bot to pick another name", p.Name)
-		} else if err != nil && !errors.Is(err, skills.ErrNotFound) {
-			return invalidf("%s", err)
+		if _, err := s.checkNameFree(p.Name, p.BotID); err != nil {
+			return err
 		}
 		sk, err := s.cfg.Skills.Save(p.Name, composeSkill(p.Name, p.Description, p.Body), skillSource(p.BotID))
 		if err != nil {
@@ -180,6 +157,12 @@ func (s *Store) ResolveSkill(ctx context.Context, id string, approve bool) error
 				return invalidf("%s", err)
 			}
 			return err
+		}
+		if s.cfg.Grants != nil {
+			if err := s.cfg.Grants.GrantSkill(ctx, p.BotID, sk.Name); err != nil {
+				s.audit("chat.skills.approve", sk.Name, "failed", "grant: "+err.Error())
+				return invalidf("the skill was saved, but it could not be added to the bot: %s", err)
+			}
 		}
 		s.audit("chat.skills.approve", sk.Name, "allowed", skillSource(p.BotID))
 		status = "approved"
@@ -200,10 +183,22 @@ func (t proposeSkillTool) Specs(bot chat.Bot, caps llm.Caps) []llm.ToolSpec {
 	}
 	return []llm.ToolSpec{{
 		Name: "propose_skill",
-		Description: "Suggest a reusable skill (a short Markdown playbook) when you worked out a procedure the user is likely to repeat. " +
-			"The user must approve it before it exists; nothing happens until then. Do not include secrets, credentials or commands that download and run code.",
-		Schema: json.RawMessage(`{"type":"object","properties":{"name":{"type":"string","description":"Lowercase slug with hyphens, e.g. weekly-report"},"description":{"type":"string","description":"One sentence on when to use the skill."},"body":{"type":"string","description":"Markdown instructions, without frontmatter."}},"required":["name","description","body"]}`),
+		Description: "Offer the user a new skill, or an update to one you created, as a card in the chat with an Add button. " +
+			"Use it once the draft is agreed (or when you worked out a procedure the user will repeat). Nothing exists until the user presses Add; " +
+			"then the skill is saved and given to you. Calling it again with the same name replaces your earlier draft. " +
+			"Do not include secrets, credentials or commands that download and run code.",
+		Schema: json.RawMessage(`{"type":"object","properties":{"name":{"type":"string","description":"Lowercase slug with hyphens, exactly as it should be saved, e.g. weekly-report"},"description":{"type":"string","description":"When to use the skill and what it does; the trigger goes first. At most 1024 characters."},"body":{"type":"string","description":"Markdown instructions, without frontmatter."}},"required":["name","description","body"]}`),
 	}}
+}
+
+// skillCardSpec is the JSON of the `skill` ui part the chat draws as a card.
+type skillCardSpec struct {
+	ProposalID  string `json:"proposalId"`
+	BotID       string `json:"botId"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Body        string `json:"body"`
+	Updates     bool   `json:"updates,omitempty"`
 }
 
 func (t proposeSkillTool) Call(ctx context.Context, rc chat.RunContext, _ string, raw json.RawMessage) (chat.ToolResult, error) {
@@ -219,12 +214,17 @@ func (t proposeSkillTool) Call(ctx context.Context, rc chat.RunContext, _ string
 	if err != nil {
 		return userToolResult(err)
 	}
-	p, err := t.s.Propose(ctx, bot, a.Name, a.Description, a.Body)
+	p, updates, err := t.s.Propose(ctx, bot, a.Name, a.Description, a.Body)
 	if err != nil {
 		return userToolResult(err)
 	}
-	if rc.Emit != nil {
-		rc.Emit(chat.MsgPart{Type: chat.PartNotice, Text: fmt.Sprintf("Skill proposed: %s (waiting for your approval)", p.Name)})
+	spec, err := json.Marshal(skillCardSpec{ProposalID: p.ID, BotID: p.BotID, Name: p.Name, Description: p.Description, Body: p.Body, Updates: updates})
+	if err != nil {
+		return toolFail("the skill card could not be built"), nil
 	}
-	return chat.ToolResult{Text: fmt.Sprintf("Proposal %q saved. It is inert until the user approves it; do not rely on it yet.", p.Name)}, nil
+	return chat.ToolResult{
+		Text: fmt.Sprintf("The user now sees a card for the skill %q with an Add button. Nothing exists until they press it, so do not say it was added. "+
+			"Keep your reply short: say what the skill does in one sentence. If they ask for changes, call propose_skill again with the same name.", p.Name),
+		Parts: []chat.MsgPart{{Type: chat.PartUI, ID: "propose_skill", Name: "skill", Spec: string(spec)}},
+	}, nil
 }

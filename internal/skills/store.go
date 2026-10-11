@@ -111,6 +111,9 @@ type regEntry struct {
 type regDoc struct {
 	Version int                 `json:"version"`
 	Skills  map[string]regEntry `json:"skills"`
+	// Builtin maps every built-in skill ever installed to the content hash installed. It tells an
+	// untouched copy (safe to upgrade) from an edited one, and a deleted skill from a new one.
+	Builtin map[string]string `json:"builtin,omitempty"`
 }
 
 // Store is the registry on disk: <dir>/<name>/SKILL.md plus resource files, and a small
@@ -142,7 +145,7 @@ func (s *Store) Dir(name string) (string, error) {
 }
 
 func (s *Store) load() (regDoc, error) {
-	doc := regDoc{Version: 1, Skills: map[string]regEntry{}}
+	doc := regDoc{Version: 1, Skills: map[string]regEntry{}, Builtin: map[string]string{}}
 	b, err := os.ReadFile(filepath.Join(s.root, registryFile))
 	if errors.Is(err, fs.ErrNotExist) {
 		return doc, nil
@@ -155,6 +158,9 @@ func (s *Store) load() (regDoc, error) {
 	}
 	if doc.Skills == nil {
 		doc.Skills = map[string]regEntry{}
+	}
+	if doc.Builtin == nil {
+		doc.Builtin = map[string]string{}
 	}
 	return doc, nil
 }
@@ -472,7 +478,7 @@ func readCapped(p string, max int64) ([]byte, error) {
 // PromptIndex builds the short list of enabled skills appended to a harness's system prompt.
 // It carries names and descriptions only; the instructions come from orole_get_skill.
 func (s *Store) PromptIndex() string {
-	list, err := s.Enabled()
+	list, err := s.EnabledForHarnesses()
 	if err != nil || len(list) == 0 {
 		return ""
 	}

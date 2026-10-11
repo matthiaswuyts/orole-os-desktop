@@ -22,7 +22,7 @@ const project = (over: Partial<Project>): Project => ({
   worktreeRoot: "", worktreeRootCustom: false, missing: false, isGit: true, ...over,
 });
 const harness = (id: string, name: string) => ({
-  id, name, available: true, executable: id, version: "1", reasoning: [], customModel: true, modes: ["structured", "process"], structured: true, interactive: false, unavailableReason: "", models: [{ id: `${id}-default`, name: `${name} default`, reasoning: [], default: true }],
+  id, name, available: true, executable: id, version: "1", reasoning: [], customModel: true, modes: ["structured", "process"], structured: true, interactive: false, unavailableReason: "", permissionModes: [], models: [{ id: `${id}-default`, name: `${name} default`, reasoning: [], default: true }],
 }) as LaunchOptions["harnesses"][number];
 const options: LaunchOptions = { machine: "local", projects: [], directories: [], worktree: true, unavailableReason: "", harnesses: [harness("claude", "Claude Code"), harness("codex", "Codex")] };
 const session = (id: string, over: Partial<Session>): Session => ({ id, projectId: "p1", project: "C:\\code\\alpha", dir: "C:\\code\\alpha", machine: "local", title: id, kind: "claude", status: "done", review: "", updatedAt: "2026-10-09T00:00:00Z", ...over }) as Session;

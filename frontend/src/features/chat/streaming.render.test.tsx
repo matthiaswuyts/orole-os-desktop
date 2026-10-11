@@ -55,7 +55,7 @@ import { useLLM } from "@/stores/llm";
 
 const bot = (id: string, over: Partial<Bot> = {}): Bot => ({
   id, name: id === "a" ? "Atlas" : "Beta", avatar: "", color: "blue", description: "", instructions: "", provider: "openrouter", model: "claude", reasoning: "",
-  config: { tools: [], mcpTools: [], skills: [], memory: [], limits: { maxSteps: 0, maxToolCalls: 0 } },
+  config: { tools: [], mcpServers: [], skills: [], memory: [], limits: { maxSteps: 0, maxToolCalls: 0 } },
   createdAt: 1, updatedAt: 1, running: false, ...over,
 });
 const msg = (seq: number, over: Partial<Message> = {}): Message => ({
@@ -78,7 +78,7 @@ beforeEach(() => {
   Element.prototype.scrollTo = () => {};
   useDaemon.setState({ link: "connected" });
   useChat.setState({ ...useChat.getInitialState(), available: true });
-  useChatMessages.setState({ byBot: {}, runs: {}, problems: {} });
+  useChatMessages.setState({ byBot: {}, runs: {}, paused: {}, problems: {} });
   useChatDrafts.setState({ drafts: {} });
   useLLM.setState({
     providers: [{ id: "openrouter", name: "OpenRouter", kind: "builtin", connected: true }], ready: true, defaults: { chatModel: "openrouter/claude", memoryModel: "" },
