@@ -6,6 +6,13 @@ Each release needs a `## X.Y.Z - YYYY-MM-DD` section matching `version` in `mygo
 workflow refuses to build without it, and the in-app update window shows that section as the release
 notes. See `docs/development/updates.md`.
 
+## Unreleased
+
+### Changed
+- SQLite: transactions take the write lock up front (`_txlock=immediate`), 4 idle connections,
+  `temp_store`/`cache_size`/`journal_size_limit` pragmas, and `PRAGMA optimize` plus a WAL checkpoint on close.
+  Migration 0099 adds a partial index on in-flight `messages.status` for startup recovery.
+
 ## 0.1.0 - 2026-10-10
 
 First tagged release. Windows only.

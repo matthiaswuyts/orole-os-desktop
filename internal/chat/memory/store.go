@@ -173,19 +173,10 @@ type querier interface {
 	QueryRowContext(ctx context.Context, q string, args ...any) *sql.Row
 }
 
-// writeTx starts a transaction that holds SQLite's write lock from the first statement. A deferred
-// transaction that reads first and writes later can fail with SQLITE_BUSY_SNAPSHOT when another
-// writer committed in between; taking the lock up front makes the busy timeout apply instead.
+// writeTx starts a write transaction. The pool opens transactions with _txlock=immediate, so the
+// write lock is held from BEGIN and the busy timeout applies instead of SQLITE_BUSY_SNAPSHOT.
 func (s *Store) writeTx(ctx context.Context) (*sql.Tx, error) {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return nil, err
-	}
-	if _, err := tx.ExecContext(ctx, `UPDATE memory_scopes SET name = name WHERE 0`); err != nil {
-		_ = tx.Rollback()
-		return nil, err
-	}
-	return tx, nil
+	return s.db.BeginTx(ctx, nil)
 }
 
 func placeholders(n int) string {

@@ -6,7 +6,10 @@ is authoritative; this page summarises it. Migrations present in this tree: `000
 ## Connection and migrations
 
 `internal/database`: DSN pragmas `busy_timeout(5000)`, `journal_mode(WAL)`, `foreign_keys(1)`,
-`synchronous(NORMAL)`; up to 4 open connections. `Migrate` creates `schema_migrations(version, applied_at)`, then
+`synchronous(NORMAL)`, `temp_store(MEMORY)`, `cache_size(-16000)`, `journal_size_limit(64MiB)`, plus
+`_txlock=immediate` (every transaction takes the write lock at BEGIN, so read-then-write transactions wait on the busy
+timeout rather than failing with `SQLITE_BUSY_SNAPSHOT`); up to 4 open and 4 idle connections. `DB.Close` runs
+`PRAGMA optimize` and `wal_checkpoint(TRUNCATE)` before closing. `Migrate` creates `schema_migrations(version, applied_at)`, then
 applies every embedded `NNNN_name.sql` (`migrations/embed.go`) whose numeric prefix is not recorded, in order,
 **each in its own transaction**. Forward-only: there are no down migrations. Different slices use different number
 prefixes (0010, 0020, ...) so concurrent work does not collide; `DB.Version()` is `MAX(version)`.
@@ -43,12 +46,13 @@ Never stored here. OAuth tokens, bearer tokens and PATs live in Windows Credenti
 New file `migrations/NNNN_<slice>.sql` with a unique, higher prefix; never edit an applied file; test through
 `database.Open` on a temp dir (`internal/database/database_test.go` shows the pattern). Update this page.
 
-## Chat tables (migrations 0096-0098)
+## Chat tables (migrations 0096-0099)
 
 | Table | Purpose |
 |---|---|
 | `bots`, `messages` (+ `messages_fts`), `chat_attachments`, `conversation_summaries` | 0096: bots as contacts, one continuous conversation each (`UNIQUE(bot_id, seq)`), FTS5 over message text, content-addressed attachment references, rolling summaries |
 | `memory_scopes`, `memory_entries` (+ `memory_fts`), `bot_memory_access`, `memory_consolidation`, `skill_proposals`, `knowledge_files`, `knowledge_chunks` (+ `knowledge_fts`) | 0097: scoped core/fact memory with validity windows, per-bot scope grants, consolidation cursor, inert skill proposals, knowledge indexing |
+| `idx_messages_active_status` | 0099: partial index on `messages(status)` for `pending`/`running`, used by the startup `markInterrupted` |
 | `llm_manifests` | 0098: declarative provider manifests with digest-based trust (same shape as `plugins`) |
 
 Provider API keys are never stored here (`llm/<provider>/key` in Credential Manager). See `chat.md`.
