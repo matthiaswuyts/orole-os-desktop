@@ -6,6 +6,14 @@ Each release needs a `## X.Y.Z - YYYY-MM-DD` section matching `version` in `mygo
 workflow refuses to build without it, and the in-app update window shows that section as the release
 notes. See `docs/development/updates.md`.
 
+## Unreleased
+
+### Fixed
+- IPC: a daemon reply larger than the 4 MiB frame limit now returns a `too_large` error instead of
+  making the client drop the link, reconnect and re-send the request (which ran the call twice).
+  Oversized events are dropped and logged, and `Client.Call` only retries a request that was never
+  written to the connection.
+
 ## 0.1.0 - 2026-10-10
 
 First tagged release. Windows only.
