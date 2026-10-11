@@ -34,11 +34,11 @@ func mapProjectErr(err error) error {
 // dir resolves a target to a directory the daemon knows about.
 func (d *Daemon) gitDir(ctx context.Context, t gitTarget) (string, error) {
 	if t.WorktreeID != "" {
-		wt, err := d.Projects.Worktrees.Get(ctx, t.WorktreeID)
+		path, err := d.Projects.Worktrees.Path(ctx, t.WorktreeID)
 		if err != nil {
 			return "", mapProjectErr(err)
 		}
-		return wt.Path, nil
+		return path, nil
 	}
 	if t.ProjectID == "" {
 		return "", &ipc.Error{Code: ipc.CodeBadRequest, Message: "projectId or worktreeId is required"}

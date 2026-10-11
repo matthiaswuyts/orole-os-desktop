@@ -6,6 +6,16 @@ Each release needs a `## X.Y.Z - YYYY-MM-DD` section matching `version` in `mygo
 workflow refuses to build without it, and the in-app update window shows that section as the release
 notes. See `docs/development/updates.md`.
 
+## Unreleased
+
+### Changed
+- Fewer git processes per request: a status or diff now takes 4 to 5 `git` spawns instead of 16, and
+  keeps git's stat cache by reviewing a copy of the real index. Ref-to-ref diffs skip the index.
+- Git calls on a worktree look its directory up in the database instead of listing every worktree
+  with a full status; worktree refreshes only write rows that changed.
+- Directory listings in Git files run one status limited to the listed directory, shared between
+  concurrent listings and reused for one second.
+
 ## 0.1.0 - 2026-10-10
 
 First tagged release. Windows only.

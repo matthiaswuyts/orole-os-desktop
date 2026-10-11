@@ -92,8 +92,10 @@ type Worktree struct {
 type Worktrees interface {
 	// Create adds a worktree on a new branch orole/<slug(name)> started at baseRef ("" = HEAD).
 	Create(ctx context.Context, projectID, name, baseRef string) (Worktree, error)
-	// Get returns one worktree with live git state.
+	// Get returns one worktree with live git state (one git list plus that worktree's status).
 	Get(ctx context.Context, id string) (Worktree, error)
+	// Path returns a registered worktree's directory from the database only: no git process, no status.
+	Path(ctx context.Context, id string) (string, error)
 	// List returns the worktrees of one project; the main checkout comes first.
 	List(ctx context.Context, projectID string) ([]Worktree, error)
 	// Remove deletes a linked worktree (never the main checkout). force discards local changes.
