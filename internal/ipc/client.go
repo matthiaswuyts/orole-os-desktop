@@ -130,9 +130,9 @@ func (c *Client) read(nc net.Conn, br *bufio.Reader) {
 		}
 	}
 	// Whatever ended the loop (EOF, oversized or unreadable frame), the link is
-	// no longer usable: close it so the peer sees the hang-up instead of
-	// writing into a socket nobody reads.
-	nc.Close()
+	// no longer usable. Retire it from the client's state first and only then
+	// close the socket, so a peer that observes the hang-up also observes
+	// Connected() == false.
 	c.mu.Lock()
 	if c.nc == nc {
 		c.nc = nil
@@ -145,6 +145,7 @@ func (c *Client) read(nc net.Conn, br *bufio.Reader) {
 		}
 	}
 	c.mu.Unlock()
+	nc.Close()
 }
 
 // Connected reports whether a live connection exists.
