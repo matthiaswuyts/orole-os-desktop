@@ -193,7 +193,6 @@ The focused reproduction commands (no external Mail/Drive credentials) are:
 ```powershell
 go test -race ./internal/drive ./internal/policy ./internal/daemon -run 'TestOnlyCompleteUnchangedBoundedTextHasShareDigest|TestRequireOnce|TestDriveScopedHandoff' -count=1
 go test -race ./internal/agents -run '^TestScopedPromptRevalidatesAfterAuthorization$' -count=1
-bun run --cwd frontend test -- src/features/drive/DriveActions.test.tsx src/features/drive/preview.test.ts
 ```
 
 The daemon smoke creates temporary SQLite state and an in-process official SDK

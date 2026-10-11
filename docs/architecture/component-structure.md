@@ -385,8 +385,10 @@ instead of letting an account-rejected model in native configuration win. Recent
 used only when discovery returns no models. Reasoning choices follow the selected model, including models
 with no reasoning support; changing models clears an explicit reasoning selection.
 
-Still in the tree but unreachable (no nav entry, no registry entry): `features/{mail,drive,github,files,terminals,browser,machines,applications,worktrees}`
-and `features/projects/ProjectsView.tsx`.
+Still in the tree but unreachable (no nav entry, no registry entry): `features/github`. The former Files, Terminals,
+Machines, Mail, Drive, Browser, Worktrees, Applications and Projects views, their editor/file-store code and the
+`files` e2e spec were removed; only `features/terminals/TerminalPane.tsx`, `features/applications/NativeNavigation`
+and `features/editor/languages.ts` (used by `SyntaxHighlighter`) remain.
 
 ## Task chat composer
 
