@@ -133,9 +133,10 @@ passed 16 tests; frontend checks passed 115 tests, with existing lint warnings.
 After `bun run --cwd frontend build`, `bun scripts/check-bundle-size.mjs` compares the entry chunk (the module script
 `dist/index.html` loads, `dist/assets/index-*.js`) with `entryMaxBytes` in `scripts/bundle-budget.json`; CI (`web` job)
 and the release verify job fail when it is over. Raw bytes, so the number is stable for a given lockfile. Initial
-budget: 1,291,264 bytes, set just above the measured 1,277,527 bytes (1.28 MB, gzip 351.7 kB).
+budget: 1,291,264 bytes, set just above the measured 1,277,527 bytes (1.28 MB, gzip 351.7 kB). After the code split in
+PR #161 the entry chunk measures 594,372 bytes (580 KiB, gzip 161.6 KiB) and the budget was ratcheted to 607,232 bytes.
 
-The budget exists to be ratcheted down. When a change shrinks the chunk (the code split in PR #161 takes it from about
-1.28 MB to about 0.77 MB), run `bun scripts/check-bundle-size.mjs --ratchet` and commit the updated JSON in the same
-PR; it sets the budget to the measured size plus 1% rounded up to a KiB and never raises it. CI prints a notice when
+The budget exists to be ratcheted down. When a change shrinks the chunk, run
+`bun scripts/check-bundle-size.mjs --ratchet` and commit the updated JSON in the same
+PR; it sets the budget to the measured size plus 2% rounded up to a KiB and never raises it. CI prints a notice when
 the chunk is more than 5% under budget. Raising the budget is a hand edit of the JSON and needs a reason in the PR.

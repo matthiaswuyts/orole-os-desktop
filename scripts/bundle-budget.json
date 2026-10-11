@@ -1,4 +1,4 @@
 {
-  "description": "Max raw bytes of the frontend entry chunk (the JS file dist/index.html loads first). Measured 1277527 bytes on 2026-10-11 (1.28 MB); set 1% plus rounding above. Ratchet down with `bun scripts/check-bundle-size.mjs --ratchet` whenever the chunk shrinks (e.g. after the code split in PR #161). Raise only with a reason in the PR.",
-  "entryMaxBytes": 1291264
+  "description": "Max raw bytes of the frontend entry chunk (the JS file dist/index.html loads first). Measured 594372 bytes on 2026-10-12 (580 KiB, after the code split in PR #161; it was 1277527 bytes before); set 2% plus rounding above. Ratchet down with `bun scripts/check-bundle-size.mjs --ratchet` whenever the chunk shrinks. Raise only with a reason in the PR.",
+  "entryMaxBytes": 607232
 }

@@ -18,7 +18,7 @@ const assets = join(root, 'frontend', 'dist', 'assets')
 const indexHtml = join(root, 'frontend', 'dist', 'index.html')
 const budgetPath = join(root, 'scripts', 'bundle-budget.json')
 // Headroom the ratchet leaves above the measured size, rounded up to a whole KiB.
-const RATCHET_HEADROOM = 0.01
+const RATCHET_HEADROOM = 0.02
 // A budget this much above the measured size is reported as stale.
 const STALE_RATIO = 0.05
 
