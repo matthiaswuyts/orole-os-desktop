@@ -4,13 +4,13 @@ import (
 	"context"
 	"errors"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/rayorole/orole-os-desktop/internal/database"
 	"github.com/rayorole/orole-os-desktop/internal/projects"
+	"github.com/rayorole/orole-os-desktop/internal/testrepo"
 	"github.com/rayorole/orole-os-desktop/migrations"
 )
 
@@ -24,30 +24,37 @@ func newService(t *testing.T) *projects.Service {
 	return projects.New(db)
 }
 
+// repoTemplate is built once per test binary; repo copies it (see internal/testrepo).
+var repoTemplate = testrepo.New(func(dir string) error {
+	if err := testrepo.Git(dir, "init", "-b", "main"); err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(dir, "f.txt"), []byte("x\n"), 0o644); err != nil {
+		return err
+	}
+	if err := testrepo.Git(dir, "add", "."); err != nil {
+		return err
+	}
+	return testrepo.Git(dir, "-c", "user.name=T", "-c", "user.email=t@e.c", "-c", "commit.gpgsign=false", "commit", "-m", "init")
+})
+
+func TestMain(m *testing.M) {
+	code := m.Run()
+	testrepo.CloseAll()
+	os.Exit(code)
+}
+
 // repo creates <tmp>/<name> with one commit and returns its canonical path.
 func repo(t *testing.T, parent, name string) string {
 	t.Helper()
 	dir := filepath.Join(parent, name)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	run := func(args ...string) {
-		t.Helper()
-		cmd := exec.Command("git", append([]string{"-c", "user.name=T", "-c", "user.email=t@e.c", "-c", "commit.gpgsign=false"}, args...)...)
-		cmd.Dir = dir
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("git %v: %v\n%s", args, err, out)
-		}
-	}
-	run("init", "-b", "main")
-	os.WriteFile(filepath.Join(dir, "f.txt"), []byte("x\n"), 0o644)
-	run("add", ".")
-	run("commit", "-m", "init")
+	repoTemplate.Copy(t, dir)
 	r, _ := filepath.EvalSymlinks(dir)
 	return r
 }
 
 func TestAddListRemove(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	s := newService(t)
 	tmp, _ := filepath.EvalSymlinks(t.TempDir())
@@ -110,6 +117,7 @@ func TestAddListRemove(t *testing.T) {
 }
 
 func TestWorktreeLifecycle(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	s := newService(t)
 	tmp, _ := filepath.EvalSymlinks(t.TempDir())
@@ -165,6 +173,7 @@ func TestWorktreeLifecycle(t *testing.T) {
 }
 
 func TestWorktreeRejectsBadInput(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	s := newService(t)
 	tmp, _ := filepath.EvalSymlinks(t.TempDir())
@@ -206,6 +215,7 @@ func TestWorktreeRejectsBadInput(t *testing.T) {
 }
 
 func TestConfiguredWorktreeRoot(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	s := newService(t)
 	tmp, _ := filepath.EvalSymlinks(t.TempDir())
@@ -233,6 +243,7 @@ func TestSlug(t *testing.T) {
 }
 
 func TestCreateWithoutGitOrFolder(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	s := newService(t)
 	tmp, _ := filepath.EvalSymlinks(t.TempDir())

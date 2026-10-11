@@ -57,6 +57,11 @@ notes. See `docs/development/updates.md`.
   `propose_skill` for your approval. Built-in skills are for bots only and are never synced to coding agents.
 
 ### Changed
+- CI also runs on pushes to `main` (so the Go, bun and NSIS caches are primed for pull requests) and is
+  split into parallel `go`, `web` and `package` jobs; `release.yml` verifies Go and the frontend in
+  parallel too. The frontend entry chunk size is checked against `scripts/bundle-budget.json`.
+- Git-heavy tests in `internal/{git,agents,daemon,projects}` copy a repository built once per package
+  (`internal/testrepo`) instead of running `git init` and `git commit` per test; the isolated ones run in parallel.
 - Chat streaming no longer re-sends the whole reply every 50 ms: streamed text travels as small
   `chat.message.delta` events, with a full snapshot at tool boundaries, at least every 2 s and at the end,
   and the daemon builds the text in linear time. A 100 KB reply now publishes about 1 MB instead of 31 MB.

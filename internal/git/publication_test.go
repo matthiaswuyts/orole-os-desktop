@@ -41,6 +41,7 @@ func publicationFixture(t *testing.T) string {
 }
 
 func TestPublicationSnapshotContainsRealCommitAndDiff(t *testing.T) {
+	t.Parallel()
 	dir := publicationFixture(t)
 	p, err := git.PublicationSnapshot(context.Background(), dir, "orole/issue-54", "main")
 	if err != nil {
@@ -66,6 +67,7 @@ func TestPublicationSnapshotContainsRealCommitAndDiff(t *testing.T) {
 }
 
 func TestPublicationSnapshotRejectsUnreviewableWorktrees(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name   string
 		mutate func(*testing.T, string)
@@ -94,6 +96,7 @@ func TestPublicationSnapshotRejectsUnreviewableWorktrees(t *testing.T) {
 		}, "orole/issue-54", "main"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			dir := publicationFixture(t)
 			tc.mutate(t, dir)
 			if _, err := git.PublicationSnapshot(context.Background(), dir, tc.branch, tc.base); err == nil {
@@ -104,6 +107,7 @@ func TestPublicationSnapshotRejectsUnreviewableWorktrees(t *testing.T) {
 }
 
 func TestPublicationSnapshotUsesOwnedLinkedWorktree(t *testing.T) {
+	t.Parallel()
 	dir := NewRepo(t)
 	worktree := filepath.Join(t.TempDir(), "owned")
 	publicationGit(t, dir, "worktree", "add", "-b", "orole/issue-54", worktree, "main")
@@ -117,6 +121,7 @@ func TestPublicationSnapshotUsesOwnedLinkedWorktree(t *testing.T) {
 }
 
 func TestPublicationSnapshotIgnoresExecutableConfigAndReplaceRefs(t *testing.T) {
+	t.Parallel()
 	dir := publicationFixture(t)
 	publicationWrite(t, dir, ".gitattributes", "a.txt filter=evil diff=evil\n")
 	publicationGit(t, dir, "add", ".gitattributes")
@@ -135,6 +140,7 @@ func TestPublicationSnapshotIgnoresExecutableConfigAndReplaceRefs(t *testing.T) 
 }
 
 func TestPublicationSnapshotRejectsTruncatedDiff(t *testing.T) {
+	t.Parallel()
 	dir := publicationFixture(t)
 	publicationWrite(t, dir, "large.txt", strings.Repeat("reviewed change\n", (17<<20)/16))
 	publicationGit(t, dir, "add", "large.txt")
@@ -145,6 +151,7 @@ func TestPublicationSnapshotRejectsTruncatedDiff(t *testing.T) {
 }
 
 func TestPushPublicationRejectsUnsafeTargetsAndChangedWorktreeLocally(t *testing.T) {
+	t.Parallel()
 	dir := publicationFixture(t)
 	head := publicationGit(t, dir, "rev-parse", "HEAD")
 	for _, repo := range []string{"https://github.com/o/r", "git@github.com:o/r", "../r", "o/..", "o/r/extra", "o/r?x", "o/r#fragment", "o/r%2f", "o/r\n", ""} {

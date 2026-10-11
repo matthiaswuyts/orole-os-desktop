@@ -10,7 +10,28 @@ import (
 	"testing"
 
 	"github.com/rayorole/orole-os-desktop/internal/git"
+	"github.com/rayorole/orole-os-desktop/internal/testrepo"
 )
+
+// repoTemplate is built once per test binary; NewRepo copies it (see internal/testrepo).
+var repoTemplate = testrepo.New(func(dir string) error {
+	if err := testrepo.Git(dir, "init", "-b", "main"); err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("one\ntwo\nthree\n"), 0o644); err != nil {
+		return err
+	}
+	if err := testrepo.Git(dir, "add", "."); err != nil {
+		return err
+	}
+	return testrepo.Git(dir, "-c", "user.name=T", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false", "commit", "-m", "first")
+})
+
+func TestMain(m *testing.M) {
+	code := m.Run()
+	testrepo.CloseAll()
+	os.Exit(code)
+}
 
 // NewRepo makes a temp repo with one commit on branch main.
 func NewRepo(t *testing.T) string {
@@ -19,24 +40,12 @@ func NewRepo(t *testing.T) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	g := func(args ...string) {
-		t.Helper()
-		cmd := exec.Command("git", append([]string{"-c", "user.name=T", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false"}, args...)...)
-		cmd.Dir = dir
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("git %v: %v\n%s", args, err, out)
-		}
-	}
-	g("init", "-b", "main")
-	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("one\ntwo\nthree\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	g("add", ".")
-	g("commit", "-m", "first")
+	repoTemplate.Copy(t, dir)
 	return dir
 }
 
 func TestStatusAndDiff(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	dir := NewRepo(t)
 	st, err := git.GetStatus(ctx, dir)
@@ -131,6 +140,7 @@ func TestParseStatusRecords(t *testing.T) {
 }
 
 func TestRefInjectionRejected(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	dir := NewRepo(t)
 	evil := []string{"--upload-pack=calc", "-b", "--output=x", "a..b", "a b", "HEAD@{1}", "feat~x", "a^b", "~1", "", "/abs", "x.lock", "a\nb", "a:b", ".hidden", "a\\b"}
@@ -173,6 +183,7 @@ func TestRefInjectionRejected(t *testing.T) {
 }
 
 func TestBranchesLogWorktreesClone(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	dir := NewRepo(t)
 	if err := git.CreateBranch(ctx, dir, "orole/x", "HEAD"); err != nil {
@@ -230,6 +241,7 @@ func TestBranchesLogWorktreesClone(t *testing.T) {
 }
 
 func TestEmptyRepoLogAndNotRepo(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	dir := t.TempDir()
 	if err := exec.Command("git", "-C", dir, "init", "-b", "main").Run(); err != nil {

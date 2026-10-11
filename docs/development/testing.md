@@ -8,11 +8,14 @@ bun run --cwd frontend check                          # tsc + oxlint + vitest
 go test -run '^$' -bench . -benchmem ./tests/performance   # benchmarks (docs/performance.md)
 ```
 
-CI (`.github/workflows/ci.yml`, pull requests only, read-only token, no secrets) runs vet, `test -race`, the
-frontend check, a bindings-up-to-date check (`go tool mygo generate` then `git diff --exit-code frontend/src/mygo.ts`),
-`scripts/build.ps1` (daemon, CLI, `mygo build`) and asserts an installer exists, on `windows-latest`. An
-`ubuntu-latest` job runs `go test -race` on `internal/{ipc,database,platform,paths,credentials}` only. Release tags
-are handled by `release.yml`, not CI; see [releasing.md](releasing.md).
+CI (`.github/workflows/ci.yml`, pull requests and pushes to `main`, read-only token, no secrets) runs four parallel
+lanes. On `windows-latest`: `go` (vet, `test -race`, a bindings-up-to-date check: `go tool mygo generate` then
+`git diff --exit-code frontend/src/mygo.ts`), `web` (frontend check, build, the [bundle budget](#frontend-bundle-budget))
+and `package` (`scripts/build.ps1`: daemon, CLI, `mygo build`, then asserts an installer exists). An `ubuntu-latest`
+`portable` job runs `go test -race` on `internal/{ipc,database,platform,paths,credentials,terminals}` only. The Go
+module and build cache, bun's package cache (keyed on `frontend/bun.lock`) and the NSIS download
+(`%LOCALAPPDATA%\mygo`) are cached. A pull request can only restore caches saved on `main`, which is why CI also runs
+on every push to `main`. Release tags are handled by `release.yml`, not CI; see [releasing.md](releasing.md).
 
 ## Style
 
@@ -21,6 +24,14 @@ are handled by `release.yml`, not CI; see [releasing.md](releasing.md).
 - Isolated IPC: `ipc.Endpoint(t.TempDir())` gives a unique pipe per test (`internal/ipc/ipc_test.go`).
 - Windows-only tests live in `*_windows_test.go` (e.g. ConPTY shells, Credential Manager round trip, which
   uses a throwaway key and deletes it).
+- Git fixtures: do not run `git init` and `git commit` in every test (several process launches each, slow on
+  Windows). `internal/testrepo` builds a repository once per test binary and copies it per test; see how
+  `NewRepo` in `internal/git/git_test.go` or `repoTest` in `internal/agents/orchestration_test.go` use it, and call
+  `testrepo.CloseAll()` from `TestMain`. The template must not record its own absolute path (a remote rewritten to a
+  local bare repository is added per copy, as `publishRepo` does).
+- `t.Parallel()` is used where a test owns only its temp dirs and repositories (`internal/git`, `internal/projects`,
+  the issue tests in `internal/daemon`). Tests that call `t.Setenv`, swap package seams (`SetGitHubTestSeams`) or
+  start fake agent processes stay serial: parallel fake agents blew their 10 s deadlines on a loaded machine.
 - Autostart: the Windows task XML and the systemd unit are rendered by pure functions and asserted in
   `internal/platform`; the systemd path is exercised with an injected command runner and temp unit dir. Registering
   a **real** Task Scheduler task is a manual check (below), never part of `go test`.
@@ -116,3 +127,16 @@ Observed on Windows, 2026-10-08: the rebuilt NSIS-installed app passed both nati
 Playwright cases (workspace/grid/palette persistence and notification preferences,
 read/dismiss/reload) against its isolated real daemon. The browser suite separately
 passed 16 tests; frontend checks passed 115 tests, with existing lint warnings.
+
+## Frontend bundle budget
+
+After `bun run --cwd frontend build`, `bun scripts/check-bundle-size.mjs` compares the entry chunk (the module script
+`dist/index.html` loads, `dist/assets/index-*.js`) with `entryMaxBytes` in `scripts/bundle-budget.json`; CI (`web` job)
+and the release verify job fail when it is over. Raw bytes, so the number is stable for a given lockfile. Initial
+budget: 1,291,264 bytes, set just above the measured 1,277,527 bytes (1.28 MB, gzip 351.7 kB). After the code split in
+PR #161 the entry chunk measures 594,372 bytes (580 KiB, gzip 161.6 KiB) and the budget was ratcheted to 607,232 bytes.
+
+The budget exists to be ratcheted down. When a change shrinks the chunk, run
+`bun scripts/check-bundle-size.mjs --ratchet` and commit the updated JSON in the same
+PR; it sets the budget to the measured size plus 2% rounded up to a KiB and never raises it. CI prints a notice when
+the chunk is more than 5% under budget. Raising the budget is a hand edit of the JSON and needs a reason in the PR.

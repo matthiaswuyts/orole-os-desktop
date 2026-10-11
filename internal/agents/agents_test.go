@@ -19,6 +19,7 @@ import (
 	"github.com/rayorole/orole-os-desktop/internal/agents"
 	"github.com/rayorole/orole-os-desktop/internal/database"
 	"github.com/rayorole/orole-os-desktop/internal/terminals"
+	"github.com/rayorole/orole-os-desktop/internal/testrepo"
 	"github.com/rayorole/orole-os-desktop/migrations"
 )
 
@@ -41,6 +42,7 @@ func TestMain(m *testing.M) {
 	}
 	code := m.Run()
 	os.RemoveAll(dir)
+	testrepo.CloseAll()
 	os.Exit(code)
 }
 
