@@ -5,6 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
+	"strings"
+	"sync"
 	"time"
 )
 
@@ -21,11 +24,52 @@ var ErrNotFound = errors.New("agents: no such session")
 // maxEventsPerSession bounds the history kept per session; the oldest events are pruned.
 const maxEventsPerSession = 5000
 
+const (
+	// pruneEvery is how many events a session appends between history prunes.
+	pruneEvery = 256
+	// eventBatch is the queue length that forces an immediate flush; eventFlushDelay is the
+	// longest an event waits in the queue (the data-loss window if the daemon is killed).
+	eventBatch      = 128
+	eventFlushDelay = 100 * time.Millisecond
+	// eventRows is the most rows one INSERT statement carries (6 bound values per row).
+	eventRows = 100
+)
+
 // Store persists sessions, events, journal rows and runs.
-type Store struct{ db DB }
+//
+// Events are queued and written in batches: QueueEvent hands out the event id immediately
+// (ids come from a counter seeded from the table), so the caller can publish the event before
+// it is on disk. Every read of events first flushes the queue, so a reader never misses an
+// event it could have seen published. Nothing but this Store may insert into agent_events.
+type Store struct {
+	db  DB
+	log *slog.Logger
+
+	flushMu sync.Mutex // serialises batch inserts so lower ids land first
+
+	evMu      sync.Mutex // guards the fields below
+	evLoaded  bool
+	nextEvent int64
+	queue     []Event
+	timer     *time.Timer
+	sinceTrim map[string]int  // events appended per session since its last prune
+	trimDue   map[string]bool // sessions whose history must be pruned after the next flush
+	kicked    bool            // a flush for a full batch is already scheduled
+}
 
 // NewStore wraps db.
-func NewStore(db DB) *Store { return &Store{db: db} }
+func NewStore(db DB) *Store {
+	return &Store{db: db, log: slog.Default(), sinceTrim: map[string]int{}, trimDue: map[string]bool{}}
+}
+
+// SetLogger routes the store's background write failures to log.
+func (st *Store) SetLogger(log *slog.Logger) {
+	if log != nil {
+		st.evMu.Lock()
+		st.log = log
+		st.evMu.Unlock()
+	}
+}
 
 func nullTime(t *time.Time) any {
 	if t == nil {
@@ -92,9 +136,16 @@ func (st *Store) SessionByKey(key string) (Session, bool, error) {
 	return s, err == nil, err
 }
 
-// ListSessions returns every session, newest first.
-func (st *Store) ListSessions() ([]Session, error) {
-	rows, err := st.db.Query(`SELECT data FROM agent_sessions ORDER BY started_at DESC, id`)
+// ListSessions returns sessions newest first, skipping offset and returning at most limit
+// (limit <= 0 = all).
+func (st *Store) ListSessions(limit, offset int) ([]Session, error) {
+	if limit <= 0 {
+		limit = -1 // SQLite: no limit
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	rows, err := st.db.Query(`SELECT data FROM agent_sessions ORDER BY started_at DESC, id LIMIT ? OFFSET ?`, limit, offset)
 	if err != nil {
 		return nil, err
 	}
@@ -110,34 +161,163 @@ func (st *Store) ListSessions() ([]Session, error) {
 	return out, rows.Err()
 }
 
-// DeleteSession removes a session and (by cascade) its events.
+// DeleteSession removes a session and (by cascade) its events, including queued ones.
 func (st *Store) DeleteSession(id string) error {
+	st.evMu.Lock()
+	kept := st.queue[:0]
+	for _, e := range st.queue {
+		if e.SessionID != id {
+			kept = append(kept, e)
+		}
+	}
+	st.queue = kept
+	delete(st.sinceTrim, id)
+	delete(st.trimDue, id)
+	st.evMu.Unlock()
+	// A flush already holding a batch that contains the session's events either inserted them
+	// before this delete (the cascade removes them) or fails their foreign key and drops them.
+	st.flushMu.Lock()
+	defer st.flushMu.Unlock()
 	_, err := st.db.Exec(`DELETE FROM agent_sessions WHERE id=?`, id)
 	return err
 }
 
-// AppendEvent stores e (assigning e.ID) and prunes old history.
-func (st *Store) AppendEvent(e *Event) error {
-	data := "null"
+func eventData(e *Event) string {
 	if len(e.Data) > 0 {
-		data = string(e.Data)
+		return string(e.Data)
 	}
-	res, err := st.db.Exec(`INSERT INTO agent_events(session_id,at,kind,text,data) VALUES(?,?,?,?,?)`,
-		e.SessionID, e.At.UnixMilli(), e.Kind, e.Text, data)
-	if err != nil {
+	return "null"
+}
+
+// loadEventCounterLocked seeds the id counter above every id ever issued (the table's rows
+// and the AUTOINCREMENT high-water mark, which pruning does not lower).
+func (st *Store) loadEventCounterLocked() error {
+	if st.evLoaded {
+		return nil
+	}
+	var top int64
+	if err := st.db.QueryRow(`SELECT COALESCE(MAX(id),0) FROM agent_events`).Scan(&top); err != nil {
 		return err
 	}
-	e.ID, _ = res.LastInsertId()
-	if e.ID%256 == 0 { // amortised pruning
-		_, _ = st.db.Exec(`DELETE FROM agent_events WHERE session_id=? AND id <= (
-			SELECT id FROM agent_events WHERE session_id=? ORDER BY id DESC LIMIT 1 OFFSET ?)`,
-			e.SessionID, e.SessionID, maxEventsPerSession)
+	var seq sql.NullInt64
+	if err := st.db.QueryRow(`SELECT seq FROM sqlite_sequence WHERE name='agent_events'`).Scan(&seq); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return err
 	}
+	st.nextEvent, st.evLoaded = max(top, seq.Int64)+1, true
 	return nil
+}
+
+// noteAppendLocked counts an appended event toward its session's next prune.
+func (st *Store) noteAppendLocked(sessionID string) {
+	st.sinceTrim[sessionID]++
+	if st.sinceTrim[sessionID] >= pruneEvery {
+		st.sinceTrim[sessionID] = 0
+		st.trimDue[sessionID] = true
+	}
+}
+
+// trim drops a session's history beyond maxEventsPerSession.
+func (st *Store) trim(sessionID string) {
+	_, _ = st.db.Exec(`DELETE FROM agent_events WHERE session_id=? AND id <= (
+		SELECT id FROM agent_events WHERE session_id=? ORDER BY id DESC LIMIT 1 OFFSET ?)`,
+		sessionID, sessionID, maxEventsPerSession)
+}
+
+// AppendEvent stores e (assigning e.ID) before returning. Hot paths use QueueEvent.
+func (st *Store) AppendEvent(e *Event) error {
+	if err := st.QueueEvent(e); err != nil {
+		return err
+	}
+	return st.FlushEvents()
+}
+
+// QueueEvent assigns e.ID and queues the event for a batched write. The write happens within
+// eventFlushDelay, sooner when a batch fills, and always before the next read of events.
+func (st *Store) QueueEvent(e *Event) error {
+	st.evMu.Lock()
+	if err := st.loadEventCounterLocked(); err != nil {
+		st.evMu.Unlock()
+		return err
+	}
+	e.ID = st.nextEvent
+	st.nextEvent++
+	st.noteAppendLocked(e.SessionID)
+	st.queue = append(st.queue, *e)
+	switch {
+	case len(st.queue) >= eventBatch:
+		if !st.kicked {
+			st.kicked = true
+			go func() { _ = st.FlushEvents() }()
+		}
+	case st.timer == nil:
+		st.timer = time.AfterFunc(eventFlushDelay, func() {
+			if err := st.FlushEvents(); err != nil {
+				st.evMu.Lock()
+				log := st.log
+				st.evMu.Unlock()
+				log.Warn("agent event write failed", "err", err)
+			}
+		})
+	}
+	st.evMu.Unlock()
+	return nil
+}
+
+// FlushEvents writes every queued event. Rows the database rejects (a session deleted
+// meanwhile) are dropped; the first other error is returned.
+func (st *Store) FlushEvents() error {
+	st.flushMu.Lock()
+	defer st.flushMu.Unlock()
+	st.evMu.Lock()
+	batch, due := st.queue, st.trimDue
+	st.queue, st.trimDue, st.kicked = nil, map[string]bool{}, false
+	if st.timer != nil {
+		st.timer.Stop()
+		st.timer = nil
+	}
+	st.evMu.Unlock()
+	var first error
+	for len(batch) > 0 {
+		n := min(len(batch), eventRows)
+		if err := st.insertEvents(batch[:n]); err != nil {
+			// One bad row (foreign key) must not discard its neighbours.
+			for i := range batch[:n] {
+				if e := st.insertEvents(batch[i : i+1]); e != nil && first == nil && !strings.Contains(e.Error(), "FOREIGN KEY") {
+					first = e
+				}
+			}
+		}
+		batch = batch[n:]
+	}
+	// Prune only what this batch counted, after its rows are in.
+	for id := range due {
+		st.trim(id)
+	}
+	return first
+}
+
+// insertEvents writes events that already carry their ids in one statement.
+func (st *Store) insertEvents(es []Event) error {
+	var sb strings.Builder
+	sb.WriteString(`INSERT INTO agent_events(id,session_id,at,kind,text,data) VALUES `)
+	args := make([]any, 0, len(es)*6)
+	for i := range es {
+		if i > 0 {
+			sb.WriteByte(',')
+		}
+		sb.WriteString("(?,?,?,?,?,?)")
+		e := &es[i]
+		args = append(args, e.ID, e.SessionID, e.At.UnixMilli(), e.Kind, e.Text, eventData(e))
+	}
+	_, err := st.db.Exec(sb.String(), args...)
+	return err
 }
 
 // Events returns events with id > after, oldest first. kinds filters when non-empty.
 func (st *Store) Events(sessionID string, after int64, limit int, kinds ...string) ([]Event, error) {
+	if err := st.FlushEvents(); err != nil {
+		return nil, err
+	}
 	if limit <= 0 || limit > 2000 {
 		limit = 500
 	}
@@ -156,6 +336,9 @@ func (st *Store) Events(sessionID string, after int64, limit int, kinds ...strin
 
 // LastEvents returns the newest limit events, oldest first.
 func (st *Store) LastEvents(sessionID string, limit int, kinds ...string) ([]Event, error) {
+	if err := st.FlushEvents(); err != nil {
+		return nil, err
+	}
 	if limit <= 0 || limit > 2000 {
 		limit = 500
 	}

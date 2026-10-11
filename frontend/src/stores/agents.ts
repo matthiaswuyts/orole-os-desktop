@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import { create } from "zustand";
-import { Agents, events, type Detection, type Run, type Session } from "@/mygo";
+import { Agents, events, type Detection, type Run, type Session, type SessionDelta } from "@/mygo";
 import { inDesktop } from "@/lib/backend";
 import { groupColumns, type Columns } from "@/features/agents/columns";
 
@@ -20,14 +20,42 @@ export interface AgentCounts {
 
 const ts = (s: { updatedAt: string }) => Date.parse(s.updatedAt) || 0;
 
+/**
+ * `updatedAt` of the newest full session each id was last set from. Deltas advance a held
+ * session's `updatedAt` but not this, so a full update that was published before a delta yet
+ * arrives after it (the daemon publishes outside its lock) still lands: it carries status
+ * changes a delta cannot, and only the delta fields keep the newer values.
+ */
+const fullAt = new Map<string, number>();
+
+/** The session to hold after a full update `next` for `cur` (undefined: `next` is stale, drop it). */
+function foldFull(cur: Session | undefined, next: Session): Session | undefined {
+  if (!cur) { fullAt.set(next.id, ts(next)); return next; }
+  const at = ts(next);
+  if (at < (fullAt.get(next.id) ?? ts(cur))) return undefined;
+  fullAt.set(next.id, at);
+  if (ts(cur) <= at) return next;
+  // The fields `SessionDelta` carries keep the newer values the deltas already merged.
+  const { updatedAt, activity, tail, lastMessage, agentSessionId, model, transcriptRef, files, additions, deletions, usage } = cur;
+  return { ...next, updatedAt, activity, tail, lastMessage, agentSessionId, model, transcriptRef, files, additions, deletions, usage };
+}
+
 /** Upserts a session; an update older than what is held is dropped (events can arrive out of order). */
 export function applySessionUpdate(sessions: SessionMap, next: Session): SessionMap {
-  const cur = sessions[next.id];
-  if (cur && ts(cur) > ts(next)) return sessions;
-  return { ...sessions, [next.id]: next };
+  const merged = foldFull(sessions[next.id], next);
+  return merged ? { ...sessions, [next.id]: merged } : sessions;
+}
+
+/** Merges a hot-path delta into the held session; a delta for an unheld or newer session is ignored. */
+export function applySessionDelta(sessions: SessionMap, delta: SessionDelta): SessionMap {
+  const cur = sessions[delta.id];
+  if (!cur || ts(cur) > ts(delta)) return sessions;
+  const { id: _id, ...fields } = delta;
+  return { ...sessions, [delta.id]: { ...cur, ...fields } };
 }
 
 export function removeSession(sessions: SessionMap, id: string): SessionMap {
+  fullAt.delete(id);
   if (!(id in sessions)) return sessions;
   const { [id]: _gone, ...rest } = sessions;
   return rest;
@@ -39,14 +67,12 @@ export function removeSession(sessions: SessionMap, id: string): SessionMap {
  */
 export function mergeList(held: SessionMap, listed: Session[], live: ReadonlySet<string> = new Set()): SessionMap {
   const out: SessionMap = {};
-  for (const s of listed) {
-    const current = held[s.id];
-    out[s.id] = current && ts(current) >= ts(s) ? current : s;
-  }
+  for (const s of listed) out[s.id] = foldFull(held[s.id], s) ?? held[s.id];
   for (const id of live) {
     if (held[id]) out[id] = held[id];
     else delete out[id];
   }
+  for (const id of fullAt.keys()) if (!(id in out)) fullAt.delete(id);
   return out;
 }
 
@@ -155,6 +181,7 @@ export const useAgents = create<State>((set, get) => ({
     if (subscribers++ === 0) {
       const offs = [
         events.agentsUpdated.on((s) => { liveDuringLoad?.add(s.id); set((st) => ({ sessions: applySessionUpdate(st.sessions, s) })); }),
+        events.agentsDelta.on((d) => set((st) => ({ sessions: applySessionDelta(st.sessions, d) }))),
         events.agentsRemoved.on((r) => { liveDuringLoad?.add(r.id); set((st) => ({ sessions: removeSession(st.sessions, r.id), openId: st.openId === r.id ? null : st.openId })); }),
         events.agentsRun.on((r) => set((st) => ({ runs: applyRunUpdate(st.runs, r) }))),
         events.daemonState.on((l) => { if (l.connected) void get().load(); else set({ offline: true }); }),

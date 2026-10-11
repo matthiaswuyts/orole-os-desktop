@@ -57,6 +57,10 @@ notes. See `docs/development/updates.md`.
   `propose_skill` for your approval. Built-in skills are for bots only and are never synced to coding agents.
 
 ### Changed
+- Agents: live sessions no longer write to SQLite on every event under the global lock. Hot-path
+  changes are debounced per session and published as small `agents.delta` updates, events are
+  inserted in batches, `agents.list` is paged, diff statistics use `git diff --numstat` coalesced
+  per session, headless agent output lines are bounded and history pruning counts per session.
 - Remote machine file operations reuse one SSH/SFTP session per machine (closed when idle, or when
   the machine's access is edited or the machine is removed) instead of reconnecting for every call,
   and remote file etags use size and modification time instead of downloading and hashing the file.
