@@ -284,3 +284,29 @@ func TestCreateWithoutGitOrFolder(t *testing.T) {
 		t.Fatalf("folderless worktree root: %v", err)
 	}
 }
+
+func TestWorktreePath(t *testing.T) {
+	ctx := context.Background()
+	s := newService(t)
+	tmp, _ := filepath.EvalSymlinks(t.TempDir())
+	p, err := s.Add(ctx, repo(t, tmp, "proj"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	wt, err := s.Worktrees.Create(ctx, p.ID, "feature", "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := s.Worktrees.Path(ctx, wt.ID); err != nil || got != wt.Path {
+		t.Fatalf("Path = %q, %v; want %q", got, err, wt.Path)
+	}
+	if _, err := s.Worktrees.Path(ctx, "nope"); !errors.Is(err, projects.ErrNotFound) {
+		t.Fatalf("unknown worktree: %v", err)
+	}
+	if err := os.RemoveAll(wt.Path); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Worktrees.Path(ctx, wt.ID); !errors.Is(err, projects.ErrNotFound) {
+		t.Fatalf("missing directory: %v", err)
+	}
+}

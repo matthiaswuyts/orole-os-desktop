@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/rayorole/orole-os-desktop/internal/git"
@@ -40,28 +41,102 @@ func NewGit(src RootSource) *Local {
 // gitAnnotate sets Entry.Git from `git status`. Failures leave entries
 // unmarked: status is decoration, never a reason to fail a listing.
 func gitAnnotate(ctx context.Context, dir string, entries []Entry) {
-	top, err := git.Toplevel(ctx, dir)
-	if err != nil {
+	status, ok := listingStatus.get(ctx, dir)
+	if !ok {
 		return
 	}
-	relative, err := filepath.Rel(top, dir)
-	if err != nil {
-		return
-	}
-	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
-	defer cancel()
-	result, err := git.GetStatus(ctx, dir)
-	if err != nil {
-		return
-	}
-	prefix := ""
-	if relative != "." {
-		prefix = filepath.ToSlash(relative) + "/"
-	}
-	status := immediateGitStatus(result.Files, prefix)
 	for i := range entries {
 		if s, ok := status[entries[i].Name]; ok {
 			entries[i].Git = s
+		}
+	}
+}
+
+// listingStatus serves directory listings.
+var listingStatus = newGitStatusCache(gitImmediateStatus, time.Second)
+
+// gitImmediateStatus is one status limited to dir's subtree, folded to dir's
+// immediate children.
+func gitImmediateStatus(ctx context.Context, dir string) (map[string]string, error) {
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	result, prefix, err := git.GetStatusUnder(ctx, dir)
+	if err != nil {
+		return nil, err
+	}
+	return immediateGitStatus(result.Files, prefix), nil
+}
+
+// gitStatusCache shares one status computation per directory: concurrent
+// listings of a directory wait for the same run (single flight) and listings
+// within ttl of a finished run reuse its result, so a burst of listings costs one
+// git status. A change shows up in a listing at most ttl late.
+type gitStatusCache struct {
+	fn  func(ctx context.Context, dir string) (map[string]string, error)
+	ttl time.Duration
+
+	mu      sync.Mutex
+	entries map[string]*gitStatusEntry
+}
+
+type gitStatusEntry struct {
+	done   chan struct{} // closed when status/err are set
+	status map[string]string
+	err    error
+	until  time.Time // valid until; set when done
+}
+
+func newGitStatusCache(fn func(context.Context, string) (map[string]string, error), ttl time.Duration) *gitStatusCache {
+	return &gitStatusCache{fn: fn, ttl: ttl, entries: map[string]*gitStatusEntry{}}
+}
+
+// get returns dir's immediate-child statuses; ok is false when status is unavailable.
+// The returned map is shared and must not be modified.
+func (c *gitStatusCache) get(ctx context.Context, dir string) (map[string]string, bool) {
+	c.mu.Lock()
+	e := c.entries[dir]
+	if e != nil {
+		select {
+		case <-e.done:
+			if !time.Now().Before(e.until) {
+				e = nil
+			}
+		default:
+		}
+	}
+	if e == nil {
+		e = &gitStatusEntry{done: make(chan struct{})}
+		c.prune()
+		c.entries[dir] = e
+		// The run is shared, so it must outlive the first caller's cancellation.
+		go func() {
+			e.status, e.err = c.fn(context.WithoutCancel(ctx), dir)
+			e.until = time.Now().Add(c.ttl)
+			close(e.done)
+		}()
+	}
+	c.mu.Unlock()
+	select {
+	case <-e.done:
+		return e.status, e.err == nil
+	case <-ctx.Done():
+		return nil, false
+	}
+}
+
+// prune drops finished, expired entries; the caller holds c.mu.
+func (c *gitStatusCache) prune() {
+	if len(c.entries) < 64 {
+		return
+	}
+	now := time.Now()
+	for dir, e := range c.entries {
+		select {
+		case <-e.done:
+			if !now.Before(e.until) {
+				delete(c.entries, dir)
+			}
+		default:
 		}
 	}
 }
