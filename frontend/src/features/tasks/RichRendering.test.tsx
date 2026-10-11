@@ -7,6 +7,7 @@ const api = vi.hoisted(() => ({ artifact: vi.fn(), taskFile: vi.fn(), diff: vi.f
 vi.mock("@/mygo", () => ({ Agents: api, Shell: { openExternal: api.openExternal } }));
 vi.mock("@/lib/backend", () => ({ inDesktop: true }));
 vi.mock("./TaskInteractions", () => ({ TaskApprovalCard: () => null }));
+import { groupEvents } from "@/lib/taskEvents";
 import { Markdown } from "@/components/Markdown";
 import { highlightCode, SyntaxHighlighter } from "@/components/SyntaxHighlighter";
 import { FileCard, GuardrailNotice, SourcesCard } from "./FeedItems";
@@ -128,7 +129,7 @@ describe("task file previews", () => {
 describe("task canvas", () => {
   it("opens real file content from the feed and restores focus on close", async () => {
     api.taskFile.mockResolvedValue(preview());
-    render(<TaskCanvas session={session()} events={[]}><FileCard file={file} sessionId="rich-session" /></TaskCanvas>);
+    render(<TaskCanvas session={session()} items={[]}><FileCard file={file} sessionId="rich-session" /></TaskCanvas>);
     const trigger = screen.getByRole("button", { name: "Preview" });
     trigger.focus();
     fireEvent.click(trigger);
@@ -141,17 +142,17 @@ describe("task canvas", () => {
   });
 
   it("clears the visible canvas when the session changes", () => {
-    const view = render(<TaskCanvas session={session("one")} events={[]}><p>Conversation one</p></TaskCanvas>);
+    const view = render(<TaskCanvas session={session("one")} items={[]}><p>Conversation one</p></TaskCanvas>);
     fireEvent.click(screen.getByRole("button", { name: "Task files" }));
     expect(screen.getByRole("region", { name: "Task canvas" })).toBeInTheDocument();
-    view.rerender(<TaskCanvas session={session("two")} events={[]}><p>Conversation two</p></TaskCanvas>);
+    view.rerender(<TaskCanvas session={session("two")} items={[]}><p>Conversation two</p></TaskCanvas>);
     expect(screen.queryByRole("region", { name: "Task canvas" })).toBeNull();
   });
 
   it("lists only reported files and fetched changed files", async () => {
     api.diff.mockResolvedValue({ error: "", truncated: false, diff: { files: [{ path: "changed.txt", oldPath: "", status: "modified", additions: 1, deletions: 0, binary: false, hunks: [] }], truncated: false } });
     const events = [{ id: 1, sessionId: "rich-session", at: "2026-10-08T12:00:00Z", kind: "file", text: "", data: file }] as AgentEvent[];
-    render(<TaskCanvas session={session()} events={events}><p>Conversation</p></TaskCanvas>);
+    render(<TaskCanvas session={session()} items={groupEvents(events)}><p>Conversation</p></TaskCanvas>);
     fireEvent.click(screen.getByRole("button", { name: /Task files/ }));
     const tree = screen.getByRole("navigation", { name: "Task files" });
     expect(await within(tree).findByRole("button", { name: /changed.txt/ })).toBeInTheDocument();

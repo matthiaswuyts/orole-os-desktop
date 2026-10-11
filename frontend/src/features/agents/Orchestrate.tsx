@@ -15,7 +15,9 @@ import { ErrorNote } from "./shared";
 type Operation = "hand-off" | "review-with" | "loop-until" | "try-n";
 const titles: Record<Operation, string> = { "hand-off": "Hand off to", "review-with": "Review with", "loop-until": "Loop until", "try-n": "Try N ways" };
 export function Orchestrate({ session, onReply }: { session: Session; onReply: () => void }) {
-  const { detections, detecting, detectError, detect, upsert } = useAgents();
+  // Slice selectors: a card must not re-render on every session update of the store.
+  const detections = useAgents((s) => s.detections), detecting = useAgents((s) => s.detecting), detectError = useAgents((s) => s.detectError);
+  const detect = useAgents((s) => s.detect), upsert = useAgents((s) => s.upsert);
   const [dialog, setDialog] = useState<{ operation: Operation; kind: string } | null>(null);
   const action = useAction();
   const installed = detections?.filter((d) => d.installed) ?? [];

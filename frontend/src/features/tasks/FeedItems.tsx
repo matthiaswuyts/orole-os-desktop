@@ -1,6 +1,5 @@
 import { useState } from "react";
 import { Brain, Check, ChevronRight, Circle, CircleX, Info, LoaderCircle, Plug, TriangleAlert, FileText, ExternalLink, ShieldAlert } from "lucide-react";
-import type { Session } from "@/mygo";
 import type { FileData, GuardrailData, SourceReference } from "@/lib/taskChatTypes";
 import { Markdown } from "@/components/Markdown";
 import { Badge } from "@/components/ui/badge";
@@ -82,8 +81,8 @@ export function ToolCard({ call }: { call: ToolCall }) {
 }
 
 
-export function PermissionItem({ session, item }: { session: Session; item: Item<"permission"> }) {
-  return <TaskApprovalCard sessionId={session.id} request={item.request} resolved={!session.pending?.some((r) => r.id === item.request.id)} decision={item.decision} />;
+export function PermissionItem({ sessionId, resolved, item }: { sessionId: string; resolved: boolean; item: Item<"permission"> }) {
+  return <TaskApprovalCard sessionId={sessionId} request={item.request} resolved={resolved} decision={item.decision} />;
 }
 
 export function NoteRow({ item }: { item: Item<"note"> }) {

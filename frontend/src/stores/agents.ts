@@ -1,8 +1,8 @@
-import { useMemo } from "react";
 import { create } from "zustand";
+import { useShallow } from "zustand/react/shallow";
 import { Agents, events, type Detection, type Run, type Session } from "@/mygo";
 import { inDesktop } from "@/lib/backend";
-import { groupColumns, type Columns } from "@/features/agents/columns";
+import { columnOf, onDashboard } from "@/features/agents/columns";
 
 export type SessionMap = Record<string, Session>;
 
@@ -59,14 +59,24 @@ export function applyRunUpdate(runs: Run[], next: Run): Run[] {
   return [next, ...runs.filter((r) => r.id !== next.id)].sort((a, b) => runTs(b) - runTs(a));
 }
 
-export const selectColumns = (sessions: SessionMap): Columns => groupColumns(Object.values(sessions));
-
 export const isReviewable = (s: Session) => (s.status === "done" || s.status === "failed") && s.review === "";
 
+/** Every count in one pass over the sessions: no grouping, no sorting. */
 export function selectCounts(sessions: SessionMap): AgentCounts {
-  const cols = selectColumns(sessions);
-  const needsYou = cols["needs-you"].length, working = cols.working.length, done = cols.done.length, idle = cols.idle.length;
-  return { needsYou, working, done, idle, total: needsYou + working + done + idle, reviewable: Object.values(sessions).filter(isReviewable).length };
+  const counts: AgentCounts = { needsYou: 0, working: 0, done: 0, idle: 0, total: 0, reviewable: 0 };
+  for (const id in sessions) {
+    const s = sessions[id]!;
+    if (isReviewable(s)) counts.reviewable++;
+    if (!onDashboard(s)) continue;
+    counts.total++;
+    switch (columnOf(s.status)) {
+      case "needs-you": counts.needsYou++; break;
+      case "working": counts.working++; break;
+      case "done": counts.done++; break;
+      default: counts.idle++;
+    }
+  }
+  return counts;
 }
 
 const msg = (e: unknown) => (e instanceof Error ? e.message : String(e));
@@ -171,8 +181,7 @@ export const useAgents = create<State>((set, get) => ({
   },
 }));
 
-/** Counts for the sidebar badges and the status bar, recomputed only when sessions change. */
+/** Counts for the sidebar badges and the status bar. The selector result is compared by value, so a session update that moves no count renders nothing. */
 export function useAgentCounts(): AgentCounts {
-  const sessions = useAgents((s) => s.sessions);
-  return useMemo(() => selectCounts(sessions), [sessions]);
+  return useAgents(useShallow((s) => selectCounts(s.sessions)));
 }

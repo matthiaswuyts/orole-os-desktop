@@ -58,18 +58,24 @@ export function ago(iso: string, now = Date.now()): string {
 const listeners = new Set<(n: number) => void>();
 let timer: number | undefined;
 
-/** Current time in ms, ticking once a second while any component uses it. */
-export function useNow(): number {
+/** Current time in ms, ticking once a second while any enabled component uses it. A disabled component holds the time of its last render and never subscribes. */
+export function useNow(enabled = true): number {
   const [now, setNow] = useState(Date.now);
   useEffect(() => {
+    if (!enabled) return;
     listeners.add(setNow);
     timer ??= window.setInterval(() => listeners.forEach((l) => l(Date.now())), 1000);
     return () => {
       listeners.delete(setNow);
       if (listeners.size === 0) { clearInterval(timer); timer = undefined; }
     };
-  }, []);
+  }, [enabled]);
   return now;
+}
+
+/** How long a session has run: up to `now` while its process is alive, otherwise up to when it last changed. */
+export function sessionDuration(s: Pick<Session, "live" | "startedAt" | "endedAt" | "updatedAt">, now: number): string {
+  return duration((s.live ? now : Date.parse(s.endedAt || s.updatedAt)) - Date.parse(s.startedAt));
 }
 
 /**

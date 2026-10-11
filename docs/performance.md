@@ -90,6 +90,26 @@ connection (the IPC hello is not included). 5 runs, then 20 s idle sampling afte
 
 Window creation time is not first paint of the React UI; do not quote it as app start-up.
 
+## Task feed and agents board (frontend, measured 2026-10-11)
+
+Same machine, other processes running (noise). "Before" is `origin/main` at `c7c9b17`, "after" is this change, both
+measured by the same tests (`TaskViewRenders`, `AgentsBoard`, `ActivityHeatmapWidget`, `TaskCanvasDiff`) and, for the
+browser rows, one Playwright run against `vite` with a test-only MyGo bridge: a 500-event history, 150 live events
+while pinned to the newest message.
+
+| Scenario | Before | After |
+|---|---|---|
+| 100 live events into a 500-event history (jsdom): `groupEvents` calls | 200 | 100 |
+| ... assistant-message / tool-card renders | 21,683 / 11,650 | 38 / 35 |
+| Browser: rows in the DOM / DOM nodes with 400 feed rows | 400 / 5,231 | 14 / 197 |
+| Browser: 150 live events while pinned, long tasks (>50 ms) / blocking time | 150 / 19.3 s | 0 / 0 ms |
+| 200-session board, 100 session updates: card renders | 20,000 (600 on first paint) | 100 (200 on first paint) |
+| Activity heatmap: date-format calls on first render / in total after a hover and 20 session updates | 743 / 16,354 | 0 / 0 |
+| Open canvas, 40 session updates: `Agents.diff` requests | 41 | 1 |
+
+Rows of a conversation longer than 60 are windowed (`@tanstack/react-virtual`); the feed groups each event once and
+reuses unchanged items so memoized rows skip rendering.
+
 ## Reproducing and extending
 
 Add benchmarks to `tests/performance`; windows-only ones go in `*_windows_test.go`. When behaviour changes in a

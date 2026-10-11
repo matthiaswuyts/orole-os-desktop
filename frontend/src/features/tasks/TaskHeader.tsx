@@ -6,7 +6,7 @@ import { useBoxes } from "@/stores/boxes";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "@/components/ui/tooltip";
 import { AgentGlyph, SessionBadge } from "@/features/agents/shared";
-import { duration, folderOf, isRemoteProcess, kindLabel, sessionTitle, useNow } from "@/features/agents/format";
+import { folderOf, isRemoteProcess, kindLabel, sessionDuration, sessionTitle, useNow } from "@/features/agents/format";
 import { toastError } from "@/features/projects/dialogs";
 import { openExternal } from "@/lib/openExternal";
 import { TaskSheets } from "./TaskSheets";
@@ -14,9 +14,9 @@ import { TaskSheets } from "./TaskSheets";
 export function TaskHeader({ session }: { session: Session }) {
   const [stopping, setStopping] = useState(false);
   const machine = useBoxes((state) => state.machines.find((box) => box.id === (session.machine || "local"))?.name);
-  const now = useNow();
+  const now = useNow(session.live);
   const title = sessionTitle(session);
-  const metadata = [kindLabel(session.kind), session.model, session.reasoning ? `${session.reasoning} reasoning` : "", machine ?? session.machine, folderOf(session), session.branch, duration(now - Date.parse(session.startedAt))].filter(Boolean).join(" · ");
+  const metadata = [kindLabel(session.kind), session.model, session.reasoning ? `${session.reasoning} reasoning` : "", machine ?? session.machine, folderOf(session), session.branch, sessionDuration(session, now)].filter(Boolean).join(" · ");
   const stop = async () => {
     if (stopping) return;
     setStopping(true);

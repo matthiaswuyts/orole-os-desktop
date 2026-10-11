@@ -6,6 +6,20 @@ Each release needs a `## X.Y.Z - YYYY-MM-DD` section matching `version` in `mygo
 workflow refuses to build without it, and the in-app update window shows that section as the release
 notes. See `docs/development/updates.md`.
 
+## Unreleased
+
+### Changed
+- Tasks: a streaming agent no longer re-renders the whole task feed. Events are grouped once for the feed and
+  the canvas, unchanged messages and tool calls skip rendering, and conversations over 60 rows render only the
+  rows near the viewport (search, "Load earlier" and following the newest message keep working).
+- Tasks board: a session update re-renders only its own card, counts are computed in one pass, and only live
+  sessions tick their elapsed time (a finished task now shows how long it ran, not time since it started).
+- Task changes (diff) refresh at most once every two seconds, never overlap, and keep showing the previous
+  diff while refreshing.
+- Startup no longer waits for the full task list; the Tasks view and Home activity show their own loading state.
+- Home activity calendar no longer rebuilds or reformats its 365 days on hover or on every session update.
+- Terminal: faster output decoding, and changing the font size no longer recreates the terminal.
+
 ## 0.1.0 - 2026-10-10
 
 First tagged release. Windows only.

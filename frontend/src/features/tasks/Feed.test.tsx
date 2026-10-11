@@ -7,7 +7,13 @@ vi.mock("@/mygo", () => ({ Agents: { approve: vi.fn(), get: vi.fn(), artifact: a
 vi.mock("@/lib/backend", () => ({ inDesktop: true }));
 vi.mock("@/stores/agents", () => ({ useAgents: { getState: () => ({ upsert: vi.fn() }) } }));
 vi.mock("@/stores/boxes", () => ({ useBoxes: vi.fn() }));
-import { Feed } from "./Feed";
+import { Feed as FeedView, type FeedProps } from "./Feed";
+import { useFeedItems } from "./useFeedItems";
+
+/** The feed as TaskView mounts it: items grouped once from the events. */
+function Feed(props: Omit<FeedProps, "items">) {
+  return <FeedView {...props} items={useFeedItems(props.events, props.session.live)} />;
+}
 
 beforeEach(() => { vi.clearAllMocks(); });
 afterEach(cleanup);

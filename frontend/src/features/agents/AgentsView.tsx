@@ -1,5 +1,5 @@
 import { Tooltip, TooltipPopup, TooltipTrigger } from "@/components/ui/tooltip";
-import { useEffect, useMemo, useState } from "react";
+import { memo, useEffect, useMemo, useState } from "react";
 import { Plus, RefreshCw, X } from "lucide-react";
 import { Agents, type Session, type Run } from "@/mygo";
 import { useAgents } from "@/stores/agents";
@@ -36,7 +36,8 @@ export function AgentsView() {
     {!loaded ? <p role="status" className="p-6 text-muted-foreground">Loading agents…</p> : <div className="min-h-0 flex-1 overflow-auto"><div className="grid grid-cols-[repeat(auto-fit,minmax(250px,1fr))] items-start gap-x-4 gap-y-6 px-6 pt-4 pb-6">{COLUMN_SPECS.map((c) => <section key={c.id} aria-label={c.title} className="min-w-0"><header className="mb-2 flex min-h-5 items-center gap-2 px-0.5"><StateGlyph status={c.id} /><h3 className="text-xs font-medium">{c.title}</h3><span className={cn("ml-auto font-mono text-[11px] tabular-nums", c.id === "needs-you" && cols[c.id].length ? "text-warning-foreground" : "text-muted-foreground")}>{cols[c.id].length}</span></header><div className="flex flex-col gap-row-gap">{cols[c.id].length ? cols[c.id].map((s) => <AgentCard key={s.id} session={s} />) : <p className="rounded-lg border border-dashed px-3 py-4 text-center text-xs text-muted-foreground">{c.empty}</p>}</div></section>)}</div></div>}
   </>}</div>;
 }
-function AgentCard({ session: s }: { session: Session }) {
+/** Memoized: a session update re-renders only the card whose session changed. */
+const AgentCard = memo(function AgentCard({ session: s }: { session: Session }) {
   const [reply, setReply] = useState(false);
   const open = useAgents((st) => st.setOpenId);
   const remote = isRemoteProcess(s);
@@ -58,7 +59,7 @@ function AgentCard({ session: s }: { session: Session }) {
       <Orchestrate session={s} onReply={() => setReply(true)} />
     </footer>
   </article>;
-}
+});
 function RunItem({ run }: { run: Run }) {
   const action = useAction();
   return <div className="flex shrink-0 items-center gap-2 rounded-md border px-2 py-1 text-xs"><span>{run.kind}</span><Badge variant={run.status === "failed" ? "error" : run.status === "succeeded" ? "success" : "secondary"}>{run.status}</Badge>{run.status === "running" && run.kind === "loop-until" && <Button size="xs" variant="ghost" disabled={action.busy} onClick={() => void action.run(async () => { await Agents.cancelRun(run.id); await useAgents.getState().refresh(); })}>Cancel</Button>}<ErrorNote error={action.error || run.error} /></div>;

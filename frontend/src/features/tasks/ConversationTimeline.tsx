@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { memo, useState } from "react";
 import type { FeedItem } from "@/lib/taskEvents";
 import { ToolCard } from "./FeedItems";
 
@@ -24,22 +24,30 @@ export function MessageTime({ at }: { at: string }) {
 }
 
 export type ToolItem = Extract<FeedItem, { type: "tool" }>;
-export type TimelineEntry = { type: "item"; key: string; at: string; item: FeedItem } | { type: "tools"; key: string; at: string; items: ToolItem[] };
+export type TimelineEntry = { type: "item"; key: string; at: string; day: string | null; item: FeedItem } | { type: "tools"; key: string; at: string; day: string | null; items: ToolItem[] };
 
-/** Only adjacent calls share a trace; never move a tool past a message or a local-day boundary. */
+/** Only adjacent calls share a trace; never move a tool past a message or a local-day boundary. `day` is each entry's local calendar day, computed once. */
 export function conversationTimeline(items: readonly FeedItem[]): TimelineEntry[] {
   const entries: TimelineEntry[] = [];
   for (const item of items) {
     const prior = entries[entries.length - 1];
+    const day = conversationDay(item.at);
     if (item.type === "tool") {
-      if (prior?.type === "tools" && conversationDay(prior.at) === conversationDay(item.at)) prior.items.push(item);
-      else entries.push({ type: "tools", key: item.key, at: item.at, items: [item] });
-    } else entries.push({ type: "item", key: item.key, at: item.at, item });
+      if (prior?.type === "tools" && prior.day === day) prior.items.push(item);
+      else entries.push({ type: "tools", key: item.key, at: item.at, day, items: [item] });
+    } else entries.push({ type: "item", key: item.key, at: item.at, day, item });
   }
   return entries;
 }
 
-export function ToolTimeline({ items }: { items: readonly ToolItem[] }) {
+const ToolRow = memo(function ToolRow({ item }: { item: ToolItem }) {
+  return <li data-scroll-anchor={item.key} className="min-w-0">
+    <ToolCard call={item.call} /><MessageTime at={item.at} />
+  </li>;
+});
+
+/** Renders again only when a call of the group changed, not on every event of the conversation. */
+export const ToolTimeline = memo(function ToolTimeline({ items }: { items: readonly ToolItem[] }) {
   const [open, setOpen] = useState(true);
   const running = items.filter((item) => item.call.status === "running").length;
   const failed = items.filter((item) => item.call.status === "error").length;
@@ -48,9 +56,7 @@ export function ToolTimeline({ items }: { items: readonly ToolItem[] }) {
       {items.length} tool {items.length === 1 ? "call" : "calls"}{running ? ` · ${running} running` : ""}{failed ? ` · ${failed} failed` : ""}
     </summary>
     <ol aria-label="Tool calls in recorded order" className="ml-1.5 space-y-2 border-l pl-3">
-      {items.map((item) => <li key={item.key} data-scroll-anchor={item.key} className="min-w-0">
-        <ToolCard call={item.call} /><MessageTime at={item.at} />
-      </li>)}
+      {items.map((item) => <ToolRow key={item.key} item={item} />)}
     </ol>
   </details>;
-}
+}, (a, b) => a.items.length === b.items.length && a.items.every((item, i) => item === b.items[i]));

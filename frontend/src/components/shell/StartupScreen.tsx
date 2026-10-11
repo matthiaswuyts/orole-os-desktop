@@ -2,20 +2,20 @@ import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import { useSettings } from "@/stores/settings";
 import { useWorkspaces } from "@/stores/workspaces";
-import { useAgents } from "@/stores/agents";
 import { useDaemon } from "@/stores/daemon";
 
-/** One startup gate; later refreshes and disconnects belong to the app, not this screen. */
+/**
+ * One startup gate; later refreshes and disconnects belong to the app, not this screen. Tasks are not a
+ * check: `Agents.list` returns every session, and each view that shows them has its own loading state.
+ */
 export function StartupScreen({ children }: { children: ReactNode }) {
   const settingsLoaded = useSettings((state) => state.loaded);
   const workspacesLoaded = useWorkspaces((state) => state.loaded);
-  const agentsLoaded = useAgents((state) => state.loaded);
   const daemonLink = useDaemon((state) => state.link);
   const [opened, setOpened] = useState(false);
   const checks = [
     { done: settingsLoaded, label: "Loading preferences" },
     { done: workspacesLoaded, label: "Loading workspaces" },
-    { done: agentsLoaded, label: "Loading tasks" },
     { done: daemonLink !== "unknown", label: "Checking daemon connection" },
   ];
   // These stores settle their initial checks on both success and failure. Completion
