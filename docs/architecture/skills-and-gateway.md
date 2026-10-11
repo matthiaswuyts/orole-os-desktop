@@ -79,7 +79,14 @@ authenticated pipe client as the CLI and hooks (`OROLE_HOME` selects the data di
 - The tool list follows the daemon: `mcp.status`, `mcp.removed` and `skills.changed` events (plus a slow safety
   poll) trigger a re-list; changed definitions send `notifications/tools/list_changed`. Until the daemon is
   reachable only the two skill tools exist.
-- IPC: `gateway.tools`, `gateway.call`, `gateway.skills`, `gateway.skill`.
+- The daemon caches the tool index and routing table keyed on `Manager.Generation()`, which moves exactly when a
+  server is added, edited, enabled, disabled, removed, changes status or changes its catalog content. Per-tool
+  permissions are not part of the index: they decorate catalogs only, are cached per server (dropped on every write
+  and on removal), and the policy engine reads them straight from SQLite on each call, so a cached index never
+  widens access. `mcp.status` is published only when a server's state differs from the last one published.
+- IPC: `gateway.tools` (request `{sessionId, etag?}`, answer `{etag, tools}` or `{etag, notModified: true}` when the
+  caller's etag is current, so the 30 s safety poll costs no tool bodies), `gateway.call`, `gateway.skills`,
+  `gateway.skill`.
 
 ### Security model
 

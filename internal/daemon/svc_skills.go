@@ -214,11 +214,11 @@ func (d *Daemon) registerSkillHandlers() {
 		return out, nil
 	})
 
-	handle(d, gateway.MethodTools, func(ctx context.Context, _ gateway.ToolsParams) ([]gateway.Tool, error) {
+	handle(d, gateway.MethodTools, func(ctx context.Context, p gateway.ToolsParams) (gateway.ToolList, error) {
 		if d.Gateway == nil {
-			return nil, errors.New("gateway is unavailable")
+			return gateway.ToolList{}, errors.New("gateway is unavailable")
 		}
-		return d.Gateway.Tools(ctx)
+		return d.Gateway.ToolList(ctx, p.ETag)
 	})
 	handle(d, gateway.MethodCall, func(ctx context.Context, p gateway.CallParams) (*mcp.CallResult, error) {
 		if d.Gateway == nil {

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/rayorole/orole-os-desktop/internal/chat"
@@ -29,6 +30,9 @@ type MCPClient interface {
 	List(ctx context.Context) ([]mcp.ServerState, error)
 	Catalog(ctx context.Context, id string) (*mcp.Catalog, error)
 	InvokeChecked(ctx context.Context, id, tool string, args map[string]any, opts mcp.CallOptions) (*mcp.CallResult, error)
+	// Generation changes whenever the server list, a server's status or a catalog changes; the
+	// specs derived from them are cached until it does.
+	Generation() uint64
 }
 
 // MCPTools exposes the MCP tools a bot's allow-list names (BotConfig.MCPTools, "<serverId>/<tool>").
@@ -37,6 +41,21 @@ type MCPClient interface {
 // the server. Results are untrusted.
 type MCPTools struct {
 	Client MCPClient
+
+	mu       sync.Mutex // guards the per-generation cache below
+	gen      uint64
+	have     bool
+	live     map[string]mcp.ServerState // enabled, connected servers; nil until listed for gen
+	cats     map[string]*mcp.Catalog
+	resolved map[mcpKey]*mcpResolved // nil value: the tool is not in the server's catalog
+}
+
+type mcpKey struct{ server, tool string }
+
+// mcpResolved is what a model is told about one tool, derived once per generation.
+type mcpResolved struct {
+	description string
+	schema      json.RawMessage
 }
 
 // mcpEntry is one allow-list entry with its stable function name.
@@ -111,42 +130,54 @@ func (t *MCPTools) Specs(bot chat.Bot, caps llm.Caps) []llm.ToolSpec {
 	// Specs has no context; the lookups read cached state and must never hang a run.
 	ctx, cancel := context.WithTimeout(context.Background(), mcpLookupLimit)
 	defer cancel()
-	servers, err := t.Client.List(ctx)
-	if err != nil {
-		return nil
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	// Read the generation first: a change during the lookups below leaves the cache stale-marked.
+	if gen := t.Client.Generation(); !t.have || gen != t.gen {
+		t.gen, t.have = gen, true
+		t.live, t.cats, t.resolved = nil, map[string]*mcp.Catalog{}, map[mcpKey]*mcpResolved{}
 	}
-	live := map[string]mcp.ServerState{}
-	for _, s := range servers {
-		if s.Enabled && s.Status == mcp.StatusConnected {
-			live[s.ID] = s
+	if t.live == nil {
+		servers, err := t.Client.List(ctx)
+		if err != nil {
+			return nil
+		}
+		t.live = map[string]mcp.ServerState{}
+		for _, s := range servers {
+			if s.Enabled && s.Status == mcp.StatusConnected {
+				t.live[s.ID] = s
+			}
 		}
 	}
-	catalogs := map[string]*mcp.Catalog{}
 	var specs []llm.ToolSpec
 	for _, e := range entries {
-		srv, ok := live[e.Server]
+		srv, ok := t.live[e.Server]
 		if !ok {
 			continue
 		}
-		cat, ok := catalogs[e.Server]
-		if !ok {
-			if cat, err = t.Client.Catalog(ctx, e.Server); err != nil {
-				cat = nil
+		key := mcpKey{e.Server, e.Tool}
+		r, seen := t.resolved[key]
+		if !seen {
+			cat, ok := t.cats[e.Server]
+			if !ok {
+				var err error
+				if cat, err = t.Client.Catalog(ctx, e.Server); err != nil {
+					continue // not cached: retried on the next call
+				}
+				t.cats[e.Server] = cat
 			}
-			catalogs[e.Server] = cat
-		}
-		if cat == nil {
-			continue
-		}
-		for i := range cat.Tools {
-			if ti := &cat.Tools[i]; ti.Name == e.Tool {
-				specs = append(specs, llm.ToolSpec{
-					Name:        e.Name,
-					Description: mcpDescription(srv.Name, ti),
-					Schema:      objectSchema(ti.InputSchema),
-				})
-				break
+			if cat != nil {
+				for i := range cat.Tools {
+					if ti := &cat.Tools[i]; ti.Name == e.Tool {
+						r = &mcpResolved{description: mcpDescription(srv.Name, ti), schema: objectSchema(ti.InputSchema)}
+						break
+					}
+				}
 			}
+			t.resolved[key] = r
+		}
+		if r != nil {
+			specs = append(specs, llm.ToolSpec{Name: e.Name, Description: r.description, Schema: r.schema})
 		}
 	}
 	return specs

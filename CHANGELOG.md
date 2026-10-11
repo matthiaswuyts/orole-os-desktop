@@ -6,6 +6,14 @@ Each release needs a `## X.Y.Z - YYYY-MM-DD` section matching `version` in `mygo
 workflow refuses to build without it, and the in-app update window shows that section as the release
 notes. See `docs/development/updates.md`.
 
+## Unreleased
+
+### Changed
+- MCP gateway and bot tools no longer rebuild the tool index, re-query permissions or re-derive
+  schemas on every call: the index is cached until a server is added, edited, enabled, disabled,
+  removed, changes status or changes its tools. `gateway.tools` carries an ETag so the gateway
+  process skips unchanged lists, and `mcp.status` is published only when a server's state changes.
+
 ## 0.1.0 - 2026-10-10
 
 First tagged release. Windows only.

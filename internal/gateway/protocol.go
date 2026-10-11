@@ -57,9 +57,20 @@ type Tool struct {
 	OpenWorld    *bool           `json:"openWorld,omitempty"`
 }
 
-// ToolsParams is the gateway.tools request.
+// ToolsParams is the gateway.tools request. ETag is the ToolList.ETag the caller already holds
+// ("" = none); when it is still current the daemon answers NotModified without the tool bodies.
 type ToolsParams struct {
 	SessionID string `json:"sessionId"`
+	ETag      string `json:"etag,omitempty"`
+}
+
+// ToolList is the gateway.tools answer. ETag identifies the exact content of Tools (it does not
+// change when only connection state or permissions churn). NotModified means the caller's ETag is
+// current; Tools is then empty.
+type ToolList struct {
+	ETag        string `json:"etag"`
+	NotModified bool   `json:"notModified,omitempty"`
+	Tools       []Tool `json:"tools"`
 }
 
 // CallParams is the gateway.call request. Arguments is the raw JSON object the model produced.
@@ -85,7 +96,8 @@ type SkillContent struct {
 
 // Backend is what the gateway server needs from the daemon.
 type Backend interface {
-	Tools(ctx context.Context) ([]Tool, error)
+	// Tools lists the proxied tools; etag is the ETag of the list the caller holds ("" = none).
+	Tools(ctx context.Context, etag string) (ToolList, error)
 	Call(ctx context.Context, name string, args json.RawMessage) (*mcp.CallResult, error)
 	Skills(ctx context.Context) ([]skills.Skill, error)
 	Skill(ctx context.Context, name, file string) (SkillContent, error)

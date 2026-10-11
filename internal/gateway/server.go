@@ -29,8 +29,9 @@ type Server struct {
 	srv *sdk.Server
 	log *slog.Logger
 
-	mu  sync.Mutex
-	dyn map[string][32]byte // exposed name -> fingerprint of the registered definition
+	mu   sync.Mutex
+	dyn  map[string][32]byte // exposed name -> fingerprint of the registered definition
+	etag string              // ETag of the daemon tool list dyn was reconciled to
 }
 
 // NewServer builds the gateway server on a backend.
@@ -103,12 +104,21 @@ func (s *Server) refreshLoop(ctx context.Context, refresh <-chan struct{}) {
 	}
 }
 
-// Refresh re-lists the daemon's tools and reconciles the server's registered tools.
+// Refresh re-lists the daemon's tools and reconciles the server's registered tools. The daemon
+// is asked conditionally: while its list is unchanged the answer carries no tools and nothing is
+// decoded, fingerprinted or re-registered.
 func (s *Server) Refresh(ctx context.Context) error {
-	tools, err := s.b.Tools(ctx)
+	s.mu.Lock()
+	etag := s.etag
+	s.mu.Unlock()
+	list, err := s.b.Tools(ctx, etag)
 	if err != nil {
 		return err
 	}
+	if list.NotModified && etag != "" {
+		return nil
+	}
+	tools := list.Tools
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	next := make(map[string][32]byte, len(tools))
@@ -137,6 +147,7 @@ func (s *Server) Refresh(ctx context.Context) error {
 		s.srv.RemoveTools(gone...)
 	}
 	s.dyn = next
+	s.etag = list.ETag
 	return nil
 }
 

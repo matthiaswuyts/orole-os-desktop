@@ -108,7 +108,7 @@ func (m *Manager) InvokeChecked(ctx context.Context, id, tool string, args map[s
 		defer c.untrackCall(opts.CallID)
 		opts.CallID = "" // one cancellation registration covers approval and invocation
 	}
-	cat, err := m.Catalog(ctx, id)
+	cat, err := m.baseCatalog(ctx, id) // permissions are enforced by the policy engine, not read from here
 	if err != nil {
 		return nil, err
 	}
