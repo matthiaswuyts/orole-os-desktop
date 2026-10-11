@@ -930,7 +930,8 @@ export interface FilesInfo {
   git?: string;
   /**
    * Etag is "v1:<mtime unix nanos>:<size>:<sha256 hex>"; the hash part is empty
-   * for files above MaxHashBytes (then mtime+size alone are compared).
+   * for files above MaxHashBytes and for remote machine files (then mtime+size
+   * alone are compared).
    */
   etag?: string;
   /** Root is the id of the root that contains the path. */
