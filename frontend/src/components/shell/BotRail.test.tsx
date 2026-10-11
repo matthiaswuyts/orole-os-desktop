@@ -4,7 +4,7 @@ import type { Bot, BotChange, Message, RunState } from "@/mygo";
 import type { ChatState } from "@/stores/chat";
 
 const bridge = vi.hoisted(() => ({
-  bots: vi.fn(), clear: vi.fn(), archiveBot: vi.fn(), pinBot: vi.fn(),
+  bots: vi.fn(), clear: vi.fn(), archiveBot: vi.fn(), pinBot: vi.fn(), openSettings: vi.fn(),
   provider: { value: true as boolean | null },
   run: null as ((s: RunState) => void) | null,
   message: null as ((m: Message) => void) | null,
@@ -17,6 +17,7 @@ vi.mock("@/mygo", async (importOriginal) => {
   const none = () => () => {};
   return {
     ...actual,
+    Desktop: { openSettings: bridge.openSettings },
     Chat: { bots: bridge.bots, clear: bridge.clear, archiveBot: bridge.archiveBot, pinBot: bridge.pinBot },
     events: {
       chatRun: { on: (f: (s: RunState) => void) => { bridge.run = f; return () => { bridge.run = null; }; } },
@@ -48,7 +49,7 @@ const loaded = (over: Partial<ChatState> = {}) =>
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ["Date"] });
   vi.setSystemTime(NOW);
-  bridge.bots.mockReset(); bridge.clear.mockReset(); bridge.archiveBot.mockReset(); bridge.pinBot.mockReset();
+  bridge.bots.mockReset(); bridge.clear.mockReset(); bridge.archiveBot.mockReset(); bridge.pinBot.mockReset(); bridge.openSettings.mockReset().mockResolvedValue(undefined);
   bridge.provider.value = true;
   localStorage.clear();
   useDaemon.setState({ link: "connected" });
@@ -86,7 +87,8 @@ describe("BotRail states", () => {
     expect(screen.queryByRole("button", { name: /Create your first bot/ })).toBeNull();
     expect(screen.queryByRole("button", { name: /^New bot$/ })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: /Connect a provider/ }));
-    expect(useUI.getState()).toMatchObject({ view: "settings", settingsSection: "ai" });
+    expect(bridge.openSettings).toHaveBeenCalledWith("ai"); // settings open in their own window
+    expect(useUI.getState().settingsSection).toBe("ai");
   });
 
   it("invites creating the first bot, never showing sample bots", () => {

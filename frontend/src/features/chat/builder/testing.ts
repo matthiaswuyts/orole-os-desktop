@@ -25,6 +25,7 @@ export function emit(name: "chatMessage" | "chatRun" | "chatMemory" | "chatBot" 
 }
 
 export const bridge = {
+  desktop: { openSettings: vi.fn() },
   chat: {
     bot: vi.fn(), bots: vi.fn(), saveBot: vi.fn(), archiveBot: vi.fn(), exportBot: vi.fn(), importBot: vi.fn(), draftSend: vi.fn(), cancel: vi.fn(), send: vi.fn(),
     beginAttachment: vi.fn(), attachmentChunk: vi.fn(), commitAttachment: vi.fn(), discardAttachment: vi.fn(),
@@ -42,6 +43,7 @@ export const mygoMock = {
   Skills: bridge.skills,
   LLM: bridge.llm,
   Daemon: { health: vi.fn() },
+  Desktop: bridge.desktop,
   events: {
     chatMessage: event("chatMessage"), chatRun: event("chatRun"), chatMemory: event("chatMemory"), chatBot: event("chatBot"),
     llmChanged: event("llmChanged"), daemonState: event("daemonState"),
@@ -74,6 +76,7 @@ export function resetBridge() {
   bridge.chat.memoryEntries.mockResolvedValue([]);
   bridge.chat.knowledgeFiles.mockResolvedValue([]);
   bridge.chat.skillProposals.mockResolvedValue([]);
+  bridge.desktop.openSettings.mockResolvedValue(undefined);
   bridge.chat.cancel.mockResolvedValue(undefined);
   bridge.mcp.list.mockResolvedValue([]);
   bridge.skills.list.mockResolvedValue([]);
