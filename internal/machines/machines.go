@@ -60,10 +60,13 @@ type Manager struct {
 	operations  map[*accessOperation]struct{}
 	closed      bool
 	hostMetrics *systemmetrics.Sampler
+	pool        *sessionPool
 }
 
 func New(db *sql.DB, secrets credentials.Store, check Checker) *Manager {
-	return &Manager{db: db, secrets: secrets, policy: check, running: map[string]context.CancelFunc{}, writes: make(chan struct{}, 1), started: time.Now(), operations: map[*accessOperation]struct{}{}}
+	m := &Manager{db: db, secrets: secrets, policy: check, running: map[string]context.CancelFunc{}, writes: make(chan struct{}, 1), started: time.Now(), operations: map[*accessOperation]struct{}{}}
+	m.pool = newSessionPool(m.dialSession)
+	return m
 }
 
 // SetHostMetrics binds the daemon-owned native sampler before serving requests.
@@ -77,6 +80,7 @@ func (m *Manager) Close() {
 		op.cancel(context.Canceled)
 	}
 	m.accessMu.Unlock()
+	m.pool.closeAll()
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for _, cancel := range m.running {
