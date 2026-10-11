@@ -1,6 +1,7 @@
 import type { DirectiveFormatter, DirectiveSegment, TriggerItem } from "@assistant-ui/react";
 import { useEffect, useMemo, useState } from "react";
-import { Skills, type Bot } from "@/mygo";
+import { useStoreWithEqualityFn } from "zustand/traditional";
+import { Skills, type Bot, type BotConfig } from "@/mygo";
 import { useChat } from "@/stores/chat";
 
 /** What the user can @mention in a bot's composer: another bot, or one of this bot's own skills. */
@@ -9,6 +10,17 @@ export interface MentionTarget {
   type: "bot" | "skill";
   label: string;
   avatar: string;
+}
+
+/** What a thread draws of a bot: its name, avatar and skills. Everything else (preview, run flag, model) is none of its business. */
+export type BotInfo = Pick<Bot, "id" | "name" | "avatar"> & { config: Pick<BotConfig, "skills"> };
+
+const sameInfo = (a: BotInfo, b: BotInfo) =>
+  a.id === b.id && a.name === b.name && a.avatar === b.avatar && a.config.skills.length === b.config.skills.length && a.config.skills.every((skill, i) => skill === b.config.skills[i]);
+
+/** Every bot, as the same array until one is added, removed or renamed, so a rail preview update or run flag does not wake the thread. */
+export function useBotInfos(): readonly BotInfo[] {
+  return useStoreWithEqualityFn(useChat, (s) => s.bots, (a, b) => a === b || (a.length === b.length && a.every((bot, i) => sameInfo(bot, b[i]!))));
 }
 
 /** Most mentions the daemon accepts per message (internal/chat/mention.go). */
@@ -91,7 +103,7 @@ export function mentionsOf(text: string, targets: readonly MentionTarget[]): { b
   return { bots: [...bots].slice(0, MAX_BOT_MENTIONS), skills: [...skills].slice(0, MAX_SKILL_MENTIONS) };
 }
 
-function buildTargets(bots: readonly Bot[], botId: string, skills: readonly string[]): readonly MentionTarget[] {
+function buildTargets(bots: readonly BotInfo[], botId: string, skills: readonly string[]): readonly MentionTarget[] {
   return [
     ...bots.filter((b) => b.id !== botId).map((b): MentionTarget => ({ id: b.id, type: "bot", label: b.name, avatar: b.avatar })),
     ...skills.map((name): MentionTarget => ({ id: name, type: "skill", label: name, avatar: "" })),
@@ -99,7 +111,7 @@ function buildTargets(bots: readonly Bot[], botId: string, skills: readonly stri
 }
 
 /** Every name a send can mention, without the registry: other bots and the skills this bot was given (the daemon checks both). */
-export function targetsFor(bots: readonly Bot[], botId: string): readonly MentionTarget[] {
+export function targetsFor(bots: readonly BotInfo[], botId: string): readonly MentionTarget[] {
   return buildTargets(bots, botId, bots.find((b) => b.id === botId)?.config.skills ?? []);
 }
 
@@ -120,7 +132,7 @@ function useDisabledSkills(wanted: boolean): ReadonlySet<string> {
 
 /** Mentionable bots (every other bot) and skills (the enabled ones this bot has been given). */
 export function useMentionTargets(bot: Pick<Bot, "id" | "config">): readonly MentionTarget[] {
-  const bots = useChat((s) => s.bots);
+  const bots = useBotInfos();
   const disabled = useDisabledSkills(bot.config.skills.length > 0);
   const skills = bot.config.skills;
   return useMemo(() => buildTargets(bots, bot.id, skills.filter((name) => !disabled.has(name))), [bots, bot.id, skills, disabled]);

@@ -6,6 +6,13 @@ Each release needs a `## X.Y.Z - YYYY-MM-DD` section matching `version` in `mygo
 workflow refuses to build without it, and the in-app update window shows that section as the release
 notes. See `docs/development/updates.md`.
 
+## Unreleased
+
+### Changed
+- Chat: a streaming reply no longer re-renders the whole conversation. The rail's preview of a reply
+  updates at most once a second, the open conversation ignores preview and run-flag changes, bots and
+  the run state are read once per thread, and composer drafts live in their own store.
+
 ## 0.1.0 - 2026-10-10
 
 First tagged release. Windows only.
