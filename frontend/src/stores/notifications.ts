@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { Notifications, events } from "@/mygo";
 import type { NotificationList, Prefs, SourcePref } from "@/mygo";
 import { inDesktop } from "@/lib/backend";
+import { onFocusRefresh } from "@/lib/focus";
 import { useDaemon } from "@/stores/daemon";
 
 const message = (error: unknown) => error instanceof Error ? error.message : String(error);
@@ -26,7 +27,6 @@ interface State {
   prefsSaving: boolean;
   prefsError: string | null;
   nativeError: string | null;
-  nativeStatus: string | null;
   testing: boolean;
   testStatus: string | null;
   testError: string | null;
@@ -36,7 +36,8 @@ interface State {
   markRead: (ids: string[], all?: boolean) => Promise<void>;
   dismiss: (ids: string[], all?: boolean) => Promise<void>;
   loadPrefs: () => Promise<void>;
-  setSourcePref: (source: string | null, pref: SourcePref | null) => Promise<void>;
+  /** One choice for every alert type: becomes the default and clears per-type overrides. */
+  setAllPrefs: (pref: SourcePref) => Promise<void>;
   startSync: () => () => void;
 }
 
@@ -58,23 +59,20 @@ export const useNotifications = create<State>((set, get) => {
     items: [], sources: [], unread: 0, source: "", unreadOnly: false,
     loaded: false, loading: false, busy: false, error: null, actionError: null,
     prefs: null, prefsLoading: false, prefsSaving: false, prefsError: null, nativeError: null,
-    nativeStatus: null, testing: false, testStatus: null, testError: null,
+    testing: false, testStatus: null, testError: null,
     async test() {
       if (!inDesktop || get().testing || get().prefsSaving || get().prefsLoading) return;
       if (useDaemon.getState().link === "offline") {
         set({ testError: "The daemon is offline. Reconnect before testing notifications.", testStatus: null });
         return;
       }
-      set({ testing: true, testStatus: null, testError: null, nativeStatus: null, nativeError: null });
+      set({ testing: true, testStatus: null, testError: null, nativeError: null });
       try {
         const result = await Notifications.test();
         if (!result.stored) {
           set({ testStatus: "No notification created: system.test is disabled by your saved preferences." });
         } else {
-          const delivery = result.native
-            ? "Windows delivery requested; this does not confirm that a notification was displayed or heard."
-            : "Windows notifications are disabled for system.test.";
-          set({ testStatus: `Test saved to your notification center. ${delivery}${result.sound ? "" : " Notification sound is off."}` });
+          set({ testStatus: `Test saved to your notification center.${result.sound ? "" : " Sound is off for this alert."}` });
         }
       } catch (error) { set({ testError: message(error) }); }
       finally { set({ testing: false }); }
@@ -108,19 +106,13 @@ export const useNotifications = create<State>((set, get) => {
         if (request === prefsRequest) set({ prefsLoading: false, prefsError: message(error) });
       }
     },
-    async setSourcePref(source, pref) {
-      const current = get().prefs;
-      if (!current || get().prefsSaving || !inDesktop) return;
+    async setAllPrefs(pref) {
+      if (!get().prefs || get().prefsSaving || !inDesktop) return;
       if (useDaemon.getState().link === "offline") {
         set({ prefsError: "The daemon is offline. Reconnect before saving preferences." });
         return;
       }
-      const next: Prefs = { default: current.default, sources: { ...current.sources } };
-      if (source === null) {
-        if (!pref) return;
-        next.default = pref;
-      } else if (pref) next.sources[source] = pref;
-      else delete next.sources[source];
+      const next: Prefs = { default: pref, sources: {} };
       ++prefsRequest;
       set({ prefsSaving: true, prefsLoading: false, prefsError: null });
       try {
@@ -140,11 +132,8 @@ export const useNotifications = create<State>((set, get) => {
         const offSettings = events.settingsChanged.on(({ key }) => {
           if (key === "notifications.prefs") void get().loadPrefs();
         });
-        const offNative = events.notificationsNativeState.on(({ denied, error, accepted }) => {
-          set({
-            nativeError: denied ? (error || "Windows notifications are unavailable or blocked. Check system notification settings.") : (error ?? null),
-            nativeStatus: accepted ? "Windows accepted the latest notification request. Display and sound still depend on Windows permissions, volume, and Do not disturb / Focus Assist." : null,
-          });
+        const offNative = events.notificationsNativeState.on(({ denied, error }) => {
+          set({ nativeError: denied ? (error || "Windows notifications are unavailable or blocked. Check system notification settings.") : (error ?? null) });
         });
         const offDaemon = useDaemon.subscribe((state, previous) => {
           if (state.link === "connected" && previous.link !== "connected") refresh();
@@ -154,9 +143,9 @@ export const useNotifications = create<State>((set, get) => {
             set({ loading: false, prefsLoading: false, error: "The daemon is offline. Showing the last loaded notifications." });
           }
         });
-        window.addEventListener("focus", refresh);
+        const offFocus = onFocusRefresh(refresh);
         refresh();
-        stopSync = () => { offChanged(); offSettings(); offNative(); offDaemon(); window.removeEventListener("focus", refresh); };
+        stopSync = () => { offChanged(); offSettings(); offNative(); offDaemon(); offFocus(); };
       }
       let stopped = false;
       return () => {

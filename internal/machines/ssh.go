@@ -127,32 +127,48 @@ func (m *Manager) Pair(ctx context.Context, actor string, p PairRequest) (Machin
 	}
 	return m.Get(ctx, id)
 }
-func dialSSH(ctx context.Context, address string, cfg *ssh.ClientConfig) (*ssh.Client, error) {
+
+// handshakeSSH dials and authenticates. Until the returned stop func runs,
+// cancelling ctx closes the socket. When bound is true the ctx deadline is also
+// applied to the connection for its whole life (one-shot operations). A pooled
+// connection must outlive its dialing context, so it passes false and disarms
+// cancellation with stop once its session is ready.
+func handshakeSSH(ctx context.Context, address string, cfg *ssh.ClientConfig, bound bool) (*ssh.Client, func() bool, error) {
 	conn, err := (&net.Dialer{}).DialContext(ctx, "tcp", address)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
-	if deadline, ok := ctx.Deadline(); ok {
+	if deadline, ok := ctx.Deadline(); ok && bound {
 		_ = conn.SetDeadline(deadline)
 	}
 	c, ch, req, err := ssh.NewClientConn(conn, address, cfg)
 	if err != nil {
 		stop()
 		_ = conn.Close()
-		return nil, err
+		return nil, nil, err
 	}
 	if ctx.Err() != nil {
 		stop()
 		_ = c.Close()
-		return nil, ctx.Err()
+		return nil, nil, ctx.Err()
+	}
+	return ssh.NewClient(c, ch, req), stop, nil
+}
+func dialSSH(ctx context.Context, address string, cfg *ssh.ClientConfig) (*ssh.Client, error) {
+	client, stop, err := handshakeSSH(ctx, address, cfg, true)
+	if err != nil {
+		return nil, err
 	}
 	// Keep cancellation hooked to the socket for the lifetime of this operation.
-	client := ssh.NewClient(c, ch, req)
 	go func() { _ = client.Wait(); stop() }()
 	return client, nil
 }
-func (m *Manager) connect(ctx context.Context, v Machine) (*ssh.Client, error) {
+
+// machineConfig loads the stored key and builds the pinned-identity client
+// configuration. The key is read from the credential store and parsed on every
+// dial; it is never cached outside it.
+func (m *Manager) machineConfig(v Machine) (*ssh.ClientConfig, error) {
 	if v.Kind != "remote" || v.Transport != "ssh" || v.hostKey == "" {
 		return nil, ErrDenied
 	}
@@ -165,5 +181,12 @@ func (m *Manager) connect(ctx context.Context, v Machine) (*ssh.Client, error) {
 	if err != nil {
 		return nil, errors.New("stored machine key is invalid; remove and pair the machine again")
 	}
-	return dialSSH(ctx, v.Address, &ssh.ClientConfig{User: v.Username, Auth: []ssh.AuthMethod{ssh.PublicKeys(signer)}, HostKeyCallback: pinnedCallback(v.hostKey, v.Fingerprint)})
+	return &ssh.ClientConfig{User: v.Username, Auth: []ssh.AuthMethod{ssh.PublicKeys(signer)}, HostKeyCallback: pinnedCallback(v.hostKey, v.Fingerprint)}, nil
+}
+func (m *Manager) connect(ctx context.Context, v Machine) (*ssh.Client, error) {
+	cfg, err := m.machineConfig(v)
+	if err != nil {
+		return nil, err
+	}
+	return dialSSH(ctx, v.Address, cfg)
 }

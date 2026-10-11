@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -72,7 +73,7 @@ func chatFixture(t *testing.T, status Status) (*Manager, *liveSess, *chatTestPro
 	if err != nil {
 		t.Fatal(err)
 	}
-	m := NewManager(Config{Store: NewStore(db), Authorize: func(context.Context, string, string, string) error { return nil }})
+	m := NewManager(Config{Store: NewStore(&chatFailDB{DB: db}), Authorize: func(context.Context, string, string, string) error { return nil }})
 	p := &chatTestProcess{}
 	now := time.Now().UTC()
 	s := Session{ID: "chat", Kind: "claude", Machine: "local", Mode: ModeStructured, Status: status, StartedAt: now, UpdatedAt: now}
@@ -92,6 +93,10 @@ func chatFixture(t *testing.T, status Status) (*Manager, *liveSess, *chatTestPro
 		m.mu.Unlock()
 		m.bgCancel()
 		m.bgWork.Wait()
+		// Drain the debounced session writer and the event flusher before the file closes, or
+		// their timers fire into a closed database and hold chat.db open during TempDir cleanup.
+		_ = m.w.close()
+		_ = m.st.FlushEvents()
 		db.Close()
 	})
 	return m, ls, p
@@ -427,15 +432,24 @@ func TestChatUsageSnapshotsAndReadableEvents(t *testing.T) {
 	}
 }
 
+// chatFailDB wraps a DB and, while armed, fails session writes the predicate selects. It is
+// installed when the Store is built and armed through an atomic, so the Store's background
+// event flusher never races a test swapping the Store's db field.
 type chatFailDB struct {
 	DB
-	fail func(Session) bool
+	fail atomic.Pointer[func(Session) bool]
 }
 
-func (db chatFailDB) Exec(query string, args ...any) (sql.Result, error) {
-	if strings.HasPrefix(query, "INSERT INTO agent_sessions") {
+func (db *chatFailDB) arm(fail func(Session) bool) { db.fail.Store(&fail) }
+func (db *chatFailDB) disarm()                     { db.fail.Store(nil) }
+
+// failDB returns the injector the fixture installed under the manager's store.
+func failDB(m *Manager) *chatFailDB { return m.st.db.(*chatFailDB) }
+
+func (db *chatFailDB) Exec(query string, args ...any) (sql.Result, error) {
+	if fail := db.fail.Load(); fail != nil && strings.HasPrefix(query, "INSERT INTO agent_sessions") {
 		var s Session
-		if json.Unmarshal([]byte(args[13].(string)), &s) == nil && db.fail(s) {
+		if json.Unmarshal([]byte(args[13].(string)), &s) == nil && (*fail)(s) {
 			return nil, errors.New("injected persistence failure")
 		}
 	}
@@ -446,13 +460,12 @@ func TestChatQueuePersistenceBeforeAndAfterDispatch(t *testing.T) {
 	for _, after := range []bool{false, true} {
 		t.Run(map[bool]string{false: "before", true: "after"}[after], func(t *testing.T) {
 			m, _, p := chatFixture(t, StatusIdle)
-			base := m.st.db
-			m.st.db = chatFailDB{DB: base, fail: func(s Session) bool {
+			failDB(m).arm(func(s Session) bool {
 				if after {
 					return s.Prompts > 0 && len(s.Queue) == 0
 				}
 				return len(s.Queue) > 0 && s.Queue[0].State == queueSending
-			}}
+			})
 			if _, err := m.QueuePrompt(context.Background(), "chat", "durable"); err == nil {
 				t.Fatal("persistence failure hidden")
 			}
@@ -463,7 +476,7 @@ func TestChatQueuePersistenceBeforeAndAfterDispatch(t *testing.T) {
 			if len(p.prompts()) != want {
 				t.Fatalf("dispatch count %d want %d", len(p.prompts()), want)
 			}
-			m.st.db = base
+			failDB(m).disarm()
 			if after {
 				s, _ := m.Get("chat")
 				if s.Queue[0].State != queueUncertain {

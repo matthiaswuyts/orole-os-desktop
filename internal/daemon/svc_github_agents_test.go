@@ -20,6 +20,7 @@ import (
 	"github.com/rayorole/orole-os-desktop/internal/github"
 	"github.com/rayorole/orole-os-desktop/internal/policy"
 	"github.com/rayorole/orole-os-desktop/internal/projects"
+	"github.com/rayorole/orole-os-desktop/internal/testrepo"
 	"github.com/rayorole/orole-os-desktop/migrations"
 )
 
@@ -50,20 +51,33 @@ func issueTestGit(t *testing.T, dir string, args ...string) string {
 	return strings.TrimSpace(string(out))
 }
 
+// issueRepoTemplate is built once per test binary; issueTestProject copies it (see internal/testrepo).
+var issueRepoTemplate = testrepo.New(func(dir string) error {
+	for _, args := range [][]string{
+		{"init", "-b", "main"},
+		{"config", "user.name", "Issue Test"},
+		{"config", "user.email", "issue@example.test"},
+	} {
+		if err := testrepo.Git(dir, args...); err != nil {
+			return err
+		}
+	}
+	if err := os.WriteFile(filepath.Join(dir, "file.txt"), []byte("base\n"), 0600); err != nil {
+		return err
+	}
+	if err := testrepo.Git(dir, "add", "file.txt"); err != nil {
+		return err
+	}
+	return testrepo.Git(dir, "commit", "-m", "base")
+})
+
 func issueTestProject(t *testing.T, g *ghService, remote string) projects.Project {
 	t.Helper()
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git unavailable")
 	}
 	dir := t.TempDir()
-	issueTestGit(t, dir, "init", "-b", "main")
-	issueTestGit(t, dir, "config", "user.name", "Issue Test")
-	issueTestGit(t, dir, "config", "user.email", "issue@example.test")
-	if err := os.WriteFile(filepath.Join(dir, "file.txt"), []byte("base\n"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	issueTestGit(t, dir, "add", "file.txt")
-	issueTestGit(t, dir, "commit", "-m", "base")
+	issueRepoTemplate.Copy(t, dir)
 	issueTestGit(t, dir, "remote", "add", "origin", remote)
 	p, err := g.d.Projects.Add(context.Background(), dir)
 	if err != nil {
@@ -85,6 +99,7 @@ func issueTestRecord(t *testing.T, g *ghService, r IssueAgentRun) {
 }
 
 func TestIssueAgentProjectMatchUsesLiveRemote(t *testing.T) {
+	t.Parallel()
 	g := issueTestService(t)
 	p := issueTestProject(t, g, "git@github.com:Owner/Repo.git")
 	ctx := context.Background()
@@ -107,6 +122,7 @@ func TestIssueAgentProjectMatchUsesLiveRemote(t *testing.T) {
 }
 
 func TestIssueRunRecoversDurableSessionLinkAndRetry(t *testing.T) {
+	t.Parallel()
 	g := issueTestService(t)
 	r := IssueAgentRun{ID: "run", Key: "intent-key", Repo: "owner/repo", Number: 54, ProjectID: "project", Kind: "claude", Task: "Fix the selected bug", IssueURL: "https://github.com/owner/repo/issues/54", IssueTitle: "Bug", IssueBody: "Untrusted source", IssueUpdatedAt: "2026-10-08T00:00:00Z", State: "launch"}
 	issueTestRecord(t, g, r)
@@ -132,6 +148,7 @@ func TestIssueRunRecoversDurableSessionLinkAndRetry(t *testing.T) {
 }
 
 func TestIssueWorkflowCancellationAndConfirmation(t *testing.T) {
+	t.Parallel()
 	g := issueTestService(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -154,6 +171,7 @@ func TestIssueWorkflowCancellationAndConfirmation(t *testing.T) {
 }
 
 func TestIssuePublicationPrerequisitesAndPolicyDenial(t *testing.T) {
+	t.Parallel()
 	g := issueTestService(t)
 	ctx := context.Background()
 	p := issueTestProject(t, g, "https://github.com/owner/repo.git")
@@ -265,6 +283,7 @@ func (issueInstalledAdapter) Detect(context.Context) agents.Detection {
 }
 
 func TestIssueLaunchUsesManagerDenialAndPreservesReviewedSource(t *testing.T) {
+	t.Parallel()
 	g := issueTestService(t)
 	p := issueTestProject(t, g, "https://github.com/owner/repo.git")
 	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

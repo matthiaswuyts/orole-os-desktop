@@ -13,6 +13,10 @@ import { bot, bridge, model, provider, resetBridge } from "./testing";
 const saved = bridge.chat.saveBot;
 const nameField = () => screen.getByLabelText("Name");
 
+// jsdom has no layout; the virtualized model list renders nothing in a zero-height scroller.
+Object.defineProperty(HTMLElement.prototype, "offsetHeight", { configurable: true, value: 320 });
+Object.defineProperty(HTMLElement.prototype, "offsetWidth", { configurable: true, value: 560 });
+
 beforeEach(() => {
   resetBridge();
   useChat.setState({ bots: [], selectedBotId: null, builder: { open: true, botId: null } });
@@ -27,7 +31,7 @@ describe("new bot", () => {
   it("asks only for a name and a model", () => {
     render(<NewBot />);
     expect(nameField()).toBeInTheDocument();
-    expect(screen.getByRole("combobox")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Model" })).toBeInTheDocument();
     expect(screen.queryByRole("tab")).toBeNull();
     expect(screen.queryByLabelText("Preview message")).toBeNull();
     expect(screen.queryByLabelText("Avatar")).toBeNull();
@@ -37,26 +41,26 @@ describe("new bot", () => {
     saved.mockResolvedValue(bot("new1", { name: "Trip planner" }));
     render(<NewBot />);
     fireEvent.change(nameField(), { target: { value: "  Trip planner " } });
-    fireEvent.keyDown(screen.getByRole("combobox"), { key: "ArrowDown" });
+    fireEvent.click(screen.getByRole("button", { name: "Model" }));
     fireEvent.click(await screen.findByRole("option", { name: /^GPT X/ }));
     fireEvent.click(screen.getByRole("button", { name: "Create bot" }));
     await waitFor(() => expect(saved).toHaveBeenCalledTimes(1));
     expect(saved.mock.calls[0]![0]).toMatchObject({
       id: "", name: "Trip planner", avatar: avatarSeed("Trip planner"), instructions: "", provider: "openrouter", model: "gpt-x",
-      config: { tools: [], setup: true },
+      config: { tools: [{ id: "web_search" }, { id: "web_fetch" }, { id: "datetime" }, { id: "research" }], setup: true },
     });
     await waitFor(() => expect(useChat.getState().builder.open).toBe(false));
     expect(useChat.getState().selectedBotId).toBe("new1");
     expect(bridge.chat.send).not.toHaveBeenCalled(); // the daemon starts the bot's first message itself
   });
 
-  it("uses the default model when none is picked", async () => {
+  it("starts on the default chat model, explicitly, when none is picked", async () => {
     saved.mockResolvedValue(bot("new1", { name: "Quick" }));
     render(<NewBot />);
     fireEvent.change(nameField(), { target: { value: "Quick" } });
     fireEvent.click(screen.getByRole("button", { name: "Create bot" }));
     await waitFor(() => expect(saved).toHaveBeenCalled());
-    expect(saved.mock.calls[0]![0]).toMatchObject({ provider: "", model: "" });
+    expect(saved.mock.calls[0]![0]).toMatchObject({ provider: "openrouter", model: "gpt-x" });
   });
 
   it("needs a name before it calls the daemon", () => {

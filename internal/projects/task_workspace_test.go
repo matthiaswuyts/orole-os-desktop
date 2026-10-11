@@ -11,6 +11,7 @@ import (
 )
 
 func TestFolderlessTaskWorkspaceStableAndPrivate(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	s := newService(t)
 	root := filepath.Join(t.TempDir(), "project-workspaces")
@@ -63,6 +64,7 @@ func TestFolderlessTaskWorkspaceStableAndPrivate(t *testing.T) {
 }
 
 func TestAttachedTaskWorkspaceDoesNotFallBackWhenMissing(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	s := newService(t)
 	p, err := s.Create(ctx, "Attached", t.TempDir())
@@ -86,6 +88,7 @@ func TestAttachedTaskWorkspaceDoesNotFallBackWhenMissing(t *testing.T) {
 }
 
 func TestTaskDirectoryAcceptsOnlyOwnWorktrees(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	s := newService(t)
 	p, err := s.Add(ctx, repo(t, t.TempDir(), "repo"))
@@ -106,6 +109,7 @@ func TestTaskDirectoryAcceptsOnlyOwnWorktrees(t *testing.T) {
 }
 
 func TestManagedTaskWorkspaceRejectsSymlinkReplacement(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	s := newService(t)
 	p, err := s.Create(ctx, "Research", "")

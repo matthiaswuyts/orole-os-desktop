@@ -1,5 +1,4 @@
 import { useState } from "react";
-import { Checkbox } from "@/components/ui/checkbox";
 import { X } from "lucide-react";
 import { Chat } from "@/mygo";
 import { BotAvatar } from "@/components/shell/BotAvatar";
@@ -9,10 +8,12 @@ import { Input } from "@/components/ui/input";
 import { errText } from "@/features/projects/dialogs";
 import { avatarSeed } from "@/lib/botAvatar";
 import { useChat } from "@/stores/chat";
+import { useLLM } from "@/stores/llm";
 import { initialForm, toInput, validate } from "./botForm";
-import { Block } from "./controls";
+import { Block, ExecutiveCard } from "./controls";
 import { BuilderMenu } from "./BuilderMenu";
-import { ModelCombobox, useModelOptions, type Option } from "./ModelTab";
+import { ModelPicker } from "./ModelPicker";
+import { useModelOptions, type Option } from "./modelOptions";
 
 
 /**
@@ -26,9 +27,12 @@ export function NewBot() {
   const [attempted, setAttempted] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const models = useModelOptions(model);
+  // Every bot gets an explicit model: the one picked, else the default chat model from AI settings.
+  const defaultModel = useLLM((s) => s.defaults?.chatModel ?? "");
+  const chosen = model || defaultModel;
+  const models = useModelOptions(chosen);
 
-  const form = { ...initialForm(), name, model, avatar: avatarSeed(name) };
+  const form = { ...initialForm(), name, model: chosen, avatar: avatarSeed(name) };
   const nameProblem = validate(form).name;
 
   async function create() {
@@ -73,12 +77,9 @@ export function NewBot() {
             )}
           </Block>
           <Block label="Model">
-            {(id, describedBy) => <ModelCombobox id={id} describedBy={describedBy} models={models} onPick={pick} />}
+            {(id, describedBy) => <ModelPicker id={id} describedBy={describedBy} models={models} onPick={pick} />}
           </Block>
-          <label className="flex items-center gap-2 text-sm">
-            <Checkbox checked={executive} onCheckedChange={(checked) => setExecutive(checked === true)} />
-            Executive assistant
-          </label>
+          <ExecutiveCard checked={executive} onChange={setExecutive} />
           <Button type="submit" disabled={saving}>{saving ? "Creating…" : "Create bot"}</Button>
         </form>
       </div>

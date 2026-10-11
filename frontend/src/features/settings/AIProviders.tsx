@@ -1,12 +1,13 @@
 import { useEffect, useState } from "react";
 import type { Account, ProviderStatus } from "@/mygo";
 import { AlertDialog, AlertDialogClose, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogPopup, AlertDialogTitle } from "@/components/ui/alert-dialog";
+import { ProviderLogo } from "@/components/ProviderLogo";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { AccountProviders } from "@/features/settings/AccountProviders";
 import { ProviderManifests } from "@/features/settings/ProviderManifests";
 import { Failure, Loading } from "@/features/mcp/shared";
 import { ConnectProviderDialog } from "@/features/settings/ConnectProviderDialog";
-import { ModelDefaults } from "@/features/settings/ModelDefaults";
 import { NeedsDesktop } from "@/features/shared/States";
 import { inDesktop } from "@/lib/backend";
 import { useLLM, type Busy } from "@/stores/llm";
@@ -54,7 +55,7 @@ function ProviderRow({ provider, onConnect }: { provider: ProviderStatus; onConn
   return (
     <li aria-label={provider.name} className="flex min-w-0 flex-col gap-1.5 p-3">
       <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2">
-        <span aria-hidden className="grid size-7 shrink-0 place-items-center rounded-md bg-muted text-sm font-semibold uppercase text-muted-foreground">{provider.name.charAt(0)}</span>
+        <ProviderLogo id={provider.id} name={provider.name} />
         <div className="flex min-w-0 flex-1 flex-col">
           <div className="flex min-w-0 flex-wrap items-center gap-2">
             <h3 className="font-medium">{provider.name}</h3>
@@ -99,7 +100,7 @@ function ProviderRow({ provider, onConnect }: { provider: ProviderStatus; onConn
   );
 }
 
-/** Settings > AI providers: connect providers, check them, and pick default models. */
+/** Settings > AI providers: connect providers and check them. */
 export function AIProviders() {
   const providers = useLLM((state) => state.providers);
   const ready = useLLM((state) => state.ready);
@@ -108,23 +109,28 @@ export function AIProviders() {
   useEffect(() => useLLM.getState().startSync(), []);
   if (!inDesktop) return <NeedsDesktop what="AI providers" />;
   const target = providers.find((p) => p.id === connecting);
+  // Account providers (Claude, ChatGPT) are managed in the Accounts section above.
+  const keyed = providers.filter((p) => p.kind !== "account");
 
   return (
     <div className="flex min-w-0 flex-col gap-5">
       <p className="rounded-lg border bg-muted/40 p-3 text-muted-foreground">
-        API keys are stored in Windows Credential Manager, never in Orole's database or logs. Requests go directly from this computer to the provider; there is no Orole server in between.
+        Bots and Code use the accounts and keys you connect here. Sign in with a plan you already pay for, or add an API key. API keys are stored in Windows Credential Manager, never in Orole's database or logs. Requests go directly from this computer to the provider; there is no Orole server in between.
       </p>
+      <AccountProviders />
       {!ready && (error ? <Failure error={error} retry={() => void useLLM.getState().load()} /> : <Loading>Loading providers…</Loading>)}
       {ready && (
         <>
           <section aria-labelledby="ai-providers-title" className="flex min-w-0 flex-col gap-2">
-            <h2 id="ai-providers-title" className="text-sm font-medium">Providers</h2>
-            {providers.length === 0
+            <div className="flex flex-col gap-0.5">
+              <h2 id="ai-providers-title" className="text-sm font-medium">API keys</h2>
+              <p className="text-muted-foreground text-xs">Pay per use with a key from the provider.</p>
+            </div>
+            {keyed.length === 0
               ? <p role="status" className="rounded-lg border bg-card p-3 text-muted-foreground">The daemon reports no providers.</p>
-              : <ul className="divide-y rounded-lg border bg-card">{providers.map((p) => <ProviderRow key={p.id} provider={p} onConnect={() => setConnecting(p.id)} />)}</ul>}
+              : <ul className="divide-y rounded-lg border bg-card">{keyed.map((p) => <ProviderRow key={p.id} provider={p} onConnect={() => setConnecting(p.id)} />)}</ul>}
           </section>
           <ProviderManifests />
-          <ModelDefaults />
         </>
       )}
       {target && <ConnectProviderDialog key={target.id} provider={target} onClose={() => setConnecting(null)} />}

@@ -1,8 +1,24 @@
 @import "@xterm/xterm/css/xterm.css";
 @import "react-grid-layout/css/styles.css";
 @import "tailwindcss";
-@import "@fontsource-variable/inter";
-@import "@fontsource-variable/jetbrains-mono";
+
+/* Latin subsets only (the fontsource packages ship every script); the families keep the names the tokens below use. */
+@font-face {
+    font-family: 'Inter Variable';
+    font-style: normal;
+    font-display: swap;
+    font-weight: 100 900;
+    src: url(@fontsource-variable/inter/files/inter-latin-wght-normal.woff2) format('woff2-variations');
+    unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD;
+}
+@font-face {
+    font-family: 'JetBrains Mono Variable';
+    font-style: normal;
+    font-display: swap;
+    font-weight: 100 800;
+    src: url(@fontsource-variable/jetbrains-mono/files/jetbrains-mono-latin-wght-normal.woff2) format('woff2-variations');
+    unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD;
+}
 
 @custom-variant dark (&:is(.dark *));
 
@@ -271,7 +287,8 @@
   body {
     @apply text-sm select-none;
   }
-  input, textarea, pre, code, .xterm, [data-selectable] {
+  /* The shell is not selectable, content is. `.selectable` marks content (messages, errors, URLs); descendants inherit it. */
+  input, textarea, pre, code, .xterm, .selectable, [data-selectable] {
     @apply select-text;
   }
   * {
@@ -338,6 +355,18 @@
 }
 
 /* ---- Orole additions ---- */
+/* Text that shimmers while work is in progress (assistant-ui elements: tool timeline, web search). */
+.cv-shimmer {
+  background: linear-gradient(90deg, var(--muted-foreground) 35%, var(--foreground) 50%, var(--muted-foreground) 65%) 0 0 / 250% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: cv-shimmer 1.8s linear infinite;
+}
+@keyframes cv-shimmer { to { background-position: -150% 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .cv-shimmer { animation: none; background: none; color: var(--muted-foreground); }
+}
 :root { --titlebar-h: var(--mygo-titlebar-height, 40px); }
 .titlebar-drag { --app-region: drag; }
 .titlebar-nodrag { --app-region: no-drag; }

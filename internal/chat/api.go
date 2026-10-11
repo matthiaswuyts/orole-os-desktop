@@ -14,6 +14,10 @@
 //	chat.messages.list    MessagesRequest          -> MessagePage
 //	chat.send             SendRequest              -> Message   (the stored user message; reply streams via events)
 //	chat.cancel           BotRef                   -> struct{}
+//	chat.bots.pin         PinRequest               -> struct{}  (pin a bot to the top of the list)
+//	chat.queue.pause      BotRef                   -> struct{}  (the next queued message waits until resume)
+//	chat.queue.resume     BotRef                   -> struct{}
+//	chat.queue.cancel     QueueItemRef             -> struct{}  (drops one waiting message)
 //	chat.regenerate       RegenerateRequest        -> struct{}
 //	chat.clear            BotRef                   -> struct{}  (deletes the conversation + summary; memory is kept)
 //	chat.draft.send       DraftRequest             -> Message   (bot-builder preview: ephemeral, nothing persisted)
@@ -26,7 +30,8 @@
 //
 // IPC events (published with d.IPC.Publish; MyGo forwards them as colon names):
 //
-//	chat.message  Message        upsert of a message snapshot (streaming snapshots coalesced to <= 1 per 50ms; final always sent)
+//	chat.message  Message        upsert of a message snapshot (coalesced to <= 1 event per 50ms; the final one is always a full snapshot)
+//	chat.message.delta MessageDelta  streamed text appended to one part of a running message (replaces the snapshots between checkpoints; see MessageDelta)
 //	chat.run      RunState       a bot started/finished a run
 //	chat.bot      BotChange      bot saved/archived/cleared
 //	chat.memory   MemoryChange   memory content changed (see memory_api.go)
@@ -55,7 +60,8 @@ const (
 	ToolKnowledge = "knowledge_search"
 )
 
-// BotTool enables one built-in tool with optional parameters (e.g. allowed_domains).
+// BotTool enables one built-in tool. Params is kept for stored configs but ignored: the web tools run with
+// fixed options (see tools.HostedParams).
 type BotTool struct {
 	ID     string         `json:"id"`
 	Params map[string]any `json:"params,omitempty"`
@@ -76,15 +82,17 @@ type BotLimits struct {
 
 // BotConfig is stored as JSON in bots.config. It never contains secrets.
 type BotConfig struct {
-	Tools     []BotTool     `json:"tools"`
-	MCPTools  []string      `json:"mcpTools"`            // "<serverId>/<tool>" allow-list, default none
-	Skills    []string      `json:"skills"`              // enabled registry skill names
-	Executive bool          `json:"executive,omitempty"` // an executive assistant may ask every other bot (ask_bot)
-	Memory    []ScopeAccess `json:"memory"`              // grants beyond the private scope
-	Limits    BotLimits     `json:"limits"`
+	Tools      []BotTool     `json:"tools"`
+	MCPServers []string      `json:"mcpServers"`          // ids of the MCP servers (integrations) the bot may use: every tool of each, default none
+	Skills     []string      `json:"skills"`              // enabled registry skill names
+	Executive  bool          `json:"executive,omitempty"` // an executive assistant may ask every other bot (ask_bot)
+	Memory     []ScopeAccess `json:"memory"`              // grants beyond the private scope
+	Limits     BotLimits     `json:"limits"`
 	// Setup marks a freshly created bot that still has to learn its purpose: it is offered the setup
 	// tools (ask_user, save_profile) until it saves its own instructions.
 	Setup bool `json:"setup,omitempty"`
+	// Pinned keeps the bot at the top of the bot list. It is changed only by PinBot: saving a bot never touches it.
+	Pinned bool `json:"pinned,omitempty"`
 }
 
 // Bot is a contact: identity, brain settings and live status.
@@ -129,6 +137,12 @@ type BotInput struct {
 	Config       BotConfig `json:"config"`
 }
 
+// PinRequest pins or unpins a bot.
+type PinRequest struct {
+	ID     string `json:"id"`
+	Pinned bool   `json:"pinned"`
+}
+
 // BotRef identifies a bot.
 type BotRef struct {
 	ID string `json:"id"`
@@ -146,11 +160,34 @@ type BotChange struct {
 	Action string `json:"action"` // "saved" | "archived" | "cleared"
 }
 
+// MessageDelta is the chat.message.delta payload: text appended to a streaming message since the
+// last chat.message or chat.message.delta event. Everything that is not appended text (new parts,
+// tool rows, citations, usage, checkpoints, the final state) is a full chat.message snapshot, and
+// the daemon sends one at least every few seconds, so a subscriber that missed a delta recovers.
+// A subscriber applies the delta only when the message and part exist, the part has Type, and its
+// text is exactly From UTF-16 units long; otherwise it waits for the next snapshot.
+type MessageDelta struct {
+	BotID     string `json:"botId"`
+	MessageID string `json:"messageId"`
+	Part      int    `json:"part"` // index into Message.Parts
+	Type      string `json:"type"` // PartText or PartReasoning
+	From      int    `json:"from"` // UTF-16 length of the part text before Text is appended
+	Text      string `json:"text"`
+}
+
 // RunState is the chat.run event payload.
 type RunState struct {
 	BotID     string `json:"botId"`
 	Running   bool   `json:"running"`
 	MessageID string `json:"messageId,omitempty"` // the assistant message being produced
+	// Paused is true while the bot's queue is on hold: messages wait and the next one starts only after Resume.
+	Paused bool `json:"paused,omitempty"`
+}
+
+// QueueItemRef identifies one waiting message of a bot's queue.
+type QueueItemRef struct {
+	BotID     string `json:"botId"`
+	MessageID string `json:"messageId"`
 }
 
 // Part types.
@@ -165,6 +202,7 @@ const (
 	PartMemory     = "memory"     // verified memory write ("Memory updated")
 	PartNotice     = "notice"     // engine notices (compaction, budget stop)
 	PartQuestion   = "question"   // a question with suggested answers (ask_user)
+	PartUI         = "ui"         // structured component (table, chart, diagram, ...) shown by the `show` tool
 )
 
 // MsgPart is one renderable piece of a message; fields are used per Type.
@@ -178,6 +216,7 @@ type MsgPart struct {
 	Status     string `json:"status,omitempty"` // "running" | "done" | "error"
 	Summary    string `json:"summary,omitempty"`
 	DurationMs int64  `json:"durationMs,omitempty"`
+	BotID      string `json:"botId,omitempty"` // delegation: id of the bot that was asked
 	// citation
 	URL     string `json:"url,omitempty"`
 	Title   string `json:"title,omitempty"`
@@ -191,6 +230,8 @@ type MsgPart struct {
 	Choices []Choice `json:"choices,omitempty"`
 	// Hidden marks a text part the model reads but the UI never shows (the setup kickoff).
 	Hidden bool `json:"hidden,omitempty"`
+	// ui: Name is the component kind (see UIKinds) and Spec its validated JSON props.
+	Spec string `json:"spec,omitempty"`
 }
 
 // Choice is one suggested answer to a question part.
@@ -256,7 +297,12 @@ type SendRequest struct {
 	Text          string   `json:"text"`
 	AttachmentIDs []string `json:"attachmentIds"`
 	Mode          string   `json:"mode"`
-	ClientNonce   string   `json:"clientNonce"` // idempotency key; a retried nonce returns the stored message
+	// Mentions are bot ids the user @mentioned. Each one answers this message in this conversation,
+	// with this conversation as context; the conversation's own bot then stays silent.
+	Mentions []string `json:"mentions,omitempty"`
+	// Skills are skill names the user asked the answering bot to use.
+	Skills      []string `json:"skills,omitempty"`
+	ClientNonce string   `json:"clientNonce"` // idempotency key; a retried nonce returns the stored message
 }
 
 // RegenerateRequest replaces the assistant reply to the last user message.

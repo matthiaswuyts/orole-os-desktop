@@ -32,9 +32,9 @@ func (b *IPCBackend) call(ctx context.Context, timeout time.Duration, method str
 }
 
 // Tools implements Backend.
-func (b *IPCBackend) Tools(ctx context.Context) ([]Tool, error) {
-	var out []Tool
-	err := b.call(ctx, 20*time.Second, MethodTools, ToolsParams{SessionID: b.session}, &out)
+func (b *IPCBackend) Tools(ctx context.Context, etag string) (ToolList, error) {
+	var out ToolList
+	err := b.call(ctx, 20*time.Second, MethodTools, ToolsParams{SessionID: b.session, ETag: etag}, &out)
 	return out, err
 }
 

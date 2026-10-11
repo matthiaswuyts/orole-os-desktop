@@ -60,7 +60,7 @@ func (p *Provider) open(ctx context.Context, req llm.Request, summary bool) (*ht
 		return nil, err
 	}
 	hreq.Header.Set("Accept", "text/event-stream")
-	return llm.Do(p.http, hreq, p.key)
+	return llm.DoRetry(p.http, hreq, p.key)
 }
 
 var errTerminal = errors.New("terminal")

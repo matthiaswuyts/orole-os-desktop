@@ -7,24 +7,11 @@ export const LIMITS = {
   instructions: 32 * 1024,
   steps: { min: 1, max: 30, default: 8 },
   toolCalls: { min: 1, max: 60, default: 20 },
-  maxResults: { min: 1, max: 10 },
-  maxContentTokens: { min: 1, max: 100_000 },
-  domains: 20,
-  mcpTools: 100,
+  mcpServers: 50,
   skills: 50,
 } as const;
 
-export const TOOL_IDS = { webSearch: "web_search", webFetch: "web_fetch", datetime: "datetime", research: "research", knowledge: "knowledge_search" } as const;
-
-/** Editable settings of one enabled tool. Numbers stay text so a half-typed value is not lost. */
-export interface ToolSettings {
-  maxResults: string;
-  maxContentTokens: string;
-  allowed: string[];
-  blocked: string[];
-  /** Params this form does not edit, carried through unchanged. */
-  rest: Record<string, unknown>;
-}
+export const TOOL_IDS = { webSearch: "web_search", webFetch: "web_fetch", datetime: "datetime", research: "research" } as const;
 
 export interface FormState {
   name: string;
@@ -35,11 +22,11 @@ export interface FormState {
   /** "<provider>/<model>"; empty = use the defaults. */
   model: string;
   reasoning: string;
-  /** Enabled tools; presence in the record means enabled. */
-  tools: Record<string, ToolSettings>;
-  mcpTools: string[];
+  /** Ids of the enabled built-in tools. */
+  tools: string[];
+  mcpServers: string[];
   skills: string[];
-  /** Grants beyond the private scope. */
+  /** Grants beyond the bot's own memory, which every bot can always read and write. Kept as saved; not edited here. */
   memory: ScopeAccess[];
   maxSteps: string;
   maxToolCalls: string;
@@ -47,40 +34,22 @@ export interface FormState {
   executive: boolean;
 }
 
-export const emptyToolSettings = (): ToolSettings => ({ maxResults: "", maxContentTokens: "", allowed: [], blocked: [], rest: {} });
-
+/** A new bot starts with every built-in tool on; each can be switched off in its settings. */
 export const initialForm = (): FormState => ({
   name: "", avatar: "", color: "", description: "", instructions: "", model: "", reasoning: "",
-  tools: {}, mcpTools: [], skills: [], memory: [], maxSteps: "", maxToolCalls: "", executive: false,
+  tools: Object.values(TOOL_IDS), mcpServers: [], skills: [], memory: [], maxSteps: "", maxToolCalls: "", executive: false,
 });
 
 export type Action =
   | { type: "patch"; patch: Partial<FormState> }
   | { type: "load"; state: FormState }
-  | { type: "tool"; id: string; settings: ToolSettings | null }
-  | { type: "toolPatch"; id: string; patch: Partial<ToolSettings> }
-  /** Write implies read; clearing read clears write. Neither = no grant. */
-  | { type: "access"; scope: string; read: boolean; write: boolean };
+  | { type: "tool"; id: string; enabled: boolean };
 
 export function formReducer(state: FormState, action: Action): FormState {
   switch (action.type) {
     case "patch": return { ...state, ...action.patch };
     case "load": return action.state;
-    case "tool": {
-      const tools = { ...state.tools };
-      if (action.settings) tools[action.id] = action.settings; else delete tools[action.id];
-      return { ...state, tools };
-    }
-    case "toolPatch": {
-      const current = state.tools[action.id];
-      return current ? { ...state, tools: { ...state.tools, [action.id]: { ...current, ...action.patch } } } : state;
-    }
-    case "access": {
-      const rest = state.memory.filter((a) => a.scope !== action.scope);
-      const write = action.write;
-      const read = action.read || write;
-      return { ...state, memory: read ? [...rest, { scope: action.scope, read, write }] : rest };
-    }
+    case "tool": return { ...state, tools: action.enabled ? [...state.tools.filter((id) => id !== action.id), action.id] : state.tools.filter((id) => id !== action.id) };
   }
 }
 
@@ -92,37 +61,10 @@ export function splitModel(value: string): { provider: string; model: string } {
   return i < 0 ? { provider: "", model: "" } : { provider: value.slice(0, i), model: value.slice(i + 1) };
 }
 
-/* ------------------------------------------------------------------ domains */
-
-/** Why `input` is not a usable host name, or the normalized host name. Mirrors the daemon's filter rules. */
-export function parseDomain(input: string): { ok: true; domain: string } | { ok: false; error: string } {
-  const domain = input.trim().toLowerCase().replace(/\.$/, "");
-  if (!domain) return { ok: false, error: "Enter a domain such as example.com." };
-  if (/[/:@\s?#]/.test(domain)) return { ok: false, error: "Enter only the host name, such as example.com (no https://, path or port)." };
-  if (!domain.includes(".")) return { ok: false, error: "A domain needs a dot, such as example.com." };
-  if (/^\d+(\.\d+){3}$/.test(domain) || domain.includes("[")) return { ok: false, error: "IP addresses are not allowed; use a host name." };
-  if (domain.length > 253) return { ok: false, error: "That domain is too long." };
-  for (const label of domain.split(".")) {
-    if (!label || label.length > 63 || label.startsWith("-") || label.endsWith("-") || !/^[a-z0-9-]+$/.test(label)) {
-      return { ok: false, error: "Use letters, digits and hyphens in each part of the domain." };
-    }
-  }
-  return { ok: true, domain };
-}
-
 /* ------------------------------------------------------------------ conversion */
 
 function stringList(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((v): v is string => typeof v === "string") : [];
-}
-
-function numberText(value: unknown): string {
-  return typeof value === "number" && Number.isFinite(value) && value > 0 ? String(Math.trunc(value)) : "";
-}
-
-function toolSettings(tool: BotTool): ToolSettings {
-  const { max_results, max_content_tokens, allowed_domains, blocked_domains, ...rest } = tool.params ?? {};
-  return { maxResults: numberText(max_results), maxContentTokens: numberText(max_content_tokens), allowed: stringList(allowed_domains), blocked: stringList(blocked_domains), rest };
 }
 
 /** The editable form of a bot (or an import) with missing parts defaulted. */
@@ -133,8 +75,9 @@ export function formFromInput(bot: Pick<BotInput, "name" | "avatar" | "color" | 
     name: bot.name, avatar: bot.avatar, color: bot.color, description: bot.description, instructions: bot.instructions,
     model: bot.provider && bot.model ? `${bot.provider}/${bot.model}` : "",
     reasoning: bot.reasoning,
-    tools: Object.fromEntries((config.tools ?? []).map((t) => [t.id, toolSettings(t)])),
-    mcpTools: [...(config.mcpTools ?? [])], skills: [...(config.skills ?? [])],
+    // knowledge_search is retired as a setting: every bot always has it, so a saved entry is dropped.
+    tools: [...new Set((config.tools ?? []).map((t) => t.id).filter((id) => id !== "knowledge_search"))],
+    mcpServers: [...(config.mcpServers ?? [])], skills: [...(config.skills ?? [])],
     memory: (config.memory ?? []).map((a) => ({ ...a })),
     maxSteps: limit(config.limits?.maxSteps), maxToolCalls: limit(config.limits?.maxToolCalls),
     executive: config.executive ?? false,
@@ -144,24 +87,6 @@ export function formFromInput(bot: Pick<BotInput, "name" | "avatar" | "color" | 
 export const formFromBot = (bot: Bot): FormState => formFromInput(bot);
 
 const integer = (text: string): number => (/^\d+$/.test(text.trim()) ? Number(text.trim()) : 0);
-
-/** Params for a tool, omitting everything left empty; invalid numbers are left out (validation reports them). */
-function toolParams(id: string, s: ToolSettings): Record<string, unknown> | undefined {
-  const params: Record<string, unknown> = { ...s.rest };
-  if (id === TOOL_IDS.webSearch) {
-    const n = integer(s.maxResults);
-    if (n > 0) params.max_results = n;
-  }
-  if (id === TOOL_IDS.webFetch) {
-    const n = integer(s.maxContentTokens);
-    if (n > 0) params.max_content_tokens = n;
-  }
-  if (id === TOOL_IDS.webSearch || id === TOOL_IDS.webFetch) {
-    if (s.allowed.length) params.allowed_domains = s.allowed;
-    if (s.blocked.length) params.blocked_domains = s.blocked;
-  }
-  return Object.keys(params).length ? params : undefined;
-}
 
 /** The payload for Chat.saveBot / Chat.draftSend. Pass an empty id to create. */
 export function toInput(form: FormState, id: string): BotInput {
@@ -176,11 +101,8 @@ export function toInput(form: FormState, id: string): BotInput {
     provider, model,
     reasoning: form.reasoning,
     config: {
-      tools: Object.entries(form.tools).map(([toolId, s]) => {
-        const params = toolParams(toolId, s);
-        return params ? { id: toolId, params } : { id: toolId };
-      }),
-      mcpTools: form.mcpTools,
+      tools: form.tools.map((toolId) => ({ id: toolId })),
+      mcpServers: form.mcpServers,
       skills: form.skills,
       memory: form.memory,
       limits: { maxSteps: integer(form.maxSteps), maxToolCalls: integer(form.maxToolCalls) },
@@ -193,17 +115,15 @@ export function toInput(form: FormState, id: string): BotInput {
 export function fingerprint(form: FormState): string {
   return JSON.stringify({
     ...form,
-    tools: Object.entries(form.tools).sort(([a], [b]) => a.localeCompare(b)),
+    tools: form.tools.toSorted(),
     memory: form.memory.toSorted((a, b) => a.scope.localeCompare(b.scope)),
-    mcpTools: form.mcpTools.toSorted(), skills: form.skills.toSorted(),
+    mcpServers: form.mcpServers.toSorted(), skills: form.skills.toSorted(),
   });
 }
 
 /* ------------------------------------------------------------------ validation */
 
-export type TabId = "persona" | "tools" | "knowledge";
-
-/** Problems by field key. Tool fields are "tool:<id>:<field>". */
+/** Problems by field key. */
 export type Problems = Partial<Record<string, string>>;
 
 const charCount = (text: string): number => Array.from(text).length;
@@ -228,23 +148,9 @@ export function validate(form: FormState): Problems {
   if (steps) problems.maxSteps = steps;
   const calls = limit(form.maxToolCalls, "Max tool calls", LIMITS.toolCalls);
   if (calls) problems.maxToolCalls = calls;
-  for (const [id, s] of Object.entries(form.tools)) {
-    const results = limit(s.maxResults, "Max results", LIMITS.maxResults);
-    if (results) problems[`tool:${id}:maxResults`] = results;
-    const content = limit(s.maxContentTokens, "Max content size", LIMITS.maxContentTokens);
-    if (content) problems[`tool:${id}:maxContentTokens`] = content;
-    if (s.allowed.length > LIMITS.domains) problems[`tool:${id}:allowed`] = `At most ${LIMITS.domains} allowed domains.`;
-    if (s.blocked.length > LIMITS.domains) problems[`tool:${id}:blocked`] = `At most ${LIMITS.domains} blocked domains.`;
-  }
-  if (form.mcpTools.length > LIMITS.mcpTools) problems.mcpTools = `At most ${LIMITS.mcpTools} MCP tools can be enabled.`;
+  if (form.mcpServers.length > LIMITS.mcpServers) problems.mcpServers = `At most ${LIMITS.mcpServers} integrations can be enabled.`;
   if (form.skills.length > LIMITS.skills) problems.skills = `At most ${LIMITS.skills} skills can be enabled.`;
   return problems;
-}
-
-/** The tab that holds the field a problem key refers to. */
-export function tabOfProblem(key: string): TabId {
-  if (key.startsWith("tool:") || key === "mcpTools" || key === "skills") return "tools";
-  return "persona";
 }
 
 /* ------------------------------------------------------------------ import */
@@ -286,7 +192,7 @@ export function parseBotExport(text: string): ParsedExport {
         id: "", name: b.name, avatar: text_("avatar"), color: text_("color"), description: text_("description"), instructions: text_("instructions"),
         provider: text_("provider"), model: text_("model"), reasoning: text_("reasoning"),
         config: {
-          tools, mcpTools: stringList(config.mcpTools), skills: stringList(config.skills), memory,
+          tools, mcpServers: stringList(config.mcpServers), skills: stringList(config.skills), memory,
           limits: { maxSteps: typeof limits.maxSteps === "number" ? limits.maxSteps : 0, maxToolCalls: typeof limits.maxToolCalls === "number" ? limits.maxToolCalls : 0 },
         },
       },

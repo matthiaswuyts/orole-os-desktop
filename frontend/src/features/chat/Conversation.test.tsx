@@ -4,6 +4,7 @@ import type { Bot, BotChange, Message, RunState, SendRequest } from "@/mygo";
 
 const bridge = vi.hoisted(() => ({
   messages: vi.fn(), send: vi.fn(), cancel: vi.fn(), regenerate: vi.fn(), clear: vi.fn(), exportBot: vi.fn(),
+  pauseQueue: vi.fn(), resumeQueue: vi.fn(), cancelQueued: vi.fn(),
   begin: vi.fn(), chunk: vi.fn(), commit: vi.fn(), discard: vi.fn(),
   run: null as ((s: RunState) => void) | null,
   message: null as ((m: Message) => void) | null,
@@ -13,14 +14,17 @@ vi.mock("@/lib/backend", () => ({ inDesktop: true }));
 vi.mock("@/mygo", () => ({
   Chat: {
     messages: bridge.messages, send: bridge.send, cancel: bridge.cancel, regenerate: bridge.regenerate, clear: bridge.clear, exportBot: bridge.exportBot,
+    pauseQueue: bridge.pauseQueue, resumeQueue: bridge.resumeQueue, cancelQueued: bridge.cancelQueued,
     beginAttachment: bridge.begin, attachmentChunk: bridge.chunk, commitAttachment: bridge.commit, discardAttachment: bridge.discard,
   },
   LLM: { models: vi.fn() },
+  Skills: { list: () => Promise.resolve([{ name: "pdf", description: "Read PDFs", enabled: true }, { name: "skill-creator", description: "Make skills", enabled: true, source: "builtin" }]) },
   Daemon: { health: vi.fn() },
   Shell: { openExternal: vi.fn() },
   events: {
     chatRun: { on: (f: (s: RunState) => void) => { bridge.run = f; return () => { bridge.run = null; }; } },
     chatMessage: { on: (f: (m: Message) => void) => { bridge.message = f; return () => { bridge.message = null; }; } },
+    chatMessageDelta: { on: () => () => {} },
     chatBot: { on: (_f: (c: BotChange) => void) => () => {} },
   },
 }));
@@ -28,13 +32,14 @@ vi.mock("@/mygo", () => ({
 import { BotActions } from "@/features/chat/BotHeader";
 import { Conversation } from "@/features/chat/Conversation";
 import { useChat } from "@/stores/chat";
+import { useChatDrafts } from "@/stores/chatDrafts";
 import { useChatMessages } from "@/stores/chatMessages";
 import { useDaemon } from "@/stores/daemon";
 import { useLLM } from "@/stores/llm";
 
 const bot = (over: Partial<Bot> = {}): Bot => ({
   id: "a", name: "Atlas", avatar: "", color: "blue", description: "Plans trips", instructions: "", provider: "openrouter", model: "claude", reasoning: "",
-  config: { tools: [], mcpTools: [], skills: [], memory: [], limits: { maxSteps: 0, maxToolCalls: 0 } },
+  config: { tools: [], mcpServers: [], skills: [], memory: [], limits: { maxSteps: 0, maxToolCalls: 0 } },
   createdAt: 1, updatedAt: 1, running: false, ...over,
 });
 const withTools = (...ids: string[]) => bot({ config: { ...bot().config, tools: ids.map((id) => ({ id })) } });
@@ -51,7 +56,8 @@ beforeEach(() => {
   vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
   useDaemon.setState({ link: "connected" });
   useChat.setState({ bots: [bot()], selectedBotId: "a", running: {}, builder: { open: false, botId: null }, settingsOpen: false, available: true, ready: true, loading: false, error: null });
-  useChatMessages.setState({ byBot: {}, runs: {}, drafts: {}, problems: {} });
+  useChatMessages.setState({ byBot: {}, runs: {}, paused: {}, problems: {} });
+  useChatDrafts.setState({ drafts: {} });
   Element.prototype.scrollTo = () => {};
   useLLM.setState({
     providers: [{ id: "openrouter", name: "OpenRouter", kind: "builtin", connected: true }], ready: true, defaults: { chatModel: "openrouter/claude", memoryModel: "" },
@@ -65,7 +71,7 @@ afterEach(() => { cleanup(); stubs.forEach((f) => f()); stubs = []; });
 
 const open = async (messages: Message[] = [], b: Bot = bot(), hasMore = false) => {
   bridge.messages.mockResolvedValue({ messages, hasMore });
-  const view = render(<><BotActions bot={b} /><Conversation key={b.id} bot={b} /></>);
+  const view = render(<><BotActions /><Conversation key={b.id} bot={b} /></>);
   if (messages.length) await screen.findAllByText(/answer|question/);
   else await screen.findByText(/Say hello/);
   return view;
@@ -74,11 +80,11 @@ const box = () => screen.getByRole("textbox", { name: "Message Atlas" }) as HTML
 const type = (text: string) => fireEvent.change(box(), { target: { value: text } });
 
 describe("conversation rendering", () => {
-  it("shows the bot, its description and a plain prompt when there are no messages", async () => {
+  it("shows the bot and a plain prompt when there are no messages", async () => {
     await open();
     const empty = document.querySelector("[data-slot=conversation-empty]") as HTMLElement;
     expect(within(empty).getByText("Atlas")).toBeInTheDocument();
-    expect(within(empty).getByText("Plans trips")).toBeInTheDocument();
+    expect(within(empty).queryByText("Plans trips")).toBeNull();
     expect(within(empty).getByText("Say hello to start the conversation.")).toBeInTheDocument();
   });
 
@@ -91,12 +97,29 @@ describe("conversation rendering", () => {
     expect(screen.getByText("Atlas said:")).toBeInTheDocument();
   });
 
-  it("dims a queued user message and labels it", async () => {
+  it("lists a waiting message in the queue above the composer instead of the thread", async () => {
     await open([msg(1), msg(2), msg(3, { status: "pending" })]);
-    const queued = screen.getByText("question 3").closest("[data-slot=chat-user]")!;
-    expect(queued).toHaveAttribute("data-queued", "true");
-    expect(within(queued as HTMLElement).getByText("Queued")).toBeInTheDocument();
-    expect(screen.getByText("question 1").closest("[data-slot=chat-user]")).not.toHaveAttribute("data-queued");
+    const queue = screen.getByRole("region", { name: "Queued messages" });
+    expect(within(queue).getByText("question 3")).toBeInTheDocument();
+    expect(screen.getAllByText("question 3")).toHaveLength(1);
+    expect(screen.getByText("question 1")).toBeInTheDocument();
+  });
+
+  it("cancels one waiting message, and pauses and resumes the queue", async () => {
+    bridge.cancelQueued.mockResolvedValue(undefined);
+    bridge.pauseQueue.mockResolvedValue(undefined);
+    bridge.resumeQueue.mockResolvedValue(undefined);
+    await open([msg(1), msg(2), msg(3, { status: "pending" }), msg(5, { status: "pending", parts: [{ type: "text", text: "question 5" }] })]);
+    const queue = screen.getByRole("region", { name: "Queued messages" });
+    fireEvent.click(within(queue).getByRole("button", { name: "Cancel queued message: question 5" }));
+    await waitFor(() => expect(bridge.cancelQueued).toHaveBeenCalledWith({ botId: "a", messageId: "m5" }));
+
+    fireEvent.click(within(queue).getByRole("button", { name: "Pause" }));
+    await waitFor(() => expect(bridge.pauseQueue).toHaveBeenCalledWith("a"));
+    act(() => bridge.run!({ botId: "a", running: false, paused: true }));
+    expect(await within(queue).findByText(/Paused/)).toBeInTheDocument();
+    fireEvent.click(within(queue).getByRole("button", { name: "Resume" }));
+    await waitFor(() => expect(bridge.resumeQueue).toHaveBeenCalledWith("a"));
   });
 
   it("replaces a streaming reply in place as snapshots arrive", async () => {
@@ -165,9 +188,9 @@ describe("composer", () => {
   it("sends with Enter, keeps a newline for Shift+Enter, and clears afterwards", async () => {
     bridge.send.mockImplementation(async (r: SendRequest) => msg(3, { parts: [{ type: "text", text: r.text }] }));
     await open([msg(1), msg(2)]);
-    const send = screen.getByRole("button", { name: "Send message" });
-    expect(send).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "Send message" })).toBeNull();
     type("hello");
+    const send = screen.getByRole("button", { name: "Send message" });
     expect(send).toBeEnabled();
     fireEvent.keyDown(box(), { key: "Enter", shiftKey: true });
     expect(bridge.send).not.toHaveBeenCalled();
@@ -177,15 +200,20 @@ describe("composer", () => {
     expect(bridge.send.mock.calls[0]![0].clientNonce).toMatch(/\S/);
     await waitFor(() => expect(box()).toHaveValue(""));
     expect(await screen.findByText("hello")).toBeInTheDocument();
-    expect(useChatMessages.getState().drafts.a?.text).toBe("");
+    expect(useChatDrafts.getState().drafts.a?.text).toBe("");
   });
 
-  it("does not send whitespace and stays disabled with nothing to send", async () => {
+  it("shows Dictate when empty, Send once there is text, and never sends whitespace", async () => {
     await open([msg(1), msg(2)]);
+    expect(screen.getByRole("button", { name: "Dictate a message" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Send message" })).toBeNull();
     type("   ");
     fireEvent.keyDown(box(), { key: "Enter" });
     expect(bridge.send).not.toHaveBeenCalled();
-    expect(screen.getByRole("button", { name: "Send message" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Dictate a message" })).toBeInTheDocument();
+    type("hi");
+    expect(screen.getByRole("button", { name: "Send message" })).toBeEnabled();
+    expect(screen.queryByRole("button", { name: "Dictate a message" })).toBeNull();
   });
 
   it("does not submit while an IME composition is active", async () => {
@@ -195,16 +223,25 @@ describe("composer", () => {
     expect(bridge.send).not.toHaveBeenCalled();
   });
 
-  it("lets a message be queued while a reply runs and offers Stop", async () => {
+  it("offers Stop and Queue while a reply runs, and Enter queues a message", async () => {
     bridge.send.mockResolvedValue(msg(3, { status: "pending" }));
     await open([msg(1), msg(2, { status: "running", parts: [{ type: "text", text: "thinking" }] })]);
     act(() => bridge.run!({ botId: "a", running: true }));
+    expect(await screen.findByRole("button", { name: "Stop" })).toBeInTheDocument();
     type("one more thing");
-    fireEvent.click(await screen.findByRole("button", { name: "Queue message" }));
+    expect(await screen.findByRole("button", { name: "Queue message" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Dictate a message" })).toBeNull();
+    fireEvent.keyDown(box(), { key: "Enter" });
     await waitFor(() => expect(bridge.send).toHaveBeenCalledTimes(1));
+    expect(within(await screen.findByRole("region", { name: "Queued messages" })).getByText("question 3")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Stop" }));
     await waitFor(() => expect(bridge.cancel).toHaveBeenCalledWith("a"));
-    expect(await screen.findByText("Queued")).toBeInTheDocument();
+  });
+
+  it("shows text put in the draft from elsewhere in the message box", async () => {
+    await open([msg(1), msg(2)]);
+    act(() => useChatDrafts.getState().setDraft("a", { text: "> quoted\n\n" }));
+    await waitFor(() => expect(box().value).toBe("> quoted\n\n"));
   });
 
   it("keeps each bot's draft while another is open", async () => {
@@ -224,14 +261,14 @@ describe("composer", () => {
   it("offers Research mode only when the research tool is on, sends mode research once and shows a pill", async () => {
     bridge.send.mockImplementation(async (r: SendRequest) => msg(3, { parts: [{ type: "text", text: r.text }] }));
     const view = await open([msg(1), msg(2)], withTools("web_search"));
-    fireEvent.click(screen.getByRole("button", { name: "Add files, research and tools" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add files and research" }));
     expect(screen.queryByRole("menuitemcheckbox", { name: "Research mode" })).toBeNull();
-    expect(screen.getByRole("menuitem", { name: "Web search" })).toHaveAttribute("aria-disabled", "true");
+    expect(screen.queryByRole("menuitem", { name: "Web search" })).toBeNull();
     view.unmount();
     cleanup();
 
     await open([msg(1), msg(2)], withTools("research"));
-    fireEvent.click(screen.getByRole("button", { name: "Add files, research and tools" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add files and research" }));
     fireEvent.click(await screen.findByRole("menuitemcheckbox", { name: "Research mode" }));
     expect(await screen.findByRole("button", { name: /Research mode on/ })).toBeInTheDocument();
     type("why is the sky blue");
@@ -241,17 +278,10 @@ describe("composer", () => {
     await waitFor(() => expect(screen.queryByRole("button", { name: /Research mode on/ })).toBeNull());
   });
 
-  it("opens bot settings from the + menu", async () => {
-    await open([msg(1), msg(2)]);
-    fireEvent.click(screen.getByRole("button", { name: "Add files, research and tools" }));
-    fireEvent.click(await screen.findByRole("menuitem", { name: "Bot settings" }));
-    expect(useChat.getState().settingsOpen).toBe(true);
-  });
-
   describe("attachments", () => {
     const pick = async (...files: File[]) => {
       const click = vi.spyOn(HTMLInputElement.prototype, "click").mockImplementation(() => {});
-      fireEvent.click(screen.getByRole("button", { name: "Add files, research and tools" }));
+      fireEvent.click(screen.getByRole("button", { name: "Add files and research" }));
       fireEvent.click(await screen.findByRole("menuitem", { name: "Attach files" }));
       await waitFor(() => expect(click).toHaveBeenCalled());
       const input = click.mock.contexts[0] as HTMLInputElement;
@@ -311,31 +341,12 @@ describe("bot title bar actions", () => {
     expect(screen.queryByText("claude")).toBeNull();
   });
 
-  it("clears the conversation only after confirmation", async () => {
-    bridge.clear.mockResolvedValue(undefined);
+  it("has a settings toggle and no overflow menu", async () => {
     await open([msg(1), msg(2)]);
-    fireEvent.click(screen.getByRole("button", { name: "More actions for Atlas" }));
-    fireEvent.click(await screen.findByRole("menuitem", { name: /Clear conversation/ }));
-    expect(bridge.clear).not.toHaveBeenCalled();
-    fireEvent.click(await screen.findByRole("button", { name: "Clear conversation" }));
-    await waitFor(() => expect(bridge.clear).toHaveBeenCalledWith("a"));
-    await waitFor(() => expect(screen.getByText(/Say hello/)).toBeInTheDocument());
-  });
-
-  it("opens the settings panel and exports the bot as a download", async () => {
-    bridge.exportBot.mockResolvedValue({ version: 1, bot: { name: "Atlas" } });
-    const create = vi.fn(() => "blob:x");
-    vi.stubGlobal("URL", Object.assign(URL, { createObjectURL: create, revokeObjectURL: vi.fn() }));
-    const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
-    await open([msg(1), msg(2)]);
-    fireEvent.click(screen.getByRole("button", { name: "More actions for Atlas" }));
-    fireEvent.click(await screen.findByRole("menuitem", { name: "Export bot" }));
-    await waitFor(() => expect(bridge.exportBot).toHaveBeenCalledWith("a"));
-    await waitFor(() => expect(click).toHaveBeenCalled());
-    click.mockRestore();
-    fireEvent.click(screen.getByRole("button", { name: "More actions for Atlas" }));
-    fireEvent.click(await screen.findByRole("menuitem", { name: "Bot settings" }));
+    expect(screen.queryByRole("button", { name: /More actions/ })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Show bot settings" }));
     expect(useChat.getState().settingsOpen).toBe(true);
+    expect(screen.getByRole("button", { name: "Hide bot settings" })).toHaveAttribute("aria-pressed", "true");
   });
 });
 
@@ -364,5 +375,130 @@ describe("questions from the bot", () => {
     await open([msg(1), asked(), msg(3)]);
     expect(screen.getByRole("button", { name: "Coding" })).toBeDisabled();
     expect(screen.getByRole("textbox", { name: "Type your own answer" })).toBeDisabled();
+  });
+});
+
+describe("mentions, structured output and search", () => {
+  const coach = bot({ id: "b", name: "Coach" });
+  const skilled = () => bot({ config: { ...bot().config, skills: ["pdf"] } });
+  const withCoach = () => useChat.setState({ bots: [bot({ config: { ...bot().config, skills: ["pdf"] } }), coach] });
+
+  it("offers the other bots and this bot's skills after @ and sends the mentioned ids", async () => {
+    withCoach();
+    bridge.send.mockResolvedValue(msg(3));
+    await open();
+    box().focus();
+    fireEvent.change(box(), { target: { value: "@", selectionStart: 1, selectionEnd: 1 } });
+    fireEvent.select(box(), { target: { selectionStart: 1, selectionEnd: 1 } });
+    fireEvent.click(await screen.findByRole("option", { name: /Coach/ }));
+    await waitFor(() => expect(box().value).toContain("@Coach"));
+    expect(screen.queryByRole("option", { name: /Atlas/ })).toBeNull();
+    expect(screen.queryByRole("option", { name: /pdf/ })).toBeNull();
+    type(`${box().value.trim()} what do you think?`);
+    fireEvent.keyDown(box(), { key: "Enter" });
+    await waitFor(() => expect(bridge.send).toHaveBeenCalledTimes(1));
+    expect(bridge.send.mock.calls[0]![0]).toMatchObject({ botId: "a", text: "@Coach what do you think?", mentions: ["b"] });
+    expect(bridge.send.mock.calls[0]![0]).not.toHaveProperty("skills");
+  });
+
+  it("opens the skills picker on / and writes /skill", async () => {
+    withCoach();
+    await open([], skilled());
+    box().focus();
+    fireEvent.change(box(), { target: { value: "/", selectionStart: 1, selectionEnd: 1 } });
+    fireEvent.select(box(), { target: { selectionStart: 1, selectionEnd: 1 } });
+    expect(screen.queryByRole("option", { name: /Coach/ })).toBeNull();
+    fireEvent.click(await screen.findByRole("option", { name: /pdf/ }));
+    await waitFor(() => expect(box().value).toContain("/pdf"));
+  });
+
+  it("tints typed mentions and deletes a whole mention with one Backspace", async () => {
+    withCoach();
+    await open([], skilled());
+    type("ask @Coach to use /pdf now");
+    const marks = () => Array.from(document.querySelectorAll("[data-slot=mention-highlight] mark")).map((m) => m.textContent);
+    expect(marks()).toEqual(["@Coach", "/pdf"]);
+    box().setSelectionRange(9, 9);
+    fireEvent.keyDown(box(), { key: "Backspace" });
+    await waitFor(() => expect(box().value).toBe("ask  to use /pdf now"));
+    expect(marks()).toEqual(["/pdf"]);
+    box().setSelectionRange(13, 13);
+    fireEvent.keyDown(box(), { key: "Delete" });
+    await waitFor(() => expect(box().value).toBe("ask  to use  now"));
+    type("plain text");
+    box().setSelectionRange(10, 10);
+    const untouched = fireEvent.keyDown(box(), { key: "Backspace" });
+    expect(untouched).toBe(true);
+  });
+
+  it("sends a typed /skill as a skill mention and keeps research messages free of mentions", async () => {
+    withCoach();
+    bridge.send.mockResolvedValue(msg(3));
+    await open();
+    type("/pdf summarise this");
+    fireEvent.keyDown(box(), { key: "Enter" });
+    await waitFor(() => expect(bridge.send).toHaveBeenCalledTimes(1));
+    expect(bridge.send.mock.calls[0]![0]).toMatchObject({ text: "/pdf summarise this", skills: ["pdf"] });
+    expect(bridge.send.mock.calls[0]![0]).not.toHaveProperty("mentions");
+  });
+
+  it("offers the built-in skill-creator to a bot that was given no skills", async () => {
+    withCoach();
+    bridge.send.mockResolvedValue(msg(3));
+    await open();
+    await act(async () => {}); // let the registry list arrive: built-in skills come from it, not from the bot
+    type("/skill-creator make me a skill");
+    fireEvent.keyDown(box(), { key: "Enter" });
+    await waitFor(() => expect(bridge.send).toHaveBeenCalledTimes(1));
+    expect(bridge.send.mock.calls[0]![0]).toMatchObject({ skills: ["skill-creator"] });
+  });
+
+  it("draws mentions in a sent message as chips with the bot's avatar and no raw trigger", async () => {
+    withCoach();
+    await open([msg(1, { parts: [{ type: "text", text: "question @Coach and /pdf please" }] })], skilled());
+    const chips = Array.from(document.querySelectorAll("[data-slot=directive-text-chip]")) as HTMLElement[];
+    expect(chips.map((c) => [c.dataset.directiveType, c.dataset.directiveId, c.textContent])).toEqual([["bot", "b", "Coach"], ["skill", "pdf", "pdf"]]);
+    expect(chips[0]!.querySelector("img")).not.toBeNull();
+  });
+
+  it("draws a reply to an @mention as the mentioned bot", async () => {
+    withCoach();
+    await open([msg(1), msg(2, { author: "bot:b", parts: [{ type: "text", text: "Coach here" }] })]);
+    expect(screen.getByText("Coach here")).toBeInTheDocument();
+    expect(screen.getByText("Coach said:")).toBeInTheDocument();
+    expect(screen.queryByText("Atlas said:")).toBeNull();
+  });
+
+  it("renders the structured components an assistant message carries", async () => {
+    const table = JSON.stringify({ columns: [{ key: "n", label: "Name", priority: "primary" }, { key: "v", label: "Score", format: { kind: "number" } }], rows: [{ n: "Ada", v: 9 }] });
+    const chart = JSON.stringify({ label: "Runs", value: "92", points: [1, 5, 9] });
+    const timeline = JSON.stringify({ events: [{ id: "1", when: "now", time: "09:00", title: "Kickoff" }] });
+    await open([msg(1), msg(2, { parts: [
+      { type: "ui", name: "table", spec: table }, { type: "ui", name: "chart", spec: chart }, { type: "ui", name: "timeline", spec: timeline },
+      { type: "ui", name: "chart", spec: "{not json" }, { type: "ui", name: "bogus", spec: "{}" },
+    ] })]);
+    expect(document.querySelector("[data-slot=data-table]")).not.toBeNull();
+    expect(screen.getAllByText("Ada").length).toBeGreaterThan(0);
+    expect(document.querySelector("[data-slot=chart]")).not.toBeNull();
+    expect(screen.getByText("Kickoff")).toBeInTheDocument();
+    expect(document.querySelectorAll("[data-slot=chat-structured]")).toHaveLength(3);
+  });
+
+  it("opens find-in-conversation on Ctrl+F, counts matches and closes on Escape", async () => {
+    await open([msg(1, { parts: [{ type: "text", text: "question: Where is Paris?" }] }), msg(2, { parts: [{ type: "text", text: "answer: Paris is in France; paris again" }] })]);
+    const scrolled: string[] = [];
+    Element.prototype.scrollIntoView = function (this: Element) { scrolled.push(this.getAttribute("data-message-id") ?? ""); };
+    vi.stubGlobal("matchMedia", () => ({ matches: false }));
+    fireEvent.keyDown(document.body, { key: "f", ctrlKey: true });
+    const input = await screen.findByRole("textbox", { name: "Find in conversation" });
+    fireEvent.change(input, { target: { value: "paris" } });
+    expect(screen.getByText("1/3")).toBeInTheDocument();
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(screen.getByText("2/3")).toBeInTheDocument();
+    fireEvent.keyDown(input, { key: "Enter", shiftKey: true });
+    expect(screen.getByText("1/3")).toBeInTheDocument();
+    expect(scrolled).toEqual(["m1", "m2", "m1"]);
+    fireEvent.keyDown(input, { key: "Escape" });
+    expect(screen.queryByRole("textbox", { name: "Find in conversation" })).toBeNull();
   });
 });

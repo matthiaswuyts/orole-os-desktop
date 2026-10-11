@@ -77,22 +77,7 @@ func TestAgentsPublishThroughDaemon(t *testing.T) {
 	defer api.Close()
 	defer daemon.SetGitHubTestSeams(api.URL, &memCreds{})()
 
-	repo := t.TempDir()
-	publishGit(t, repo, "init", "-b", "main")
-	publishGit(t, repo, "config", "user.name", "Daemon Test")
-	publishGit(t, repo, "config", "user.email", "daemon@example.test")
-	publishGit(t, repo, "config", "commit.gpgsign", "false")
-	if err := os.WriteFile(filepath.Join(repo, "a.txt"), []byte("base\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	publishGit(t, repo, "add", ".")
-	publishGit(t, repo, "commit", "-m", "base")
-	bare := filepath.Join(t.TempDir(), "remote.git")
-	publishGit(t, repo, "init", "--bare", "-b", "main", bare)
-	publishGit(t, repo, "remote", "add", "origin", "https://github.com/owner/repo.git")
-	publishGit(t, repo, "config", "url."+bare+".insteadOf", "https://github.com/owner/repo.git")
-	publishGit(t, repo, "push", "origin", "main")
-	publishGit(t, repo, "remote", "set-head", "origin", "main")
+	repo, bare := copyPublishRepo(t)
 	publishGit(t, repo, "checkout", "-b", "orole/daemon-publish")
 	if err := os.WriteFile(filepath.Join(repo, "work.txt"), []byte("work\n"), 0o644); err != nil {
 		t.Fatal(err)

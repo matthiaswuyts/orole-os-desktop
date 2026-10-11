@@ -18,6 +18,10 @@ type RunContext struct {
 	Actor string
 	// Depth is the ask_bot delegation depth (0 = user-initiated run).
 	Depth int
+	// Chain lists the bot ids of the runs waiting on this run's answer through ask_bot, outermost
+	// first (empty for a user-initiated run). A tool calling Delegator.Ask sets it to the chain of
+	// the asking run plus the asking bot; the delegated run receives it unchanged.
+	Chain []string
 	// Emit publishes a UI part on the running assistant message (progress, citations).
 	// It is a no-op for background work. Tools must keep parts small.
 	Emit func(MsgPart)
@@ -62,10 +66,13 @@ type Memory interface {
 	Consolidate(ctx context.Context, botID string) error
 }
 
-// Delegator lets ask_bot run another bot without importing the engine.
+// Delegator lets ask_bot hand off work to another bot without importing the engine.
 type Delegator interface {
-	// Ask runs callee with question in its own context and memory and returns its final text.
-	Ask(ctx context.Context, from RunContext, calleeID, question string) (string, error)
+	// Handoff gives task to the callee bot as a real turn of its own conversation (stored messages, live events, its
+	// own memory and tools, queued behind anything it is already doing) and returns once it is queued: the delegating
+	// run is not blocked. When the callee finishes, its outcome is delivered to the delegating bot as a report.
+	// from.Chain must hold the chain of the delegating run plus the delegating bot.
+	Handoff(ctx context.Context, from RunContext, calleeID, task string) error
 }
 
 // Fence wraps untrusted text so the model treats it as data. Engines and tools use this one function.

@@ -5,17 +5,22 @@ import type { Bot } from "@/mygo";
 const env = vi.hoisted(() => ({ desktop: true, provider: true as boolean | null }));
 
 vi.mock("@/lib/backend", () => ({ get inDesktop() { return env.desktop; } }));
+const openSettings = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
+vi.mock("@/mygo", () => ({ Desktop: { openSettings } }));
 vi.mock("@/stores/llm", () => ({ useHasProvider: () => env.provider }));
 vi.mock("@/features/chat/Conversation", () => ({ Conversation: ({ bot }: { bot: Bot }) => <div data-testid="conversation">{bot.name}</div> }));
 vi.mock("@/features/chat/builder/NewBot", () => ({ NewBot: () => <div data-testid="builder">new</div> }));
+vi.mock("@/components/ascii/AsciiMark", () => ({
+  SPACE_PIECES: ["earth", "eclipse", "black-hole", "galaxy", "planet"],
+  AsciiMark: ({ pieces }: { pieces?: readonly string[] }) => <div data-testid="ascii-mark" data-pieces={pieces?.join(",")} />,
+}));
 
 import { ChatView } from "@/features/chat/ChatView";
 import { useChat } from "@/stores/chat";
-import { useUI } from "@/stores/ui";
 
 const bot = (id: string, name = id): Bot => ({
   id, name, avatar: "", color: "blue", description: "", instructions: "", provider: "", model: "", reasoning: "",
-  config: { tools: [], mcpTools: [], skills: [], memory: [], limits: { maxSteps: 0, maxToolCalls: 0 } },
+  config: { tools: [], mcpServers: [], skills: [], memory: [], limits: { maxSteps: 0, maxToolCalls: 0 } },
   createdAt: 1, updatedAt: 1, running: false,
 });
 const state = (over: Partial<ReturnType<typeof useChat.getState>> = {}) =>
@@ -38,8 +43,7 @@ describe("ChatView states", () => {
     expect(screen.getByText("Connect an AI provider to start chatting")).toBeInTheDocument();
     expect(screen.queryByTestId("conversation")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Open AI settings" }));
-    expect(useUI.getState().view).toBe("settings");
-    expect(useUI.getState().settingsSection).toBe("ai");
+    expect(openSettings).toHaveBeenCalledWith("ai");
   });
 
   it("waits quietly while the provider answer is unknown and the bots load", () => {
@@ -60,6 +64,7 @@ describe("ChatView states", () => {
 
   it("invites creating the first bot when there are none", () => {
     render(<ChatView />);
+    expect(screen.getByTestId("ascii-mark")).toHaveAttribute("data-pieces", "earth,eclipse,black-hole,galaxy,planet");
     fireEvent.click(screen.getByRole("button", { name: "Create your first bot" }));
     expect(useChat.getState().builder).toEqual({ open: true, botId: null });
   });

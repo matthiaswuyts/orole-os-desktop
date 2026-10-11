@@ -2,7 +2,6 @@ package daemon
 
 import (
 	"context"
-	"slices"
 	"time"
 
 	"github.com/rayorole/orole-os-desktop/internal/chat"
@@ -35,7 +34,10 @@ func (d *Daemon) registerChatTools() {
 	if d.Skills != nil {
 		list = append(list, &tools.SkillsTool{Store: d.Skills})
 		m.AddPromptSection(func(b chat.Bot) string { return tools.SkillsPrompt(d.Skills, b) })
+		m.SetBuiltinSkills(func() []string { return tools.BuiltinSkillNames(d.Skills) })
 	}
+	list = append(list, tools.Show{})
+	m.AddPromptSection(func(chat.Bot) string { return tools.ShowPrompt })
 	list = append(list, &tools.Setup{Bots: m})
 	m.AddPromptSection(func(b chat.Bot) string {
 		if !b.Config.Setup {
@@ -51,11 +53,8 @@ func (d *Daemon) registerChatTools() {
 	info := tools.InfoSource{
 		LLM:       d.LLM,
 		ModelCaps: m.ModelCaps,
-		HasTool: func(id string) bool {
-			return slices.ContainsFunc(m.Tools(), func(t chat.Tool) bool { return t.ID() == id })
-		},
-		Fetcher: fetcher,
-		Native:  research.Native,
+		Fetcher:   fetcher,
+		Native:    research.Native,
 	}
 	handle(d, "chat.tools.list", func(ctx context.Context, p chat.ToolsRequest) ([]chat.ToolInfo, error) {
 		out, err := info.Describe(ctx, p)

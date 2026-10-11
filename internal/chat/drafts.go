@@ -2,8 +2,6 @@ package chat
 
 import (
 	"context"
-	"errors"
-	"fmt"
 	"regexp"
 	"strings"
 	"unicode/utf8"
@@ -88,7 +86,7 @@ func (m *Manager) DraftSend(ctx context.Context, req DraftRequest) (Message, err
 			m.emit("chat.run", RunState{BotID: key})
 		}()
 		asst := Message{ID: newID(), BotID: key, Role: "assistant", Author: "bot:draft", Status: StatusRunning, CreatedAt: m.nowMs(), Parts: []MsgPart{}}
-		s := newSink(asst, nil, m.publishMessage)
+		s := newSink(asst, nil, m.publishMessage, m.publishDelta)
 		m.emit("chat.run", RunState{BotID: key, Running: true, MessageID: asst.ID})
 		s.checkpoint()
 		rc := RunContext{Bot: bot, MessageID: asst.ID, Actor: "bot:draft", Emit: s.upsertTool}
@@ -111,52 +109,3 @@ func (m *Manager) runDraft(ctx context.Context, bot Bot, rc RunContext, history 
 	}
 	return m.loop(ctx, env)
 }
-
-// Ask implements Delegator: it runs callee on question in its own context (own instructions,
-// memory and tools; the caller's conversation is not shared) and returns its final text. The
-// exchange is not stored in the callee's conversation. Only executive assistants may delegate: the
-// caller must be flagged Executive in its stored configuration, and chains are depth-limited.
-func (m *Manager) Ask(ctx context.Context, from RunContext, calleeID, question string) (string, error) {
-	if from.BotID == "" {
-		return "", errors.New("delegation is not available in previews")
-	}
-	if from.Depth >= maxDelegationDepth {
-		return "", fmt.Errorf("delegation is limited to %d levels", maxDelegationDepth)
-	}
-	if strings.TrimSpace(question) == "" || len(question) > MaxMessageTextLen || !utf8.ValidString(question) {
-		return "", errors.New("the question is empty or too long")
-	}
-	caller, err := m.store.getBot(ctx, from.BotID, false)
-	if err != nil {
-		return "", err
-	}
-	if calleeID == caller.ID || !caller.Config.Executive {
-		return "", fmt.Errorf("%s is not allowed to ask that bot", caller.Name)
-	}
-	callee, err := m.store.getBot(ctx, calleeID, false)
-	if err != nil {
-		return "", fmt.Errorf("the bot to ask no longer exists")
-	}
-	s := newSink(Message{ID: newID(), BotID: callee.ID, Role: "assistant", Author: "bot:" + callee.ID, Status: StatusRunning, Parts: []MsgPart{}}, nil, nil)
-	rc := RunContext{BotID: callee.ID, Bot: callee, Actor: "bot:" + callee.ID, Depth: from.Depth + 1, Emit: s.upsertTool}
-	extra := fmt.Sprintf("You are answering a question that another bot (%q) asked on the user's behalf. Reply with a concise, self-contained answer; you cannot ask follow-up questions.", caller.Name)
-	env, err := m.prepare(ctx, prep{bot: callee, rc: rc, sink: s, text: question, memory: true, extra: extra})
-	if err != nil {
-		return "", errors.New(describeError(err))
-	}
-	status, errText := m.loop(ctx, env)
-	switch status {
-	case StatusComplete:
-	case StatusCanceled, StatusIncomplete:
-		return "", context.Canceled
-	default:
-		return "", errors.New(errText)
-	}
-	out := strings.TrimSpace(s.finalText())
-	if out == "" {
-		return "", fmt.Errorf("%s did not answer", callee.Name)
-	}
-	return out, nil
-}
-
-var _ Delegator = (*Manager)(nil)

@@ -76,57 +76,27 @@ func TestHostedToolsNeverReachCall(t *testing.T) {
 	}
 }
 
-func TestSanitizeParams(t *testing.T) {
-	long := make([]any, 30)
-	for i := range long {
-		long[i] = "site" + string(rune('a'+i%26)) + string(rune('a'+i/26)) + ".example.com"
+func TestHostedParamsAreFixedAndIgnoreBotSettings(t *testing.T) {
+	if got := HostedParams(llm.HostedWebSearch); len(got) != 1 || got["max_results"] != 5 {
+		t.Fatalf("search = %v, want only max_results 5", got)
 	}
-	in := map[string]any{
-		"max_results":        float64(500),
-		"max_uses":           json.Number("3"),
-		"max_content_tokens": 10_000_000,
-		"allowed_domains":    append([]any{"Example.COM", "https://evil.example/path", "a b.com", "localhost", "10.0.0.1", "ok-1.example.org.", 7}, long...),
-		"blocked_domains":    []string{"bad.test", "bad.test", "-x.com"},
-		"secret":             "nope",
+	if got := HostedParams(llm.HostedWebFetch); len(got) != 1 || got["max_content_tokens"] != 25_000 {
+		t.Fatalf("fetch = %v, want only max_content_tokens 25000", got)
 	}
-	got := SanitizeParams(llm.HostedWebSearch, in)
-	if got["max_results"] != 10 || got["max_uses"] != 3 {
-		t.Fatalf("numbers = %v", got)
+	if HostedParams(llm.HostedDatetime) != nil {
+		t.Fatal("datetime has no options")
 	}
-	if _, ok := got["max_content_tokens"]; ok {
-		t.Fatal("max_content_tokens is a fetch parameter")
+	// Params saved by older versions (limits, domain lists) never reach the provider.
+	saved := map[string]any{"max_results": 99.0, "max_content_tokens": 1.0, "allowed_domains": []any{"example.com"}, "blocked_domains": []any{"bad.test"}}
+	bot := chat.Bot{Config: chat.BotConfig{Tools: []chat.BotTool{{ID: chat.ToolWebSearch, Params: saved}, {ID: chat.ToolWebFetch, Params: saved}}}}
+	caps := llm.Caps{HostedTools: []string{llm.HostedWebSearch, llm.HostedWebFetch}}
+	search := WebSearch{}.Specs(bot, caps)
+	if len(search) != 1 || !reflect.DeepEqual(search[0].Params, map[string]any{"max_results": 5}) {
+		t.Fatalf("search specs = %+v", search)
 	}
-	if _, ok := got["secret"]; ok {
-		t.Fatal("unknown key survived")
-	}
-	allowed := got["allowed_domains"].([]string)
-	if len(allowed) != 20 || allowed[0] != "example.com" || allowed[1] != "ok-1.example.org" {
-		t.Fatalf("allowed = %v", allowed)
-	}
-	if !reflect.DeepEqual(got["blocked_domains"], []string{"bad.test"}) {
-		t.Fatalf("blocked = %v", got["blocked_domains"])
-	}
-
-	fetch := SanitizeParams(llm.HostedWebFetch, in)
-	if fetch["max_content_tokens"] != 100000 {
-		t.Fatalf("fetch = %v", fetch)
-	}
-	if _, ok := fetch["max_results"]; ok {
-		t.Fatal("max_results is a search parameter")
-	}
-	if SanitizeParams(llm.HostedWebSearch, map[string]any{"max_results": "ten", "max_uses": -1.0}) != nil {
-		t.Fatal("invalid values must be dropped")
-	}
-	if SanitizeParams(llm.HostedDatetime, in) != nil || SanitizeParams(llm.HostedWebSearch, nil) != nil {
-		t.Fatal("expected nil")
-	}
-}
-
-func TestHostedSpecCarriesSanitizedParams(t *testing.T) {
-	bot := chat.Bot{Config: chat.BotConfig{Tools: []chat.BotTool{{ID: chat.ToolWebSearch, Params: map[string]any{"max_results": 99.0, "x": 1}}}}}
-	specs := WebSearch{}.Specs(bot, llm.Caps{HostedTools: []string{llm.HostedWebSearch}})
-	if len(specs) != 1 || specs[0].Params["max_results"] != 10 || len(specs[0].Params) != 1 {
-		t.Fatalf("specs = %+v", specs)
+	fetch := WebFetch{}.Specs(bot, caps)
+	if len(fetch) != 1 || !reflect.DeepEqual(fetch[0].Params, map[string]any{"max_content_tokens": 25_000}) {
+		t.Fatalf("fetch specs = %+v", fetch)
 	}
 }
 
@@ -148,20 +118,5 @@ func TestDatetimeCall(t *testing.T) {
 	res, _ = d.Call(context.Background(), chat.RunContext{}, "datetime", nil)
 	if res.IsError || !strings.Contains(res.Text, "Current time:") {
 		t.Fatalf("local time: %+v", res)
-	}
-}
-
-func TestDomainFilter(t *testing.T) {
-	f := DomainFilter{Allowed: []string{"example.com"}, Blocked: []string{"bad.example.com"}}
-	for host, want := range map[string]bool{
-		"example.com": true, "www.example.com": true, "EXAMPLE.com.": true,
-		"bad.example.com": false, "x.bad.example.com": false, "notexample.com": false, "evil.com": false,
-	} {
-		if got := f.Permits(host); got != want {
-			t.Errorf("Permits(%q) = %v, want %v", host, got, want)
-		}
-	}
-	if !(DomainFilter{}).Permits("anything.test") {
-		t.Error("empty filter must permit")
 	}
 }

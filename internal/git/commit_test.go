@@ -34,6 +34,7 @@ func identifiedRepo(t *testing.T) string {
 }
 
 func TestCurrentBranch(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	dir := NewRepo(t)
 	if b, err := git.CurrentBranch(ctx, dir); err != nil || b != "main" {
@@ -49,6 +50,7 @@ func TestCurrentBranch(t *testing.T) {
 }
 
 func TestCommitAll(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	dir := identifiedRepo(t)
 
@@ -114,6 +116,7 @@ func TestCommitAllRequiresIdentity(t *testing.T) {
 }
 
 func TestPushRemoteHelpers(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	dir := identifiedRepo(t)
 	bare := filepath.Join(t.TempDir(), "remote.git")

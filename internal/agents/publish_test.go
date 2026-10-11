@@ -19,6 +19,7 @@ import (
 	"github.com/rayorole/orole-os-desktop/internal/database"
 	"github.com/rayorole/orole-os-desktop/internal/github"
 	"github.com/rayorole/orole-os-desktop/internal/terminals"
+	"github.com/rayorole/orole-os-desktop/internal/testrepo"
 	"github.com/rayorole/orole-os-desktop/migrations"
 )
 
@@ -173,19 +174,41 @@ func newPubEnv(t *testing.T) *pubEnv {
 	return e
 }
 
+// publishTemplate holds <work> and <remote.git>: work is the base repository on main, with origin
+// https://github.com/Owner/Repo.git already pushed to the bare remote (url.<bare>.insteadOf makes that
+// push real without a network) and origin/HEAD set. The template's own path is not recorded in
+// either repository; publishRepo adds the insteadOf rewrite for the copy.
+var publishTemplate = testrepo.New(func(dir string) error {
+	work, bare := filepath.Join(dir, "work"), filepath.Join(dir, "remote.git")
+	if err := os.Mkdir(work, 0o755); err != nil {
+		return err
+	}
+	if err := buildBaseRepo(work); err != nil {
+		return err
+	}
+	for _, args := range [][]string{
+		{"branch", "-M", "main"},
+		{"config", "commit.gpgsign", "false"},
+		{"init", "--bare", "-b", "main", bare},
+		{"remote", "add", "origin", "https://github.com/Owner/Repo.git"},
+		{"-c", "url." + bare + ".insteadOf=https://github.com/Owner/Repo.git", "push", "origin", "main"},
+		{"remote", "set-head", "origin", "main"},
+	} {
+		if err := testrepo.Git(work, args...); err != nil {
+			return err
+		}
+	}
+	return nil
+})
+
 // publishRepo is a repository whose origin is https://github.com/Owner/Repo.git but is rewritten
 // (url.<bare>.insteadOf) to a local bare repository, so pushes are real and need no network.
 func publishRepo(t *testing.T) (dir, bare string) {
 	t.Helper()
-	dir = repoTest(t)
-	gitTest(t, dir, "branch", "-M", "main")
-	gitTest(t, dir, "config", "commit.gpgsign", "false")
-	bare = filepath.Join(t.TempDir(), "remote.git")
-	gitTest(t, dir, "init", "--bare", "-b", "main", bare)
-	gitTest(t, dir, "remote", "add", "origin", "https://github.com/Owner/Repo.git")
+	root := t.TempDir()
+	publishTemplate.Copy(t, root)
+	dir, bare = filepath.Join(root, "work"), filepath.Join(root, "remote.git")
 	gitTest(t, dir, "config", "url."+bare+".insteadOf", "https://github.com/Owner/Repo.git")
-	gitTest(t, dir, "push", "origin", "main")
-	gitTest(t, dir, "remote", "set-head", "origin", "main")
 	return dir, bare
 }
 

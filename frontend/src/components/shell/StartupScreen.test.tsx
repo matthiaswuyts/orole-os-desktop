@@ -23,17 +23,28 @@ it("waits for every startup check and never advances just because time passes", 
   act(() => { vi.advanceTimersByTime(5000); });
   expect(screen.getByRole("progressbar")).toHaveAttribute("aria-valuenow", "0");
   act(() => { useWorkspaces.setState({ loaded: true }); useDaemon.setState({ link: "connected" }); });
-  expect(screen.getByRole("progressbar")).toHaveAttribute("aria-valuenow", "50");
+  expect(screen.getByRole("progressbar")).toHaveAttribute("aria-valuenow", "67");
   expect(screen.queryByRole("button", { name: "App action" })).toBeNull();
   act(() => { useSettings.setState({ loaded: true }); });
-  expect(screen.getByRole("progressbar")).toHaveAttribute("aria-valuenow", "75");
-  act(() => { useAgents.setState({ loaded: true }); });
   expect(screen.getByRole("progressbar")).toHaveAttribute("aria-valuenow", "100");
   act(() => { vi.advanceTimersByTime(40); });
   expect(screen.getByRole("button", { name: "App action" })).toBeVisible();
   // A refresh or reconnect must not put an already-open app behind the startup screen.
-  act(() => { useAgents.setState({ loaded: false }); useDaemon.setState({ link: "offline" }); });
+  act(() => { useSettings.setState({ loaded: false }); useDaemon.setState({ link: "offline" }); });
   expect(screen.queryByRole("progressbar")).toBeNull();
+});
+
+it("does not wait for the task list, which can be large and has its own loading states", () => {
+  render(<StartupScreen><p>App ready</p></StartupScreen>);
+  act(() => {
+    useSettings.setState({ loaded: true });
+    useWorkspaces.setState({ loaded: true });
+    useDaemon.setState({ link: "connected" });
+  });
+  expect(useAgents.getState().loaded).toBe(false);
+  expect(screen.getByRole("progressbar")).toHaveAttribute("aria-valuenow", "100");
+  act(() => { vi.advanceTimersByTime(40); });
+  expect(screen.getByText("App ready")).toBeVisible();
 });
 
 it("hands off after failed initial requests instead of trapping the user at startup", () => {

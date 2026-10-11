@@ -3,8 +3,6 @@ package daemon_test
 import (
 	"context"
 	"errors"
-	"os"
-	"os/exec"
 	"path/filepath"
 	"testing"
 
@@ -26,14 +24,7 @@ func TestProjectsOverIPC(t *testing.T) {
 
 	repo, _ := filepath.EvalSymlinks(t.TempDir())
 	repo = filepath.Join(repo, "demo")
-	os.Mkdir(repo, 0o755)
-	for _, args := range [][]string{{"init", "-b", "main"}, {"-c", "user.name=T", "-c", "user.email=t@e.c", "commit", "--allow-empty", "-m", "init"}} {
-		cmd := exec.Command("git", args...)
-		cmd.Dir = repo
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("%v: %s", err, out)
-		}
-	}
+	copyEmptyRepo(t, repo)
 
 	var pr struct {
 		ID   string `json:"id"`

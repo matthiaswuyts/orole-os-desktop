@@ -124,18 +124,30 @@ export function parseTurnDone(ev: AgentEvent): TurnDone {
   return { ok: d.ok !== false, result: str(d.result) || ev.text };
 }
 
-/** Merges one event into an id-sorted list; an already-known id is ignored. */
+const FEED_KIND: Record<string, true> = Object.fromEntries(FEED_KINDS.map((kind) => [kind, true]));
+
+/** Merges one event into an id-sorted list; an already-known id is ignored. Appending the newest event is O(1) to locate; anything older binary-searches. */
 export function mergeEvent(list: AgentEvent[], ev: AgentEvent): AgentEvent[] {
-  if (!FEED_KINDS.includes(ev.kind) || list.some((x) => x.id === ev.id)) return list;
+  if (!FEED_KIND[ev.kind]) return list;
   const last = list[list.length - 1];
-  return !last || last.id < ev.id ? [...list, ev] : [...list, ev].sort((a, b) => a.id - b.id);
+  if (!last || last.id < ev.id) return [...list, ev];
+  let lo = 0, hi = list.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >>> 1;
+    if (list[mid]!.id < ev.id) lo = mid + 1; else hi = mid;
+  }
+  if (list[lo]!.id === ev.id) return list;
+  return [...list.slice(0, lo), ev, ...list.slice(lo)];
 }
 
-/** Merges loaded history with events that arrived while it loaded. */
+/** Merges loaded history with events that arrived while it loaded; on a repeated id the later event wins. */
 export function mergeHistory(history: AgentEvent[], extra: AgentEvent[]): AgentEvent[] {
   const all = new Map<number, AgentEvent>();
-  for (const ev of [...history, ...extra]) if (FEED_KINDS.includes(ev.kind)) all.set(ev.id, ev);
-  return [...all.values()].sort((a, b) => a.id - b.id);
+  for (const ev of history) if (FEED_KIND[ev.kind]) all.set(ev.id, ev);
+  for (const ev of extra) if (FEED_KIND[ev.kind]) all.set(ev.id, ev);
+  const merged = [...all.values()];
+  for (let i = 1; i < merged.length; i++) if (merged[i - 1]!.id > merged[i]!.id) return merged.sort((a, b) => a.id - b.id);
+  return merged;
 }
 
 export interface GroupOptions {
@@ -171,10 +183,15 @@ export function groupEvents(events: AgentEvent[], options: GroupOptions = { live
     else items[index] = { ...item, key: items[index]!.key, at: items[index]!.at };
   };
   const legacyOpen: number[] = []; // legacy calls still waiting for a result, oldest first
+  const running: number[] = []; // indexes of tool items announced as running; settled when a turn ends
   let turnStart: number | null = null;
 
   const settleOpen = () => {
-    for (const [i, item] of items.entries()) if (item.type === "tool" && item.call.status === "running") items[i] = { ...item, call: { ...item.call, status: "unknown" } };
+    for (const i of running) {
+      const item = items[i];
+      if (item?.type === "tool" && item.call.status === "running") items[i] = { ...item, call: { ...item.call, status: "unknown" } };
+    }
+    running.length = 0;
     legacyOpen.length = 0;
   };
 
@@ -206,6 +223,7 @@ export function groupEvents(events: AgentEvent[], options: GroupOptions = { live
         }
         if (call.linked) toolAt.set(call.id, items.length);
         else if (call.status === "running") legacyOpen.push(items.length);
+        if (call.status === "running") running.push(items.length);
         items.push({ type: "tool", key, at: ev.at, call });
         break;
       }
@@ -306,6 +324,53 @@ export function groupEvents(events: AgentEvent[], options: GroupOptions = { live
   return items;
 }
 
+function sameValue(a: unknown, b: unknown): boolean {
+  if (Object.is(a, b)) return true;
+  if (Array.isArray(a)) return Array.isArray(b) && a.length === b.length && a.every((x, i) => sameValue(x, b[i]));
+  if (!isRecord(a) || !isRecord(b)) return false;
+  const keys = Object.keys(a);
+  return keys.length === Object.keys(b).length && keys.every((k) => k in b && sameValue(a[k], b[k]));
+}
+
+/**
+ * Reuses the item objects of `previous` wherever the regrouped `next` holds the same content (matched by
+ * key), so memoized rows skip rendering for every item an incoming event did not touch. `groupEvents`
+ * rebuilds every item, and its leaves (text, tool input) keep the identity of the event they came from,
+ * so unchanged items compare equal in a few reference checks.
+ */
+export function shareItems(previous: FeedItem[], next: FeedItem[]): FeedItem[] {
+  if (!previous.length) return next;
+  const before = new Map<string, FeedItem>();
+  for (const item of previous) before.set(item.key, item);
+  for (let i = 0; i < next.length; i++) {
+    const prior = before.get(next[i]!.key);
+    if (prior && sameValue(prior, next[i])) next[i] = prior;
+  }
+  // An event that changes nothing visible (usage, a repeated announcement) keeps the whole list.
+  return next.length === previous.length && next.every((item, i) => item === previous[i]) ? previous : next;
+}
+
+const sameList = (a: readonly FeedItem[], b: readonly FeedItem[]) => a.length === b.length && a.every((item, i) => item === b[i]);
+
+/**
+ * Reuses the entry objects of `previous` wherever the regrouped `next` holds the same items (matched by key), so memoized
+ * feed rows skip rendering for every turn an incoming event did not touch. Items already keep their identity through `shareItems`.
+ */
+export function shareEntries(previous: readonly TurnEntry[], next: TurnEntry[]): TurnEntry[] {
+  if (!previous.length) return next;
+  const before = new Map<string, TurnEntry>();
+  for (const entry of previous) before.set(entry.key, entry);
+  for (let i = 0; i < next.length; i++) {
+    const entry = next[i]!, prior = before.get(entry.key);
+    if (!prior || prior.at !== entry.at) continue;
+    const same = prior.type === "item"
+      ? entry.type === "item" && prior.item === entry.item
+      : entry.type === "run" && prior.status === entry.status && prior.durationMs === entry.durationMs && sameList(prior.steps, entry.steps) && sameList(prior.attention, entry.attention) && sameList(prior.answer, entry.answer);
+    if (same) next[i] = prior;
+  }
+  return next.length === previous.length && next.every((entry, i) => entry === previous[i]) ? (previous as TurnEntry[]) : next;
+}
+
 /** What the agent is doing right now, from Session.activity, for the live indicator under the feed. */
 export interface LiveActivity { kind: "thinking" | "working"; label: string }
 export function liveActivity(session: Pick<Session, "status" | "live" | "activity">): LiveActivity | null {
@@ -334,4 +399,122 @@ export function toolPreview(call: ToolCall): string {
 export function toolInputJSON(call: ToolCall): string {
   if (call.input === undefined || call.input === null) return "";
   try { return JSON.stringify(call.input, null, 2); } catch { return String(call.input); }
+}
+
+// ---- assistant turns ----
+
+/** The label of a reasoning/commentary block: its `**title**`, else its first line, without markdown markers. */
+export function reasoningTitle(text: string, fallback = "Thinking"): string {
+  const bold = /\*\*([^*\n]+?)\*\*/.exec(text)?.[1] ?? "";
+  const line = text.split(/\r?\n/).map((l) => l.replace(/^[\s>#*_\-`]+/, "").replace(/\*\*|__|`/g, "").trim()).find(Boolean) ?? "";
+  const title = clip((bold || line).replace(/\*\*|__|`/g, ""), 80);
+  return title || fallback;
+}
+
+export type RunState = "running" | "requires-action" | "complete" | "cancelled" | "error" | "incomplete";
+
+/**
+ * One assistant turn, from a user message to the next: `steps` (reasoning, tool calls, interim messages...) fold into a single
+ * collapsed disclosure; `attention` (pending approvals and questions, errors, notices) and `answer` (the closing message and any
+ * files or images) always stay visible, each in original order.
+ */
+export interface TurnRun {
+  type: "run";
+  key: string;
+  at: string;
+  status: RunState;
+  /** First to last event of the turn in ms; null when unknown or under a second. */
+  durationMs: number | null;
+  steps: FeedItem[];
+  attention: FeedItem[];
+  answer: FeedItem[];
+}
+export type TurnEntry = { type: "item"; key: string; at: string; item: FeedItem } | TurnRun;
+
+export interface RunContext {
+  /** The session is working right now: the last turn is in flight. */
+  running: boolean;
+  /** The agent process is alive: a turn that never reported completion is `incomplete` once it is not. */
+  live: boolean;
+  pendingPermissions: ReadonlySet<string>;
+  pendingQuestions: ReadonlySet<string>;
+}
+
+const CANCELLED = /\b(cancel+ed|interrupted|aborted|stopped)\b/i;
+
+function closeTurn(entries: TurnEntry[], user: Extract<FeedItem, { type: "user" }> | null, buffer: FeedItem[], last: boolean, ctx: RunContext) {
+  if (!buffer.length) {
+    // A prompt the agent has not answered yet still shows that it is working.
+    if (user && last && ctx.running) entries.push({ type: "run", key: `run:${user.key}`, at: user.at, status: "running", durationMs: null, steps: [], attention: [], answer: [] });
+    return;
+  }
+  const steps: FeedItem[] = [], attention: FeedItem[] = [], media: FeedItem[] = [];
+  const messages: { item: FeedItem; at: number }[] = [];
+  let turn: Extract<FeedItem, { type: "turn" }> | null = null;
+  let pending = false;
+  let lastStep = -1;
+  for (const [index, item] of buffer.entries()) {
+    switch (item.type) {
+      case "assistant": messages.push({ item, at: index }); break;
+      case "reasoning": case "tool": case "sources": case "subagent": steps.push(item); lastStep = index; break;
+      case "note":
+        if (item.kind === "needs_input") attention.push(item); else { steps.push(item); lastStep = index; }
+        break;
+      case "permission":
+        if (!item.decision && ctx.pendingPermissions.has(item.request.id)) { attention.push(item); pending = true; } else { steps.push(item); lastStep = index; }
+        break;
+      case "question":
+        if (!item.answers && !item.cancelled && ctx.pendingQuestions.has(item.request.id)) { attention.push(item); pending = true; } else { steps.push(item); lastStep = index; }
+        break;
+      case "guardrail": case "error": attention.push(item); break;
+      case "image": case "file": case "generation": media.push(item); break;
+      case "turn": turn = item; break;
+      case "user": break;
+    }
+  }
+  const answer: FeedItem[] = [...media];
+  for (const message of messages) {
+    if (message.at > lastStep) answer.push(message.item); else steps.push(message.item);
+  }
+  const order = new Map(buffer.map((item, index) => [item, index]));
+  const byOrder = (a: FeedItem, b: FeedItem) => order.get(a)! - order.get(b)!;
+  steps.sort(byOrder); answer.sort(byOrder);
+
+  let status: RunState;
+  if (pending) status = "requires-action";
+  else if (turn) status = turn.ok ? "complete" : CANCELLED.test(turn.result) ? "cancelled" : "error";
+  else if (last && ctx.running) status = "running";
+  else if (last && !ctx.live) status = "incomplete";
+  else if (attention.some((item) => item.type === "error")) status = "error";
+  else status = "complete";
+  if (turn && !turn.ok && status !== "requires-action") attention.push(turn);
+
+  const first = Date.parse((user ?? buffer[0]!).at), end = Date.parse(buffer[buffer.length - 1]!.at);
+  const span = end - first;
+  const durationMs = status !== "running" && Number.isFinite(span) && span >= 1000 ? span : null;
+  const at = buffer[0]!.at;
+  if (!steps.length && !attention.length && status === "complete") {
+    for (const item of answer) entries.push({ type: "item", key: item.key, at: item.at, item });
+    return;
+  }
+  entries.push({ type: "run", key: `run:${user?.key ?? buffer[0]!.key}`, at, status, durationMs, steps, attention, answer });
+}
+
+/**
+ * Groups feed items into one entry per user message and one run per assistant turn. The closing assistant message(s) of a turn,
+ * meaning those after its last piece of activity, are its answer; earlier interim messages are commentary inside the run.
+ */
+export function groupRuns(items: readonly FeedItem[], ctx: RunContext): TurnEntry[] {
+  const entries: TurnEntry[] = [];
+  let user: Extract<FeedItem, { type: "user" }> | null = null;
+  let buffer: FeedItem[] = [];
+  for (const item of items) {
+    if (item.type !== "user") { buffer.push(item); continue; }
+    closeTurn(entries, user, buffer, false, ctx);
+    entries.push({ type: "item", key: item.key, at: item.at, item });
+    user = item;
+    buffer = [];
+  }
+  closeTurn(entries, user, buffer, true, ctx);
+  return entries;
 }

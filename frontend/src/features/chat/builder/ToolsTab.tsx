@@ -1,49 +1,27 @@
-import { useId, useMemo, type Dispatch } from "react";
-import { Globe } from "lucide-react";
-import { Chat, MCP, Skills, type ChatToolInfo } from "@/mygo";
+import { useId, type Dispatch, type ReactNode } from "react";
+import { Globe, ScrollText } from "lucide-react";
+import { Chat, MCP, Skills, type ChatToolInfo, type ServerState, type Skill } from "@/mygo";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
-import { LIMITS, TOOL_IDS, emptyToolSettings, splitModel, type Action, type FormState, type Problems, type ToolSettings } from "./botForm";
-import { Block, DomainList, MultiSelect, type MultiItem } from "./controls";
-import { useLoad } from "./useLoad";
+import { ServerLogo } from "@/features/integrations/ServerLogo";
+import { useUI } from "@/stores/ui";
+import { splitModel, type Action, type FormState, type Problems } from "./botForm";
+import { Section } from "./controls";
+import { useLoad, type Loaded } from "./useLoad";
 
-interface McpCatalog {
-  items: MultiItem[];
-  /** Servers whose tools could not be listed, with the daemon's reason. */
-  failed: { name: string; error: string }[];
+/** Why an integration cannot be used right now, if it cannot. */
+function serverNotice(server: ServerState): string | undefined {
+  if (!server.enabled || server.status === "disabled") return "Off";
+  if (server.status === "auth_required") return "Needs sign-in";
+  if (server.status === "backoff") return "Retrying";
+  return undefined;
 }
 
-const failure = (cause: unknown) => (cause instanceof Error ? cause.message : String(cause)).replace(/^(bad_request|not_found|internal|denied): /, "");
-
-/** Tools of every enabled MCP server, as "<serverId>/<tool>" values (the daemon's allow-list format). */
-async function loadMcpCatalog(): Promise<McpCatalog> {
-  const servers = ((await MCP.list()) ?? []).filter((s) => s.enabled);
-  const settled = await Promise.allSettled(servers.map((s) => MCP.tools(s.id)));
-  const catalog: McpCatalog = { items: [], failed: [] };
-  settled.forEach((result, i) => {
-    const server = servers[i]!;
-    if (result.status === "rejected") { catalog.failed.push({ name: server.name, error: failure(result.reason) }); return; }
-    for (const tool of result.value ?? []) {
-      catalog.items.push({
-        value: `${server.id}/${tool.name}`, label: tool.title || tool.name,
-        detail: [server.name, tool.description].filter(Boolean).join(" · "),
-        badge: tool.effect === "write" || tool.effect === "destructive" ? tool.effect : undefined,
-      });
-    }
-  });
-  return catalog;
-}
-
-function BuiltinTool({ info, form, dispatch, problems }: { info: ChatToolInfo; form: FormState; dispatch: Dispatch<Action>; problems: Problems }) {
+function BuiltinTool({ info, form, dispatch }: { info: ChatToolInfo; form: FormState; dispatch: Dispatch<Action> }) {
   const heading = useId();
-  const settings = form.tools[info.id];
-  const enabled = settings !== undefined;
-  const patch = (value: Partial<ToolSettings>) => dispatch({ type: "toolPatch", id: info.id, patch: value });
-  const isSearch = info.id === TOOL_IDS.webSearch;
-  const isFetch = info.id === TOOL_IDS.webFetch;
-  const key = (field: string) => `tool:${info.id}:${field}`;
+  const enabled = form.tools.includes(info.id);
   return (
     <li className="flex min-w-0 flex-col gap-2 py-2">
       <div className="flex items-center justify-between gap-3">
@@ -53,45 +31,117 @@ function BuiltinTool({ info, form, dispatch, problems }: { info: ChatToolInfo; f
         </span>
         <Switch
           checked={enabled} disabled={!info.available && !enabled} aria-labelledby={heading}
-          onCheckedChange={(on) => dispatch({ type: "tool", id: info.id, settings: on ? emptyToolSettings() : null })}
+          onCheckedChange={(on) => dispatch({ type: "tool", id: info.id, enabled: on })}
         />
       </div>
       {!info.available && <p role="status" className="text-muted-foreground text-xs">{info.reason || "The selected model cannot run this tool."}</p>}
-      {enabled && settings && (isSearch || isFetch) && (
-        <div className="flex flex-col gap-3 pb-1">
-          {isSearch && (
-            <Block label="Max results" error={problems[key("maxResults")]}>
-              {(id, describedBy) => (
-                <Input nativeInput id={id} type="number" inputMode="numeric" className="w-24" min={LIMITS.maxResults.min} max={LIMITS.maxResults.max} step={1} value={settings.maxResults} aria-invalid={!!problems[key("maxResults")] || undefined} aria-describedby={describedBy} onChange={(e) => patch({ maxResults: e.target.value })} />
-              )}
-            </Block>
-          )}
-          {isFetch && (
-            <Block label="Max page size (tokens)" error={problems[key("maxContentTokens")]}>
-              {(id, describedBy) => (
-                <Input nativeInput id={id} type="number" inputMode="numeric" className="w-32" min={LIMITS.maxContentTokens.min} max={LIMITS.maxContentTokens.max} step={1} value={settings.maxContentTokens} aria-invalid={!!problems[key("maxContentTokens")] || undefined} aria-describedby={describedBy} onChange={(e) => patch({ maxContentTokens: e.target.value })} />
-              )}
-            </Block>
-          )}
-          <DomainList label="Allowed domains" value={settings.allowed} max={LIMITS.domains} onChange={(allowed) => patch({ allowed })} />
-          {problems[key("allowed")] && <p role="alert" className="text-destructive-foreground text-xs">{problems[key("allowed")]}</p>}
-          <DomainList label="Blocked domains" value={settings.blocked} max={LIMITS.domains} onChange={(blocked) => patch({ blocked })} />
-          {problems[key("blocked")] && <p role="alert" className="text-destructive-foreground text-xs">{problems[key("blocked")]}</p>}
+    </li>
+  );
+}
+
+/** One switch row: a lead (icon and name), quiet trailing text or badges, and the switch labelled by the name. */
+function ToggleRow({ lead, name, badge, quiet, checked, disabled, onChange }: {
+  lead: ReactNode; name: string; badge?: string; quiet?: string; checked: boolean; disabled?: boolean; onChange: (on: boolean) => void;
+}) {
+  const heading = useId();
+  return (
+    <li className="flex items-center justify-between gap-3 py-2">
+      <span className="flex min-w-0 items-center gap-2">
+        {lead}
+        <span id={heading} className="truncate text-sm">{name}</span>
+        {badge && <Badge size="sm" variant="warning">{badge}</Badge>}
+      </span>
+      <span className="flex shrink-0 items-center gap-2">
+        {quiet && <span className="text-muted-foreground text-xs">{quiet}</span>}
+        <Switch checked={checked} disabled={disabled} aria-labelledby={heading} onCheckedChange={onChange} />
+      </span>
+    </li>
+  );
+}
+
+/** A saved id that no longer exists, with a way to drop it. */
+function RemovedRow({ label, name, onRemove }: { label: string; name?: string; onRemove: () => void }) {
+  const heading = useId();
+  return (
+    <li className="flex items-center justify-between gap-3 py-2">
+      <span id={heading} className="min-w-0 truncate text-muted-foreground text-sm">{name && <span className="text-foreground">{name} </span>}{label}</span>
+      <Button size="xs" variant="outline" aria-describedby={heading} onClick={onRemove}>Remove</Button>
+    </li>
+  );
+}
+
+function Integrations({ form, dispatch, servers, error, bare }: { form: FormState; dispatch: Dispatch<Action>; servers: Loaded<ServerState[]>; error?: string; bare?: boolean }) {
+  const list = servers.data ?? [];
+  const known = new Set(list.map((s) => s.id));
+  const removed = servers.data ? form.mcpServers.filter((id) => !known.has(id)) : [];
+  const set = (mcpServers: string[]) => dispatch({ type: "patch", patch: { mcpServers } });
+  return (
+    <Group title={bare ? undefined : "Integrations / MCP"}>
+      {servers.error && <p role="alert" className="selectable break-words text-destructive-foreground text-xs">{servers.error}</p>}
+      {servers.loading && !servers.data && !servers.error && <p role="status" className="text-muted-foreground text-xs">Loading…</p>}
+      {servers.data && list.length === 0 && removed.length === 0 && (
+        <div className="flex items-center justify-between gap-2">
+          <p className="text-muted-foreground text-xs">No integrations connected yet.</p>
+          <Button size="xs" variant="outline" onClick={() => useUI.getState().openSettings("integrations")}>Open Integrations</Button>
         </div>
       )}
-    </li>
+      {(list.length > 0 || removed.length > 0) && (
+        <ul aria-label="Integrations" className="flex flex-col divide-y">
+          {list.map((server) => (
+            <ToggleRow
+              key={server.id} lead={<ServerLogo server={server} className="size-4 shrink-0" />} name={server.name} badge={serverNotice(server)}
+              checked={form.mcpServers.includes(server.id)}
+              onChange={(on) => set(on ? [...form.mcpServers, server.id] : form.mcpServers.filter((id) => id !== server.id))}
+            />
+          ))}
+          {removed.map((id) => <RemovedRow key={id} label="Removed integration" onRemove={() => set(form.mcpServers.filter((other) => other !== id))} />)}
+        </ul>
+      )}
+      {error && <p role="alert" className="text-destructive-foreground text-xs">{error}</p>}
+    </Group>
+  );
+}
+
+function SkillList({ form, dispatch, skills, error, bare }: { form: FormState; dispatch: Dispatch<Action>; skills: Loaded<Skill[]>; error?: string; bare?: boolean }) {
+  const list = skills.data ?? [];
+  const known = new Set(list.map((s) => s.name));
+  const removed = skills.data ? form.skills.filter((name) => !known.has(name)) : [];
+  const set = (next: string[]) => dispatch({ type: "patch", patch: { skills: next } });
+  return (
+    <Group title={bare ? undefined : "Skills"}>
+      {skills.error && <p role="alert" className="selectable break-words text-destructive-foreground text-xs">{skills.error}</p>}
+      {skills.loading && !skills.data && !skills.error && <p role="status" className="text-muted-foreground text-xs">Loading…</p>}
+      {skills.data && list.length === 0 && removed.length === 0 && <p className="text-muted-foreground text-xs">No skills yet.</p>}
+      {(list.length > 0 || removed.length > 0) && (
+        <ul aria-label="Skills" className="flex flex-col divide-y">
+          {list.map((skill) => {
+            const lead = <ScrollText aria-hidden className="size-4 shrink-0 text-muted-foreground" />;
+            // Built-in skills reach every bot on their own; they are never stored on the bot.
+            if (skill.source === "builtin") return <ToggleRow key={skill.name} lead={lead} name={skill.name} quiet="Built in" checked disabled onChange={() => {}} />;
+            return (
+              <ToggleRow
+                key={skill.name} lead={lead} name={skill.name} badge={skill.enabled ? undefined : "Off"}
+                checked={form.skills.includes(skill.name)}
+                onChange={(on) => set(on ? [...form.skills, skill.name] : form.skills.filter((name) => name !== skill.name))}
+              />
+            );
+          })}
+          {removed.map((name) => <RemovedRow key={name} name={name} label="Removed skill" onRemove={() => set(form.skills.filter((other) => other !== name))} />)}
+        </ul>
+      )}
+      {error && <p role="alert" className="text-destructive-foreground text-xs">{error}</p>}
+    </Group>
   );
 }
 
 export function ToolsTab({ form, dispatch, problems }: { form: FormState; dispatch: Dispatch<Action>; problems: Problems }) {
   const request = splitModel(form.model);
   const tools = useLoad(() => Chat.tools(request), form.model);
-  const mcp = useLoad(loadMcpCatalog, "mcp");
-  const skills = useLoad(() => Skills.list(), "skills");
+  const servers = useLoad(async () => (await MCP.list()) ?? [], "mcp");
+  const skills = useLoad(async () => (await Skills.list()) ?? [], "skills");
 
-  const skillItems = useMemo<MultiItem[]>(() => (skills.data ?? []).map((s) => ({ value: s.name, label: s.name, detail: s.description, badge: s.enabled ? undefined : "disabled" })), [skills.data]);
   const offered = new Set((tools.data ?? []).map((t) => t.id));
-  const unknown = tools.data ? Object.keys(form.tools).filter((id) => !offered.has(id)) : [];
+  const unknown = tools.data ? form.tools.filter((id) => !offered.has(id)) : [];
 
   return (
     <div className="flex flex-col gap-4">
@@ -99,35 +149,53 @@ export function ToolsTab({ form, dispatch, problems }: { form: FormState; dispat
         <Alert variant="error"><AlertDescription className="flex items-center justify-between gap-2"><span className="selectable break-words">{tools.error}</span><Button size="xs" variant="outline" onClick={tools.reload}>Retry</Button></AlertDescription></Alert>
       )}
       {!tools.data && !tools.error && <p role="status" className="text-muted-foreground text-xs">Loading…</p>}
-      {tools.data && tools.data.length > 0 && <ul aria-label="Built-in tools" className="flex flex-col divide-y">{tools.data.map((info) => <BuiltinTool key={info.id} info={info} form={form} dispatch={dispatch} problems={problems} />)}</ul>}
+      {tools.data && tools.data.length > 0 && <ul aria-label="Built-in tools" className="flex flex-col divide-y">{tools.data.map((info) => <BuiltinTool key={info.id} info={info} form={form} dispatch={dispatch} />)}</ul>}
       {unknown.map((id) => (
         <div key={id} className="flex items-center justify-between gap-2 text-xs">
           <span className="min-w-0 break-words text-muted-foreground">{id} is not offered here.</span>
-          <Button size="xs" variant="outline" onClick={() => dispatch({ type: "tool", id, settings: null })}>Remove {id}</Button>
+          <Button size="xs" variant="outline" onClick={() => dispatch({ type: "tool", id, enabled: false })}>Remove {id}</Button>
         </div>
       ))}
 
-      <Block label="MCP tools" error={problems.mcpTools}>
-        {(id, describedBy) => (
-          <MultiSelect
-            id={id} label="MCP tools" items={mcp.data?.items ?? []} value={form.mcpTools} onChange={(mcpTools) => dispatch({ type: "patch", patch: { mcpTools } })}
-            placeholder="Search…" emptyText={mcp.loading ? "Loading…" : "No MCP tool matches."} invalid={!!problems.mcpTools} describedBy={describedBy}
-            missingLabel="not found"
-          />
-        )}
-      </Block>
-      {mcp.error && <p role="alert" className="selectable break-words text-destructive-foreground text-xs">{mcp.error}</p>}
-      {mcp.data?.failed.map((f) => <p key={f.name} role="status" className="selectable break-words text-warning-foreground text-xs">{f.name}: {f.error}</p>)}
-
-      <Block label="Skills" error={problems.skills}>
-        {(id, describedBy) => (
-          <MultiSelect
-            id={id} label="Skills" items={skillItems} value={form.skills} onChange={(next) => dispatch({ type: "patch", patch: { skills: next } })}
-            placeholder="Search…" emptyText={skills.loading ? "Loading…" : "No skill matches."} invalid={!!problems.skills} describedBy={describedBy}
-          />
-        )}
-      </Block>
-      {skills.error && <p role="alert" className="selectable break-words text-destructive-foreground text-xs">{skills.error}</p>}
+      <Integrations form={form} dispatch={dispatch} servers={servers} error={problems.mcpServers} />
+      <SkillList form={form} dispatch={dispatch} skills={skills} error={problems.skills} />
     </div>
   );
+}
+
+/** The built-in tools alone, for a settings page of their own. */
+export function ToolsPage({ form, dispatch }: { form: FormState; dispatch: Dispatch<Action> }) {
+  const tools = useLoad(() => Chat.tools(splitModel(form.model)), form.model);
+  const offered = new Set((tools.data ?? []).map((t) => t.id));
+  const unknown = tools.data ? form.tools.filter((id) => !offered.has(id)) : [];
+  return (
+    <div className="flex flex-col gap-3">
+      {tools.error && (
+        <Alert variant="error"><AlertDescription className="flex items-center justify-between gap-2"><span className="selectable break-words">{tools.error}</span><Button size="xs" variant="outline" onClick={tools.reload}>Retry</Button></AlertDescription></Alert>
+      )}
+      {!tools.data && !tools.error && <p role="status" className="text-muted-foreground text-xs">Loading…</p>}
+      {tools.data && tools.data.length > 0 && <ul aria-label="Built-in tools" className="flex flex-col divide-y">{tools.data.map((info) => <BuiltinTool key={info.id} info={info} form={form} dispatch={dispatch} />)}</ul>}
+      {unknown.map((id) => (
+        <div key={id} className="flex items-center justify-between gap-2 text-xs">
+          <span className="min-w-0 break-words text-muted-foreground">{id} is not offered here.</span>
+          <Button size="xs" variant="outline" onClick={() => dispatch({ type: "tool", id, enabled: false })}>Remove {id}</Button>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+export function IntegrationsPage({ form, dispatch, problems }: { form: FormState; dispatch: Dispatch<Action>; problems: Problems }) {
+  const servers = useLoad(async () => (await MCP.list()) ?? [], "mcp");
+  return <Integrations form={form} dispatch={dispatch} servers={servers} error={problems.mcpServers} bare />;
+}
+
+export function SkillsPage({ form, dispatch, problems }: { form: FormState; dispatch: Dispatch<Action>; problems: Problems }) {
+  const skills = useLoad(async () => (await Skills.list()) ?? [], "skills");
+  return <SkillList form={form} dispatch={dispatch} skills={skills} error={problems.skills} bare />;
+}
+
+/** A heading and its content, or only the content on a page that has its own heading. */
+function Group({ title, children }: { title?: string; children: ReactNode }) {
+  return title ? <Section title={title}>{children}</Section> : <div className="flex flex-col gap-2">{children}</div>;
 }

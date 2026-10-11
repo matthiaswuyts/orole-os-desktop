@@ -4,13 +4,13 @@ import (
 	"context"
 	"errors"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/rayorole/orole-os-desktop/internal/database"
 	"github.com/rayorole/orole-os-desktop/internal/projects"
+	"github.com/rayorole/orole-os-desktop/internal/testrepo"
 	"github.com/rayorole/orole-os-desktop/migrations"
 )
 
@@ -24,30 +24,37 @@ func newService(t *testing.T) *projects.Service {
 	return projects.New(db)
 }
 
+// repoTemplate is built once per test binary; repo copies it (see internal/testrepo).
+var repoTemplate = testrepo.New(func(dir string) error {
+	if err := testrepo.Git(dir, "init", "-b", "main"); err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(dir, "f.txt"), []byte("x\n"), 0o644); err != nil {
+		return err
+	}
+	if err := testrepo.Git(dir, "add", "."); err != nil {
+		return err
+	}
+	return testrepo.Git(dir, "-c", "user.name=T", "-c", "user.email=t@e.c", "-c", "commit.gpgsign=false", "commit", "-m", "init")
+})
+
+func TestMain(m *testing.M) {
+	code := m.Run()
+	testrepo.CloseAll()
+	os.Exit(code)
+}
+
 // repo creates <tmp>/<name> with one commit and returns its canonical path.
 func repo(t *testing.T, parent, name string) string {
 	t.Helper()
 	dir := filepath.Join(parent, name)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	run := func(args ...string) {
-		t.Helper()
-		cmd := exec.Command("git", append([]string{"-c", "user.name=T", "-c", "user.email=t@e.c", "-c", "commit.gpgsign=false"}, args...)...)
-		cmd.Dir = dir
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("git %v: %v\n%s", args, err, out)
-		}
-	}
-	run("init", "-b", "main")
-	os.WriteFile(filepath.Join(dir, "f.txt"), []byte("x\n"), 0o644)
-	run("add", ".")
-	run("commit", "-m", "init")
+	repoTemplate.Copy(t, dir)
 	r, _ := filepath.EvalSymlinks(dir)
 	return r
 }
 
 func TestAddListRemove(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	s := newService(t)
 	tmp, _ := filepath.EvalSymlinks(t.TempDir())
@@ -110,6 +117,7 @@ func TestAddListRemove(t *testing.T) {
 }
 
 func TestWorktreeLifecycle(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	s := newService(t)
 	tmp, _ := filepath.EvalSymlinks(t.TempDir())
@@ -141,8 +149,11 @@ func TestWorktreeLifecycle(t *testing.T) {
 	if got, _ = s.Worktrees.Get(ctx, wt.ID); got.Dirty != 1 || got.Untracked != 1 {
 		t.Fatalf("dirty state: %+v", got)
 	}
-	if list, _ = s.Worktrees.List(ctx, p.ID); len(list) != 2 || !list[0].IsMain {
-		t.Fatalf("list after create: %+v", list)
+	if list, _ = s.Worktrees.List(ctx, p.ID); len(list) != 2 || !list[0].IsMain || list[0].StatusKnown || list[1].Dirty != 0 {
+		t.Fatalf("fast list must not read git status: %+v", list)
+	}
+	if list, _ = s.Worktrees.ListStatus(ctx, p.ID); len(list) != 2 || !list[0].IsMain || !list[0].StatusKnown || list[1].Dirty != 1 {
+		t.Fatalf("status list: %+v", list)
 	}
 	if _, err := s.Worktrees.Create(ctx, p.ID, "fix login", ""); !errors.Is(err, projects.ErrConflict) {
 		t.Fatalf("duplicate create: %v", err)
@@ -162,6 +173,7 @@ func TestWorktreeLifecycle(t *testing.T) {
 }
 
 func TestWorktreeRejectsBadInput(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	s := newService(t)
 	tmp, _ := filepath.EvalSymlinks(t.TempDir())
@@ -203,6 +215,7 @@ func TestWorktreeRejectsBadInput(t *testing.T) {
 }
 
 func TestConfiguredWorktreeRoot(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	s := newService(t)
 	tmp, _ := filepath.EvalSymlinks(t.TempDir())
@@ -230,6 +243,7 @@ func TestSlug(t *testing.T) {
 }
 
 func TestCreateWithoutGitOrFolder(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	s := newService(t)
 	tmp, _ := filepath.EvalSymlinks(t.TempDir())
@@ -279,5 +293,31 @@ func TestCreateWithoutGitOrFolder(t *testing.T) {
 	}
 	if _, err := s.SetWorktreeRoot(ctx, a.ID, filepath.Join(tmp, "wt")); !errors.Is(err, projects.ErrInvalid) {
 		t.Fatalf("folderless worktree root: %v", err)
+	}
+}
+
+func TestWorktreePath(t *testing.T) {
+	ctx := context.Background()
+	s := newService(t)
+	tmp, _ := filepath.EvalSymlinks(t.TempDir())
+	p, err := s.Add(ctx, repo(t, tmp, "proj"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	wt, err := s.Worktrees.Create(ctx, p.ID, "feature", "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := s.Worktrees.Path(ctx, wt.ID); err != nil || got != wt.Path {
+		t.Fatalf("Path = %q, %v; want %q", got, err, wt.Path)
+	}
+	if _, err := s.Worktrees.Path(ctx, "nope"); !errors.Is(err, projects.ErrNotFound) {
+		t.Fatalf("unknown worktree: %v", err)
+	}
+	if err := os.RemoveAll(wt.Path); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Worktrees.Path(ctx, wt.ID); !errors.Is(err, projects.ErrNotFound) {
+		t.Fatalf("missing directory: %v", err)
 	}
 }

@@ -1,5 +1,6 @@
 import { lazy, Suspense, useEffect } from "react";
 import { PlugZap, Plus } from "lucide-react";
+import { AsciiMark, SPACE_PIECES } from "@/components/ascii/AsciiMark";
 import { Button } from "@/components/ui/button";
 import { NeedsDesktop } from "@/features/shared/States";
 import { inDesktop } from "@/lib/backend";
@@ -18,6 +19,18 @@ function CenteredCard({ icon, title, children, action }: { icon?: React.ReactNod
       <h2 className="text-sm font-medium">{title}</h2>
       {children && <div className="text-sm text-muted-foreground">{children}</div>}
       {action && <div className="mt-2">{action}</div>}
+    </div>
+  </div>;
+}
+
+/** Empty Bots page. Mounted fresh each time it is shown, so each visit draws a new random piece. */
+function NoBots() {
+  return <div className="flex h-full flex-col items-center justify-center gap-4 p-6">
+    <AsciiMark pieces={SPACE_PIECES} width={420} height={260} />
+    <div role="status" className="flex max-w-md flex-col items-center gap-2 text-center">
+      <h2 className="text-base font-medium">No bots yet</h2>
+      <p className="text-sm text-muted-foreground">A bot has its own instructions, model, tools and one long-running conversation.</p>
+      <Button type="button" className="mt-2" onClick={() => useChat.getState().openBuilder("new")}><Plus aria-hidden />Create your first bot</Button>
     </div>
   </div>;
 }
@@ -54,9 +67,7 @@ export function ChatView() {
   }
   if (!bot) {
     return botCount === 0
-      ? <CenteredCard title="No bots yet" action={<Button type="button" onClick={() => useChat.getState().openBuilder("new")}><Plus aria-hidden />Create your first bot</Button>}>
-        <p>A bot has its own instructions, model, tools and one long-running conversation.</p>
-      </CenteredCard>
+      ? <NoBots />
       : <CenteredCard title="Pick a bot"><p>Choose a bot from the list to open its conversation.</p></CenteredCard>;
   }
   return <div className="flex h-full min-w-0">

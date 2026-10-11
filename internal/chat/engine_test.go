@@ -903,41 +903,6 @@ func TestDraftCanBeCanceled(t *testing.T) {
 	}
 }
 
-func TestAskRunsTheCalleeInItsOwnContext(t *testing.T) {
-	e := newEnv(t, func(call int, req llm.Request) []llm.Delta {
-		if strings.Contains(req.System, "Be Callee.") {
-			return []llm.Delta{llmtest.Text("callee says 42")}
-		}
-		return []llm.Delta{llmtest.Text("caller reply")}
-	})
-	callee := e.bot("Callee")
-	stranger := e.bot("Stranger")
-	caller := e.bot("Caller", func(in *BotInput) { in.Config.Executive = true })
-	ctx := context.Background()
-	rc := RunContext{BotID: caller.ID, Bot: caller}
-
-	out, err := e.m.Ask(ctx, rc, callee.ID, "what is the answer?")
-	if err != nil || out != "callee says 42" {
-		t.Fatalf("ask: %q %v", out, err)
-	}
-	req := e.fake.Calls()[0]
-	if !strings.Contains(req.System, "Caller") || len(req.Messages) != 1 || req.Messages[0].Parts[0].Text != "what is the answer?" {
-		t.Fatalf("callee request: %+v", req)
-	}
-	if len(e.history(callee.ID))+len(e.history(caller.ID)) != 0 {
-		t.Fatal("a delegated exchange must not be stored in either conversation")
-	}
-	if _, err := e.m.Ask(ctx, RunContext{BotID: stranger.ID, Bot: stranger}, callee.ID, "hi"); err == nil {
-		t.Fatal("only executive assistants may delegate")
-	}
-	if _, err := e.m.Ask(ctx, RunContext{BotID: caller.ID, Bot: caller, Depth: maxDelegationDepth}, callee.ID, "hi"); err == nil {
-		t.Fatal("delegation depth must be limited")
-	}
-	if _, err := e.m.Ask(ctx, RunContext{}, callee.ID, "hi"); err == nil {
-		t.Fatal("previews cannot delegate")
-	}
-}
-
 func TestSinkCoalescesPublishesAndAlwaysSendsTheFinalOne(t *testing.T) {
 	var mu sync.Mutex
 	var snaps []Message
@@ -945,7 +910,7 @@ func TestSinkCoalescesPublishesAndAlwaysSendsTheFinalOne(t *testing.T) {
 		mu.Lock()
 		snaps = append(snaps, m)
 		mu.Unlock()
-	})
+	}, nil)
 	start := time.Now()
 	for time.Since(start) < 220*time.Millisecond {
 		s.appendText(PartText, "x")
@@ -991,5 +956,32 @@ func TestNewSetupBotSpeaksFirstFromAHiddenKickoff(t *testing.T) {
 	bots, _ := e.m.Bots(context.Background())
 	if len(bots) != 1 || bots[0].LastMessage == nil || bots[0].LastMessage.Role != "assistant" {
 		t.Fatalf("preview = %+v", bots)
+	}
+}
+
+func TestAQuestionEndsTheTurnAndOnlyTheFirstOneIsShown(t *testing.T) {
+	asked := 0
+	ask := &fakeTool{id: "ask", call: func(ctx context.Context, rc RunContext, name string, args json.RawMessage) (ToolResult, error) {
+		asked++
+		return ToolResult{Text: "shown", Parts: []MsgPart{{Type: PartQuestion, Text: "Q", Choices: []Choice{{Label: "A"}}}}}, nil
+	}}
+	e := newEnv(t, func(call int, req llm.Request) []llm.Delta {
+		return []llm.Delta{
+			{Kind: llm.DeltaToolCall, Call: &llm.ToolCall{ID: "q1", Name: "ask", Args: []byte(`{}`)}},
+			{Kind: llm.DeltaToolCall, Call: &llm.ToolCall{ID: "q2", Name: "ask", Args: []byte(`{"n":2}`)}},
+			{Kind: llm.DeltaStop, Stop: llm.StopToolCalls},
+		}
+	})
+	e.m.AddTools(ask)
+	b := e.bot("Asker")
+	e.send(b.ID, "hi")
+	e.idle(b.ID)
+
+	if asked != 1 || len(e.fake.Calls()) != 1 {
+		t.Fatalf("tool runs %d, model calls %d: the turn must end after the first question", asked, len(e.fake.Calls()))
+	}
+	reply := e.lastReply(b.ID)
+	if reply.Status != StatusComplete || len(partsOfType(reply.Parts, PartQuestion)) != 1 {
+		t.Fatalf("reply: %+v", reply)
 	}
 }

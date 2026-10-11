@@ -32,8 +32,10 @@ func assertNoReviewAttack(t *testing.T, marker string) {
 }
 
 func TestDiffAndStatusDoNotExecuteRepositoryFilters(t *testing.T) {
+	t.Parallel()
 	for _, filter := range []string{"clean", "process"} {
 		t.Run(filter, func(t *testing.T) {
+			t.Parallel()
 			dir := NewRepo(t)
 			publicationWrite(t, dir, ".gitattributes", "*.txt filter=hostile diff=hostile\n*.bin filter=hostile\n")
 			publicationWrite(t, dir, "tracked.bin", "old\x00binary")
@@ -65,6 +67,7 @@ func TestDiffAndStatusDoNotExecuteRepositoryFilters(t *testing.T) {
 }
 
 func TestDiffAndStatusReviewDirtySubmodulesWithoutExecutingFilters(t *testing.T) {
+	t.Parallel()
 	dir := NewRepo(t)
 	child := NewRepo(t)
 	publicationWrite(t, child, ".gitattributes", "*.txt filter=hostile\n")

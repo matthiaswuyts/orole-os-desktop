@@ -15,6 +15,7 @@ import (
 	"github.com/rayorole/orole-os-desktop/internal/policy"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -53,6 +54,14 @@ type Engine struct {
 	cancel      context.CancelFunc
 	wg          sync.WaitGroup
 	queue       []string
+	live        map[string]Run // queued, running and waiting-approval runs, mirrored from SQLite
+	liveMu      sync.Mutex     // never held while taking mu
+	defMu       sync.Mutex
+	defSnap     *defSnapshot
+	secretMu    sync.RWMutex
+	secret      []byte
+	nextPrune   time.Time // scheduler goroutine only
+	pruning     atomic.Bool
 	active      map[string]context.CancelFunc
 	counts      map[string]int
 	wakeC       chan struct{}
@@ -74,7 +83,7 @@ func New(o Options) *Engine {
 	if o.Commands == nil {
 		o.Commands = ExecRunner{}
 	}
-	e := &Engine{db: o.DB, bus: o.Bus, credentials: o.Credentials, clock: o.Clock, log: o.Log, auditFn: o.Audit, changedFn: o.Changed, commands: o.Commands, notifier: o.Notifier, authorize: o.Authorize, config: DefaultConfig(), active: map[string]context.CancelFunc{}, counts: map[string]int{}, wakeC: make(chan struct{}, 1)}
+	e := &Engine{db: o.DB, bus: o.Bus, credentials: o.Credentials, clock: o.Clock, log: o.Log, auditFn: o.Audit, changedFn: o.Changed, commands: o.Commands, notifier: o.Notifier, authorize: o.Authorize, config: DefaultConfig(), active: map[string]context.CancelFunc{}, live: map[string]Run{}, counts: map[string]int{}, wakeC: make(chan struct{}, 1)}
 	var raw string
 	if err := e.db.QueryRow(`SELECT value FROM settings WHERE key='automations.config'`).Scan(&raw); err == nil {
 		_ = json.Unmarshal([]byte(raw), &e.config)
@@ -115,19 +124,23 @@ func (e *Engine) Start(ctx context.Context) error {
 	}
 	e.ctx, e.cancel = context.WithCancel(ctx)
 	e.started = true
-	rows, err := e.db.Query(`SELECT id FROM automation_runs WHERE status IN ('queued','running') ORDER BY created_at`)
+	rows, err := e.db.Query(`SELECT ` + runColumns + ` FROM automation_runs WHERE status IN ('queued','running') ORDER BY created_at`)
 	if err != nil {
 		e.mu.Unlock()
 		return err
 	}
 	for rows.Next() {
-		var id string
-		if err = rows.Scan(&id); err != nil {
+		var r Run
+		if r, err = scanRun(rows); err != nil {
 			break
 		}
-		e.queue = append(e.queue, id)
+		e.rememberRun(r)
+		e.queue = append(e.queue, r.ID)
 	}
 	rows.Close()
+	if err == nil {
+		err = rows.Err()
+	}
 	if err != nil {
 		e.mu.Unlock()
 		return err
@@ -163,18 +176,21 @@ func (e *Engine) audit(action, id, outcome, detail string) {
 		e.auditFn(action, id, outcome, e.redact.Text(detail))
 	}
 }
+
+// changed publishes a run summary from memory; only a run that is no longer
+// tracked (a late journal write after it finished) costs a SQLite read.
 func (e *Engine) changed(id string) {
-	r, err := e.loadRun(context.Background(), id)
+	if e.changedFn == nil {
+		return
+	}
+	r, err := e.runState(context.Background(), id)
 	if err != nil {
 		return
 	}
-	if e.changedFn != nil {
-		e.changedFn(r)
-	}
+	e.changedFn(r)
 }
-func (e *Engine) finished(id string) {
-	r, err := e.loadRun(context.Background(), id)
-	if err == nil && terminal(r.Status) {
+func (e *Engine) finished(r Run) {
+	if terminal(r.Status) {
 		e.bus.Publish(events.Event{Topic: "automation.run.finished", Chain: r.Chain, Data: map[string]any{"automationId": r.AutomationID, "runId": r.ID, "status": r.Status, "name": r.Name}})
 	}
 }
@@ -195,14 +211,15 @@ func (e *Engine) trigger(ctx context.Context, id, kind string, data any, chain [
 			return Run{}, fmt.Errorf("automation cannot trigger itself through its provenance chain")
 		}
 	}
-	d, err := e.definition(ctx, id)
+	entry, err := e.definitionEntry(ctx, id)
 	if err != nil {
 		return Run{}, err
 	}
+	d := entry.def
 	if kind != "manual" && !d.Enabled {
 		return Run{}, fmt.Errorf("automation is disabled")
 	}
-	if issues := Validate(d); len(issues) > 0 {
+	if issues := entry.issues; len(issues) > 0 {
 		return Run{}, fmt.Errorf("invalid definition: %s: %s", issues[0].Path, issues[0].Message)
 	}
 	var pending int
@@ -222,13 +239,12 @@ func (e *Engine) trigger(ctx context.Context, id, kind string, data any, chain [
 	}
 	b = e.redact.JSON(b)
 	cb, _ := json.Marshal(chain)
-	db, _ := json.Marshal(d)
 	r := Run{ID: uuid.NewString(), AutomationID: id, Name: d.Name, Status: "queued", TriggerType: kind, TriggerData: b, Chain: chain, Definition: d, CreatedAt: e.clock.Now().UnixMilli()}
 	var triggerKey any
 	if key != "" {
 		triggerKey = key
 	}
-	_, err = e.db.ExecContext(ctx, `INSERT INTO automation_runs(id,automation_id,status,trigger_type,trigger_key,trigger_data,chain,definition,created_at) VALUES(?,?,?,?,?,?,?,?,?)`, r.ID, id, r.Status, kind, triggerKey, string(b), string(cb), string(db), r.CreatedAt)
+	_, err = e.db.ExecContext(ctx, `INSERT INTO automation_runs(id,automation_id,status,trigger_type,trigger_key,trigger_data,chain,definition,created_at) VALUES(?,?,?,?,?,?,?,?,?)`, r.ID, id, r.Status, kind, triggerKey, string(b), string(cb), entry.raw, r.CreatedAt)
 	if err != nil {
 		if key != "" {
 			existing, x := scanRun(e.db.QueryRowContext(ctx, `SELECT `+runColumns+` FROM automation_runs WHERE trigger_key=?`, key))
@@ -239,6 +255,7 @@ func (e *Engine) trigger(ctx context.Context, id, kind string, data any, chain [
 		return Run{}, err
 	}
 	e.audit("automation.run.start", r.ID, "allowed", kind)
+	e.rememberRun(r)
 	e.queue = append(e.queue, r.ID)
 	e.pumpLocked()
 	return r, nil
@@ -249,7 +266,7 @@ func (e *Engine) pumpLocked() {
 	}
 	for i := 0; i < len(e.queue) && len(e.active) < e.config.GlobalConcurrency; {
 		id := e.queue[i]
-		r, err := e.loadRun(e.ctx, id)
+		r, err := e.runState(e.ctx, id)
 		if err != nil || terminal(r.Status) {
 			e.queue = append(e.queue[:i], e.queue[i+1:]...)
 			continue
@@ -293,7 +310,7 @@ func (e *Engine) pumpLocked() {
 func (e *Engine) Cancel(ctx context.Context, id string) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	r, err := e.loadRun(ctx, id)
+	r, err := e.runState(ctx, id)
 	if err != nil {
 		return err
 	}
@@ -313,18 +330,22 @@ func keyFor(run, step string) string {
 	return hex.EncodeToString(x[:])
 }
 func (e *Engine) execute(ctx context.Context, r Run) error {
-	detail, err := e.Detail(ctx, r.ID)
+	current, err := e.runState(ctx, r.ID)
 	if err != nil {
 		return err
 	}
-	if terminal(detail.Run.Status) {
+	if terminal(current.Status) {
 		return nil
+	}
+	steps, err := e.loadJournals(ctx, r.ID)
+	if err != nil {
+		return err
 	}
 	if err = e.status(r.ID, "running", ""); err != nil {
 		return err
 	}
 	journals := map[string]Journal{}
-	for _, j := range detail.Steps {
+	for _, j := range steps {
 		journals[j.StepID] = j
 	}
 	var trigger any
@@ -395,7 +416,7 @@ func (e *Engine) interrupted(id string, err error) error {
 	if e.ctx.Err() != nil {
 		return nil
 	}
-	r, x := e.loadRun(context.Background(), id)
+	r, x := e.runState(context.Background(), id)
 	if x != nil {
 		return x
 	}

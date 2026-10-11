@@ -1,10 +1,11 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { Model, ProviderStatus } from "@/mygo";
+import type { CliruntimeStatus, Model, ProviderStatus } from "@/mygo";
 
 const bridge = vi.hoisted(() => ({
   providers: vi.fn(), defaults: vi.fn(), models: vi.fn(), connect: vi.fn(), disconnect: vi.fn(), test: vi.fn(),
   setDefaults: vi.fn(), authStart: vi.fn(), authFinish: vi.fn(), openExternal: vi.fn(),
+  cliList: vi.fn(), cliInstall: vi.fn(), cliLogin: vi.fn(), cliLogout: vi.fn(),
 }));
 vi.mock("@/lib/backend", () => ({ inDesktop: true }));
 vi.mock("@/mygo", () => ({
@@ -12,11 +13,13 @@ vi.mock("@/mygo", () => ({
     providers: bridge.providers, defaults: bridge.defaults, models: bridge.models, connect: bridge.connect, disconnect: bridge.disconnect,
     test: bridge.test, setDefaults: bridge.setDefaults, openRouterAuthStart: bridge.authStart, openRouterAuthFinish: bridge.authFinish,
   },
+  CLIRuntimes: { list: bridge.cliList, install: bridge.cliInstall, login: bridge.cliLogin, logout: bridge.cliLogout },
   Shell: { openExternal: bridge.openExternal },
   Daemon: { health: vi.fn() },
   events: { llmChanged: { on: () => () => {} }, daemonState: { on: () => () => {} } },
 }));
 import { AIProviders } from "@/features/settings/AIProviders";
+import { useCLIRuntimes } from "@/stores/cliRuntimes";
 import { useLLM } from "@/stores/llm";
 import { useDaemon } from "@/stores/daemon";
 
@@ -39,6 +42,8 @@ beforeEach(() => {
   bridge.providers.mockResolvedValue([openrouter, openai]);
   bridge.defaults.mockResolvedValue({ chatModel: "", memoryModel: "" });
   bridge.models.mockResolvedValue(models);
+  bridge.cliList.mockResolvedValue([]);
+  useCLIRuntimes.setState({ statuses: [], ready: false, loading: false, error: null, busy: {}, problems: {} });
   useDaemon.setState({ link: "connected" });
   useLLM.setState({ providers: [], defaults: null, models: {}, busy: {}, ready: false, loading: false, error: null });
 });
@@ -46,8 +51,10 @@ afterEach(cleanup);
 
 const row = (name: string) => screen.getByRole("listitem", { name });
 
+const cli = (over: Partial<CliruntimeStatus> & { id: string; name: string }): CliruntimeStatus => ({ installed: false, updateAvailable: false, auth: "unknown", installable: true, ...over });
+
 describe("AI providers settings", () => {
-  it("shows unconnected providers, where keys live and an empty model chooser", async () => {
+  it("shows unconnected providers and where keys live", async () => {
     seed([openrouter, openai]);
     render(<AIProviders />);
     expect(screen.getByText(/Windows Credential Manager/)).toBeInTheDocument();
@@ -56,8 +63,6 @@ describe("AI providers settings", () => {
       expect(within(row(name)).getByText("Not connected")).toBeInTheDocument();
       expect(within(row(name)).getByRole("button", { name: "Connect" })).toBeEnabled();
     }
-    expect(screen.getByText("Connect a provider to choose models")).toBeInTheDocument();
-    expect(screen.queryByRole("combobox")).toBeNull();
   });
 
   it("connects with a pasted key, then closes and leaves no key behind", async () => {
@@ -167,36 +172,6 @@ describe("AI providers settings", () => {
     await waitFor(() => expect(within(row("OpenAI")).getByText("Not connected")).toBeInTheDocument());
   });
 
-  it("chooses default models from the connected providers' catalogues", async () => {
-    seed([{ ...openrouter, connected: true, keyHint: "9f2c", valid: true }, openai]);
-    bridge.setDefaults.mockImplementation(async (d) => d);
-    render(<AIProviders />);
-    const chat = await screen.findByRole("combobox", { name: "Default chat model" });
-    await waitFor(() => expect(chat).toBeEnabled());
-    expect(bridge.models).toHaveBeenCalledWith("openrouter");
-    expect(screen.getByRole("combobox", { name: "Memory model" })).toBeInTheDocument();
-    fireEvent.keyDown(chat, { key: "ArrowDown" });
-    expect(await screen.findAllByRole("option")).toHaveLength(2);
-    fireEvent.change(chat, { target: { value: "sonnet" } });
-    const option = await screen.findByRole("option", { name: /Claude Sonnet/ });
-    expect(within(option).getByText("Vision")).toBeInTheDocument();
-    expect(within(option).getByText("200K context")).toBeInTheDocument();
-    expect(screen.queryByRole("option", { name: /GPT Mini/ })).toBeNull();
-    fireEvent.click(option);
-    await waitFor(() => expect(bridge.setDefaults).toHaveBeenCalledWith({ chatModel: "openrouter/anthropic/claude-sonnet", memoryModel: "" }));
-    expect(useLLM.getState().defaults?.chatModel).toBe("openrouter/anthropic/claude-sonnet");
-  });
-
-  it("warns that a chat model without tools cannot drive bots and flags a model no provider offers", async () => {
-    useLLM.setState({ defaults: { chatModel: "openrouter/openai/gpt-mini", memoryModel: "openai/gone" } });
-    seed([{ ...openrouter, connected: true, keyHint: "9f2c", valid: true }, openai]);
-    useLLM.setState({ defaults: { chatModel: "openrouter/openai/gpt-mini", memoryModel: "openai/gone" } });
-    bridge.defaults.mockResolvedValue({ chatModel: "openrouter/openai/gpt-mini", memoryModel: "openai/gone" });
-    render(<AIProviders />);
-    expect(await screen.findByText(/cannot call tools/)).toBeInTheDocument();
-    expect(screen.getByText(/not offered by a connected provider/)).toBeInTheDocument();
-  });
-
   it("shows the daemon error with a retry when providers cannot load", async () => {
     bridge.providers.mockRejectedValueOnce(new Error("daemon unreachable"));
     render(<AIProviders />);
@@ -211,5 +186,51 @@ describe("AI providers settings", () => {
     render(<AIProviders />);
     expect(within(row("Custom")).getByText("Manifest")).toBeInTheDocument();
     expect(within(row("Custom")).getByRole("button", { name: "Connect" })).toBeEnabled();
+  });
+});
+
+describe("account CLIs", () => {
+  it("shows what is installed, its version, the account and an update", async () => {
+    seed([openrouter]);
+    bridge.cliList.mockResolvedValue([
+      cli({ id: "claude", name: "Claude", installed: true, version: "2.1.289", latest: "2.1.296", updateAvailable: true, auth: "signed_in", account: "ray@example.com", source: "system" }),
+      cli({ id: "codex", name: "ChatGPT" }),
+      cli({ id: "grok", name: "Grok", installable: false }),
+    ]);
+    render(<AIProviders />);
+    const claude = await screen.findByRole("listitem", { name: "Claude" });
+    expect(within(claude).getByText(/v2\.1\.289 · ray@example\.com · Your installed copy/)).toBeInTheDocument();
+    expect(within(claude).getByText("Update available")).toBeInTheDocument();
+    expect(within(claude).getByRole("button", { name: "Update" })).toBeEnabled();
+    expect(within(claude).getByRole("button", { name: "Sign out" })).toBeEnabled();
+    expect(within(claude).queryByRole("button", { name: "Sign in" })).toBeNull();
+    expect(within(row("ChatGPT")).getByText("Not installed on this computer")).toBeInTheDocument();
+    expect(within(row("ChatGPT")).getByRole("button", { name: "Download" })).toBeEnabled();
+    expect(within(row("Grok")).getByText("Not available for this computer")).toBeInTheDocument();
+    expect(within(row("Grok")).queryByRole("button")).toBeNull();
+  });
+
+  it("does not list an account provider among the API keys", async () => {
+    const account: ProviderStatus = { id: "codex", name: "ChatGPT", kind: "account", connected: true };
+    seed([openrouter, account]);
+    bridge.cliList.mockResolvedValue([cli({ id: "codex", name: "ChatGPT", installed: true, version: "0.162.1", auth: "signed_in", account: "ChatGPT", source: "managed" })]);
+    render(<AIProviders />);
+    await screen.findByRole("listitem", { name: "ChatGPT" });
+    expect(screen.getAllByRole("listitem", { name: "ChatGPT" })).toHaveLength(1);
+    expect(screen.getByRole("listitem", { name: "OpenRouter" })).toBeInTheDocument();
+  });
+
+  it("downloads, then signs in, and shows a failed sign-in", async () => {
+    seed([openrouter]);
+    bridge.cliList.mockResolvedValue([cli({ id: "codex", name: "ChatGPT" })]);
+    bridge.cliInstall.mockResolvedValue(cli({ id: "codex", name: "ChatGPT", installed: true, version: "0.162.1", auth: "signed_out", source: "managed" }));
+    bridge.cliLogin.mockRejectedValue(new Error("internal: could not sign in ChatGPT: browser closed"));
+    render(<AIProviders />);
+    fireEvent.click(await screen.findByRole("button", { name: "Download" }));
+    await waitFor(() => expect(bridge.cliInstall).toHaveBeenCalledWith("codex"));
+    const signIn = await screen.findByRole("button", { name: "Sign in" });
+    expect(within(row("ChatGPT")).getByText(/v0\.162\.1 · Not signed in · Orole's copy/)).toBeInTheDocument();
+    fireEvent.click(signIn);
+    expect(await within(row("ChatGPT")).findByRole("alert")).toHaveTextContent("could not sign in ChatGPT: browser closed");
   });
 });

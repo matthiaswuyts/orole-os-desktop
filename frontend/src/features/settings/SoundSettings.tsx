@@ -24,7 +24,7 @@ export function SoundSettings() {
       </div>
       {audioError && <p role="alert" className="text-destructive-foreground">{audioError}</p>}
       {saveError && <p role="alert" className="text-destructive-foreground">Settings could not be saved: {saveError}</p>}
-      <p className="max-w-prose text-xs text-muted-foreground">Notification source sound and Windows delivery switches are in Alerts &amp; automations. Native notifications use Windows sounds and volume, not this slider. Windows permissions and Do not disturb / Focus Assist may suppress them.</p>
+      <p className="max-w-prose text-xs text-muted-foreground">Which alerts make a sound is set in Alerts &amp; automations.</p>
     </section>
   );
 }

@@ -26,6 +26,8 @@ Home combines the task composer, running-agent view and persistent widget grid. 
 
 Built-ins: Orole Midnight, Orole Obsidian, Orole Light, Solarized Dark/Light, and Catppuccin Latte/Frappé/Macchiato/Mocha. Theme IDs, labels and terminal colors come from the same registry. Custom themes extend Midnight with the whitelist in `themes/custom.ts`: background, foreground, primary, primary-foreground, card, sidebar, success, warning, destructive, border and muted-foreground. Inputs must be a JSON object with recognized keys and validated color strings, not arbitrary CSS.
 
+A custom theme is imported from a JSON file (Settings → Customization → Import theme, max 64 KiB) and then chosen from the theme select like any other.
+
 ## Components and interaction
 
 Use the existing coss/Base UI primitives in `components/ui`; do not add a competing menu, dialog, tooltip or field implementation. Preserve upstream notices and record copied changes in [upstream attribution](../research/upstream-attribution.md).
@@ -37,7 +39,7 @@ Use the existing coss/Base UI primitives in `components/ui`; do not add a compet
 - Project **New task** is a page, not a modal. It renders the same composer as Home (`HomeComposerView`: attachments, project/system/worktree menus, the provider/model/reasoning picker) with the page's project and prompt preselected. Both entry points share launch logic and saved provider preferences. Enter starts, Shift+Enter inserts a newline, and Ctrl/Cmd+Enter remains supported; composition and held Enter do not launch tasks.
 - Harness/model discovery is cached in memory per machine and shared across composers. Reopening uses cached choices immediately and shares any in-flight request. Results older than 45 seconds refresh on the next mount without clearing the picker. Each entry records the daemon's `connectEpoch` (incremented whenever the daemon becomes reachable again); an entry from an earlier epoch is stale and a late reply for it is ignored, even if no dialog was open at the time. Offline state still blocks launching.
 - The **Issues** view lists GitHub issues for projects whose `origin` is on github.com, composes `Message`/`Bubble` for the thread and the coss `Textarea` for comments, and hands an issue to an agent through the reviewed launch sheet. See [GitHub](github.md#issues-view).
-- CodeMirror owns text editing; xterm.js owns terminal rendering. Both consume the shared appearance settings rather than independently selected palettes.
+- CodeMirror owns code highlighting; xterm.js owns terminal rendering. Both consume the shared appearance settings rather than independently selected palettes.
 - Charts use the integrated Dither Kit chart components and real daemon samples. Unknown samples remain gaps; empty data is not synthesized.
 
 ## Component contracts
@@ -51,8 +53,6 @@ solely to match the handoff's names.
 | AppShell / TitleBar / Sidebar | `components/shell/AppShell.tsx` accepts the active view as children; shell stores own navigation and sidebar visibility. Native window chrome is not a React imitation. |
 | Panel / Widget | `components/widgets/Widget.tsx`: `title`, optional `icon`, `count`, `children`, `onRemove`, and `status` (`ready`, `loading`, `error`, `offline`, `unconfigured`). `message` and `{label,onClick}` action explain non-ready states. The header is the grid drag handle; the body scrolls independently. Feature panels otherwise compose semantic layout elements and shared surfaces; there is no second generic Panel API. |
 | DataTable | `components/ui/table.tsx` exports semantic Table/Header/Body/Row/Head/Cell composition. `Table` accepts native table props and `variant: default | card`; its wrapper provides horizontal scrolling. Feature stores own sorting/filtering/selection, not the table primitive. |
-| TreeView | `features/files/DirectoryTree.tsx` takes roots, explicit provider, selected path, navigate callback, revision, removable and onRemove. Expansion loads provider directories, ignores stale responses and does not descend through links. Arrow keys/Home/End navigate; missing roots remain visible with their problem. |
-| SplitPane / terminal tabs | `features/terminals/TerminalsView.tsx` owns a list of daemon terminal IDs, active pane and up to three side-by-side TerminalPane children. Switching tabs changes the selected pane; closing a terminal explicitly calls Go. This is a concrete terminal split layout, not a general draggable-divider API. |
 | Dialogs | `components/ui/dialog.tsx` supplies Base UI open/onOpenChange composition, popup, title, description and close controls. Use confirmation-specific composition for destructive actions and await Go results before reporting success. |
 | ContextMenu | `components/ui/context-menu.tsx`: Root/Trigger/Popup and item primitives. Popup accepts position/anchor and portal options while preserving Base UI keyboard/focus behavior. Context actions must still call authorized services. |
 | Empty / Loading / Error | Shared Empty/Skeleton/Alert primitives and `WidgetState`; feature-level `NeedsDesktop`, `NotConnected`, `NotImplemented` in `features/shared/States.tsx` describe distinct capability states. Error states preserve actionable retry/setup information. |

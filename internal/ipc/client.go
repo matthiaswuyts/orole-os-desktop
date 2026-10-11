@@ -23,11 +23,17 @@ type Client struct {
 
 	mu      sync.Mutex
 	nc      net.Conn
-	pending map[uint64]chan Message
+	pending map[uint64]pendingCall
 	topics  []string
 	onEvent func(event string, data json.RawMessage)
 	closed  bool
 	Hello   HelloResult
+}
+
+// pendingCall is an in-flight request and the connection it was written to.
+type pendingCall struct {
+	ch chan Message
+	nc net.Conn
 }
 
 // NewClient creates a client; call Connect before use.
@@ -38,7 +44,7 @@ func NewClient(dial Dialer, token, name string) *Client {
 // NewClientFunc is like NewClient but resolves the token on each connect, so a
 // restarted daemon (which issues a fresh token) is picked up automatically.
 func NewClientFunc(dial Dialer, token func() string, name string) *Client {
-	return &Client{dial: dial, token: token, name: name, pending: map[uint64]chan Message{}}
+	return &Client{dial: dial, token: token, name: name, pending: map[uint64]pendingCall{}}
 }
 
 // OnEvent installs the event callback (called on the reader goroutine; keep it short).
@@ -82,10 +88,10 @@ func (c *Client) Connect(ctx context.Context) error {
 	c.nc, c.Hello, c.closed = nc, hr, false
 	topics := c.topics
 	c.mu.Unlock()
-	c.nextID.Store(1)
 	go c.read(nc, br)
 	if len(topics) > 0 {
-		return c.call(ctx, "subscribe", SubscribeParams{Topics: topics}, nil)
+		_, err := c.call(ctx, "subscribe", SubscribeParams{Topics: topics}, nil)
+		return err
 	}
 	return nil
 }
@@ -112,22 +118,34 @@ func (c *Client) read(nc net.Conn, br *bufio.Reader) {
 			continue
 		}
 		c.mu.Lock()
-		ch := c.pending[m.ID]
-		delete(c.pending, m.ID)
+		p, ok := c.pending[m.ID]
+		if ok && p.nc == nc {
+			delete(c.pending, m.ID)
+		} else {
+			ok = false
+		}
 		c.mu.Unlock()
-		if ch != nil {
-			ch <- m
+		if ok {
+			p.ch <- m
 		}
 	}
+	// Whatever ended the loop (EOF, oversized or unreadable frame), the link is
+	// no longer usable. Retire it from the client's state first and only then
+	// close the socket, so a peer that observes the hang-up also observes
+	// Connected() == false.
 	c.mu.Lock()
 	if c.nc == nc {
 		c.nc = nil
 	}
-	for id, ch := range c.pending {
-		ch <- Message{ID: id, Error: &Error{Code: "disconnected", Message: "connection lost"}}
-		delete(c.pending, id)
+	// Only fail calls made on this connection; a newer one may already be live.
+	for id, p := range c.pending {
+		if p.nc == nc {
+			p.ch <- Message{ID: id, Error: &Error{Code: "disconnected", Message: "connection lost after the request was sent; it may have executed"}}
+			delete(c.pending, id)
+		}
 	}
 	c.mu.Unlock()
+	nc.Close()
 }
 
 // Connected reports whether a live connection exists.
@@ -138,55 +156,66 @@ func (c *Client) Subscribe(ctx context.Context, topics ...string) error {
 	c.mu.Lock()
 	c.topics = append(c.topics, topics...)
 	c.mu.Unlock()
-	return c.call(ctx, "subscribe", SubscribeParams{Topics: topics}, nil)
+	_, err := c.call(ctx, "subscribe", SubscribeParams{Topics: topics}, nil)
+	return err
 }
 
-// Call invokes method; if disconnected it reconnects once. ctx cancellation
-// sends a "cancel" for the in-flight call.
+// Call invokes method. If the link is down, or the request could not be
+// written, it reconnects once and sends again. Once a request has been
+// written it is never re-sent: the daemon may already have executed it, and a
+// lost link then surfaces as a "disconnected" error. ctx cancellation sends a
+// "cancel" for the in-flight call.
 func (c *Client) Call(ctx context.Context, method string, params, out any) error {
 	if !c.Connected() {
 		if err := c.Connect(ctx); err != nil {
 			return err
 		}
 	}
-	err := c.call(ctx, method, params, out)
+	sent, err := c.call(ctx, method, params, out)
 	var e *Error
-	if errors.As(err, &e) && e.Code == "disconnected" {
+	if !sent && errors.As(err, &e) && e.Code == "disconnected" {
 		if cerr := c.Connect(ctx); cerr != nil {
 			return cerr
 		}
-		return c.call(ctx, method, params, out)
+		_, err = c.call(ctx, method, params, out)
 	}
 	return err
 }
 
-func (c *Client) call(ctx context.Context, method string, params, out any) error {
+// call performs one request. sent reports whether the request frame was
+// completely written to the connection; when false the daemon cannot have
+// executed it and the caller may retry on a fresh connection.
+func (c *Client) call(ctx context.Context, method string, params, out any) (sent bool, err error) {
 	id := c.nextID.Add(1)
+	req, err := json.Marshal(Message{ID: id, Method: method, Params: mustJSON(params)})
+	if err != nil {
+		return false, err
+	}
 	ch := make(chan Message, 1)
 	c.mu.Lock()
 	nc := c.nc
 	if nc == nil {
 		c.mu.Unlock()
-		return &Error{Code: "disconnected", Message: "not connected"}
+		return false, &Error{Code: "disconnected", Message: "not connected"}
 	}
-	c.pending[id] = ch
+	c.pending[id] = pendingCall{ch: ch, nc: nc}
 	c.mu.Unlock()
-	req, err := json.Marshal(Message{ID: id, Method: method, Params: mustJSON(params)})
-	if err != nil {
-		return err
-	}
 	if _, err := nc.Write(append(req, '\n')); err != nil {
-		return &Error{Code: "disconnected", Message: err.Error()}
+		c.mu.Lock()
+		delete(c.pending, id)
+		c.mu.Unlock()
+		nc.Close() // the link is unusable; let the read loop retire it
+		return false, &Error{Code: "disconnected", Message: err.Error()}
 	}
 	select {
 	case m := <-ch:
 		if m.Error != nil {
-			return m.Error
+			return true, m.Error
 		}
 		if out != nil {
-			return json.Unmarshal(m.Result, out)
+			return true, json.Unmarshal(m.Result, out)
 		}
-		return nil
+		return true, nil
 	case <-ctx.Done():
 		c.mu.Lock()
 		delete(c.pending, id)
@@ -194,7 +223,7 @@ func (c *Client) call(ctx context.Context, method string, params, out any) error
 		cid := c.nextID.Add(1)
 		cr, _ := json.Marshal(Message{ID: cid, Method: "cancel", Params: mustJSON(map[string]uint64{"id": id})})
 		nc.Write(append(cr, '\n'))
-		return ctx.Err()
+		return true, ctx.Err()
 	}
 }
 

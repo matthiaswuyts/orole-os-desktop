@@ -57,7 +57,8 @@ signed (issue #110).
 
 ## CI
 
-`ci.yml` runs on pull requests only, with a read-only token and no secrets, and builds unsigned artefacts.
+`ci.yml` runs on pull requests and on pushes to `main` (the push run primes the caches that pull requests restore), with a
+read-only token and no secrets, and builds unsigned artefacts.
 `release.yml` runs on `desktop-v*` tags only: it verifies the tag against `mygo.json` and `CHANGELOG.md`, repeats the CI
-gates, then in the `release` environment (tag-restricted, holds the signing key) builds, signs and uploads to a
-**draft** release. Publishing is a manual step (`gh release edit <tag> --draft=false --latest=false`).
+gates (Go and frontend jobs in parallel), then in the `release` environment (tag-restricted, holds the signing key) builds, signs and uploads to a
+**draft** release. That job restores no caches: only the verify jobs use the bun cache. Publishing is a manual step (`gh release edit <tag> --draft=false --latest=false`).

@@ -48,9 +48,9 @@ func serverFetcher(t *testing.T, srv *httptest.Server, res fakeResolver) (*Fetch
 	}, &dialed
 }
 
-func callFetch(f *Fetcher, filter DomainFilter, rawURL string) (chat.ToolResult, error) {
+func callFetch(f *Fetcher, rawURL string) (chat.ToolResult, error) {
 	args, _ := json.Marshal(map[string]string{"url": rawURL})
-	return f.Call(context.Background(), chat.RunContext{BotID: "b1", Actor: "bot:b1"}, filter, args)
+	return f.Call(context.Background(), chat.RunContext{BotID: "b1", Actor: "bot:b1"}, args)
 }
 
 func TestPublicAddress(t *testing.T) {
@@ -79,7 +79,7 @@ func TestFetchHappyPathHTML(t *testing.T) {
 	defer srv.Close()
 	f, dialed := serverFetcher(t, srv, fakeResolver{"docs.example.com": {"93.184.216.34"}})
 
-	res, err := callFetch(f, DomainFilter{}, "http://docs.example.com/page?token=secret")
+	res, err := callFetch(f, "http://docs.example.com/page?token=secret")
 	if err != nil || res.IsError {
 		t.Fatalf("res = %+v err = %v", res, err)
 	}
@@ -125,7 +125,7 @@ func TestFetchBlocksNonPublicDestinations(t *testing.T) {
 		"http://intranet.example.com/", "http://mixed.example.com/", "http://meta.example.com/", "http://v6.example.com/",
 		"http://2130706433/", "http://0x7f.0.0.1/", "http://unresolvable.example.com/",
 	} {
-		res, err := callFetch(f, DomainFilter{}, target)
+		res, err := callFetch(f, target)
 		if err != nil || !res.IsError {
 			t.Errorf("%s: res = %+v err = %v, want an error result", target, res, err)
 		}
@@ -146,11 +146,11 @@ func TestFetchDNSRebindingIsCheckedAtDialTime(t *testing.T) {
 	res := rebinder{n: &lookups}
 	f, _ := serverFetcher(t, srv, nil)
 	f.Resolver = res
-	first, _ := callFetch(f, DomainFilter{}, "http://rebind.example.com/")
+	first, _ := callFetch(f, "http://rebind.example.com/")
 	if first.IsError {
 		t.Fatalf("first fetch: %+v", first)
 	}
-	second, _ := callFetch(f, DomainFilter{}, "http://rebind.example.com/")
+	second, _ := callFetch(f, "http://rebind.example.com/")
 	if !second.IsError || !strings.Contains(second.Text, "not a public internet address") {
 		t.Fatalf("second fetch must be blocked, got %+v", second)
 	}
@@ -177,9 +177,6 @@ func TestFetchRedirects(t *testing.T) {
 	mux.HandleFunc("/to-file", func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "file:///etc/passwd", http.StatusFound)
 	})
-	mux.HandleFunc("/to-blocked", func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, "http://blocked.example.com/", http.StatusFound)
-	})
 	mux.HandleFunc("/loop", func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/loop", http.StatusFound)
 	})
@@ -194,11 +191,10 @@ func TestFetchRedirects(t *testing.T) {
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 	f, _ := serverFetcher(t, srv, fakeResolver{
-		"pub.example.com": {"93.184.216.34"}, "internal.example.com": {"10.9.9.9"}, "blocked.example.com": {"93.184.216.35"},
+		"pub.example.com": {"93.184.216.34"}, "internal.example.com": {"10.9.9.9"},
 	})
-	filter := DomainFilter{Blocked: []string{"blocked.example.com"}}
-	for _, path := range []string{"to-private", "to-ip", "to-file", "to-blocked", "loop"} {
-		res, err := callFetch(f, filter, "http://pub.example.com/"+path)
+	for _, path := range []string{"to-private", "to-ip", "to-file", "loop"} {
+		res, err := callFetch(f, "http://pub.example.com/"+path)
 		if err != nil || !res.IsError {
 			t.Errorf("%s: res = %+v err = %v, want an error result", path, res, err)
 		}
@@ -209,7 +205,7 @@ func TestFetchRedirects(t *testing.T) {
 	if privateHits.Load() != 0 {
 		t.Fatal("redirect reached a private host")
 	}
-	res, _ := callFetch(f, filter, "http://pub.example.com/ok")
+	res, _ := callFetch(f, "http://pub.example.com/ok")
 	if res.IsError || !strings.Contains(res.Text, "landed") || !strings.Contains(res.Text, "/ok-target") {
 		t.Fatalf("followed redirect: %+v", res)
 	}
@@ -263,7 +259,7 @@ func TestFetchResponseLimitsAndTypes(t *testing.T) {
 	f.Timeout = 300 * time.Millisecond
 	get := func(p string) chat.ToolResult {
 		t.Helper()
-		res, err := callFetch(f, DomainFilter{}, "http://pub.example.com/"+p)
+		res, err := callFetch(f, "http://pub.example.com/"+p)
 		if err != nil {
 			t.Fatalf("%s: %v", p, err)
 		}
@@ -298,15 +294,14 @@ func TestFetchResponseLimitsAndTypes(t *testing.T) {
 	}
 }
 
-func TestFetchArgumentAndDomainValidation(t *testing.T) {
+func TestFetchArgumentValidation(t *testing.T) {
 	f := &Fetcher{Resolver: fakeResolver{}}
-	filter := DomainFilter{Allowed: []string{"example.com"}}
 	for _, args := range []string{
 		`{}`, `{"url":""}`, `not json`, `{"url":"ftp://example.com/x"}`, `{"url":"file:///etc/passwd"}`,
 		`{"url":"https://user:pw@example.com/"}`, `{"url":"https://other.org/"}`, `{"url":"javascript:alert(1)"}`,
 		`{"url":"https://example.com/` + strings.Repeat("a", 3000) + `"}`,
 	} {
-		res, err := f.Call(context.Background(), chat.RunContext{BotID: "b"}, filter, json.RawMessage(args))
+		res, err := f.Call(context.Background(), chat.RunContext{BotID: "b"}, json.RawMessage(args))
 		if err != nil || !res.IsError {
 			t.Errorf("%.60s: res = %+v err = %v, want an error result", args, res, err)
 		}
@@ -334,11 +329,11 @@ func TestFetchPolicy(t *testing.T) {
 	f, _ := serverFetcher(t, srv, fakeResolver{"pub.example.com": {"93.184.216.34"}})
 	pol := &recordingPolicy{}
 	f.Policy = pol
-	res, _ := callFetch(f, DomainFilter{}, "http://user@pub.example.com/a?key=SECRET#frag")
+	res, _ := callFetch(f, "http://user@pub.example.com/a?key=SECRET#frag")
 	if !res.IsError { // credentials in URL are refused before the policy is consulted
 		t.Fatalf("res = %+v", res)
 	}
-	res, _ = callFetch(f, DomainFilter{}, "http://pub.example.com/a?key=SECRET#frag")
+	res, _ = callFetch(f, "http://pub.example.com/a?key=SECRET#frag")
 	if res.IsError || len(pol.reqs) != 1 {
 		t.Fatalf("res = %+v reqs = %+v", res, pol.reqs)
 	}
@@ -352,7 +347,7 @@ func TestFetchPolicy(t *testing.T) {
 
 	pol.err = policy.ErrDenied
 	before := hits.Load()
-	res, err := callFetch(f, DomainFilter{}, "http://pub.example.com/b")
+	res, err := callFetch(f, "http://pub.example.com/b")
 	if err != nil || !res.IsError || hits.Load() != before {
 		t.Fatalf("denied fetch must not run: res = %+v err = %v hits = %d->%d", res, err, before, hits.Load())
 	}
@@ -362,12 +357,12 @@ func TestFetchPolicy(t *testing.T) {
 	cancel()
 	pol.err = context.Canceled
 	args, _ := json.Marshal(map[string]string{"url": "http://pub.example.com/c"})
-	if _, err := f.Call(ctx, chat.RunContext{BotID: "b1"}, DomainFilter{}, args); !errors.Is(err, context.Canceled) {
+	if _, err := f.Call(ctx, chat.RunContext{BotID: "b1"}, args); !errors.Is(err, context.Canceled) {
 		t.Fatalf("err = %v, want context.Canceled", err)
 	}
 }
 
-func TestWebFetchFallbackCallUsesBotDomains(t *testing.T) {
+func TestWebFetchFallbackReachesAnyPublicDomain(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain")
 		w.Write([]byte("ok"))
@@ -375,15 +370,14 @@ func TestWebFetchFallbackCallUsesBotDomains(t *testing.T) {
 	defer srv.Close()
 	f, _ := serverFetcher(t, srv, fakeResolver{"a.example.com": {"93.184.216.34"}, "b.example.org": {"93.184.216.35"}})
 	tool := WebFetch{Fetcher: f}
+	// Domain lists saved by older versions are ignored: every public domain is reachable.
 	bot := chat.Bot{ID: "b1", Config: chat.BotConfig{Tools: []chat.BotTool{{ID: chat.ToolWebFetch, Params: map[string]any{"allowed_domains": []any{"example.com"}}}}}}
 	rc := chat.RunContext{BotID: "b1", Bot: bot}
-	ok, _ := tool.Call(context.Background(), rc, FetchURLName, json.RawMessage(`{"url":"http://a.example.com/"}`))
-	if ok.IsError {
-		t.Fatalf("allowed domain: %+v", ok)
-	}
-	no, _ := tool.Call(context.Background(), rc, FetchURLName, json.RawMessage(`{"url":"http://b.example.org/"}`))
-	if !no.IsError || !strings.Contains(no.Text, "domain settings") {
-		t.Fatalf("domain outside allow-list: %+v", no)
+	for _, target := range []string{"http://a.example.com/", "http://b.example.org/"} {
+		res, _ := tool.Call(context.Background(), rc, FetchURLName, json.RawMessage(`{"url":"`+target+`"}`))
+		if res.IsError {
+			t.Fatalf("%s: %+v", target, res)
+		}
 	}
 }
 

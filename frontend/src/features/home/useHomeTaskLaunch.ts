@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Agents, type Mode, type StartSpec } from "@/mygo";
 import { inDesktop } from "@/lib/backend";
 import { useAgents } from "@/stores/agents";
@@ -8,6 +8,7 @@ import { useHarnessOptions } from "@/features/agents/useHarnessOptions";
 import { newKey } from "@/features/agents/format";
 import { toastError } from "@/features/projects/dialogs";
 import { openTask } from "@/features/projects/tasks";
+import { modeSupport, type PermissionMode } from "@/features/tasks/permissionModes";
 import { useTaskAttachments } from "./useTaskAttachments";
 import { loadProviderPreferences, saveProviderPreferences } from "./provider-preferences";
 
@@ -16,6 +17,13 @@ export interface TaskLaunchOptions {
   initialPrompt?: string;
   onStarted?: () => void;
   onBusyChange?: (busy: boolean) => void;
+}
+
+const PERMISSION_KEY = "orole.task.permissionMode";
+
+/** The remembered default. YOLO is never remembered: it must be chosen, and confirmed, for each launch. */
+function savedPermissionMode(): PermissionMode {
+  try { return localStorage.getItem(PERMISSION_KEY) === "auto" ? "auto" : "manual"; } catch { return "manual"; }
 }
 
 export function useHomeTaskLaunch({ initialProjectId, initialPrompt = "", onStarted, onBusyChange }: TaskLaunchOptions = {}) {
@@ -35,6 +43,9 @@ export function useHomeTaskLaunch({ initialProjectId, initialPrompt = "", onStar
   const project = choices.find((p) => p.id === (remoteProject || selectedId || savedProject)) ?? choices.find((p) => !p.missing);
   const [worktreeChoice, setWorktreeChoice] = useState<{ project: string; value: string } | null>(null);
   const canIsolate = Boolean(project?.isGit && source.options?.worktree);
+  const needsTrees = Boolean(project?.isGit);
+  // Worktrees cost a git call per project, so they are fetched only while the picked project can use them.
+  useEffect(() => needsTrees ? useProjects.getState().watchWorktrees() : undefined, [needsTrees]);
   const trees = project ? worktrees[project.id] ?? [] : [];
   const preferredTree = worktreeChoice?.project === project?.id ? worktreeChoice?.value : undefined;
   const tree = preferredTree && trees.find((w) => w.id === preferredTree && !w.error);
@@ -49,6 +60,11 @@ export function useHomeTaskLaunch({ initialProjectId, initialPrompt = "", onStar
   const modelOption = models.find((m) => m.id === model);
   const reasoningLevels = modelOption ? modelOption.reasoning : harness?.reasoning ?? [];
   const reasoning = reasoningLevels.includes(selected.reasoning) ? selected.reasoning : "";
+  const [chosenMode, setChosenMode] = useState<PermissionMode>(savedPermissionMode);
+  const [yoloConfirmed, setYoloConfirmed] = useState(false);
+  // A mode this agent cannot run (or that was turned off) falls back to Manual rather than launching in it.
+  const permissionSupport = harness?.permissionModes ?? [];
+  const permissionMode: PermissionMode = modeSupport(permissionSupport, chosenMode).available && (chosenMode !== "yolo" || yoloConfirmed) ? chosenMode : "manual";
   const [prompt, setPrompt] = useState(initialPrompt);
   const [busy, setBusy] = useState(false);
   const attachments = useTaskAttachments(inDesktop && !busy && !source.offline);
@@ -67,6 +83,12 @@ export function useHomeTaskLaunch({ initialProjectId, initialPrompt = "", onStar
     if (p.registered) useProjects.getState().select(id);
     localStorage.setItem("orole.home.project", id);
     setWorktreeChoice(null);
+  }
+  function choosePermissionMode(mode: PermissionMode, confirmYolo: boolean) {
+    setChosenMode(mode);
+    setYoloConfirmed(mode === "yolo" && confirmYolo);
+    if (mode === "yolo") return;
+    try { localStorage.setItem(PERMISSION_KEY, mode); } catch (error) { toastError("Could not save the permission mode", error); }
   }
   function chooseMachine(id: string) {
     setMachine(id); setRemoteProject(""); setWorktreeChoice(null);
@@ -88,7 +110,7 @@ export function useHomeTaskLaunch({ initialProjectId, initialPrompt = "", onStar
       kind: harness.id, machine, projectId: project.registered ? project.id : "", dir: tree ? tree.path : project.registered ? "" : project.path,
       prompt: prompt.trim(), model, reasoning, mode: (machine === "local" ? "structured" : "process") as Mode,
       attachmentIds: attachments.ids,
-      newWorktree: worktree === "new", branch: "", baseRef: "", permissionMode: "default", command: "", title: "", parentId: "", group: "",
+      newWorktree: worktree === "new", branch: "", baseRef: "", permissionMode, confirmYolo: permissionMode === "yolo", command: "", title: "", parentId: "", group: "",
     };
     const signature = JSON.stringify(spec);
     if (attempt.current?.signature !== signature) attempt.current = { signature, key: newKey() };
@@ -98,12 +120,12 @@ export function useHomeTaskLaunch({ initialProjectId, initialPrompt = "", onStar
       attempt.current = null;
       localStorage.setItem("orole.task.harness", harness.id);
       localStorage.setItem("orole.home.project", project.id);
-      useAgents.getState().upsert(session); setPrompt(""); attachments.clear(); openTask(session.id);
+      useAgents.getState().upsert(session); setPrompt(""); attachments.clear(); setChosenMode(savedPermissionMode()); setYoloConfirmed(false); openTask(session.id);
       onStarted?.();
     } catch (error) { toastError("Could not start task", error); }
     finally { inFlight.current = false; setBusy(false); onBusyChange?.(false); }
   }
-  return { machine, machines, observations, now, choices, project, trees, worktree, canIsolate, harnesses, harness, model, reasoning, prompt, setPrompt, busy, blocked, canStart, chooseProject, chooseMachine, chooseAgent, start, attachments,
+  return { machine, machines, observations, now, choices, project, trees, worktree, canIsolate, harnesses, harness, model, reasoning, prompt, setPrompt, busy, blocked, canStart, chooseProject, chooseMachine, chooseAgent, start, attachments, permissionMode, permissionSupport, choosePermissionMode,
     chooseWorktree: (value: string) => { if (project) setWorktreeChoice({ project: project.id, value }); },
     createProject: () => { chooseMachine("local"); useProjects.getState().setNewProjectOpen(true); },
   };

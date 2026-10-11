@@ -1,4 +1,4 @@
-import { ChevronDown, Code, MessagesSquare, PanelLeftClose, Search } from "lucide-react";
+import { Bot, ChevronDown, Code, PanelLeftClose, Search } from "lucide-react";
 import { PRIMARY, SETTINGS, type NavItem } from "@/lib/nav";
 import { cn } from "@/lib/utils";
 import { useUI, type Mode } from "@/stores/ui";
@@ -12,18 +12,27 @@ import { useAgentCounts } from "@/stores/agents";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsList, TabsTab } from "@/components/ui/tabs";
 import { BotRail } from "./BotRail";
+import { Desktop } from "@/mygo";
+import { inDesktop } from "@/lib/backend";
 
 const row = "flex h-side-row w-full items-center gap-2 rounded-md px-2 text-left text-sidebar-foreground text-sm outline-none hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring";
 
 const MODES: { id: Mode; label: string; icon: typeof Code }[] = [
+  { id: "chat", label: "Bots", icon: Bot },
   { id: "code", label: "Code", icon: Code },
-  { id: "chat", label: "Chat", icon: MessagesSquare },
 ];
 
 /** Workspace controls, navigation, projects, and settings. */
 export function Sidebar() {
-  const { view, mode, setView, setMode, setPalette, toggleSidebar } = useUI();
-  const { list, activeId, select } = useWorkspaces();
+  const view = useUI((s) => s.view);
+  const mode = useUI((s) => s.mode);
+  const setView = useUI((s) => s.setView);
+  const setMode = useUI((s) => s.setMode);
+  const setPalette = useUI((s) => s.setPalette);
+  const toggleSidebar = useUI((s) => s.toggleSidebar);
+  const list = useWorkspaces((s) => s.list);
+  const activeId = useWorkspaces((s) => s.activeId);
+  const select = useWorkspaces((s) => s.select);
   const agentCounts = useAgentCounts();
   const item = (n: NavItem) => (
     <button key={n.id} type="button" aria-current={view === n.id ? "page" : undefined} onClick={() => setView(n.id)}
@@ -33,6 +42,11 @@ export function Sidebar() {
       {n.id === "review" && agentCounts.reviewable > 0 && <Badge size="sm" variant="secondary" className="ml-auto">{agentCounts.reviewable}</Badge>}
     </button>
   );
+  // Desktop: isolated settings window. Browser preview has no native windows, so it keeps the in-app view.
+  const openSettingsWindow = () => {
+    if (!inDesktop) return setView("settings");
+    Desktop.openSettings(useUI.getState().settingsSection).catch((error: unknown) => console.warn("Could not open the settings window", error));
+  };
   return (
     <nav aria-label="Applications" className="titlebar-drag flex w-64 max-w-[45vw] shrink-0 flex-col border-r bg-sidebar">
       <div className="titlebar-nodrag flex h-8 shrink-0 items-center gap-1 px-2">
@@ -70,7 +84,7 @@ export function Sidebar() {
         </>}
       </div>
       <div className="titlebar-nodrag flex h-9 shrink-0 items-center gap-1 border-t px-2">
-        <button type="button" onClick={() => setView("settings")} aria-current={view === "settings" ? "page" : undefined} className={cn(row, "flex-1", view === "settings" && "bg-sidebar-accent text-sidebar-accent-foreground")}>
+        <button type="button" onClick={openSettingsWindow} className={cn(row, "flex-1")}>
           <SETTINGS.icon className="size-3.5" />Settings
         </button>
       </div>

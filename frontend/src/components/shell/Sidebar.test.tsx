@@ -17,7 +17,7 @@ describe("sidebar mode tabs", () => {
   it("shows the Code navigation and projects in Code mode, without the bot rail", () => {
     render(<Sidebar />);
     expect(screen.getByRole("tab", { name: "Code" })).toHaveAttribute("aria-selected", "true");
-    expect(screen.getByRole("tab", { name: "Chat" })).toHaveAttribute("aria-selected", "false");
+    expect(screen.getByRole("tab", { name: "Bots" })).toHaveAttribute("aria-selected", "false");
     for (const label of ["Home", "Tasks", "Review", "Issues", "Automations"]) expect(screen.getByRole("button", { name: label })).toBeInTheDocument();
     expect(screen.getByRole("region", { name: "Projects" })).toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "Bot rail" })).toBeNull();
@@ -26,7 +26,7 @@ describe("sidebar mode tabs", () => {
 
   it("switches to the bot rail in Chat mode, replacing navigation and projects", () => {
     render(<Sidebar />);
-    fireEvent.click(screen.getByRole("tab", { name: "Chat" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Bots" }));
     expect(useUI.getState()).toMatchObject({ mode: "chat", view: "chat" });
     expect(screen.getByRole("region", { name: "Bot rail" })).toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "Projects" })).toBeNull();
@@ -39,7 +39,7 @@ describe("sidebar mode tabs", () => {
   it("returns to the last Code view when switching back", () => {
     render(<Sidebar />);
     fireEvent.click(screen.getByRole("button", { name: "Issues" }));
-    fireEvent.click(screen.getByRole("tab", { name: "Chat" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Bots" }));
     fireEvent.click(screen.getByRole("tab", { name: "Code" }));
     expect(useUI.getState()).toMatchObject({ mode: "code", view: "issues" });
     expect(screen.getByRole("button", { name: "Issues" })).toHaveAttribute("aria-current", "page");
@@ -51,7 +51,7 @@ describe("sidebar mode tabs", () => {
     fireEvent.click(screen.getByRole("button", { name: "Settings" }));
     expect(useUI.getState()).toMatchObject({ mode: "chat", view: "settings" });
     expect(screen.getByRole("region", { name: "Bot rail" })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("tab", { name: "Chat" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Bots" }));
     expect(useUI.getState().view).toBe("chat");
   });
 });

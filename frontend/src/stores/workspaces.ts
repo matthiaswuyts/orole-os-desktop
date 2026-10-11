@@ -28,6 +28,7 @@ export const DEFAULT_WIDGETS: WidgetInstance[] = [
   { id: "w-clock", type: "clock", x: 4, y: 0, w: 4, h: 5 },
   { id: "w-setup", type: "setup", x: 8, y: 0, w: 4, h: 5 },
   { id: "w-notes", type: "notes", x: 0, y: 5, w: 6, h: 6 },
+  { id: "w-heat", type: "activity-heatmap", x: 0, y: 11, w: 12, h: 6 },
 ];
 
 interface State {

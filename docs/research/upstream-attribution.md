@@ -122,9 +122,33 @@ daemon can regenerate) and Copy is supplied by the caller so reports copy too. T
 word-reveal simulation is not shipped: replies only ever stream from the daemon. The full MIT
 notice, copyright (c) 2026 AgentbaseAI Inc., is retained in the source header.
 
+### assistant-ui structured and search elements
+
+Source: [assistant-ui/assistant-ui](https://github.com/assistant-ui/assistant-ui/tree/9201447608271c64a8a9ca66c69e81d27a1d9fab),
+commit `9201447608271c64a8a9ca66c69e81d27a1d9fab`, `packages/ui/src/components/react/assistant-ui/`.
+
+| Upstream path (`elements/` unless noted) | Orole path (`frontend/src/components/assistant-ui/`) | Modification |
+|---|---|---|
+| `composer-trigger-popover.aui.tsx` | `elements/composer-trigger-popover.tsx` | `process.env.NODE_ENV` check replaced by `import.meta.env.DEV`; item rows show only the label with an icon (or the bot's avatar when `metadata.avatar` is set), the description line is removed |
+| `directive-text.tsx` | `elements/directive-text.tsx` | added `renderIcon` (a chip's leading visual from the segment, used for bot avatars) and `chipClassName` options |
+| `conversation-search.tsx` | `elements/conversation-search.tsx` | none |
+| `data-table.tsx`, `chart.tsx`, `diagram.tsx`, `flow-graph.tsx`, `math-block.tsx`, `spec-sheet.tsx`, `comparison-card.tsx`, `timeline.tsx`, `job-progress.tsx` | `elements/<same name>.tsx` | none |
+| `../utils/range.ts`, `../utils/href.ts` | `utils/range.ts`, `utils/href.ts` | none |
+
+Only a source header was added to each element; `surfaces.ts` gained named re-exports (`paper`, `field`, `mono`,
+`ghostButton`) so the copied files import them unchanged. The full MIT notice, copyright (c) 2026 AgentbaseAI Inc.,
+is retained in each source header.
+
 The chat view also depends on the MIT-licensed [`@assistant-ui/react`](https://github.com/assistant-ui/assistant-ui)
 package (`useExternalStoreRuntime`, thread, composer, message and action bar primitives) as an
 unmodified npm dependency; nothing from it is copied.
+
+`elements/run-activity.tsx`, `elements/permission-grant.tsx` and `elements/image-generation.tsx` are not copied: they are
+written in Orole's own code from the published element documentation (props, anatomy, lifecycle table) at
+`https://www.assistant-ui.com/elements/{run-activity,permission-grant,image-generation}.md`, with `tool-timeline.tsx`
+extended by step rows that can open into details. Orole deviations: `PermissionGrant` is adapted to a single daemon request
+(`once`/`denied` only unless the request carries more, a `blocked` reason, a details disclosure), `ImageGeneration` omits the
+fixed "1024 × 1024" label, and `RunActivity` rows reuse the timeline step row.
 
 ### beui reasoning range slider
 
@@ -144,10 +168,12 @@ The full MIT notice, copyright (c) 2026 Saurabh Chauhan, is retained in the sour
 Source: [starc007/ui-components](https://github.com/starc007/ui-components/tree/cbc23255f962098a93a2c103d39e11f93b61d059),
 commit `cbc23255f962098a93a2c103d39e11f93b61d059`,
 [`components/agents/image-generation.tsx`](https://raw.githubusercontent.com/starc007/ui-components/cbc23255f962098a93a2c103d39e11f93b61d059/components/agents/image-generation.tsx).
-Adapted path: `frontend/src/features/tasks/TaskImages.tsx`. The image card keeps the
+Adapted path: `frontend/src/features/tasks/TaskImages.tsx`. The image card kept the
 stable status/media/footer composition; Orole connects it to actual provider events and
 daemon-verified raster artifacts. Demo timers, dithered synthetic pixels, unsupported
-resolution/refinement stages, and regeneration controls were not copied.
+resolution/refinement stages, and regeneration controls were not copied. While a generation
+runs, the card now renders the assistant-ui `ImageGeneration` element (see above) instead of
+the former spinner placeholder; the notice below is retained for the composition that remains.
 
 The upstream repository's pinned [`LICENSE`](https://raw.githubusercontent.com/starc007/ui-components/cbc23255f962098a93a2c103d39e11f93b61d059/LICENSE)
 declares MIT, Copyright (c) 2026 Saurabh Chauhan. The full notice:

@@ -135,6 +135,12 @@ func partsOf(res chat.ToolResult, typ string) []chat.MsgPart {
 	return out
 }
 
+// sourced returns one distinct source per sub-question followed by the notes.
+func sourced(q, notes string) []llm.Delta {
+	slug := strings.ToLower(strings.NewReplacer(" ", "-", "?", "").Replace(q))
+	return []llm.Delta{cite("https://"+slug+".example/", q), llmtest.Text(notes)}
+}
+
 func TestResearchEndToEnd(t *testing.T) {
 	sc := &scenario{
 		plan: func(int) []llm.Delta {
@@ -155,7 +161,7 @@ func TestResearchEndToEnd(t *testing.T) {
 		},
 	}
 	h := newHarness(t, sc, searchCaps)
-	res, err := h.call(context.Background(), `{"question":"Compare A, B and C","depth":"quick"}`)
+	res, err := h.call(context.Background(), `{"question":"Compare A, B and C","depth":"quick","include_sources":true}`)
 	if err != nil || res.IsError {
 		t.Fatalf("res = %+v err = %v", res, err)
 	}
@@ -340,7 +346,7 @@ func TestResearchBudgets(t *testing.T) {
 		sc := &scenario{
 			plan: func(int) []llm.Delta { return append(planJSON("Q1"), usage(60, 40)) },
 			worker: func(q string, req llm.Request) []llm.Delta {
-				d := []llm.Delta{llmtest.Text("early notes")}
+				d := sourced(q, "early notes")
 				d = append(d, llmtest.Call("c1", "fetch_url", `{"url":"http://x.example.com/"}`)...)
 				return append(d, usage(700, 100))
 			},
@@ -368,7 +374,7 @@ func TestResearchBudgets(t *testing.T) {
 			plan: func(int) []llm.Delta { return planJSON("Q1") },
 			worker: func(q string, req llm.Request) []llm.Delta {
 				if len(req.Tools) == 0 {
-					return []llm.Delta{llmtest.Text("wrapped up")}
+					return sourced(q, "wrapped up")
 				}
 				return llmtest.Call("c"+q, "fetch_url", `{"url":"http://x.example.com/"}`)
 			},
@@ -418,7 +424,7 @@ func TestResearchWallClockAndCancel(t *testing.T) {
 	sc := &scenario{
 		plan: func(int) []llm.Delta { return planJSON("fast", "slow") },
 		worker: func(q string, req llm.Request) []llm.Delta {
-			return []llm.Delta{llmtest.Text("notes " + q)}
+			return sourced(q, "notes "+q)
 		},
 		synth: func(req llm.Request) []llm.Delta { return []llm.Delta{llmtest.Text("# T\n\nBody.")} },
 	}
@@ -479,7 +485,7 @@ func TestResearchPlanValidation(t *testing.T) {
 				}
 				return planJSON("Q1", "Q2")
 			},
-			worker: func(q string, req llm.Request) []llm.Delta { return []llm.Delta{llmtest.Text("n " + q)} },
+			worker: func(q string, req llm.Request) []llm.Delta { return sourced(q, "n "+q) },
 			synth:  func(llm.Request) []llm.Delta { return []llm.Delta{llmtest.Text("# T\n\nB")} },
 		}
 		h := newHarness(t, sc, searchCaps)
@@ -548,7 +554,7 @@ func TestResearchSynthesisFailureReturnsNotes(t *testing.T) {
 func TestResearchWorkerModel(t *testing.T) {
 	sc := &scenario{
 		plan:   func(int) []llm.Delta { return planJSON("Q1") },
-		worker: func(q string, req llm.Request) []llm.Delta { return []llm.Delta{llmtest.Text("notes")} },
+		worker: func(q string, req llm.Request) []llm.Delta { return sourced(q, "notes") },
 		synth:  func(llm.Request) []llm.Delta { return []llm.Delta{llmtest.Text("# T\n\nB")} },
 	}
 	run := func(t *testing.T, cheapCaps llm.Caps) (main, cheap *llmtest.Fake) {
@@ -620,7 +626,7 @@ func TestResearchNativeSeam(t *testing.T) {
 	h := newHarness(t, sc, llm.Caps{Tools: true, DeepResearch: true})
 	h.tool.Native = fakeNative{}
 	res, err := h.call(context.Background(), `{"question":"q"}`)
-	if err != nil || res.IsError || !strings.Contains(res.Text, "answer for q [1] ") || strings.Contains(res.Text, "[4]") {
+	if err != nil || res.IsError || res.Text != "answer for q [1]" || strings.Contains(res.Text, "[4]") {
 		t.Fatalf("res = %+v err = %v", res, err)
 	}
 	if len(h.fake.Calls()) != 0 {
@@ -645,10 +651,10 @@ func TestResearchArgumentErrors(t *testing.T) {
 	}
 }
 
-func TestResearchHonoursBotDomainSettings(t *testing.T) {
+func TestResearchUsesTheFixedSearchOptions(t *testing.T) {
 	sc := &scenario{
 		plan:   func(int) []llm.Delta { return planJSON("Q1") },
-		worker: func(q string, req llm.Request) []llm.Delta { return []llm.Delta{llmtest.Text("n")} },
+		worker: func(q string, req llm.Request) []llm.Delta { return sourced(q, "n") },
 		synth:  func(llm.Request) []llm.Delta { return []llm.Delta{llmtest.Text("# T\n\nB")} },
 	}
 	h := newHarness(t, sc, searchCaps)
@@ -661,8 +667,151 @@ func TestResearchHonoursBotDomainSettings(t *testing.T) {
 			continue
 		}
 		p := c.Tools[0].Params
-		if c.Tools[0].Hosted != llm.HostedWebSearch || p["max_results"] != 3 || len(p["allowed_domains"].([]string)) != 1 {
+		if c.Tools[0].Hosted != llm.HostedWebSearch || len(p) != 1 || p["max_results"] != 5 {
 			t.Fatalf("search params = %+v", p)
 		}
+	}
+}
+
+func TestResearchPerQuestionSourceAllowance(t *testing.T) {
+	sc := &scenario{
+		plan: func(int) []llm.Delta { return planJSON("Q1", "Q2", "Q3") },
+		worker: func(q string, req llm.Request) []llm.Delta {
+			if req.MaxHostedToolCalls > 2 {
+				t.Errorf("hosted calls %d exceed the worker allowance 2", req.MaxHostedToolCalls)
+			}
+			slug := strings.ToLower(q)
+			var d []llm.Delta
+			for i := range 10 { // a hosted search can return many citations in one call
+				d = append(d, cite("https://"+slug+".example/"+string(rune('a'+i)), q))
+			}
+			return append(d, llmtest.Text("notes "+q))
+		},
+		synth: func(llm.Request) []llm.Delta { return []llm.Delta{llmtest.Text("# T\n\nBody.")} },
+	}
+	h := newHarness(t, sc, searchCaps)
+	h.tool.Presets = map[string]Budget{DepthStandard: {SubQuestions: 3, WorkerSteps: 3, MaxSources: 6, MaxTokens: 1 << 30, WallClock: time.Minute, SynthTokens: 100}}
+	res, err := h.call(context.Background(), `{"question":"q"}`)
+	if err != nil || res.IsError {
+		t.Fatalf("res = %+v err = %v", res, err)
+	}
+	if n := len(partsOf(res, chat.PartCitation)); n != 6 {
+		t.Fatalf("sources = %d, want 6", n)
+	}
+	for _, id := range []string{"research:q1", "research:q2", "research:q3"} {
+		rows := h.emitted(id)
+		last := rows[len(rows)-1]
+		if last.Status != "done" || !strings.Contains(last.Summary, "(2 sources)") {
+			t.Errorf("%s must end done with its own allowance of 2: %+v", id, last)
+		}
+	}
+	if strings.Contains(res.Text, "> Note") {
+		t.Fatalf("a per-question cap is not a partial run: %s", res.Text)
+	}
+}
+
+func TestResearchUnsourcedNotesAreDiscarded(t *testing.T) {
+	var synthInput string
+	sc := &scenario{
+		plan: func(int) []llm.Delta { return planJSON("Q1", "Q2") },
+		worker: func(q string, req llm.Request) []llm.Delta {
+			if q == "Q1" {
+				return []llm.Delta{llmtest.Text("from prior knowledge, no searches performed")}
+			}
+			return sourced(q, "real notes")
+		},
+		synth: func(req llm.Request) []llm.Delta {
+			synthInput = req.Messages[0].Parts[0].Text
+			return []llm.Delta{llmtest.Text("# T\n\nBody [1].")}
+		},
+	}
+	h := newHarness(t, sc, searchCaps)
+	res, err := h.call(context.Background(), `{"question":"q"}`)
+	if err != nil || res.IsError {
+		t.Fatalf("res = %+v err = %v", res, err)
+	}
+	if strings.Contains(synthInput, "prior knowledge") || !strings.Contains(synthInput, "Sub-question 1: Q1\n(no notes were gathered)") || !strings.Contains(synthInput, "real notes") {
+		t.Fatalf("synthesis input:\n%s", synthInput)
+	}
+	if rows := h.emitted("research:q1"); rows[len(rows)-1].Status != "error" {
+		t.Fatalf("an unsourced worker must show as failed: %+v", rows)
+	}
+	if rows := h.emitted("research:q2"); rows[len(rows)-1].Status != "done" {
+		t.Fatalf("q2 rows = %+v", rows)
+	}
+}
+
+func TestAssembleSourcesOnRequest(t *testing.T) {
+	rep := Report{Title: "T", Markdown: "Body [1].", Sources: []Source{{URL: "https://a.example/", Title: "A"}, {URL: "https://b.example/"}}}
+	without := assemble(rep, "", false)
+	if strings.Contains(without.Text, "## Sources") || without.Text != "Body [1]." {
+		t.Fatalf("default text = %q", without.Text)
+	}
+	if n := len(partsOf(without, chat.PartCitation)); n != 2 {
+		t.Fatalf("citation parts = %d, want 2 even without the list", n)
+	}
+	with := assemble(rep, "", true)
+	for _, want := range []string{"## Sources", "1. A - https://a.example/", "2. https://b.example/ - https://b.example/"} {
+		if !strings.Contains(with.Text, want) {
+			t.Errorf("%q missing from %q", want, with.Text)
+		}
+	}
+	if n := len(partsOf(with, chat.PartCitation)); n != 2 {
+		t.Fatalf("citation parts = %d", n)
+	}
+}
+
+func TestResearchSpecDepthGuidance(t *testing.T) {
+	bot := chat.Bot{Config: chat.BotConfig{Tools: []chat.BotTool{{ID: chat.ToolResearch}}}}
+	specs := (&Research{}).Specs(bot, searchCaps)
+	if len(specs) != 1 {
+		t.Fatalf("specs = %+v", specs)
+	}
+	for _, want := range []string{"use quick when", "brief", "include_sources"} {
+		if !strings.Contains(specs[0].Description+string(specs[0].Schema), want) {
+			t.Errorf("%q missing from the spec", want)
+		}
+	}
+}
+
+func TestTrimTruncated(t *testing.T) {
+	for _, c := range []struct{ in, want string }{
+		{"One. Two is cut o", "One."},
+		{"Done sentence (see https://a.example/x). Next one is", "Done sentence (see https://a.example/x)."},
+		{"Para one.\n\nPara two dangling", "Para one."},
+		{"Complete.", "Complete."},
+		{"Fine.\n```go\nx := 1", "Fine."},
+		{"nothing complete here", ""},
+	} {
+		if got := trimTruncated(c.in); got != c.want {
+			t.Errorf("trimTruncated(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+func lengthStop() llm.Delta { return llm.Delta{Kind: llm.DeltaStop, Stop: llm.StopLength} }
+
+func TestResearchTruncatedOutputIsTrimmed(t *testing.T) {
+	var synthInput string
+	sc := &scenario{
+		plan: func(int) []llm.Delta { return planJSON("Q1") },
+		worker: func(q string, req llm.Request) []llm.Delta {
+			return append(sourced(q, "Server A is fast (https://q1.example/). The note on server B was cu"), lengthStop())
+		},
+		synth: func(req llm.Request) []llm.Delta {
+			synthInput = req.Messages[0].Parts[0].Text
+			return []llm.Delta{llmtest.Text("# T\n\nAll good [1]. Logprobs are"), lengthStop()}
+		},
+	}
+	h := newHarness(t, sc, searchCaps)
+	res, err := h.call(context.Background(), `{"question":"q"}`)
+	if err != nil || res.IsError {
+		t.Fatalf("res = %+v err = %v", res, err)
+	}
+	if !strings.Contains(synthInput, "Server A is fast (https://q1.example/).") || strings.Contains(synthInput, "was cu") {
+		t.Fatalf("worker notes must end at a complete sentence:\n%s", synthInput)
+	}
+	if strings.Contains(res.Text, "Logprobs") || !strings.Contains(res.Text, "All good [1].") || !strings.Contains(res.Text, "shortened") {
+		t.Fatalf("report must be trimmed with one short note:\n%s", res.Text)
 	}
 }

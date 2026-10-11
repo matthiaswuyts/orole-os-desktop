@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -64,6 +65,14 @@ type Manager struct {
 	conns    map[string]*conn
 	flows    map[string]*authFlow
 	sessions map[string]*authSession
+
+	gen        atomic.Uint64 // see Generation
+	statusMu   sync.Mutex
+	lastStatus map[string]ServerState // last published mcp.status per server
+
+	permMu    sync.RWMutex
+	perms     map[string]map[string]string // server id -> tool -> decision (see permissions)
+	permEpoch uint64
 }
 
 // New builds a Manager. Call Start to load persisted servers and connect.
@@ -82,7 +91,8 @@ func New(o Options) *Manager {
 		version:     o.Version,
 		backoffBase: or(o.BackoffBase, time.Second), backoffMax: or(o.BackoffMax, time.Minute),
 		connectTimeout: or(o.ConnectTimeout, 30*time.Second), callTimeout: or(o.CallTimeout, 60*time.Second),
-		conns: map[string]*conn{}, flows: map[string]*authFlow{}, sessions: map[string]*authSession{}}
+		conns: map[string]*conn{}, flows: map[string]*authFlow{}, sessions: map[string]*authSession{},
+		lastStatus: map[string]ServerState{}, perms: map[string]map[string]string{}}
 	return m
 }
 
@@ -165,7 +175,12 @@ func (m *Manager) conn(id string) (*conn, error) {
 	return c, nil
 }
 
+// server returns a server's configuration. A live connection holds the current copy, so the
+// registry is only queried for servers without one.
 func (m *Manager) server(ctx context.Context, id string) (ServerConfig, error) {
+	if c, err := m.conn(id); err == nil {
+		return c.config(), nil
+	}
 	return m.dbGetServer(ctx, id)
 }
 
@@ -313,7 +328,7 @@ func (m *Manager) Add(ctx context.Context, p AddParams) (ServerState, error) {
 	m.mu.Unlock()
 	c.start()
 	st := m.state(cfg)
-	m.publish("mcp.status", st)
+	m.publishStatus(st, false)
 	return st, nil
 }
 
@@ -376,7 +391,7 @@ func (m *Manager) Update(ctx context.Context, id string, p UpdateParams) (Server
 		}
 	}
 	st := m.state(cfg)
-	m.publish("mcp.status", st)
+	m.publishStatus(st, false)
 	return st, nil
 }
 
@@ -396,12 +411,13 @@ func (m *Manager) Remove(ctx context.Context, id string) error {
 	if _, err := m.db.ExecContext(ctx, `DELETE FROM mcp_servers WHERE id=?`, id); err != nil {
 		return err
 	}
+	m.invalidatePermissions(id)
 	err := m.authSession(id).Clear()
 	m.mu.Lock()
 	delete(m.sessions, id)
 	m.mu.Unlock()
 	m.audit("mcp.server.remove", "mcp/"+id, "allowed", "")
-	m.publish("mcp.removed", map[string]string{"id": id})
+	m.publishRemoved(id)
 	return err
 }
 
@@ -427,7 +443,7 @@ func (m *Manager) SetEnabled(ctx context.Context, id string, enabled bool) (Serv
 	}
 	m.audit("mcp.server.enable", "mcp/"+id, "allowed", fmt.Sprint(enabled))
 	st := m.state(cfg)
-	m.publish("mcp.status", st)
+	m.publishStatus(st, false)
 	return st, nil
 }
 
@@ -460,7 +476,7 @@ func (m *Manager) SignOut(ctx context.Context, id string) error {
 		c.reconnect()
 	}
 	m.audit("mcp.auth.signout", "mcp/"+id, "allowed", "")
-	m.publish("mcp.status", m.state(cfg))
+	m.publishStatus(m.state(cfg), false)
 	return nil
 }
 
@@ -498,15 +514,26 @@ func (m *Manager) Tools(ctx context.Context, id string) ([]ToolInfo, error) {
 	return cat.Tools, nil
 }
 
-// Catalog returns the live catalog if connected, else the SQLite cache (possibly empty).
+// Catalog returns the live catalog if connected, else the SQLite cache (possibly empty), with the
+// stored per-tool permissions merged in.
 func (m *Manager) Catalog(ctx context.Context, id string) (*Catalog, error) {
-	if _, err := m.dbGetServer(ctx, id); err != nil {
+	cat, err := m.baseCatalog(ctx, id)
+	if err != nil {
 		return nil, err
 	}
-	if c, err := m.conn(id); err == nil {
-		if _, cat := c.live(); cat != nil {
-			return m.withPermissions(ctx, cat)
+	return m.withPermissions(ctx, cat)
+}
+
+// baseCatalog is Catalog without permissions: the returned catalog is shared and immutable.
+func (m *Manager) baseCatalog(ctx context.Context, id string) (*Catalog, error) {
+	c, err := m.conn(id)
+	if err != nil {
+		// No connection: only a registered server may be answered from the SQLite cache.
+		if _, err := m.dbGetServer(ctx, id); err != nil {
+			return nil, err
 		}
+	} else if _, cat := c.live(); cat != nil {
+		return cat, nil
 	}
 	cat, err := m.loadCatalog(id)
 	if err != nil {
@@ -515,12 +542,12 @@ func (m *Manager) Catalog(ctx context.Context, id string) (*Catalog, error) {
 	if cat == nil {
 		cat = &Catalog{ServerID: id, Tools: []ToolInfo{}, Resources: []ResourceInfo{}, Prompts: []PromptInfo{}}
 	}
-	return m.withPermissions(ctx, cat)
+	return cat, nil
 }
 
 // Copy only the mutable permission-bearing slice; cached metadata remains immutable.
 func (m *Manager) withPermissions(ctx context.Context, cat *Catalog) (*Catalog, error) {
-	perms, err := m.ToolPermissions(ctx, cat.ServerID)
+	perms, err := m.permissions(ctx, cat.ServerID)
 	if err != nil {
 		return nil, err
 	}
