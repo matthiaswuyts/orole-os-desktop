@@ -69,7 +69,9 @@ keycaps and sidebar tooltip; its runtime error buffer was empty.
 while `components/shell/StartupScreen.tsx` gates the shell. The centered ASCII bar follows
 the classic `[====>   ]` style from [ascii.rest/progress-bar](https://ascii.rest/progress-bar/),
 but uses actual settled startup checks, not the upstream demo's timed simulated percentages.
-Preferences, workspaces, tasks and the first daemon connection result each account for 25%.
+Preferences, workspaces and the first daemon connection result each account for a third. Tasks are not a
+check: `Agents.list` returns every session, so the task list loads while the shell opens and each view
+that shows tasks has its own loading state.
 Failed requests count as checked and retain their store errors; offline startup can reach the app.
 Preview mode skips daemon/task work through the existing preview states. The real 100% state
 paints before handoff, without a minimum-duration timer. Once opened, subsequent refreshes

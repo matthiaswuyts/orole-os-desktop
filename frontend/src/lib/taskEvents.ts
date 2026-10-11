@@ -124,18 +124,30 @@ export function parseTurnDone(ev: AgentEvent): TurnDone {
   return { ok: d.ok !== false, result: str(d.result) || ev.text };
 }
 
-/** Merges one event into an id-sorted list; an already-known id is ignored. */
+const FEED_KIND: Record<string, true> = Object.fromEntries(FEED_KINDS.map((kind) => [kind, true]));
+
+/** Merges one event into an id-sorted list; an already-known id is ignored. Appending the newest event is O(1) to locate; anything older binary-searches. */
 export function mergeEvent(list: AgentEvent[], ev: AgentEvent): AgentEvent[] {
-  if (!FEED_KINDS.includes(ev.kind) || list.some((x) => x.id === ev.id)) return list;
+  if (!FEED_KIND[ev.kind]) return list;
   const last = list[list.length - 1];
-  return !last || last.id < ev.id ? [...list, ev] : [...list, ev].sort((a, b) => a.id - b.id);
+  if (!last || last.id < ev.id) return [...list, ev];
+  let lo = 0, hi = list.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >>> 1;
+    if (list[mid]!.id < ev.id) lo = mid + 1; else hi = mid;
+  }
+  if (list[lo]!.id === ev.id) return list;
+  return [...list.slice(0, lo), ev, ...list.slice(lo)];
 }
 
-/** Merges loaded history with events that arrived while it loaded. */
+/** Merges loaded history with events that arrived while it loaded; on a repeated id the later event wins. */
 export function mergeHistory(history: AgentEvent[], extra: AgentEvent[]): AgentEvent[] {
   const all = new Map<number, AgentEvent>();
-  for (const ev of [...history, ...extra]) if (FEED_KINDS.includes(ev.kind)) all.set(ev.id, ev);
-  return [...all.values()].sort((a, b) => a.id - b.id);
+  for (const ev of history) if (FEED_KIND[ev.kind]) all.set(ev.id, ev);
+  for (const ev of extra) if (FEED_KIND[ev.kind]) all.set(ev.id, ev);
+  const merged = [...all.values()];
+  for (let i = 1; i < merged.length; i++) if (merged[i - 1]!.id > merged[i]!.id) return merged.sort((a, b) => a.id - b.id);
+  return merged;
 }
 
 export interface GroupOptions {
@@ -171,10 +183,15 @@ export function groupEvents(events: AgentEvent[], options: GroupOptions = { live
     else items[index] = { ...item, key: items[index]!.key, at: items[index]!.at };
   };
   const legacyOpen: number[] = []; // legacy calls still waiting for a result, oldest first
+  const running: number[] = []; // indexes of tool items announced as running; settled when a turn ends
   let turnStart: number | null = null;
 
   const settleOpen = () => {
-    for (const [i, item] of items.entries()) if (item.type === "tool" && item.call.status === "running") items[i] = { ...item, call: { ...item.call, status: "unknown" } };
+    for (const i of running) {
+      const item = items[i];
+      if (item?.type === "tool" && item.call.status === "running") items[i] = { ...item, call: { ...item.call, status: "unknown" } };
+    }
+    running.length = 0;
     legacyOpen.length = 0;
   };
 
@@ -206,6 +223,7 @@ export function groupEvents(events: AgentEvent[], options: GroupOptions = { live
         }
         if (call.linked) toolAt.set(call.id, items.length);
         else if (call.status === "running") legacyOpen.push(items.length);
+        if (call.status === "running") running.push(items.length);
         items.push({ type: "tool", key, at: ev.at, call });
         break;
       }
@@ -304,6 +322,53 @@ export function groupEvents(events: AgentEvent[], options: GroupOptions = { live
   }
   if (!options.live) settleOpen();
   return items;
+}
+
+function sameValue(a: unknown, b: unknown): boolean {
+  if (Object.is(a, b)) return true;
+  if (Array.isArray(a)) return Array.isArray(b) && a.length === b.length && a.every((x, i) => sameValue(x, b[i]));
+  if (!isRecord(a) || !isRecord(b)) return false;
+  const keys = Object.keys(a);
+  return keys.length === Object.keys(b).length && keys.every((k) => k in b && sameValue(a[k], b[k]));
+}
+
+/**
+ * Reuses the item objects of `previous` wherever the regrouped `next` holds the same content (matched by
+ * key), so memoized rows skip rendering for every item an incoming event did not touch. `groupEvents`
+ * rebuilds every item, and its leaves (text, tool input) keep the identity of the event they came from,
+ * so unchanged items compare equal in a few reference checks.
+ */
+export function shareItems(previous: FeedItem[], next: FeedItem[]): FeedItem[] {
+  if (!previous.length) return next;
+  const before = new Map<string, FeedItem>();
+  for (const item of previous) before.set(item.key, item);
+  for (let i = 0; i < next.length; i++) {
+    const prior = before.get(next[i]!.key);
+    if (prior && sameValue(prior, next[i])) next[i] = prior;
+  }
+  // An event that changes nothing visible (usage, a repeated announcement) keeps the whole list.
+  return next.length === previous.length && next.every((item, i) => item === previous[i]) ? previous : next;
+}
+
+const sameList = (a: readonly FeedItem[], b: readonly FeedItem[]) => a.length === b.length && a.every((item, i) => item === b[i]);
+
+/**
+ * Reuses the entry objects of `previous` wherever the regrouped `next` holds the same items (matched by key), so memoized
+ * feed rows skip rendering for every turn an incoming event did not touch. Items already keep their identity through `shareItems`.
+ */
+export function shareEntries(previous: readonly TurnEntry[], next: TurnEntry[]): TurnEntry[] {
+  if (!previous.length) return next;
+  const before = new Map<string, TurnEntry>();
+  for (const entry of previous) before.set(entry.key, entry);
+  for (let i = 0; i < next.length; i++) {
+    const entry = next[i]!, prior = before.get(entry.key);
+    if (!prior || prior.at !== entry.at) continue;
+    const same = prior.type === "item"
+      ? entry.type === "item" && prior.item === entry.item
+      : entry.type === "run" && prior.status === entry.status && prior.durationMs === entry.durationMs && sameList(prior.steps, entry.steps) && sameList(prior.attention, entry.attention) && sameList(prior.answer, entry.answer);
+    if (same) next[i] = prior;
+  }
+  return next.length === previous.length && next.every((entry, i) => entry === previous[i]) ? (previous as TurnEntry[]) : next;
 }
 
 /** What the agent is doing right now, from Session.activity, for the live indicator under the feed. */

@@ -64,6 +64,16 @@ notes. See `docs/development/updates.md`.
   time. A failed summary is retried with a growing backoff instead of on every message.
 - Sending, regenerating, clearing and delegating no longer hold the chat manager's global lock during
   database work.
+- MCP gateway and bot tools no longer rebuild the tool index, re-query permissions or re-derive
+  schemas on every call: the index is cached until a server is added, edited, enabled, disabled,
+  removed, changes status or changes its tools. `gateway.tools` carries an ETag so the gateway
+  process skips unchanged lists, and `mcp.status` is published only when a server's state changes.
+- Automations: finished runs and their journal are now pruned (30 days and 500 runs per automation by
+  default; `retentionDays` and `retentionMaxRuns` in the automations config, no settings UI yet).
+  Queued, running and waiting-approval runs are never removed.
+- Automations: run updates, queue scheduling and event dispatch no longer reload runs and definitions
+  from SQLite for every step or event; the scheduler uses one timer that event bursts cannot postpone,
+  and the webhook secret is read from the credential store once instead of per request.
 - Agents: live sessions no longer write to SQLite on every event under the global lock. Hot-path
   changes are debounced per session and published as small `agents.delta` updates, events are
   inserted in batches, `agents.list` is paged, diff statistics use `git diff --numstat` coalesced
@@ -138,6 +148,17 @@ notes. See `docs/development/updates.md`.
   only while a view that shows them is open (cached for a minute), not on every project reload.
 - Daemon health polling no longer notifies the UI when the status is unchanged, and the status bar,
   sidebar and shell subscribe to the fields they show, so the 5 second poll does not re-render them.
+- Tasks: a streaming agent no longer re-renders the whole task feed. Events are grouped once for the feed and
+  the canvas, unchanged messages and turns skip rendering, and conversations over 60 entries (messages and
+  assistant turns) render only the entries near the viewport (search, "Load earlier" and following the newest
+  message keep working).
+- Tasks board: a session update re-renders only its own card, counts are computed in one pass, and only live
+  sessions tick their elapsed time (a finished task now shows how long it ran, not time since it started).
+- Task changes (diff) in Review and issue workflows refresh at most once every two seconds, never overlap, and
+  keep showing the previous diff while refreshing.
+- Startup no longer waits for the full task list; the Tasks view and Home activity show their own loading state.
+- Home activity calendar no longer rebuilds or reformats its 365 days on hover or on every session update.
+- Terminal: faster output decoding, and changing the font size no longer recreates the terminal.
 
 ### Fixed
 - A model stream that goes silent for 90 seconds is cancelled with a clear error instead of hanging.

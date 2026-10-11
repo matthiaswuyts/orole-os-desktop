@@ -6,14 +6,20 @@ import { Button } from "@/components/ui/button";
 const PIN_SLACK = 48;
 interface Anchor { element: HTMLElement; key: string; offset: number }
 
-/** Real-content anchoring: resizing above the reader never turns into a jump to the end. */
-export function useScrollAnchor(revision: unknown, updateIds: readonly number[]) {
+/**
+ * Real-content anchoring: resizing above the reader never turns into a jump to the end. `locate` gives the
+ * offset of a row inside the scroll viewport's content for lists that do not render every row.
+ */
+export function useScrollAnchor(revision: unknown, updateIds: readonly number[], locate?: (key: string) => number | undefined) {
   const viewport = useRef<HTMLDivElement>(null);
   const content = useRef<HTMLDivElement>(null);
   const following = useRef(true);
   const anchor = useRef<Anchor | null>(null);
   const lastTop = useRef(0);
+  const lastHeight = useRef(0);
   const newest = useRef<number | null>(null);
+  const locateRef = useRef(locate);
+  useLayoutEffect(() => { locateRef.current = locate; });
   const [away, setAway] = useState(false);
   const [unseen, setUnseen] = useState(0);
 
@@ -21,10 +27,13 @@ export function useScrollAnchor(revision: unknown, updateIds: readonly number[])
     const el = viewport.current;
     if (!el) return;
     const top = el.getBoundingClientRect().top;
-    const elements = content.current?.querySelectorAll<HTMLElement>("[data-scroll-anchor]");
-    const visible = elements && Array.from(elements).find((row) => row.getBoundingClientRect().bottom > top);
+    const rows = Array.from(content.current?.querySelectorAll<HTMLElement>("[data-scroll-anchor]") ?? []);
+    const bottom = top + el.clientHeight;
+    // Prefer the first row that starts inside the viewport: a row cut off at the top may itself resize (a windowed list measures rows as they render) without moving what the reader sees below it.
+    const visible = rows.find((row) => { const start = row.getBoundingClientRect().top; return start >= top - 0.5 && start < bottom; }) ?? rows.find((row) => row.getBoundingClientRect().bottom > top);
     anchor.current = visible ? { element: visible, key: visible.dataset.scrollAnchor!, offset: visible.getBoundingClientRect().top - top } : null;
     lastTop.current = el.scrollTop;
+    lastHeight.current = el.scrollHeight;
   }, []);
 
   const pause = useCallback(() => {
@@ -39,6 +48,12 @@ export function useScrollAnchor(revision: unknown, updateIds: readonly number[])
     if (following.current) el.scrollTop = el.scrollHeight;
     else if (anchor.current) {
       const row = anchor.current.element.isConnected ? anchor.current.element : Array.from(content.current?.querySelectorAll<HTMLElement>("[data-scroll-anchor]") ?? []).find((item) => item.dataset.scrollAnchor === anchor.current!.key);
+      if (!row) {
+        // A windowed list does not render a row that moved far away (older history was prepended): scroll to where its list puts it.
+        // The anchor stays, so the next settle aligns the row exactly once it renders.
+        const start = locateRef.current?.(anchor.current.key);
+        if (start !== undefined) { el.scrollTop = start - anchor.current.offset; lastTop.current = el.scrollTop; return; }
+      }
       const delta = row ? row.getBoundingClientRect().top - el.getBoundingClientRect().top - anchor.current.offset : 0;
       if (Math.abs(delta) > 0.5) el.scrollTop += delta;
     }
@@ -72,7 +87,8 @@ export function useScrollAnchor(revision: unknown, updateIds: readonly number[])
     if (!el) return;
     // Ignore scroll events caused by our own anchor correction or explicit reveal.
     if (Math.abs(el.scrollTop - lastTop.current) < 0.5) return;
-    const movedUp = el.scrollTop < lastTop.current - 1;
+    // A shorter document clamps scrollTop by itself (virtual rows measured smaller than estimated); the reader did not scroll up.
+    const movedUp = el.scrollTop < lastTop.current - 1 && el.scrollHeight >= lastHeight.current - 0.5;
     if (movedUp) following.current = false;
     else if (el.scrollHeight - el.scrollTop - el.clientHeight < PIN_SLACK) following.current = true;
     setAway(!following.current);

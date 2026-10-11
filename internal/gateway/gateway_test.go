@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -16,18 +17,28 @@ import (
 )
 
 type fakeBackend struct {
-	mu     sync.Mutex
-	tools  []Tool
-	calls  []string
-	args   []json.RawMessage
-	result *mcp.CallResult
-	err    error
+	mu          sync.Mutex
+	tools       []Tool
+	version     int // bumped by setTools: the fake's ETag
+	toolCalls   int
+	notModified int
+	calls       []string
+	args        []json.RawMessage
+	result      *mcp.CallResult
+	err         error
 }
 
-func (f *fakeBackend) Tools(context.Context) ([]Tool, error) {
+// Tools answers like the daemon: NotModified when the caller already holds the current ETag.
+func (f *fakeBackend) Tools(_ context.Context, etag string) (ToolList, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return append([]Tool(nil), f.tools...), nil
+	f.toolCalls++
+	cur := fmt.Sprintf("v%d", f.version)
+	if etag != "" && etag == cur {
+		f.notModified++
+		return ToolList{ETag: cur, NotModified: true}, nil
+	}
+	return ToolList{ETag: cur, Tools: append([]Tool(nil), f.tools...)}, nil
 }
 
 func (f *fakeBackend) Call(_ context.Context, name string, args json.RawMessage) (*mcp.CallResult, error) {
@@ -58,6 +69,7 @@ func (f *fakeBackend) Skill(_ context.Context, name, file string) (SkillContent,
 func (f *fakeBackend) setTools(t ...Tool) {
 	f.mu.Lock()
 	f.tools = t
+	f.version++
 	f.mu.Unlock()
 }
 
@@ -308,4 +320,39 @@ func TestNaming(t *testing.T) {
 	if got := ServerSlug(strings.Repeat("ab ", 20)); len(got) > 24 || strings.HasSuffix(got, "_") {
 		t.Errorf("slug = %q", got)
 	}
+}
+
+// The server asks conditionally: an unchanged daemon list costs no tool bodies and no
+// re-registration, and a changed one is picked up again.
+func TestRefreshIsConditionalOnTheDaemonETag(t *testing.T) {
+	b := &fakeBackend{tools: []Tool{echoTool()}}
+	r := start(t, b)
+	r.waitTool(t, "notes__echo", true)
+	read := func() (calls, notModified int) {
+		b.mu.Lock()
+		defer b.mu.Unlock()
+		return b.toolCalls, b.notModified
+	}
+	wait := func(cond func() bool, what string) {
+		t.Helper()
+		for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
+			if cond() {
+				return
+			}
+		}
+		t.Fatal(what)
+	}
+	_, nm0 := read()
+	for i := 1; i <= 3; i++ {
+		r.refresh <- struct{}{}
+		wait(func() bool { _, nm := read(); return nm == nm0+i }, "unchanged refresh was not answered NotModified")
+	}
+	// A real change is not masked by the held ETag.
+	b.setTools(echoTool(), Tool{Name: "git__status", Server: "git", InputSchema: json.RawMessage(`{"type":"object"}`)})
+	r.refresh <- struct{}{}
+	r.waitTool(t, "git__status", true)
+	// ...and once reconciled, the new ETag is held again.
+	_, nm1 := read()
+	r.refresh <- struct{}{}
+	wait(func() bool { _, nm := read(); return nm == nm1+1 }, "refresh after a change was not answered NotModified")
 }

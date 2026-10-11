@@ -141,8 +141,8 @@ func (m *Manager) touchAuthExpiry(id string, exp time.Time) {
 	_, _ = m.db.Exec(`UPDATE mcp_auth_state SET access_expires_at=? WHERE server_id=?`, exp.Unix(), id)
 }
 
-// ToolPermissions returns the stored per-tool decisions for a server.
-func (m *Manager) ToolPermissions(ctx context.Context, id string) (map[string]string, error) {
+// loadToolPermissions reads the stored per-tool decisions of a server from SQLite.
+func (m *Manager) loadToolPermissions(ctx context.Context, id string) (map[string]string, error) {
 	rows, err := m.db.QueryContext(ctx, `SELECT tool,decision FROM mcp_permissions WHERE server_id=?`, id)
 	if err != nil {
 		return nil, err
@@ -169,12 +169,14 @@ func (m *Manager) SetToolPermission(ctx context.Context, id, tool, decision stri
 	}
 	if decision == "" {
 		_, err := m.db.ExecContext(ctx, `DELETE FROM mcp_permissions WHERE server_id=? AND tool=?`, id, tool)
+		m.invalidatePermissions(id)
 		return err
 	}
 	if decision != "allow" && decision != "ask" && decision != "deny" {
 		return ErrBadRequest
 	}
 	_, err := m.db.ExecContext(ctx, `INSERT INTO mcp_permissions(server_id,tool,decision) VALUES(?,?,?) ON CONFLICT(server_id,tool) DO UPDATE SET decision=excluded.decision`, id, tool, decision)
+	m.invalidatePermissions(id)
 	if err == nil {
 		m.audit("mcp.permission.set", "mcp/"+id+"/"+tool, "allowed", decision)
 	}
