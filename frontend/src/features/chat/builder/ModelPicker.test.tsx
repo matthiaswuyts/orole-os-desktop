@@ -65,6 +65,63 @@ describe("provider chooser", () => {
     expect(useUI.getState().settingsSection).toBe("ai");
   });
 
+  it("offers the company filter for All and for an aggregator, not for a single-vendor account", () => {
+    useLLM.setState({ models: {
+      openrouter: { models: [model("anthropic/claude-x", { name: "Claude X" }), model("openai/gpt-x", { name: "GPT X" })], loading: false, error: null },
+      claude: { models: [model("sonnet", { name: "Claude Sonnet" }), model("opus", { name: "Claude Opus" })], loading: false, error: null },
+    } });
+    render(<Harness selected="claude/sonnet" onPick={() => {}} />);
+    fireEvent.click(screen.getByRole("button", { name: /Claude Sonnet/ }));
+    const group = screen.getByRole("radiogroup", { name: "Provider" });
+    expect(screen.getByRole("group", { name: "Filter by company" })).toBeInTheDocument();
+    fireEvent.click(within(group).getByRole("radio", { name: /Claude.*Your account/ }));
+    expect(screen.queryByRole("group", { name: "Filter by company" })).toBeNull();
+    fireEvent.click(within(group).getByRole("radio", { name: /OpenRouter/ }));
+    const companies = screen.getByRole("group", { name: "Filter by company" });
+    fireEvent.click(within(companies).getByRole("button", { name: /OpenAI/ }));
+    expect(screen.getAllByRole("option")).toHaveLength(1);
+    expect(screen.getAllByRole("option")[0]).toHaveTextContent("GPT X");
+  });
+
+  it("shows only handpicked models under All but every model once a provider is chosen", () => {
+    useLLM.setState({ models: {
+      openrouter: { models: [model("anthropic/claude-opus-5-5", { name: "Claude Opus 5.5" }), model("acme/obscure-7b", { name: "Obscure 7B" }), model("acme/other-3b", { name: "Other 3B" })], loading: false, error: null },
+      claude: { models: [model("sonnet", { name: "Claude Sonnet" })], loading: false, error: null },
+    } });
+    render(<Harness selected="claude/sonnet" onPick={() => {}} />);
+    fireEvent.click(screen.getByRole("button", { name: /Claude Sonnet/ }));
+    expect(screen.queryByText("Obscure 7B")).toBeNull();
+    fireEvent.click(within(screen.getByRole("radiogroup", { name: "Provider" })).getByRole("radio", { name: /OpenRouter/ }));
+    expect(screen.getAllByRole("option")).toHaveLength(3);
+    expect(screen.getByText("Obscure 7B")).toBeInTheDocument();
+    // Searching under All reaches every model too.
+    fireEvent.click(within(screen.getByRole("radiogroup", { name: "Provider" })).getByRole("radio", { name: /All/ }));
+    fireEvent.change(screen.getByRole("combobox", { name: "Search models" }), { target: { value: "other" } });
+    expect(screen.getByText("Other 3B")).toBeInTheDocument();
+  });
+
+  it("marks the keyboard position only: no row looks selected until the arrow keys are used", () => {
+    render(<Harness selected="openrouter/acme/alpha" onPick={() => {}} />);
+    fireEvent.click(screen.getByRole("button", { name: /Alpha/ }));
+    const ring = () => document.querySelectorAll("[role=option].ring-1").length;
+    expect(ring()).toBe(0);
+    fireEvent.keyDown(screen.getByRole("combobox", { name: "Search models" }), { key: "ArrowDown" });
+    expect(ring()).toBe(1);
+  });
+
+  it("never lists a Use default entry, and shows the model a bot without one really runs on", () => {
+    useLLM.setState({ defaults: { chatModel: "claude/sonnet", memoryModel: "" } });
+    render(<Harness selected="" onPick={() => {}} />);
+    expect(screen.getByRole("button", { name: /Claude Sonnet/ })).toHaveTextContent("via Claude account");
+    fireEvent.click(screen.getByRole("button", { name: /Claude Sonnet/ }));
+    expect(screen.queryByText(/default/i)).toBeNull();
+  });
+
+  it("asks for a model when there is neither a choice nor a default", () => {
+    render(<Harness selected="" onPick={() => {}} />);
+    expect(screen.getByRole("button", { name: /Choose a model/ })).toBeInTheDocument();
+  });
+
   it("has no chooser when only one provider is connected", () => {
     useLLM.setState({ providers: [provider()] });
     render(<Harness selected="openrouter/acme/alpha" onPick={() => {}} />);

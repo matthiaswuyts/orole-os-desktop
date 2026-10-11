@@ -19,7 +19,7 @@ const ALL = "all";
 export function ProviderTabs({ choices, value, onChange, total }: { choices: readonly ProviderChoice[]; value: string; onChange: (id: string) => void; total: number }) {
   return (
     <div role="radiogroup" aria-label="Provider" className="flex flex-wrap gap-1.5 px-2 pb-2">
-      <Tile label="All" caption={`${total} models`} selected={value === ALL} onSelect={() => onChange(ALL)} />
+      <Tile label="All" caption={`${total} top picks`} selected={value === ALL} onSelect={() => onChange(ALL)} />
       {choices.map((c) => (
         <Tile key={c.id} label={c.name} caption={c.kind === "account" ? "Your account" : "API key"} selected={value === c.id} onSelect={() => onChange(c.id)}
           logo={<ProviderLogo id={c.id} name={c.name} className="size-7 rounded-md" />} />
