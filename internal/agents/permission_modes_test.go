@@ -117,12 +117,10 @@ func TestSetPermissionModeSwitchesLiveClaude(t *testing.T) {
 		t.Fatalf("switches must be audited: %v", e.rec.audits)
 	}
 	tr, _ := e.m.Transcript(s.ID, 100)
-	var noted bool
 	for _, ev := range tr {
-		noted = noted || (ev.Kind == agents.EvSystem && strings.Contains(ev.Text, "Permission mode changed to yolo"))
-	}
-	if !noted {
-		t.Fatalf("the switch must be visible in the transcript: %v", kinds(tr))
+		if ev.Kind == agents.EvSystem && strings.Contains(ev.Text, "Permission mode changed") {
+			t.Fatalf("a mode switch must not add a notice to the conversation: %q", ev.Text)
+		}
 	}
 }
 

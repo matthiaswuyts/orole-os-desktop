@@ -53,6 +53,14 @@ type Config struct {
 	// YoloEnabled reports whether the daemon setting allows YOLO sessions (nil = allowed). It is
 	// read on every start, switch and detection, so turning it off takes effect immediately.
 	YoloEnabled func() bool
+	// TitleAccount resolves the model account of kind's own vendor ("claude", "codex") for naming a
+	// task with one short request (nil = the heuristic and harness-chosen titles only). It must return
+	// an error unless that vendor's CLI is installed and signed in, and never another vendor's account.
+	TitleAccount func(ctx context.Context, kind string) (TitleRoute, error)
+	// TitlesEnabled reports whether that request may be made (nil = enabled). It is read each time.
+	TitlesEnabled func() bool
+	// TitleTimeout bounds one naming request (default 15 s).
+	TitleTimeout time.Duration
 }
 
 // Manager owns every live agent process and the session records.
@@ -85,6 +93,9 @@ type Manager struct {
 	diffMu   sync.Mutex // guards diffRuns
 	diffRuns map[string]*diffRun
 	diffSem  chan struct{} // bounds concurrent diff-stat refreshes
+
+	titleMu sync.Mutex // guards titles; a leaf lock, never held across another lock or a call out
+	titles  map[string]*titleState
 }
 
 type liveSess struct {
@@ -123,7 +134,7 @@ func NewManager(cfg Config) *Manager {
 	}
 	m := &Manager{cfg: cfg, st: cfg.Store, adapters: map[string]Adapter{}, boot: uuid.NewString(),
 		live: map[string]*liveSess{}, changed: make(chan struct{}),
-		diffRuns: map[string]*diffRun{}, diffSem: make(chan struct{}, diffStatWorkers)}
+		diffRuns: map[string]*diffRun{}, diffSem: make(chan struct{}, diffStatWorkers), titles: map[string]*titleState{}}
 	if cfg.Store != nil {
 		cfg.Store.SetLogger(cfg.Log)
 	}
@@ -476,6 +487,9 @@ func (m *Manager) record(sessionID string, e Event) Event {
 		}
 	}
 	m.cfg.Publish("agents.event", e)
+	if e.Kind == EvPrompt {
+		m.titlePrompt(sessionID, e.Text)
+	}
 	return e
 }
 
@@ -656,6 +670,9 @@ func (m *Manager) Start(ctx context.Context, spec StartSpec) (Session, error) {
 		}
 		return Session{}, err
 	}
+	if strings.TrimSpace(spec.Title) == "" {
+		m.trackTitle(s.ID, s.Kind, s.Title) // a title the user chose is never tracked, so never replaced
+	}
 	if spec.NewWorktree {
 		if err := ctx.Err(); err != nil {
 			return m.failStart(s, err)
@@ -704,6 +721,7 @@ func (m *Manager) failStart(s Session, err error) (Session, error) {
 		s.Status = StatusLost
 	}
 	_ = m.st.SaveSession(s, "")
+	m.forgetTitle(s.ID)
 	m.record(s.ID, Event{Kind: EvError, Text: err.Error()})
 	m.cfg.Publish("agents.updated", s)
 	m.cfg.Audit("agent.start", s.ID, "error", err.Error())
@@ -1207,6 +1225,7 @@ func (m *Manager) Remove(ctx context.Context, id string) error {
 	if m.cfg.Host != nil && m.cfg.Host.DataDir != "" {
 		_ = os.RemoveAll(filepath.Join(m.cfg.Host.DataDir, "agents", id))
 	}
+	m.forgetTitle(id)
 	m.cfg.Audit("agent.remove", id, "allowed", "")
 	m.cfg.Publish("agents.removed", map[string]string{"id": id})
 	return nil
@@ -1294,6 +1313,10 @@ func (m *Manager) apply(id string, e Event) {
 	}
 	// Late requests during stop cannot resurrect an actionable permission/form.
 	if stopping && (e.Kind == EvQuestion || e.Kind == EvPermission) {
+		return
+	}
+	if e.Kind == EvTitle {
+		m.applyTitle(id, e.Text, true) // a name, not history: neither recorded nor published as an event
 		return
 	}
 	e = m.record(id, e)

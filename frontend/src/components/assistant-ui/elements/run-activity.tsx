@@ -19,8 +19,6 @@ export interface RunEntry {
   failed?: boolean;
   /** An in-flight step shimmers. */
   running?: boolean;
-  /** Hover text of the row, such as the time it happened. */
-  title?: string;
   /** Opens from the row: commentary text, a tool's details. Rows without content are static. */
   content?: ReactNode;
   /** Shown under the row even while it is closed, such as a search excerpt. */
@@ -56,7 +54,7 @@ export function RunActivity({ status, statusLabel, durationLabel, open, onOpenCh
   const Icon = statusIcon[status];
   const steps: TimelineStep[] = entries.map((entry) => ({
     id: entry.id, verb: entry.label, chip: entry.chip ?? "", icon: entry.icon ?? MessageSquareTextIcon,
-    failed: entry.failed, running: entry.running, title: entry.title, content: entry.content, aside: entry.aside,
+    failed: entry.failed, running: entry.running, content: entry.content, aside: entry.aside,
   }));
   const summary = <>
     {Icon && <Icon aria-hidden className={cn("size-3.5 shrink-0", running && "animate-spin motion-reduce:animate-none")} />}

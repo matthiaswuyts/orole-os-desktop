@@ -125,6 +125,32 @@ session's own `<data>/agents/<id>` directory (symlinks resolved, traversal rejec
   enforced, and a missing authorizer fails closed. Automation provenance selects the requesting
   automation actor; it is not authorization. Stopping an agent remains available without approval.
 
+### Task titles
+
+A task's title is chosen in layers (`internal/agents/titles.go`); a title the user gave (`StartSpec.Title`) or
+changed later is never replaced, and the tracking of which titles are still automatic is in memory only (a
+daemon restart leaves every title as it is).
+
+1. **Heuristic.** The first line of the prompt (80 characters) is the title at once, offline.
+2. **Harness-native.** Oh My Pi's `session_info_update` and `setTitle`, and Codex's `thread/name/updated`, arrive as
+   an `EvTitle` event. The manager sanitizes it (one line, control characters stripped, at most 80 characters, empty
+   or `null` ignored), renames the session while its title is still automatic and publishes `agents.updated`. It is
+   not recorded in the transcript. After a native title, layer 3 stays quiet. Claude Code emits no title.
+3. **One short request through the task's own account.** For Claude and Codex tasks that still carry the heuristic
+   title, up to the first three user prompts may trigger one request (in the manager's background work, so it never
+   delays `Start` or fails a task; 15 s timeout; cancelled by `Shutdown`) through the *same vendor's* account provider
+   from `internal/llm/cli`: Claude's `haiku` alias, or Codex's smallest `nano`/`mini` model with minimal/low reasoning
+   when its catalogue lists one. Another vendor is never used: with no installed, signed-in account, no listed small
+   model, a different provider id, or for Oh My Pi (which names its own tasks) and custom tasks, nothing is sent. The
+   first 1500 bytes of the prompt, with image markers removed, are sent as data inside `<task>` tags of a system
+   prompt that asks for `<title>…</title>` (`<title/>` for none) and tells the model not to follow the text.
+   Greetings, acknowledgements, bare numbers and emoji, and very short prompts are skipped and a later prompt is
+   tried. Only a single-line `<title>` of at most 80 characters is accepted. Each request is audited as
+   `agent.title` (vendor and model, no prompt text). A branch created for a new worktree keeps the heuristic name.
+
+Settings > System > Task permissions > "Name tasks with AI" stores `aiTitlesDisabled` in the `agents` setting (the
+object shared with `yoloDisabled`; default on, an unreadable value fails closed). It disables only layer 3.
+
 ### Task branches and publishing
 
 A task started with a new worktree gets branch `orole/<slug of the title, else of the prompt's first

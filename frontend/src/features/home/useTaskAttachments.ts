@@ -25,15 +25,22 @@ function discard(id: string) {
   void Agents.discardAttachment(id).catch(() => {});
 }
 
-export function useTaskAttachments(enabled: boolean) {
-  const [files, setFiles] = useState<TaskAttachment[]>([]);
-  const current = useRef<TaskAttachment[]>([]);
+/** `initial`: uploads a failed launch hands back; they are already staged in the daemon. */
+export function useTaskAttachments(enabled: boolean, initial: TaskAttachment[] = []) {
+  const [files, setFiles] = useState<TaskAttachment[]>(initial);
+  const current = useRef<TaskAttachment[]>(initial);
   const mounted = useRef(true);
   function update(next: TaskAttachment[]) { current.current = next; if (mounted.current) setFiles(next); }
   function clear() {
     const previous = current.current;
     update([]);
     for (const file of previous) if (file.uploadId) discard(file.uploadId);
+  }
+  /** Hands the files to a launch: they leave this composer without being discarded, the launch now owns them. */
+  function release() {
+    const previous = current.current;
+    update([]);
+    return previous;
   }
   useEffect(() => {
     mounted.current = true;
@@ -74,5 +81,5 @@ export function useTaskAttachments(enabled: boolean) {
       }
     }
   }
-  return { files, add, remove, clear, ids: files.flatMap((file) => file.uploadId ? [file.uploadId] : []), ready: files.every((file) => file.state === "done"), canAdd: enabled && files.length < MAX_FILES };
+  return { files, add, remove, clear, release, ids: files.flatMap((file) => file.uploadId ? [file.uploadId] : []), ready: files.every((file) => file.state === "done"), canAdd: enabled && files.length < MAX_FILES };
 }

@@ -1,15 +1,15 @@
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { LaunchOptions, Project, Session } from "@/mygo";
 
-const api = vi.hoisted(() => ({ options: vi.fn(), start: vi.fn(), toast: vi.fn(), openTask: vi.fn() }));
+const api = vi.hoisted(() => ({ options: vi.fn(), start: vi.fn(), toast: vi.fn() }));
 vi.mock("@/lib/backend", () => ({ inDesktop: true }));
 vi.mock("@/mygo", () => ({ Agents: { options: api.options, start: api.start }, events: {} }));
-vi.mock("./dialogs", () => ({ toastError: api.toast }));
-vi.mock("./tasks", async (original) => ({ ...(await original<typeof import("./tasks")>()), openTask: api.openTask }));
+vi.mock("./dialogs", async (original) => ({ ...(await original<object>()), toastError: api.toast }));
 vi.mock("@/features/agents/ProviderLogo", () => ({ ProviderLogo: () => null }));
 vi.mock("@/components/ascii/AsciiMark", () => ({ AsciiMark: () => null }));
 import { NewTaskView } from "./NewTaskView";
+import { editLaunch } from "@/features/tasks/pendingLaunch";
 import { useAgents } from "@/stores/agents";
 import { useBoxes } from "@/stores/boxes";
 import { useDaemon } from "@/stores/daemon";
@@ -35,6 +35,7 @@ beforeEach(() => {
   useAgents.setState({ sessions: {} });
   useBoxes.setState({ machines: [], observations: {} });
   useUI.setState({ view: "home" });
+  useAgents.setState({ sessions: {}, launches: {}, launchDraft: null, openId: null });
   useProjects.setState({ projects: [project({}), project({ id: "p2", name: "notes", path: "", isGit: false, remoteUrl: "" })], worktrees: {}, loaded: true, selectedId: "p2", newTask: { projectId: null, prompt: "", from: "home", seq: 0 } });
 });
 afterEach(cleanup);
@@ -53,8 +54,12 @@ it("is a page for the project it was opened from, not the project Home last used
   expect(screen.getByText("me/alpha")).toBeInTheDocument();
   expect(screen.getByText("C:\\code\\alpha")).toBeInTheDocument();
   expect(screen.getByPlaceholderText("What should an agent do in alpha?")).toBeInTheDocument();
+  const started = Promise.withResolvers<Session>(); api.start.mockReturnValue(started.promise);
   fireEvent.click(await ready());
-  await waitFor(() => expect(api.openTask).toHaveBeenCalledWith("s1"));
+  expect(useUI.getState().view).toBe("agents");
+  expect(Object.values(useAgents.getState().launches)[0]).toMatchObject({ status: "starting", title: "Fix the login redirect", projectId: "p1", worktree: true });
+  started.resolve(session("s1", {}));
+  await waitFor(() => expect(useAgents.getState().openId).toBe("s1"));
   expect(api.start).toHaveBeenCalledWith(expect.objectContaining({ projectId: "p1", prompt: "Fix the login redirect", machine: "local", mode: "structured", newWorktree: true }));
 });
 
@@ -66,14 +71,19 @@ it("starts on the remote system of a remote project", async () => {
   expect(api.options).toHaveBeenCalledWith("remote");
 });
 
-it("keeps the draft after a failed start and retries with the same request key", async () => {
+it("fails on the pending page, then Edit prompt returns the draft and an identical resend reuses the request key", async () => {
   api.start.mockRejectedValueOnce(new Error("connection lost"));
   open("p1", "Run the tests");
   fireEvent.click(await ready());
-  await waitFor(() => expect(api.toast).toHaveBeenCalled());
+  await waitFor(() => expect(Object.values(useAgents.getState().launches)[0]?.status).toBe("failed"));
+  const [failed] = Object.values(useAgents.getState().launches);
+  expect(failed!.error).toBe("connection lost");
+  act(() => editLaunch(failed!.id));
+  expect(useAgents.getState().launches).toEqual({});
+  expect(useUI.getState().view).toBe("new-task");
   expect(screen.getByLabelText("Task for your agent")).toHaveValue("Run the tests");
   fireEvent.click(await ready());
-  await waitFor(() => expect(api.openTask).toHaveBeenCalledWith("s1"));
+  await waitFor(() => expect(useAgents.getState().openId).toBe("s1"));
   expect(api.start.mock.calls[1]![0].key).toBe(api.start.mock.calls[0]![0].key);
 });
 
@@ -101,7 +111,7 @@ it("lists only this project's recent tasks and opens one", async () => {
   expect(recent.queryByText("Unrelated research")).toBeNull();
   expect(recent.queryByText("Discarded work")).toBeNull();
   fireEvent.click(recent.getByRole("button", { name: "Open" }));
-  expect(api.openTask).toHaveBeenCalledWith("mine");
+  expect(useAgents.getState().openId).toBe("mine"); expect(useUI.getState().view).toBe("agents");
 });
 
 it("has no recent-tasks section for a project with none", () => {

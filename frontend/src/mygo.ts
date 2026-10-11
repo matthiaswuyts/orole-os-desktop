@@ -2388,6 +2388,8 @@ export interface Session {
   model: string;
   reasoning?: string;
   title: string;
+  /** Pinned keeps the task above unpinned ones in its project's list. The user sets it. */
+  pinned?: boolean;
   task: string;
   mode: Mode;
   /** custom CLI command line */
@@ -3422,6 +3424,10 @@ export const Agents = {
   remove(id: string): Promise<void> {
     return call("Agents.Remove", id);
   },
+  /** Rename sets a task's title. The name is the user's: automatic naming never replaces it. */
+  rename(id: string, title: string): Promise<Session> {
+    return call("Agents.Rename", id, title);
+  },
   /**
    * Restart relaunches an ended session: resumed in its CLI session when fresh is false and the
    * CLI supports it, otherwise started over from its task. prompt may be empty.
@@ -3459,6 +3465,10 @@ export const Agents = {
    */
   setPermissionMode(id: string, mode: string, confirmYolo: boolean): Promise<Session> {
     return call("Agents.SetPermissionMode", id, mode, confirmYolo);
+  },
+  /** SetPinned keeps a task above the others in its project's list. */
+  setPinned(id: string, pinned: boolean): Promise<Session> {
+    return call("Agents.SetPinned", id, pinned);
   },
   /** Start launches an agent. spec.Key makes the request idempotent. */
   start(spec: StartSpec): Promise<Session> {

@@ -4,15 +4,18 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import type { Event as AgentEvent, Session } from "@/mygo";
 import { Button } from "@/components/ui/button";
 import { RunActivity } from "@/components/assistant-ui/elements/run-activity";
+import { ConversationMap } from "@/components/assistant-ui/elements/conversation-map";
+import { mapTurns } from "@/lib/conversationMap";
 import { ErrorNote } from "@/features/agents/shared";
 import { liveActivity, type FeedItem, type LiveActivity, type TurnEntry, type TurnRun } from "@/lib/taskEvents";
-import { AssistantMessage, ErrorRow, FileCard, GuardrailNotice, ImageCard, ImageGenerationCard, NoteRow, PermissionItem, SourcesCard, stamp, TurnFailure, UserMessage } from "./FeedItems";
+import { AssistantMessage, ErrorRow, FileCard, GuardrailNotice, ImageCard, ImageGenerationCard, NoteRow, PermissionItem, SourcesCard, TurnFailure, UserMessage } from "./FeedItems";
 import { QuestionCard, SubagentCard } from "./TaskInteractions";
 import { ConversationSearch, conversationHits, SearchMatches, SearchTrack, stepSearchHit, type SearchHit } from "./ConversationSearch";
 import { conversationDay, DaySeparator } from "./ConversationTimeline";
 import { runEntry, runStatusText } from "./RunEntries";
 import { ScrollAnchor, useScrollAnchor } from "./ScrollAnchor";
 import { useFeedItems, useTurnEntries } from "./useFeedItems";
+import { useVisibleTurns } from "./useVisibleTurns";
 
 /** Conversations up to this many entries (a message, or one assistant turn) render every row; longer ones render only the rows near the viewport. */
 export const VIRTUALIZE_FROM = 60;
@@ -73,7 +76,6 @@ function RunView({ run, session, search, open, activity, onOpenChange }: Omit<Ro
   const itemView = (item: FeedItem) => anchored(item.key, <FeedEntry item={item} session={session} />, search);
   return <div data-scroll-anchor={run.key} className="min-w-0"><RunActivity
     data-testid={run.status === "running" ? "live-activity" : undefined}
-    title={stamp(run.at)}
     status={run.status}
     statusLabel={label}
     durationLabel={duration}
@@ -146,10 +148,12 @@ function ConversationFeed({ session, events, loading, loadingMore, error, hasMor
     });
     return { indexOfKey: index, runOfMessage: run };
   }, [entries]);
+  const map = useMemo(() => mapTurns(entries), [entries]);
   const updateIds = useMemo(() => events.filter((event) => event.kind !== "usage").map((event) => event.id), [events]);
   const locate = useRef<(key: string) => number | undefined>(() => undefined);
   const scroll = useScrollAnchor(items, updateIds, (key) => locate.current(key));
   const { reveal, pause } = scroll;
+  const mapState = useVisibleTurns({ viewport: scroll.viewport, content: scroll.content, turns: map.turns, indexOfKey, turnOfEntry: map.turnOfEntry });
   const [query, setQuery] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -256,7 +260,7 @@ function ConversationFeed({ session, events, loading, loadingMore, error, hasMor
     }
   }}>
     {searchOpen && <ConversationSearch query={query} hits={hits} activeIndex={activeIndex} inputRef={searchInput} onQueryChange={(next) => { setQuery(next); setActiveId(null); }} onStep={step} onClose={() => { setQuery(""); setActiveId(null); setSearchOpen(false); }} />}
-    <div className="relative flex min-h-0 flex-1 flex-col">
+    <div className="@container/feed relative flex min-h-0 flex-1 flex-col">
       <div ref={scroll.viewport} onScroll={scroll.onScroll} onWheel={(event) => { if (event.deltaY < 0) scroll.pause(); }} onTouchStart={scroll.pause} onKeyDown={scroll.onKeyDown} role="log" tabIndex={0} aria-label="Task conversation" aria-live="off" aria-busy={loading} style={{ overflowAnchor: "none" }} className="min-h-0 flex-1 overflow-auto px-5 py-4 pb-14 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring">
         <div ref={scroll.content} className="mx-auto flex max-w-4xl flex-col gap-4">
           {error && <div className="space-y-2"><ErrorNote error={error} />{onRetry && <Button size="sm" variant="outline" loading={loading || loadingMore} onClick={onRetry}>Retry loading conversation</Button>}</div>}
@@ -272,6 +276,8 @@ function ConversationFeed({ session, events, loading, loadingMore, error, hasMor
         </div>
       </div>
       <SearchTrack hits={hits} activeId={active?.id} />
+      {map.turns.length > 1 && <ConversationMap side="left" entries={map.turns} activeId={mapState.activeId} visibleIds={mapState.visibleIds} onSelect={(id) => revealRow(id)}
+        className="absolute top-1/2 right-1.5 z-10 hidden max-h-[70%] -translate-y-1/2 @5xl/feed:flex" />}
       {scroll.away && <ScrollAnchor unseen={scroll.unseen} onJump={scroll.jump} />}
     </div>
   </div>;

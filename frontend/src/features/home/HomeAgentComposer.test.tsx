@@ -1,13 +1,15 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { HarnessOption, LaunchOptions, Machine, Project, Worktree } from "@/mygo";
-const api = vi.hoisted(() => ({ options: vi.fn(), start: vi.fn(), upload: vi.fn(), discard: vi.fn(), toast: vi.fn(), open: vi.fn() }));
+const api = vi.hoisted(() => ({ options: vi.fn(), start: vi.fn(), upload: vi.fn(), discard: vi.fn(), toast: vi.fn() }));
 vi.mock("@/lib/backend", () => ({ inDesktop: true }));
 vi.mock("@/mygo", () => ({ Agents: { options: api.options, start: api.start, uploadAttachment: api.upload, discardAttachment: api.discard }, events: {} }));
 import { useDaemon } from "@/stores/daemon";
 import { useHarnessOptionsCache } from "@/stores/harnessOptions";
-vi.mock("@/features/projects/dialogs", () => ({ toastError: api.toast }));
-vi.mock("@/features/projects/tasks", () => ({ openTask: api.open }));
+vi.mock("@/features/projects/dialogs", async (original) => ({ ...(await original<object>()), toastError: api.toast }));
+import { useAgents } from "@/stores/agents";
+import { useUI } from "@/stores/ui";
+import { retryLaunch } from "@/features/tasks/pendingLaunch";
 import { useProjects } from "@/stores/projects";
 import { useBoxes } from "@/stores/boxes";
 import { HomeAgentComposer } from "./HomeAgentComposer";
@@ -16,7 +18,8 @@ const harness: HarnessOption = { id: "codex", name: "Codex", available: true, ex
 const options: LaunchOptions = { machine: "local", harnesses: [harness], projects: [], directories: [], worktree: true, unavailableReason: "" };
 beforeEach(() => {
  useDaemon.setState({ link: "connected", connectEpoch: 0 }); useHarnessOptionsCache.setState({ machines: {} });
- vi.clearAllMocks(); localStorage.clear(); api.options.mockResolvedValue(options); api.start.mockResolvedValue({ id: "task", updatedAt: "2026-10-08T00:00:00Z" });
+ vi.clearAllMocks(); localStorage.clear(); api.options.mockResolvedValue(options); api.start.mockReset(); api.start.mockResolvedValue({ id: "task", updatedAt: "2026-10-08T00:00:00Z" });
+ useAgents.setState({ sessions: {}, launches: {}, launchDraft: null, openId: null }); useUI.setState({ view: "home" });
  api.upload.mockResolvedValue({ id: "upload-one", name: "notes.txt", size: 8, mime: "text/plain" }); api.discard.mockResolvedValue(undefined);
  useBoxes.setState({ machines: [{ id: "local", name: "devl" }, { id: "remote", name: "gpu" }] as Machine[], observations: {} });
  useProjects.setState({ projects: [project], worktrees: {}, selectedId: null, available: true, loaded: true, newProjectOpen: false });
@@ -24,9 +27,16 @@ beforeEach(() => {
 afterEach(cleanup);
 async function fill() { fireEvent.change(screen.getByLabelText("Task for your agent"), { target: { value: "Plan this research" } }); const start = screen.getByRole("button", { name: "Start task" }); await waitFor(() => expect(start).toBeEnabled()); return start; }
 function menu(name: string) { fireEvent.click(screen.getByRole("button", { name })); }
-it("launches a folderless task directly with the discovered model", async () => {
+it("shows the task page at once and opens the started task when the daemon answers", async () => {
+ const started = Promise.withResolvers<{ id: string; updatedAt: string }>(); api.start.mockReturnValue(started.promise);
  render(<HomeAgentComposer />); fireEvent.click(await fill());
- await waitFor(() => expect(api.open).toHaveBeenCalledWith("task"));
+ expect(useUI.getState().view).toBe("agents");
+ const [launch] = Object.values(useAgents.getState().launches);
+ expect(launch).toMatchObject({ status: "starting", title: "Plan this research", prompt: "Plan this research", kind: "codex", worktree: false });
+ expect(useAgents.getState().openId).toBe(launch!.id);
+ started.resolve({ id: "task", updatedAt: "2026-10-08T00:00:00Z" });
+ await waitFor(() => expect(useAgents.getState().openId).toBe("task"));
+ expect(useAgents.getState().launches).toEqual({}); expect(useAgents.getState().sessions.task).toBeDefined();
  expect(api.start).toHaveBeenCalledWith(expect.objectContaining({ projectId: "notes", dir: "", machine: "local", mode: "structured", model: "model-a", prompt: "Plan this research", newWorktree: false }));
 });
 it("keeps missing attached folders unavailable", async () => {
@@ -62,12 +72,13 @@ it("switches system and launches only with its approved project and process capa
 });
 it("keeps the same request key after an uncertain failure", async () => {
  api.start.mockRejectedValueOnce(new Error("connection lost")).mockResolvedValueOnce({ id: "retried", updatedAt: "2026-10-08T00:00:00Z" });
- render(<HomeAgentComposer />); const start = await fill(); fireEvent.click(start);
- await waitFor(() => expect(api.toast).toHaveBeenCalled()); await waitFor(() => expect(start).toBeEnabled()); fireEvent.click(start);
- await waitFor(() => expect(api.open).toHaveBeenCalledWith("retried")); expect(api.start.mock.calls[1]![0].key).toBe(api.start.mock.calls[0]![0].key);
+ render(<HomeAgentComposer />); fireEvent.click(await fill());
+ await waitFor(() => expect(Object.values(useAgents.getState().launches)[0]?.status).toBe("failed"));
+ retryLaunch(Object.keys(useAgents.getState().launches)[0]!);
+ await waitFor(() => expect(useAgents.getState().openId).toBe("retried")); expect(api.start.mock.calls[1]![0].key).toBe(api.start.mock.calls[0]![0].key);
 });
 
-it("does not send incomplete attachments and preserves them with the draft on launch failure", async () => {
+it("does not send incomplete attachments and hands them to the failed launch, which keeps them staged", async () => {
  const upload = Promise.withResolvers<{ id: string; name: string; size: number; mime: string }>();
  api.upload.mockReturnValue(upload.promise); api.start.mockRejectedValueOnce(new Error("Disconnected"));
  render(<HomeAgentComposer />); const start = await fill();
@@ -76,9 +87,10 @@ it("does not send incomplete attachments and preserves them with the draft on la
  expect(start).toBeDisabled();
  upload.resolve({ id: "uploaded-notes", name: "notes.txt", size: 8, mime: "text/plain" });
  await waitFor(() => expect(start).toBeEnabled()); fireEvent.click(start);
- await waitFor(() => expect(api.toast).toHaveBeenCalled());
- expect(screen.getByLabelText("Task for your agent")).toHaveValue("Plan this research");
- expect(screen.getByRole("button", { name: "Remove notes.txt" })).toBeEnabled();
+ await waitFor(() => expect(Object.values(useAgents.getState().launches)[0]?.status).toBe("failed"));
+ const [launch] = Object.values(useAgents.getState().launches);
+ expect(launch!.attachments.map((file) => file.uploadId)).toEqual(["uploaded-notes"]);
+ expect(launch!.draft.prompt).toBe("Plan this research");
  expect(api.discard).not.toHaveBeenCalled();
  expect(api.start).toHaveBeenCalledWith(expect.objectContaining({ attachmentIds: ["uploaded-notes"] }));
 });
@@ -152,7 +164,7 @@ async function pick(name: RegExp) {
  const option = await screen.findByRole("option", { name }); await new Promise((resolve) => setTimeout(resolve, 400));
  fireEvent.pointerUp(option, { button: 0, pointerType: "mouse" }); fireEvent.mouseUp(option, { button: 0 }); fireEvent.click(option);
 }
-it("launches in Manual by default and remembers Auto but never YOLO", async () => {
+it("launches in Manual by default and remembers Auto but never Yolo", async () => {
  const modes = [{ mode: "manual", available: true, approximated: false, detail: "" }, { mode: "auto", available: true, approximated: false, detail: "Codex's auto-review decides." }, { mode: "yolo", available: true, approximated: false, detail: "" }];
  api.options.mockResolvedValue({ ...options, harnesses: [{ ...harness, permissionModes: modes }] });
  const { unmount } = render(<HomeAgentComposer />); const start = await fill();
@@ -168,10 +180,10 @@ it("launches in Manual by default and remembers Auto but never YOLO", async () =
  unmount(); render(<HomeAgentComposer />); await fill();
  expect(await screen.findByRole("combobox", { name: "Permission mode: Auto" })).toBeVisible();
  fireEvent.click(screen.getByRole("combobox", { name: "Permission mode: Auto" }));
- await pick(/YOLO/);
+ await pick(/Yolo/);
  expect(api.start).toHaveBeenCalledTimes(2);
- fireEvent.click(await screen.findByRole("button", { name: "Enable YOLO" }));
- await waitFor(() => expect(screen.getByRole("combobox", { name: "Permission mode: YOLO" })).toBeVisible());
+ fireEvent.click(await screen.findByRole("button", { name: "Enable Yolo" }));
+ await waitFor(() => expect(screen.getByRole("combobox", { name: "Permission mode: Yolo" })).toBeVisible());
  fireEvent.click(screen.getByRole("button", { name: "Start task" }));
  await waitFor(() => expect(api.start).toHaveBeenLastCalledWith(expect.objectContaining({ permissionMode: "yolo", confirmYolo: true })));
  expect(localStorage.getItem("orole.task.permissionMode")).toBe("auto");

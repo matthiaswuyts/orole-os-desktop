@@ -8,7 +8,7 @@ import { duration } from "@/features/agents/format";
 import { describePermission } from "@/lib/permissionLabels";
 import { clip, reasoningTitle, type FeedItem, type LiveActivity, type RunState } from "@/lib/taskEvents";
 import { toolLabel, type ToolFileStat } from "@/lib/toolLabels";
-import { PermissionItem, SourcesList, stamp, ToolDetails } from "./FeedItems";
+import { PermissionItem, SourcesList, ToolDetails } from "./FeedItems";
 import { approvalText, QuestionCard, SubagentCard } from "./TaskInteractions";
 
 /** "2m 13s" below an hour (the clock people expect), "1h 05m" above. */
@@ -34,39 +34,38 @@ const statText = (stats: readonly ToolFileStat[]) => {
 
 /** What a run's step row shows. `matches` gives the search excerpts of an interim message, shown under its row even while it is closed. */
 export function runEntry(item: FeedItem, session: Session, matches: (key: string) => ReactNode): RunEntry | null {
-  const title = stamp(item.at);
   switch (item.type) {
     case "reasoning": {
       const label = reasoningTitle(item.text);
       const body = item.text.replace(/\*\*|__/g, "").trim();
-      return { id: item.key, kind: "commentary", label, icon: Brain, title, content: body && body !== label ? <Markdown className="text-xs text-muted-foreground">{item.text}</Markdown> : undefined };
+      return { id: item.key, kind: "commentary", label, icon: Brain, content: body && body !== label ? <Markdown className="text-xs text-muted-foreground">{item.text}</Markdown> : undefined };
     }
     case "assistant":
-      return { id: item.key, kind: "commentary", label: reasoningTitle(item.text, "Message"), icon: MessageSquareText, title, content: <Markdown className="text-xs">{item.text}</Markdown>, aside: matches(item.key) };
+      return { id: item.key, kind: "commentary", label: reasoningTitle(item.text, "Message"), icon: MessageSquareText, content: <Markdown className="text-xs">{item.text}</Markdown>, aside: matches(item.key) };
     case "tool": {
       const label = toolLabel(item.call);
       const stats = statText(label.stats);
       return {
         id: item.key, kind: "tool", label: label.verb, chip: [label.chip, stats].filter(Boolean).join(" "), icon: label.icon,
-        failed: item.call.status === "error", running: item.call.status === "running", title, content: <ToolDetails call={item.call} />,
+        failed: item.call.status === "error", running: item.call.status === "running", content: <ToolDetails call={item.call} />,
       };
     }
     case "sources": {
       const count = item.sources.length;
-      return { id: item.key, kind: "tool", label: "Found sources", chip: `${count} ${count === 1 ? "source" : "sources"}`, icon: ExternalLink, title, content: <SourcesList sources={item.sources} /> };
+      return { id: item.key, kind: "tool", label: "Found sources", chip: `${count} ${count === 1 ? "source" : "sources"}`, icon: ExternalLink, content: <SourcesList sources={item.sources} /> };
     }
     case "subagent":
-      return { id: item.key, kind: "tool", label: "Delegated to an agent", chip: item.agent.name || item.agent.id, icon: Bot, title, content: <SubagentCard agent={item.agent} /> };
+      return { id: item.key, kind: "tool", label: "Delegated to an agent", chip: item.agent.name || item.agent.id, icon: Bot, content: <SubagentCard agent={item.agent} /> };
     case "note":
-      return { id: item.key, kind: "commentary", label: clip(item.text, 80) || "Note", icon: Info, title, content: item.text.length > 80 ? <p className="selectable whitespace-pre-wrap break-words text-xs">{item.text}</p> : undefined };
+      return { id: item.key, kind: "commentary", label: clip(item.text, 80) || "Note", icon: Info, content: item.text.length > 80 ? <p className="selectable whitespace-pre-wrap break-words text-xs">{item.text}</p> : undefined };
     case "permission": {
       const { capability } = describePermission(item.request);
-      return { id: item.key, kind: "tool", label: item.decision ? item.decision.allow ? "Allowed" : "Denied" : "Permission closed", chip: approvalText(capability), icon: ShieldCheck, title, content: <PermissionItem session={session} item={item} /> };
+      return { id: item.key, kind: "tool", label: item.decision ? item.decision.allow ? "Allowed" : "Denied" : "Permission closed", chip: approvalText(capability), icon: ShieldCheck, content: <PermissionItem session={session} item={item} /> };
     }
     case "question":
       return {
         id: item.key, kind: "tool", label: item.cancelled ? "Question cancelled" : item.answers ? "Answered a question" : "Question closed",
-        chip: clip(item.request.questions[0]?.prompt ?? "", 80), icon: MessageCircleQuestion, title,
+        chip: clip(item.request.questions[0]?.prompt ?? "", 80), icon: MessageCircleQuestion,
         content: <QuestionCard session={session} request={item.request} answers={item.answers} cancelled={item.cancelled} />,
       };
     default: return null;

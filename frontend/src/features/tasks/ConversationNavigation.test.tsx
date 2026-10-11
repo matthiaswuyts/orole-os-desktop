@@ -120,6 +120,29 @@ describe("real-content scroll anchor", () => {
     expect(screen.queryByRole("button")).toBeNull();
   });
 
+  it("never offers Jump to latest when there is nothing to scroll to", () => {
+    const view = render(<AnchoredContent rows={[{ id: 1, height: 100 }, { id: 2, height: 100 }]} />);
+    const viewport = screen.getByTestId("viewport");
+    fireEvent.keyDown(viewport, { key: "PageUp" });
+    fireEvent.scroll(viewport);
+    expect(screen.queryByRole("button")).toBeNull();
+    // It still follows once content grows past the viewport: the reader never actually scrolled away.
+    view.rerender(<AnchoredContent rows={[{ id: 1, height: 100 }, { id: 2, height: 100 }, { id: 3, height: 300 }]} />);
+    expect(viewport.scrollTop).toBe(300);
+    expect(screen.queryByRole("button")).toBeNull();
+  });
+
+  it("does not show Jump to latest for a nudge within a few lines of the end", () => {
+    render(<AnchoredContent rows={[{ id: 1, height: 300 }, { id: 2, height: 300 }]} />);
+    const viewport = screen.getByTestId("viewport");
+    viewport.scrollTop = 380;
+    fireEvent.scroll(viewport);
+    expect(screen.queryByRole("button")).toBeNull();
+    viewport.scrollTop = 300;
+    fireEvent.scroll(viewport);
+    expect(screen.getByRole("button", { name: "Jump to latest" })).toBeInTheDocument();
+  });
+
   it("keeps following when a shorter document clamps the scroll position by itself", () => {
     const rows = [{ id: 1, height: 300 }, { id: 2, height: 300 }];
     const view = render(<AnchoredContent rows={rows} />);

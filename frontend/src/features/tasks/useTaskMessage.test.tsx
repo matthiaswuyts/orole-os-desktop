@@ -2,15 +2,15 @@ import { act, cleanup, fireEvent, render, renderHook, screen, waitFor } from "@t
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { Attachment, HarnessOption, LaunchOptions, Session } from "@/mygo";
 
-const api = vi.hoisted(() => ({ options: vi.fn(), prompt: vi.fn(), sendMessage: vi.fn(), uploadAttachment: vi.fn(), discardAttachment: vi.fn(), upsert: vi.fn(), toast: vi.fn() }));
+const api = vi.hoisted(() => ({ options: vi.fn(), prompt: vi.fn(), sendMessage: vi.fn(), uploadAttachment: vi.fn(), discardAttachment: vi.fn(), upsert: vi.fn(), toast: vi.fn(), skills: vi.fn(), servers: vi.fn() }));
 vi.mock("@/lib/backend", () => ({ inDesktop: true }));
-vi.mock("@/mygo", () => ({ Agents: api }));
+vi.mock("@/mygo", () => ({ Agents: api, Skills: { list: api.skills }, MCP: { list: api.servers } }));
 vi.mock("@/stores/agents", () => ({ useAgents: { getState: () => ({ upsert: api.upsert }) } }));
 import { useDaemon } from "@/stores/daemon";
 import { useHarnessOptionsCache } from "@/stores/harnessOptions";
 vi.mock("@/features/projects/dialogs", () => ({ toastError: api.toast }));
 import { useTaskMessage } from "./useTaskMessage";
-import { TaskAttachmentButton, TaskAttachmentPreviews, TaskModelPicker } from "./TaskMessageControls";
+import { TaskAddMenu, TaskAttachmentPreviews, TaskModelPicker } from "./TaskMessageControls";
 
 const harness: HarnessOption = {
   id: "codex", name: "Codex", available: true, executable: "codex", version: "1", reasoning: ["low", "high"], customModel: true,
@@ -118,14 +118,36 @@ it("guards duplicate dispatches and disables attachment changes while sending", 
   expect(result.current.busy).toBe(false);
 });
 
-function Controls({ value }: { value: Session }) {
+function Controls({ value, onInsert = () => {} }: { value: Session; onInsert?: (text: string) => void }) {
   const message = useTaskMessage(value);
-  return <><TaskAttachmentButton message={message} /><TaskAttachmentPreviews message={message} /><TaskModelPicker message={message} /></>;
+  return <><TaskAddMenu message={message} onInsert={onInsert} /><TaskAttachmentPreviews message={message} /><TaskModelPicker message={message} /></>;
 }
+
+it("opens a menu from + instead of the file picker, listing enabled skills and connected connectors", async () => {
+  api.skills.mockResolvedValue([{ name: "docs", description: "", enabled: true }, { name: "retired", description: "", enabled: false }]);
+  api.servers.mockResolvedValue([{ id: "s1", name: "Linear", url: "https://mcp.linear.app/mcp", enabled: true, status: "connected" }, { id: "s2", name: "Offline one", url: "", enabled: true, status: "error" }]);
+  const insert = vi.fn();
+  const picker = vi.spyOn(HTMLInputElement.prototype, "click");
+  render(<Controls value={session()} onInsert={insert} />);
+  fireEvent.click(screen.getByRole("button", { name: "Add to message" }));
+  expect(picker).not.toHaveBeenCalled();
+  expect(await screen.findByRole("menuitem", { name: "Add files or photos" })).not.toHaveAttribute("aria-disabled", "true");
+  fireEvent.click(screen.getByRole("menuitem", { name: "Skills" }));
+  const skill = await screen.findByRole("menuitem", { name: "docs" });
+  expect(screen.queryByRole("menuitem", { name: "retired" })).toBeNull();
+  fireEvent.click(skill);
+  expect(insert).toHaveBeenCalledWith("Use the docs skill to ");
+  fireEvent.click(screen.getByRole("button", { name: "Add to message" }));
+  fireEvent.click(await screen.findByRole("menuitem", { name: "Connectors" }));
+  expect(await screen.findByRole("menuitem", { name: /Linear/ })).toBeVisible();
+  expect(screen.queryByRole("menuitem", { name: /Offline one/ })).toBeNull();
+  picker.mockRestore();
+});
 
 it("locks the provider and exposes disabled model controls with the daemon's explanation", async () => {
   render(<Controls value={session({ followup: { attachments: false, model: false, reasoning: false, reason: "This live conversation cannot change model or reasoning.", permissionMode: true, permissionModeRestarts: false, permissionModeReason: "" } })} />);
-  expect(screen.getByRole("button", { name: "Add attachment" })).toBeDisabled();
+  fireEvent.click(screen.getByRole("button", { name: "Add to message" }));
+  expect(await screen.findByRole("menuitem", { name: "Add files or photos" })).toHaveAttribute("aria-disabled", "true");
   fireEvent.click(screen.getByRole("button", { name: "Model and reasoning" }));
   expect(await screen.findByText("This live conversation cannot change model or reasoning.")).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Change model" })).toBeDisabled();

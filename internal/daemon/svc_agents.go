@@ -12,6 +12,7 @@ import (
 
 	"github.com/rayorole/orole-os-desktop/internal/agents"
 	"github.com/rayorole/orole-os-desktop/internal/agents/orchestrate"
+	"github.com/rayorole/orole-os-desktop/internal/cliruntime"
 	"github.com/rayorole/orole-os-desktop/internal/events"
 	"github.com/rayorole/orole-os-desktop/internal/ipc"
 	"github.com/rayorole/orole-os-desktop/internal/policy"
@@ -101,22 +102,70 @@ func (d *Daemon) projectTaskDirectory(ctx context.Context, projectID, machine, d
 	return d.Projects.TaskDirectory(ctx, projectID, machine, dir, filepath.Join(d.DataDir, "project-workspaces"))
 }
 
-// yoloEnabled reads the daemon setting that can turn YOLO sessions off entirely. The "agents"
-// settings value is {"yoloDisabled": true}; absent or unreadable means YOLO stays available, and
-// a stored value that cannot be parsed fails closed.
-func (d *Daemon) yoloEnabled() bool {
+// agentSettings is the "agents" daemon setting: {"yoloDisabled": true} turns YOLO sessions off
+// entirely and {"aiTitlesDisabled": true} stops Orole from spending one short request on the
+// task's own Claude or ChatGPT account to name a new task (names chosen by the harness itself
+// still apply). Absent means every option stays on. ok is false when the stored value cannot be
+// read or parsed; callers fail closed.
+type agentSettings struct {
+	YoloDisabled     bool `json:"yoloDisabled"`
+	AITitlesDisabled bool `json:"aiTitlesDisabled"`
+}
+
+func (d *Daemon) agentSettings() (v agentSettings, ok bool) {
 	var raw string
 	err := d.DB.QueryRow(`SELECT value FROM settings WHERE key='agents'`).Scan(&raw)
 	if errors.Is(err, sql.ErrNoRows) {
-		return true
+		return v, true
 	}
 	if err != nil {
-		return false
+		return v, false
 	}
-	var v struct {
-		YoloDisabled bool `json:"yoloDisabled"`
+	return v, json.Unmarshal([]byte(raw), &v) == nil
+}
+
+// yoloEnabled reports whether YOLO sessions are allowed; unreadable settings fail closed.
+func (d *Daemon) yoloEnabled() bool {
+	v, ok := d.agentSettings()
+	return ok && !v.YoloDisabled
+}
+
+// aiTitlesEnabled reports whether a task may be named through its harness's own account;
+// unreadable settings fail closed because that request sends the first prompt to the vendor.
+func (d *Daemon) aiTitlesEnabled() bool {
+	v, ok := d.agentSettings()
+	return ok && !v.AITitlesDisabled
+}
+
+// agentTitleAccount resolves the account a task's own harness signs in with, for naming it:
+// Claude Code's task uses the Claude account, Codex's the ChatGPT account, and nothing else is
+// ever substituted (no OpenRouter, OpenAI key or default model). It fails unless that CLI is
+// installed and signed in.
+func (d *Daemon) agentTitleAccount(ctx context.Context, kind string) (agents.TitleRoute, error) {
+	var id string
+	switch kind {
+	case "claude":
+		id = cliruntime.Claude
+	case "codex":
+		id = cliruntime.Codex
+	default:
+		return agents.TitleRoute{}, fmt.Errorf("%s has no account to name tasks with", kind)
 	}
-	return json.Unmarshal([]byte(raw), &v) == nil && !v.YoloDisabled
+	if d.CLI == nil || d.LLM == nil {
+		return agents.TitleRoute{}, errors.New("account providers are unavailable")
+	}
+	if ok, why := d.CLI.Ready(id); !ok {
+		return agents.TitleRoute{}, errors.New(why)
+	}
+	p, err := d.LLM.Provider(ctx, id)
+	if err != nil {
+		return agents.TitleRoute{}, err
+	}
+	models, err := d.LLM.Models(ctx, id)
+	if err != nil {
+		return agents.TitleRoute{}, err
+	}
+	return agents.TitleRoute{Provider: p, Models: models}, nil
 }
 
 func (d *Daemon) registerAgents() {
@@ -150,9 +199,11 @@ func (d *Daemon) registerAgents() {
 			}
 			return out, nil
 		},
-		Publish:     d.IPC.Publish,
-		Audit:       d.audit,
-		YoloEnabled: d.yoloEnabled,
+		Publish:       d.IPC.Publish,
+		Audit:         d.audit,
+		YoloEnabled:   d.yoloEnabled,
+		TitleAccount:  d.agentTitleAccount,
+		TitlesEnabled: d.aiTitlesEnabled,
 		Authorize: func(ctx context.Context, action, resource, detail string) error {
 			if d.Policy == nil {
 				return errors.New("permission policy is unavailable")
@@ -273,6 +324,20 @@ func (d *Daemon) registerAgents() {
 		ConfirmYolo bool   `json:"confirmYolo"`
 	}) (agents.Session, error) {
 		s, err := m.SetPermissionMode(ctx, p.ID, p.Mode, p.ConfirmYolo)
+		return s, mapErr(err)
+	})
+	handle(d, "agents.rename", func(ctx context.Context, p struct {
+		ID    string `json:"id"`
+		Title string `json:"title"`
+	}) (agents.Session, error) {
+		s, err := m.Rename(p.ID, p.Title)
+		return s, mapErr(err)
+	})
+	handle(d, "agents.setPinned", func(ctx context.Context, p struct {
+		ID     string `json:"id"`
+		Pinned bool   `json:"pinned"`
+	}) (agents.Session, error) {
+		s, err := m.SetPinned(p.ID, p.Pinned)
 		return s, mapErr(err)
 	})
 	handle(d, "agents.approve", func(ctx context.Context, p struct {

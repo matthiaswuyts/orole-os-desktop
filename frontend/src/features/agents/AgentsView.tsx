@@ -14,10 +14,11 @@ import { AgentGlyph, StateGlyph, SessionMeta, SessionBadge, PermissionCard, Repl
 import { isRemoteProcess, sessionTitle, useAction } from "./format";
 import { Orchestrate } from "./Orchestrate";
 import { TaskView } from "@/features/tasks/TaskView";
+import { PendingTaskView } from "@/features/tasks/PendingTaskView";
 import { belongsToProject } from "@/features/projects/tasks";
 
 export function AgentsView() {
-  const { available, sessions, loaded, loading, error, offline, refresh, detect, runs, projectFilter, setProjectFilter, openId } = useAgents();
+  const { available, sessions, loaded, loading, error, offline, refresh, detect, runs, projectFilter, setProjectFilter, openId, launches } = useAgents();
   const link = useDaemon((s) => s.link);
   const projects = useProjects((s) => s.projects);
   const projectsLoaded = useProjects((s) => s.loaded);
@@ -29,6 +30,9 @@ export function AgentsView() {
   // A removed project must not leave the dashboard filtered to nothing.
   useEffect(() => { if (projectFilter && projectsLoaded && !project) setProjectFilter(null); }, [projectFilter, projectsLoaded, project, setProjectFilter]);
   if (!available) return <NeedsDesktop what="Tasks" />;
+  // A task that was just sent shows its page even while the daemon is unreachable: the failure is reported there, with a retry.
+  const launch = openId ? launches[openId] : undefined;
+  if (launch) return <div className="flex h-full min-h-0 flex-col"><PendingTaskView key={launch.id} launch={launch} /></div>;
   if (offline || link === "offline") return <div className="flex h-full"><NotConnected app="Tasks" what={error || "The daemon is offline. Reconnect to manage tasks."} action={{ label: "Retry", onClick: () => { void useDaemon.getState().refresh(); void refresh(); } }} /></div>;
   return <div className="flex h-full min-h-0 flex-col">{openId && sessions[openId] ? <TaskView key={openId} session={sessions[openId]} /> : <>
     <header className="flex min-h-12 shrink-0 flex-wrap items-center gap-3 border-b bg-sidebar/40 px-6 py-2"><p className="min-w-0 flex-1 text-xs text-muted-foreground">{total} {total === 1 ? "task" : "tasks"} · {cols["needs-you"].length} needs you · {cols.working.length} working</p>{project && <Badge variant="secondary" className="gap-1 pr-0.5">Project: {project.name}<Button size="icon-xs" variant="ghost" className="size-4" aria-label={`Show tasks of every project, not only ${project.name}`} onClick={() => setProjectFilter(null)}><X /></Button></Badge>}<Button size="sm" variant="ghost" disabled={loading} onClick={() => void refresh()} aria-label="Refresh tasks"><RefreshCw /></Button><Button size="sm" onClick={() => openNewTask(project?.id ?? null)}><Plus />New task</Button></header>

@@ -10,7 +10,7 @@ afterEach(cleanup);
 
 const entries: RunEntry[] = [
   { id: "c1", kind: "commentary", label: "Inspecting the files", content: <p>I will inspect the files.</p> },
-  { id: "t1", kind: "tool", label: "Ran", chip: "npm test", icon: Terminal, title: "10/8/2026, 12:00:00 PM" },
+  { id: "t1", kind: "tool", label: "Ran", chip: "npm test", icon: Terminal },
   { id: "t2", kind: "tool", label: "Ran", chip: "npm run lint", icon: Terminal, failed: true },
 ];
 
@@ -30,7 +30,7 @@ describe("RunActivity", () => {
     fireEvent.click(trigger);
     const rows = within(screen.getByRole("list", { name: "Activity" })).getAllByRole("listitem");
     expect(rows.map((row) => row.textContent)).toEqual(["Inspecting the files", "Rannpm test", "Rannpm run lintFailed"]);
-    expect(rows[1]).toHaveAttribute("title", "10/8/2026, 12:00:00 PM");
+    expect(rows[1]).not.toHaveAttribute("title");
     expect(rows[2]).toHaveAttribute("data-failed", "true");
     expect(trigger).toHaveAttribute("aria-expanded", "true");
   });

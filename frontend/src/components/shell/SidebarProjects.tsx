@@ -1,17 +1,21 @@
 import { useEffect, useMemo, useState } from "react";
-import { ChevronRight, Folder, FolderPlus, ListTodo, MoreHorizontal, Plus, SquarePen, TriangleAlert } from "lucide-react";
-import type { Project, Session } from "@/mygo";
+import { ChevronRight, Folder, FolderPlus, ListTodo, MoreHorizontal, Pencil, Pin, PinOff, Plus, SquarePen, Trash2, TriangleAlert } from "lucide-react";
+import { Agents, type Project, type Session } from "@/mygo";
 import { cn } from "@/lib/utils";
 import { useAgents } from "@/stores/agents";
 import { useProjects } from "@/stores/projects";
 import { useUI } from "@/stores/ui";
 import { useBoxes } from "@/stores/boxes";
 import { ProviderLogo } from "@/features/agents/ProviderLogo";
-import { ConfirmDialog } from "@/features/projects/dialogs";
+import { ConfirmDialog, errText } from "@/features/projects/dialogs";
 import { countNeedsYou, groupTasksByProject, openProjectTasks, openTask } from "@/features/projects/tasks";
 import { sessionTitle } from "@/features/agents/format";
+import type { PendingLaunch } from "@/features/tasks/pendingLaunch";
+import { RenameTaskDialog } from "@/features/tasks/RenameTaskDialog";
 import { Badge } from "@/components/ui/badge";
+import { ContextMenu, ContextMenuItem, ContextMenuPopup, ContextMenuSeparator, ContextMenuTrigger } from "@/components/ui/context-menu";
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "@/components/ui/menu";
+import { toastManager } from "@/components/ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "@/components/ui/tooltip";
 
 const SHOWN = 5;
@@ -41,6 +45,8 @@ export function SidebarProjects() {
   const startSync = useProjects((s) => s.startSync);
   const sessions = useAgents((s) => s.sessions);
   const tasks = useMemo(() => groupTasksByProject(Object.values(sessions), projects), [sessions, projects]);
+  const launches = useAgents((s) => s.launches);
+  const pending = useMemo(() => Object.values(launches).sort((a, b) => b.startedAt - a.startedAt), [launches]);
 
   useEffect(() => startSync(), [startSync]);
 
@@ -66,14 +72,14 @@ export function SidebarProjects() {
         </button>
       ) : (
         <ul className="flex flex-col gap-px">
-          {projects.map((p) => <ProjectNode key={p.id} project={p} tasks={tasks.get(p.id) ?? []} open={expanded[p.id] !== false} onToggle={() => toggle(p.id)} />)}
+          {projects.map((p) => <ProjectNode key={p.id} project={p} tasks={tasks.get(p.id) ?? []} launches={pending.filter((l) => l.projectId === p.id)} open={expanded[p.id] !== false} onToggle={() => toggle(p.id)} />)}
         </ul>
       )}
     </section>
   );
 }
 
-function ProjectNode({ project, tasks, open, onToggle }: { project: Project; tasks: Session[]; open: boolean; onToggle: () => void }) {
+function ProjectNode({ project, tasks, launches, open, onToggle }: { project: Project; tasks: Session[]; launches: PendingLaunch[]; open: boolean; onToggle: () => void }) {
   const remove = useProjects((s) => s.remove);
   const openNewTask = useProjects((s) => s.openNewTask);
   const [all, setAll] = useState(false);
@@ -108,8 +114,8 @@ function ProjectNode({ project, tasks, open, onToggle }: { project: Project; tas
       {open && (
         <ul className="ml-[17px] flex flex-col gap-px border-l py-0.5 pl-1.5">
           {project.missing && <li className="px-2 py-0.5 text-destructive-foreground text-[11px]">Folder not found</li>}
-          {tasks.length === 0 ? <li>{canRun ? <button type="button" onClick={() => openNewTask(project.id)} className="flex h-6 w-full items-center px-2 text-left text-muted-foreground text-xs outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring">Start a task</button> : <span className="px-2 py-0.5 text-muted-foreground text-xs">No tasks yet</span>}</li>
-            : shown.map((s) => <TaskRow key={s.id} session={s} />)}
+          {tasks.length === 0 && launches.length === 0 ? <li>{canRun ? <button type="button" onClick={() => openNewTask(project.id)} className="flex h-6 w-full items-center px-2 text-left text-muted-foreground text-xs outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring">Start a task</button> : <span className="px-2 py-0.5 text-muted-foreground text-xs">No tasks yet</span>}</li>
+            : <>{launches.map((launch) => <LaunchRow key={launch.id} launch={launch} />)}{shown.map((s) => <TaskRow key={s.id} session={s} />)}</>}
           {hidden > 0 && <li><button type="button" onClick={() => setAll(true)} className="flex h-6 w-full items-center px-2 text-left text-muted-foreground text-xs outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring">{hidden} more {hidden === 1 ? "task" : "tasks"}</button></li>}
           {all && tasks.length > SHOWN && <li><button type="button" onClick={() => setAll(false)} className="flex h-6 w-full items-center px-2 text-left text-muted-foreground text-xs outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring">Show fewer</button></li>}
         </ul>
@@ -121,21 +127,66 @@ function ProjectNode({ project, tasks, open, onToggle }: { project: Project; tas
   );
 }
 
+/** A task that was just sent and has no session yet: muted until the daemon has started it. */
+function LaunchRow({ launch }: { launch: PendingLaunch }) {
+  const opened = useAgents((s) => s.openId === launch.id);
+  const inTasks = useUI((s) => s.view === "agents");
+  const failed = launch.status === "failed";
+  return (
+    <li>
+      <button type="button" aria-current={opened && inTasks ? "page" : undefined} onClick={() => openTask(launch.id)} className={cn(rowBase, "pl-2 text-[13px] text-muted-foreground", opened && inTasks && "bg-sidebar-accent text-sidebar-accent-foreground")}>
+        <span aria-hidden className={cn("size-1.5 shrink-0 rounded-full", failed ? "bg-destructive" : "animate-pulse bg-muted-foreground/50 motion-reduce:animate-none")} />
+        <span className="min-w-0 flex-1 truncate">{launch.title}</span>
+        {failed ? <Badge size="sm" variant="error">Failed</Badge> : <span className="shrink-0 text-[11px]">Starting…</span>}
+        <span className="ml-1 inline-flex shrink-0" role="img" aria-label={`${launch.kind} agent`}><ProviderLogo kind={launch.kind} /></span>
+      </button>
+    </li>
+  );
+}
+
 function TaskRow({ session }: { session: Session }) {
   const opened = useAgents((s) => s.openId === session.id);
   const inTasks = useUI((s) => s.view === "agents");
   const current = opened && inTasks;
   const title = sessionTitle(session);
+  const [renaming, setRenaming] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const togglePin = () => {
+    Agents.setPinned(session.id, !session.pinned).then(
+      (next) => useAgents.getState().upsert(next),
+      (cause: unknown) => toastManager.add({ type: "error", title: session.pinned ? "Could not unpin the task" : "Could not pin the task", description: errText(cause) }),
+    );
+  };
+  // A running task is stopped first: the daemon only deletes tasks that are not running.
+  const remove = async () => {
+    if (session.live) await Agents.stop(session.id);
+    await Agents.remove(session.id);
+  };
   return (
     <li>
-      <Tooltip><TooltipTrigger render={<button type="button" aria-current={current ? "page" : undefined} onClick={() => openTask(session.id)} className={cn(rowBase, "pl-2 text-[13px] text-sidebar-foreground", current && "bg-sidebar-accent text-sidebar-accent-foreground")} />}>
-        <span role="img" aria-label={session.status} className={cn("size-1.5 shrink-0 rounded-full", dot[session.status] ?? "bg-muted-foreground/50")} />
-        <span className="min-w-0 flex-1 truncate">{title}</span>
-        <BoxLabel machine={session.machine || "local"} />
-        {session.status === "needs-you" && <Badge size="sm" variant="warning">Needs you</Badge>}
-        {session.status === "failed" && <Badge size="sm" variant="error">Failed</Badge>}
-        <span className="ml-1 inline-flex shrink-0" role="img" aria-label={`${session.kind} agent`}><ProviderLogo kind={session.kind} /></span>
-      </TooltipTrigger><TooltipPopup><span className="max-w-sm whitespace-pre-wrap break-words">{`${title}\n${session.status}${session.branch ? ` · ${session.branch}` : ""}`}</span></TooltipPopup></Tooltip>
+      <ContextMenu>
+        <ContextMenuTrigger className="block w-full">
+          <button type="button" aria-current={current ? "page" : undefined} onClick={() => openTask(session.id)} className={cn(rowBase, "pl-2 text-[13px] text-sidebar-foreground", current && "bg-sidebar-accent text-sidebar-accent-foreground")}>
+            <span role="img" aria-label={session.status} className={cn("size-1.5 shrink-0 rounded-full", dot[session.status] ?? "bg-muted-foreground/50")} />
+            <span className="min-w-0 flex-1 truncate">{title}</span>
+            <BoxLabel machine={session.machine || "local"} />
+            {session.status === "needs-you" && <Badge size="sm" variant="warning">Needs you</Badge>}
+            {session.status === "failed" && <Badge size="sm" variant="error">Failed</Badge>}
+            {session.pinned && <Pin aria-label="Pinned" className="size-3 shrink-0 -rotate-45 fill-current text-muted-foreground" />}
+            <span className="ml-1 inline-flex shrink-0" role="img" aria-label={`${session.kind} agent`}><ProviderLogo kind={session.kind} /></span>
+          </button>
+        </ContextMenuTrigger>
+        <ContextMenuPopup align="start" className="min-w-44">
+          <ContextMenuItem onClick={() => setRenaming(true)}><Pencil className="size-3.5" />Rename…</ContextMenuItem>
+          <ContextMenuItem onClick={togglePin}>{session.pinned ? <PinOff className="size-3.5" /> : <Pin className="size-3.5" />}{session.pinned ? "Unpin" : "Pin to top"}</ContextMenuItem>
+          <ContextMenuSeparator />
+          <ContextMenuItem variant="destructive" onClick={() => setDeleting(true)}><Trash2 className="size-3.5" />Delete…</ContextMenuItem>
+        </ContextMenuPopup>
+      </ContextMenu>
+      {renaming && <RenameTaskDialog session={session} open onOpenChange={setRenaming} />}
+      <ConfirmDialog open={deleting} onOpenChange={setDeleting} title={`Delete ${title}?`} confirmLabel="Delete task" onConfirm={remove}>
+        <p>{session.live ? "This task is running. It will be stopped, then " : "The task, "}its conversation and scratch files are deleted. Files and branches in your project stay on disk.</p>
+      </ConfirmDialog>
     </li>
   );
 }
@@ -143,5 +194,5 @@ function TaskRow({ session }: { session: Session }) {
 function BoxLabel({ machine }: { machine: string }) {
   const name = useBoxes((s) => s.machines.find((m) => m.id === machine)?.name);
   const label = name || (machine === "local" ? "This system" : machine);
-  return <span title={`System: ${label}`} className="max-w-16 shrink truncate rounded bg-sidebar-accent px-1 font-mono text-[10px] font-normal text-muted-foreground">{label}</span>;
+  return <span className="max-w-16 shrink truncate rounded bg-sidebar-accent px-1 font-mono text-[10px] font-normal text-muted-foreground">{label}</span>;
 }

@@ -17,11 +17,12 @@ const WIDTH = 150;
 const HEIGHT = 96;
 
 /** One randomly chosen ascii.rest piece. Follows the ASCII settings: hidden when off, still when motion is reduced, paused or the window is unfocused. */
-export function AsciiMark({ piece, pieces, width = WIDTH, height = HEIGHT }: {
+export function AsciiMark({ piece, pieces, width = WIDTH, height = HEIGHT, align = "center" }: {
   /** Fixes the piece instead of picking one at random. */ piece?: string;
   /** Pool to pick from when `piece` is not given. */ pieces?: readonly string[];
   width?: number;
   height?: number;
+  /** Where the piece sits in its row. */ align?: "start" | "center";
 }) {
   const [chosen] = useState(() => piece ?? pickMark(Math.random, pieces));
   const s = useSettings((x) => x.ascii);
@@ -51,7 +52,7 @@ export function AsciiMark({ piece, pieces, width = WIDTH, height = HEIGHT }: {
   }, [chosen, s.enabled, loaded, m.fps, width, height]);
 
   if (!s.enabled || !loaded) return null;
-  return <div aria-hidden="true" className="flex items-end justify-center" style={{ height }}>
+  return <div aria-hidden="true" className={align === "start" ? "flex items-end justify-start" : "flex items-end justify-center"} style={{ height }}>
     <pre ref={ref} data-testid="ascii-mark" data-piece={chosen} data-motion={m.reason} className="m-0 select-none overflow-hidden whitespace-pre font-mono text-foreground/70" style={{ fontSize, lineHeight: 1 }} />
   </div>;
 }

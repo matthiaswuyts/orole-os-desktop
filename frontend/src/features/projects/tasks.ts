@@ -17,7 +17,8 @@ export function belongsToProject(session: Session, project: Project): boolean {
   return session.projectId ? session.projectId === project.id : Boolean(project.path) && pathKey(session.project) === pathKey(project.path);
 }
 
-const newestFirst = (a: Session, b: Session) => (Date.parse(b.updatedAt) || 0) - (Date.parse(a.updatedAt) || 0);
+/** Pinned tasks first, then the most recently updated. */
+const newestFirst = (a: Session, b: Session) => Number(!!b.pinned) - Number(!!a.pinned) || (Date.parse(b.updatedAt) || 0) - (Date.parse(a.updatedAt) || 0);
 
 /** Dashboard-visible sessions of one project, newest first. */
 export function projectTasks(sessions: Iterable<Session>, project: Project): Session[] {

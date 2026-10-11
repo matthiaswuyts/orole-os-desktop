@@ -31,6 +31,17 @@ describe("task composer delivery", () => {
     expect(api.sendMessage).toHaveBeenLastCalledWith("task-a", "Keep this draft", [], "", "");
   });
 
+  it("shows the mic while the draft is empty and the send button once there is text", () => {
+    render(<Composer session={session()} />);
+    expect(screen.getByRole("button", { name: "Dictate a message" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Queue message" })).toBeNull();
+    fireEvent.change(screen.getByLabelText("Message the agent"), { target: { value: "hello" } });
+    expect(screen.getByRole("button", { name: "Queue message" })).toBeEnabled();
+    expect(screen.queryByRole("button", { name: "Dictate a message" })).toBeNull();
+    fireEvent.change(screen.getByLabelText("Message the agent"), { target: { value: "  " } });
+    expect(screen.getByRole("button", { name: "Dictate a message" })).toBeInTheDocument();
+  });
+
   it("does not submit composition Enter or Shift+Enter and deduplicates pending sends", async () => {
     const queued = Promise.withResolvers<Session>();
     api.sendMessage.mockReturnValue(queued.promise);
@@ -38,7 +49,8 @@ describe("task composer delivery", () => {
     const input = screen.getByLabelText("Message the agent");
     fireEvent.change(input, { target: { value: "next" } });
     fireEvent.keyDown(input, { key: "Enter", isComposing: true });
-    fireEvent.keyDown(input, { key: "Enter", shiftKey: true });
+    // Shift+Enter must stay a native new line: not sent and not default-prevented.
+    expect(fireEvent.keyDown(input, { key: "Enter", shiftKey: true })).toBe(true);
     expect(api.sendMessage).not.toHaveBeenCalled();
     fireEvent.keyDown(input, { key: "Enter" });
     fireEvent.keyDown(input, { key: "Enter" });
@@ -146,7 +158,7 @@ describe("permission mode", () => {
     await open("Permission mode: Auto");
     expect(await screen.findByRole("option", { name: /Auto.*The agent decides which actions are safe/ })).toBeVisible();
     expect(screen.getByRole("option", { name: /Manual.*Asks before anything it isn't sure is safe/ })).toBeVisible();
-    expect(screen.getByRole("option", { name: /YOLO.*Never asks/ })).toBeVisible();
+    expect(screen.getByRole("option", { name: /Yolo.*Never asks/ })).toBeVisible();
   });
 
   it("treats a stored legacy value as Manual", () => {
@@ -162,10 +174,10 @@ describe("permission mode", () => {
     await waitFor(() => expect(api.upsert).toHaveBeenCalledWith(expect.objectContaining({ permissionMode: "auto" })));
   });
 
-  it("asks for confirmation before YOLO and sends confirmYolo only after it", async () => {
+  it("asks for confirmation before Yolo and sends confirmYolo only after it", async () => {
     render(<Composer session={live()} />);
     await open();
-    await pick(/YOLO/);
+    await pick(/Yolo/);
     expect(await screen.findByText("Run without asking?")).toBeVisible();
     expect(screen.getByText(/No prompts will be shown/)).toBeVisible();
     expect(api.setPermissionMode).not.toHaveBeenCalled();
@@ -174,18 +186,18 @@ describe("permission mode", () => {
     expect(api.setPermissionMode).not.toHaveBeenCalled();
 
     await open();
-    await pick(/YOLO/);
-    fireEvent.click(await screen.findByRole("button", { name: "Enable YOLO" }));
+    await pick(/Yolo/);
+    fireEvent.click(await screen.findByRole("button", { name: "Enable Yolo" }));
     await waitFor(() => expect(api.setPermissionMode).toHaveBeenCalledWith("task-a", "yolo", true));
     await waitFor(() => expect(screen.queryByText("Run without asking?")).toBeNull());
   });
 
-  it("keeps the dialog open and shows the daemon's refusal when YOLO is rejected", async () => {
+  it("keeps the dialog open and shows the daemon's refusal when Yolo is rejected", async () => {
     api.setPermissionMode.mockRejectedValueOnce(new Error("bad_request: YOLO mode is turned off in Orole's settings"));
     render(<Composer session={live()} />);
     await open();
-    await pick(/YOLO/);
-    fireEvent.click(await screen.findByRole("button", { name: "Enable YOLO" }));
+    await pick(/Yolo/);
+    fireEvent.click(await screen.findByRole("button", { name: "Enable Yolo" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("YOLO mode is turned off in Orole's settings");
     expect(screen.getByText("Run without asking?")).toBeVisible();
   });
@@ -202,7 +214,7 @@ describe("permission mode", () => {
     toast.mockRestore();
   });
 
-  it("marks an approximated Auto and a disabled YOLO honestly", async () => {
+  it("marks an approximated Auto and a disabled Yolo honestly", async () => {
     api.options.mockResolvedValue({ harnesses: [harness([
       modes[0]!,
       { mode: "auto", available: true, approximated: true, detail: "No AI reviewer here; Auto approves file edits only." },
@@ -211,7 +223,7 @@ describe("permission mode", () => {
     render(<Composer session={live()} />);
     await open();
     expect(await screen.findByRole("option", { name: /Auto.*Approximated.*No AI reviewer here/ })).toBeVisible();
-    const yolo = screen.getByRole("option", { name: /YOLO.*turned off in Orole's settings/ });
+    const yolo = screen.getByRole("option", { name: /Yolo.*turned off in Orole's settings/ });
     expect(yolo).toHaveAttribute("aria-disabled", "true");
     fireEvent.click(yolo);
     expect(screen.queryByText("Run without asking?")).toBeNull();

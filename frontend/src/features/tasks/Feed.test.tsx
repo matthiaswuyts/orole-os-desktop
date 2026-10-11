@@ -51,13 +51,13 @@ describe("Feed", () => {
     expect(screen.getByLabelText("Tool input")).toHaveTextContent('"query": "hooks"');
   });
 
-  it("shows a failed tool as an explicit error and keeps the time in a hover title only", () => {
+  it("shows a failed tool as an explicit error and puts no date in a hover title", () => {
     show([ev("prompt", "go"), ev("tool", "", { id: "t1", name: "shell", status: "error", input: { command: "npm test" }, output: "exit code 1" }), ev("message", "It failed.")]);
     fireEvent.click(run());
     const step = within(screen.getByRole("list", { name: "Activity" })).getByRole("listitem");
     expect(step).toHaveAttribute("data-failed", "true");
     expect(step).toHaveTextContent("Failed");
-    expect(step.getAttribute("title")).toBeTruthy();
+    expect(step).not.toHaveAttribute("title");
   });
 
   it("folds thoughts into the run as commentary labelled by their title, with the full text one click away", () => {

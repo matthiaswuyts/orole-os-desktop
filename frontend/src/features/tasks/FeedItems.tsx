@@ -19,18 +19,15 @@ export { ImageCard, ImageGenerationCard } from "./TaskImages";
 
 type Item<T extends FeedItem["type"]> = Extract<FeedItem, { type: T }>;
 
-/** Full local date and time, for a row's hover title. Rows never show a clock of their own. */
-export const stamp = (at: string) => { const t = Date.parse(at); return Number.isFinite(t) ? new Date(t).toLocaleString() : undefined; };
-
 export function UserMessage({ item }: { item: Item<"user"> }) {
-  return <div className="ml-auto max-w-[85%] rounded-lg bg-accent px-3 py-2 text-sm" title={stamp(item.at)}>
+  return <div className="ml-auto w-fit max-w-[85%] rounded-lg bg-accent px-3 py-2 text-sm">
     <p className="sr-only">You said</p>
     <p className="selectable whitespace-pre-wrap break-words">{item.text}</p>
   </div>;
 }
 
 export function AssistantMessage({ item }: { item: Item<"assistant"> }) {
-  return <div className="min-w-0 max-w-[92%]" title={stamp(item.at)}>
+  return <div className="min-w-0 max-w-[92%]">
     <p className="sr-only">Agent said</p>
     <Markdown>{item.text}</Markdown>
   </div>;
@@ -63,7 +60,7 @@ export function PermissionItem({ session, item }: { session: Session; item: Item
 
 export function NoteRow({ item }: { item: Item<"note"> }) {
   const Icon = item.kind === "needs_input" ? TriangleAlert : Info;
-  return <p className={cn("flex items-start gap-1.5 text-xs", item.kind === "needs_input" ? "text-warning-foreground" : "text-muted-foreground")} title={stamp(item.at)}><Icon aria-hidden className="mt-px size-3.5 shrink-0" /><span className="min-w-0 whitespace-pre-wrap break-words">{item.text}</span></p>;
+  return <p className={cn("flex items-start gap-1.5 text-xs", item.kind === "needs_input" ? "text-warning-foreground" : "text-muted-foreground")}><Icon aria-hidden className="mt-px size-3.5 shrink-0" /><span className="min-w-0 whitespace-pre-wrap break-words">{item.text}</span></p>;
 }
 
 export function ErrorRow({ item }: { item: Item<"error"> }) {
@@ -72,7 +69,7 @@ export function ErrorRow({ item }: { item: Item<"error"> }) {
 
 /** A turn that ended badly: shown outside the collapsed run so the failure is never hidden. */
 export function TurnFailure({ item }: { item: Item<"turn"> }) {
-  return <div role="alert" data-slot="turn-failure" className="flex items-start gap-2 text-xs text-destructive-foreground" title={stamp(item.at)}>
+  return <div role="alert" data-slot="turn-failure" className="flex items-start gap-2 text-xs text-destructive-foreground">
     <CircleX aria-hidden className="mt-px size-3.5 shrink-0" />
     <div className="min-w-0"><p className="font-medium">Turn failed{item.durationMs === null ? "" : ` after ${duration(item.durationMs)}`}</p>{item.result && <p className="selectable whitespace-pre-wrap break-words">{item.result}</p>}</div>
   </div>;

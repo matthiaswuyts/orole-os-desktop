@@ -255,7 +255,7 @@ func (m *Manager) applyPermissionMode(ctx context.Context, id, mode string) (Ses
 		return s, false, nil
 	}
 	from := s.PermissionMode
-	note, restart := "", false
+	restart := false
 	if ls != nil {
 		m.mu.Lock()
 		stopping := m.closing || m.live[id] != ls || ls.stopping
@@ -265,13 +265,10 @@ func (m *Manager) applyPermissionMode(ctx context.Context, id, mode string) (Ses
 		}
 		restart = true
 		if pp, ok := ls.proc.(permissionModeProcess); ok {
-			nextTurn, err := pp.SetPermissionMode(mode)
+			_, err := pp.SetPermissionMode(mode)
 			switch {
 			case err == nil:
 				restart = false
-				if nextTurn {
-					note = " It applies from the next turn."
-				}
 			case !errors.Is(err, ErrRestartRequired):
 				return Session{}, false, err
 			}
@@ -283,14 +280,14 @@ func (m *Manager) applyPermissionMode(ctx context.Context, id, mode string) (Ses
 			if s.AgentSessionID == "" || !m.adapterCanResume(s.Kind) {
 				return Session{}, false, errors.New("this agent has no resumable conversation to restart with the new permission mode")
 			}
-			note = " The conversation was resumed to apply it."
+			// The conversation resumes to apply the new mode; the mode picker already shows it.
 		}
 	}
 	s, err = m.mutate(id, func(s *Session) { s.PermissionMode = mode })
 	if err != nil {
 		return s, false, err
 	}
-	m.record(id, Event{Kind: EvSystem, Text: "Permission mode changed to " + mode + "." + note})
+	// No transcript notice: the picker shows the mode, and the change is audited below.
 	m.cfg.Audit("agent.permissionMode", id, "allowed", from+" -> "+mode)
 	if mode == PermYolo {
 		m.cfg.Audit("agent.yolo", id, "allowed", "switched from "+from)

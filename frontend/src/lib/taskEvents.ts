@@ -301,6 +301,10 @@ export function groupEvents(events: AgentEvent[], options: GroupOptions = { live
         items.push({ type: "note", key, at: ev.at, kind: "decision", text: ev.text });
         break;
       case "system":
+        // Older transcripts recorded a "Permission mode changed to …" note; the mode picker shows it now.
+        if (ev.text.startsWith("Permission mode changed to ")) break;
+        items.push({ type: "note", key, at: ev.at, kind: ev.kind, text: ev.text });
+        break;
       case "needs_input":
         items.push({ type: "note", key, at: ev.at, kind: ev.kind, text: ev.text || (ev.kind === "needs_input" ? "Waiting for you." : "") });
         break;

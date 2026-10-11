@@ -87,9 +87,11 @@ type Session struct {
 	Model         string `json:"model"`
 	Reasoning     string `json:"reasoning,omitempty"`
 	Title         string `json:"title"`
-	Task          string `json:"task"`
-	Mode          Mode   `json:"mode"`
-	Command       string `json:"command,omitempty"` // custom CLI command line
+	// Pinned keeps the task above unpinned ones in its project's list. The user sets it.
+	Pinned  bool   `json:"pinned,omitempty"`
+	Task    string `json:"task"`
+	Mode    Mode   `json:"mode"`
+	Command string `json:"command,omitempty"` // custom CLI command line
 	// PermissionMode is the Orole permission mode the session runs with: manual | auto | yolo,
 	// or plan (read-only, daemon-internal). Each harness maps it onto its own approval controls.
 	PermissionMode string `json:"permissionMode"`
@@ -174,6 +176,10 @@ const (
 	EvTranscript  = "transcript"  // transcript path known; Text = path
 	EvPermCancel  = "perm_cancel" // agent withdrew a permission request; Data = {id}
 	EvOutputBytes = "output"      // terminal output counter bump (not persisted)
+	// EvTitle is a harness-chosen task name (omp session_info_update/setTitle, Codex thread/name/updated);
+	// Text = the name. The manager renames the session when its title is still automatic and never
+	// records or publishes the event itself.
+	EvTitle = "title"
 
 	// Structured-harness events (omp RPC, Codex app-server, Claude stream-json). Adapters emit
 	// these when an item completes (never per streamed token); live typing shows through

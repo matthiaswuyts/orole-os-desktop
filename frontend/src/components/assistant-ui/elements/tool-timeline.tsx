@@ -13,8 +13,6 @@ export interface TimelineStep {
   failed?: boolean;
   /** The step is still in flight: its verb shimmers. */
   running?: boolean;
-  /** Hover text of the whole row, such as the time it happened. */
-  title?: string;
   /** Detail revealed by the row's own disclosure (input, output, a longer note). Rows without content are static. */
   content?: ReactNode;
   /** Shown under the row whether or not it is open, such as a search excerpt. */
@@ -23,7 +21,7 @@ export interface TimelineStep {
 export interface TimelineStat { file: string; added?: number; removed?: number }
 
 /** One verb + icon + chip step of a timeline; with `content` the whole row opens into its detail. */
-export function TimelineStepRow({ step, shimmer = false, className, ...props }: Omit<ComponentProps<"li">, "children" | "title"> & { step: TimelineStep; shimmer?: boolean }) {
+export function TimelineStepRow({ step, shimmer = false, className, ...props }: Omit<ComponentProps<"li">, "children"> & { step: TimelineStep; shimmer?: boolean }) {
   const Icon = step.failed ? CircleXIcon : step.icon;
   const verbLine = <>
     <Icon aria-hidden className={cn("size-3.5 shrink-0", step.failed && "text-destructive-foreground")} />
@@ -31,7 +29,7 @@ export function TimelineStepRow({ step, shimmer = false, className, ...props }: 
     {step.chip && <span className={cn(surfaces.field, "min-w-0 truncate px-2 py-0.5", step.failed && "border-destructive/40")} title={step.chip}>{step.chip}</span>}
     {step.failed && <span className="shrink-0 text-destructive-foreground">Failed</span>}
   </>;
-  return <li data-slot="timeline-step" data-failed={step.failed || undefined} title={step.title} className={cn("min-w-0 text-muted-foreground", className)} {...props}>
+  return <li data-slot="timeline-step" data-failed={step.failed || undefined} className={cn("min-w-0 text-muted-foreground", className)} {...props}>
     {step.content ? <Collapsible>
       <CollapsibleTrigger className="group/step flex w-full min-w-0 items-center gap-2 rounded-md text-left outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring" aria-label={`${step.verb}${step.chip ? ` ${step.chip}` : ""}${step.failed ? " (failed)" : ""}: show details`}>
         <ChevronRightIcon aria-hidden className="size-3 shrink-0 transition-transform group-data-[panel-open]/step:rotate-90 motion-reduce:transition-none" />

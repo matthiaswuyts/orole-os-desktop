@@ -11,6 +11,22 @@ notes. See `docs/development/updates.md`.
 ## 0.2.0 - 2026-10-12
 
 ### Added
+- Right-click a task in the sidebar to rename it, pin it to the top of its project, or delete it. A name you give a task is final
+  (automatic naming never replaces it); a running task is stopped before it is deleted.
+- Code task conversations have a conversation map: a thin rail of ticks in the right gutter, one per turn. The turn being read is
+  solid, turns on screen are darker, hovering shows the turn's title and the start of the reply, and clicking jumps there. It
+  appears when the conversation is wide enough to leave a gutter and has more than one turn.
+- New Code tasks get a real name. Oh My Pi and Codex name the task themselves (shown as soon as they do), and for Claude Code (and
+  Codex until it names one) Orole makes one short request to the task's own Claude or ChatGPT account (Haiku, or Codex's smallest
+  listed model) for a 3-6 word title, using the first prompts that say something. Until then the title is the first line of your
+  prompt, a title you typed or changed is never replaced, and nothing is sent when the account is not installed and signed in. The
+  request is audited without the prompt, and Settings > System > Task permissions > "Name tasks with AI" turns it off (names the
+  harness chooses itself still apply).
+- Starting a task opens its page instantly. Pressing Send in the Home or New task prompt switches to the task page at once, showing
+  your message, the agent logo and a provisional title, and "Starting <agent>…" (or "Preparing workspace…" when a new worktree is
+  being created), while the task launches in the background. The real task replaces it when ready; if the start fails, the page
+  stays with the error, **Try again** and **Edit prompt** (which restores your prompt, files and choices). Leaving the page does
+  not cancel the start, and the task appears in the sidebar as "Starting…".
 - Code tasks have three permission modes, chosen before launch and switchable while the task runs: **Manual** asks before
   anything not known to be safe, **Auto** lets the agent decide which actions are safe, and **YOLO** never asks. Auto uses
   Claude Code's own auto mode and Codex's auto-review agent; Oh My Pi has no such mode, so Auto approves file edits there and
@@ -168,6 +184,8 @@ notes. See `docs/development/updates.md`.
   `@fontsource-variable/geist`.
 
 ### Fixed
+- Hovering over a message, a run step or a note in a task conversation no longer pops up a native tooltip with its date. Dates
+  stay on the day separators, and the system label on sidebar tasks lost its tooltip too.
 - A model stream that goes silent for 90 seconds is cancelled with a clear error instead of hanging.
 - Rate-limit (429) and server (5xx) answers are retried with jittered backoff before the reply starts,
   honouring `Retry-After`; a reply that already began is never replayed.

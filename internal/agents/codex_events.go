@@ -107,11 +107,12 @@ func (p *codexProc) notification(method string, raw json.RawMessage) {
 			Status string          `json:"status"`
 			Error  *codexTurnError `json:"error"`
 		} `json:"turn"`
-		Error     codexTurnError  `json:"error"`
-		Message   string          `json:"message"`
-		TurnID    string          `json:"turnId"`
-		WillRetry bool            `json:"willRetry"`
-		RequestID json.RawMessage `json:"requestId"`
+		Error      codexTurnError  `json:"error"`
+		Message    string          `json:"message"`
+		TurnID     string          `json:"turnId"`
+		WillRetry  bool            `json:"willRetry"`
+		RequestID  json.RawMessage `json:"requestId"`
+		ThreadName *string         `json:"threadName"`
 	}
 	if json.Unmarshal(raw, &n) != nil {
 		return
@@ -187,6 +188,10 @@ func (p *codexProc) notification(method string, raw json.RawMessage) {
 		if mine && n.Message != "" {
 			p.emit(Event{Kind: EvGuardrail, Data: jraw(GuardrailData{ID: n.ThreadID, Kind: "warning",
 				Message: n.Message, Source: "codex:guardianWarning"})})
+		}
+	case "thread/name/updated":
+		if mine && n.ThreadName != nil && strings.TrimSpace(*n.ThreadName) != "" {
+			p.emit(Event{Kind: EvTitle, Text: *n.ThreadName})
 		}
 	case "serverRequest/resolved":
 		p.requestResolved(n.RequestID)

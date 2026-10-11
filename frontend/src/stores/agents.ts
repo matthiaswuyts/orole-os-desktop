@@ -3,6 +3,7 @@ import { useShallow } from "zustand/react/shallow";
 import { Agents, events, type Detection, type Run, type Session, type SessionDelta } from "@/mygo";
 import { inDesktop } from "@/lib/backend";
 import { columnOf, onDashboard } from "@/features/agents/columns";
+import type { LaunchDraft, PendingLaunch } from "@/features/tasks/pendingLaunch";
 
 export type SessionMap = Record<string, Session>;
 
@@ -52,6 +53,11 @@ export function applySessionDelta(sessions: SessionMap, delta: SessionDelta): Se
   if (!cur || ts(cur) > ts(delta)) return sessions;
   const { id: _id, ...fields } = delta;
   return { ...sessions, [delta.id]: { ...cur, ...fields } };
+}
+
+function omitLaunch(launches: Record<string, PendingLaunch>, id: string): Record<string, PendingLaunch> {
+  const { [id]: _gone, ...rest } = launches;
+  return rest;
 }
 
 export function removeSession(sessions: SessionMap, id: string): SessionMap {
@@ -126,6 +132,16 @@ interface State {
   openId: string | null;
   setProjectFilter: (id: string | null) => void;
   setOpenId: (id: string | null) => void;
+  /** Tasks being started: sent, but `Agents.start` has not returned a session (or failed). The id is also the `openId` of the pending task page. */
+  launches: Record<string, PendingLaunch>;
+  /** The launcher form a failed launch is returned to; the next launcher of that kind to open takes it. */
+  launchDraft: LaunchDraft | null;
+  addLaunch: (launch: PendingLaunch) => void;
+  patchLaunch: (id: string, patch: Partial<Pick<PendingLaunch, "status" | "error">>) => void;
+  removeLaunch: (id: string) => void;
+  setLaunchDraft: (draft: LaunchDraft | null) => void;
+  /** Swaps a started launch for its session; `open` also opens the session where the pending page was. */
+  resolveLaunch: (id: string, session: Session, open: boolean) => void;
   load: () => Promise<void>;
   refresh: () => Promise<void>;
   detect: (refresh: boolean) => Promise<void>;
@@ -156,6 +172,16 @@ export const useAgents = create<State>((set, get) => ({
   openId: null,
   setProjectFilter: (projectFilter) => set({ projectFilter }),
   setOpenId: (openId) => set({ openId }),
+  launches: {},
+  launchDraft: null,
+  addLaunch: (launch) => set((s) => ({ launches: { ...s.launches, [launch.id]: launch }, launchDraft: null })),
+  patchLaunch: (id, patch) => set((s) => s.launches[id] ? { launches: { ...s.launches, [id]: { ...s.launches[id], ...patch } } } : s),
+  removeLaunch: (id) => set((s) => ({ launches: omitLaunch(s.launches, id), openId: s.openId === id ? null : s.openId })),
+  setLaunchDraft: (launchDraft) => set({ launchDraft }),
+  resolveLaunch: (id, session, open) => {
+    get().upsert(session);
+    set((s) => ({ launches: omitLaunch(s.launches, id), openId: s.openId === id ? (open ? session.id : null) : s.openId }));
+  },
 
   async load() {
     if (!inDesktop) return;

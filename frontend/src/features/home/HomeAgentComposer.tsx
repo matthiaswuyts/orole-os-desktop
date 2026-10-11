@@ -33,7 +33,7 @@ export function HomeComposerView({ task, autoFocus = false, placeholder = DEFAUL
   const id = useId();
   const picker = useRef<HTMLInputElement>(null);
   const [dragging, setDragging] = useState(false);
-  function submit(event: FormEvent) { event.preventDefault(); void task.start(); }
+  function submit(event: FormEvent) { event.preventDefault(); task.start(); }
   return <section aria-label="New AI task" className="mx-auto w-full min-w-0 max-w-[720px]">
     <form onSubmit={submit}>
       <input ref={picker} type="file" multiple hidden aria-label="Attach files" disabled={!task.attachments.canAdd}

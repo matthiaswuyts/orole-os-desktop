@@ -8,7 +8,7 @@ import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "@/compone
 import { Tooltip, TooltipPopup, TooltipTrigger } from "@/components/ui/tooltip";
 import { SidebarProjects } from "./SidebarProjects";
 import { Logo } from "./Logo";
-import { useAgentCounts } from "@/stores/agents";
+import { useAgentCounts, useAgents } from "@/stores/agents";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsList, TabsTab } from "@/components/ui/tabs";
 import { BotRail } from "./BotRail";
@@ -34,14 +34,19 @@ export function Sidebar() {
   const activeId = useWorkspaces((s) => s.activeId);
   const select = useWorkspaces((s) => s.select);
   const agentCounts = useAgentCounts();
-  const item = (n: NavItem) => (
-    <button key={n.id} type="button" aria-current={view === n.id ? "page" : undefined} onClick={() => setView(n.id)}
-      className={cn(row, view === n.id && "bg-sidebar-accent text-sidebar-accent-foreground")}>
-      <n.icon className="size-3.5 shrink-0" /><span className="truncate">{n.label}</span>
-      {n.id === "agents" && agentCounts.needsYou > 0 && <Badge size="sm" variant="warning" className="ml-auto">{agentCounts.needsYou}</Badge>}
-      {n.id === "review" && agentCounts.reviewable > 0 && <Badge size="sm" variant="secondary" className="ml-auto">{agentCounts.reviewable}</Badge>}
-    </button>
-  );
+  // An open task has its own highlighted row; the Tasks board is only "current" when no task is open.
+  const taskOpen = useAgents((s) => s.openId !== null && (!!s.sessions[s.openId] || !!s.launches[s.openId]));
+  const item = (n: NavItem) => {
+    const current = view === n.id && !(n.id === "agents" && taskOpen);
+    return (
+      <button key={n.id} type="button" aria-current={current ? "page" : undefined} onClick={() => { if (n.id === "agents") useAgents.getState().setOpenId(null); setView(n.id); }}
+        className={cn(row, current && "bg-sidebar-accent text-sidebar-accent-foreground")}>
+        <n.icon className="size-3.5 shrink-0" /><span className="truncate">{n.label}</span>
+        {n.id === "agents" && agentCounts.needsYou > 0 && <Badge size="sm" variant="warning" className="ml-auto">{agentCounts.needsYou}</Badge>}
+        {n.id === "review" && agentCounts.reviewable > 0 && <Badge size="sm" variant="secondary" className="ml-auto">{agentCounts.reviewable}</Badge>}
+      </button>
+    );
+  };
   // Desktop: isolated settings window. Browser preview has no native windows, so it keeps the in-app view.
   const openSettingsWindow = () => {
     if (!inDesktop) return setView("settings");

@@ -184,7 +184,7 @@ when switching providers/systems or reopening the composer. An explicit Auto cho
 is saved too. Missing models fall back to the discovered default; unsupported effort
 is omitted from launch without erasing the saved preference, so returning to a
 compatible model restores it. Missing catalogs are explicit, not fabricated.
-Start or Enter calls `Agents.start`; Shift+Enter still inserts a newline.
+Start or Enter hands the task to the pending task page, which calls `Agents.start` behind it (see Task view); Shift+Enter still inserts a newline.
 Duplicate submissions are blocked and uncertain retries reuse their request key.
 
 Files can be selected, dropped or pasted. `useTaskAttachments` uploads through
@@ -300,10 +300,28 @@ its page title. The titlebar's command-palette plus button is removed; the keybo
 `features/tasks/TaskView.tsx` wraps the real conversation and composer in `TaskCanvas`; file and
 image selections open a responsive side canvas without removing chat.
 
+**Starting a task is instant.** Send (Home or New task) calls `beginLaunch` (`features/tasks/pendingLaunch.ts`), which adds a
+`PendingLaunch` to the agents store (`launches`, keyed `launch:<uuid>`; `status` `starting` | `failed`), makes it the open task and
+switches to Tasks in the same frame; `Agents.start` (which may create a git worktree and spawn the harness) runs behind it, owned by
+the store rather than the launcher, so leaving the page never cancels it. `PendingTaskView` uses the real page's containers: the
+titlebar (`TaskHeader`, provider logo and the provisional title, the first line of the prompt like the daemon's own), the prompt as
+the right-aligned `UserMessage` bubble, attachment chips, a `WorkingStatus` row ("Preparing workspace…" when a new worktree is being
+created, else "Starting <Provider>…") and a disabled composer; it shows no output of its own. On success the session is upserted and,
+if the person is still on that page, opened where the pending page was, so the real `TaskView` replaces it. If they have left, the
+task simply appears in the sidebar and Tasks list. On failure the page stays, with the error, **Try again** (same request and
+idempotency key) and **Edit prompt**, which returns to the launcher with prompt, attachments (already staged in the daemon),
+project, system, worktree, agent and mode restored (`launchDraft`; YOLO is never restored); an identical resend still reuses the key.
+A failure while the person is elsewhere raises a toast with a Review action. The sidebar lists a pending launch under its project as a
+muted "Starting…" (or "Failed") row. Several launches can be pending at once; each resolves independently.
+
 - **Feed/navigation** (`Feed.tsx`, `RunEntries.tsx`, `lib/taskEvents.ts`): `chat_types.go` defines structured provider
   payloads; `taskChatTypes.ts` mirrors `Event.data` payloads not reachable through generated services.
   Feed items normalize provider events without inferring unsupported hierarchy, progress, citations, or
   context data. Search covers loaded transcript events only; loading older history remains available.
+  The conversation map (`elements/conversation-map.tsx`, props after assistant-ui's element, markup written here) draws one
+  tick per turn from `lib/conversationMap.ts` (`mapTurns` splits at user messages). `useVisibleTurns` reads the rendered
+  `[data-scroll-anchor]` rows, so with a windowed list only mounted turns count as on screen; the turn under a line a third
+  of the way down is the one being read, and the last turn while the reader is at the end. A click goes through `revealRow`.
   Day boundaries use local calendar time and are the only dates in the feed; a row's exact time is only its
   hover `title`. Follow-scroll pauses when the reader leaves the end, retains the anchor when older pages
   prepend, and offers a return-to-latest control.
@@ -404,7 +422,7 @@ once nothing is focused), then switches to the page; each opening is a fresh pag
 `Agents.start` through the same composer and launch state as Home (`HomeComposerView`, `useHomeTaskLaunch`): one `StartSpec`
 with `projectId` and an empty `dir` (resolved by the daemon), the chosen harness, optional model and reasoning, the prompt,
 attachments and the project/system/worktree menus. A retry of an identical spec reuses its idempotency key, so an uncertain
-failure never starts a second agent. Errors appear as toasts. Above the input sit one small random ascii.rest piece
+failure never starts a second agent. A failed start is reported on the pending task page (see Task view), not as a toast. Above the input sit one small random ascii.rest piece
 (`AsciiMark`, from a fixed list of 13 text pieces; hidden when the ASCII setting is off, still when motion is reduced), the
 project name and its repository, system and folder. Below it: "New <agent>" rows that choose the agent and focus the input,
 "All tasks in <project>", and "Pick up where you left off" (the project's three newest tasks, each with an Open button).

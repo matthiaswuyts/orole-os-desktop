@@ -36,11 +36,24 @@ export function useScrollAnchor(revision: unknown, updateIds: readonly number[],
     lastHeight.current = el.scrollHeight;
   }, []);
 
+  /**
+   * The jump button means "there is more below you": it needs real scroll distance. A view that cannot scroll is always
+   * following, and a reader within PIN_SLACK of the end is not away even if they nudged upward.
+   */
+  const refreshAway = useCallback(() => {
+    const el = viewport.current;
+    if (!el) return;
+    if (el.scrollHeight - el.clientHeight <= 1) following.current = true;
+    const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
+    setAway(!following.current && distance > PIN_SLACK);
+    if (following.current) setUnseen(0);
+  }, []);
+
   const pause = useCallback(() => {
     following.current = false;
-    setAway(true);
     remember();
-  }, [remember]);
+    refreshAway();
+  }, [remember, refreshAway]);
 
   const settle = useCallback(() => {
     const el = viewport.current;
@@ -59,7 +72,8 @@ export function useScrollAnchor(revision: unknown, updateIds: readonly number[],
     }
     lastTop.current = el.scrollTop;
     remember();
-  }, [remember]);
+    refreshAway();
+  }, [remember, refreshAway]);
 
   useLayoutEffect(() => {
     const latest = updateIds.length ? updateIds[updateIds.length - 1]! : null;
@@ -91,10 +105,9 @@ export function useScrollAnchor(revision: unknown, updateIds: readonly number[],
     const movedUp = el.scrollTop < lastTop.current - 1 && el.scrollHeight >= lastHeight.current - 0.5;
     if (movedUp) following.current = false;
     else if (el.scrollHeight - el.scrollTop - el.clientHeight < PIN_SLACK) following.current = true;
-    setAway(!following.current);
-    if (following.current) setUnseen(0);
+    refreshAway();
     remember();
-  }, [remember]);
+  }, [remember, refreshAway]);
 
   const jump = useCallback(() => {
     following.current = true;

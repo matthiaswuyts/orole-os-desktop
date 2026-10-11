@@ -166,6 +166,20 @@ func (a Agents) SetPermissionMode(ctx context.Context, id, mode string, confirmY
 	return out, err
 }
 
+// Rename sets a task's title. The name is the user's: automatic naming never replaces it.
+func (a Agents) Rename(ctx context.Context, id, title string) (agents.Session, error) {
+	var out agents.Session
+	err := a.L.call(ctx, "agents.rename", map[string]any{"id": id, "title": title}, &out)
+	return out, err
+}
+
+// SetPinned keeps a task above the others in its project's list.
+func (a Agents) SetPinned(ctx context.Context, id string, pinned bool) (agents.Session, error) {
+	var out agents.Session
+	err := a.L.call(ctx, "agents.setPinned", map[string]any{"id": id, "pinned": pinned}, &out)
+	return out, err
+}
+
 // Approve answers a pending permission request. The daemon decides and audits; this only relays.
 func (a Agents) Approve(ctx context.Context, id, requestID string, allow bool, reason string) error {
 	return a.L.call(ctx, "agents.approve", map[string]any{"id": id, "requestId": requestID, "allow": allow, "reason": reason}, nil)

@@ -548,6 +548,13 @@ func (s *ompState) frame(p *pipeProc, typ string, line []byte) []Event {
 			a := frame.Payload
 			return []Event{{Kind: EvSubagent, Data: jraw(SubagentData{ID: a.ID, Name: a.Agent, Status: a.Status, Task: a.Description, ToolCallID: a.ParentToolCallID})}}
 		}
+	case "session_info_update":
+		var frame struct {
+			Title string `json:"title"`
+		}
+		if json.Unmarshal(line, &frame) == nil && strings.TrimSpace(frame.Title) != "" {
+			return []Event{{Kind: EvTitle, Text: frame.Title}}
+		}
 	case "auto_compaction_end":
 		s.requestState(p)
 	case "auto_compaction_start":
@@ -1043,7 +1050,12 @@ func (s *ompState) dialog(p *pipeProc, line []byte) []Event {
 		}
 	}
 	switch r.Method {
-	case "notify", "setStatus", "setWidget", "setTitle", "set_editor_text", "open_url":
+	case "setTitle":
+		if strings.TrimSpace(r.Title) == "" {
+			return nil
+		}
+		return []Event{{Kind: EvTitle, Text: r.Title}}
+	case "notify", "setStatus", "setWidget", "set_editor_text", "open_url":
 		return nil // presentation only; no reply expected
 	case "cancel":
 		p.pmu.Lock()

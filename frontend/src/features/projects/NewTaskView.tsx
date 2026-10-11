@@ -26,7 +26,7 @@ export function NewTaskView() {
 }
 
 function NewTaskPage({ initialProjectId, initialPrompt }: { initialProjectId: string | null; initialPrompt: string }) {
-  const task = useHomeTaskLaunch({ initialProjectId, initialPrompt });
+  const task = useHomeTaskLaunch({ launcher: "new-task", initialProjectId, initialPrompt });
   const close = useProjects((state) => state.closeNewTask);
   const registered = useProjects((state) => state.projects.find((project) => project.id === task.project?.id));
   const machines = useBoxes((state) => state.machines);
@@ -52,7 +52,7 @@ function NewTaskPage({ initialProjectId, initialPrompt }: { initialProjectId: st
   return <div className="h-full overflow-auto">
     <div className="mx-auto flex min-h-full w-full max-w-[640px] flex-col justify-center gap-4 px-6 py-12">
       <header className="flex flex-col gap-2">
-        <AsciiMark />
+        <AsciiMark align="start" />
         <h1 className="break-words font-heading font-semibold text-xl">{project?.name ?? "New task"}</h1>
         {project && <p className="flex flex-wrap items-center gap-1.5">
           {repo && <span className={chip}><GithubMark /><span className="truncate">{repo}</span></span>}
