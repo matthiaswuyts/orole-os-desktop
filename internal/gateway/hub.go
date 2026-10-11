@@ -144,12 +144,12 @@ func (h *Hub) Call(ctx context.Context, session, name string, args json.RawMessa
 	return h.MCP.InvokeChecked(ctx, tg.serverID, tg.tool, m, mcp.CallOptions{Actor: actor})
 }
 
-// SkillList returns the enabled skills (no bodies).
+// SkillList returns the enabled skills (no bodies). Built-in skills are for Chat bots only.
 func (h *Hub) SkillList() ([]skills.Skill, error) {
 	if h.Skills == nil {
 		return nil, errors.New("skills registry is unavailable")
 	}
-	all, err := h.Skills.Enabled()
+	all, err := h.Skills.EnabledForHarnesses()
 	for i := range all {
 		all[i].Body = ""
 	}
@@ -168,7 +168,7 @@ func (h *Hub) SkillGet(name, file string) (SkillContent, error) {
 	if err != nil {
 		return SkillContent{}, err
 	}
-	if !sk.Enabled {
+	if !sk.Enabled || sk.Source == skills.SourceBuiltin {
 		return SkillContent{}, fmt.Errorf("%w: %s is disabled", skills.ErrNotFound, name)
 	}
 	out := SkillContent{Name: name, File: file, Files: []string{}}

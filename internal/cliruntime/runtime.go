@@ -149,24 +149,42 @@ func (m *Manager) Path(id string) string {
 
 func (m *Manager) status(ctx context.Context, s spec) Status {
 	st := Status{ID: s.id, Name: s.name, Auth: Unknown, Installable: m.installable(s.id)}
-	var problems []string
 	path, source := m.resolve(s)
+	// The version, the release lookup and the sign-in check are independent (a CLI start and a network call), so they
+	// run together: the listing takes as long as the slowest, not their sum.
+	var (
+		wg                     sync.WaitGroup
+		version, latest        string
+		versionErr, latestErr  error
+		authState, authAccount = Unknown, ""
+	)
 	if path != "" {
 		st.Installed, st.Path, st.Source = true, path, source
-		if v, err := m.version(ctx, path); err != nil {
-			problems = append(problems, "could not read the version")
-		} else {
-			st.Version = v
+		wg.Add(1)
+		go func() { defer wg.Done(); version, versionErr = m.version(ctx, path) }()
+		if s.authArgs != nil {
+			wg.Add(1)
+			go func() { defer wg.Done(); authState, authAccount = m.auth(ctx, s, path) }()
 		}
 	}
-	if latest, err := m.latestVersion(ctx, s.id); err != nil {
+	wg.Add(1)
+	go func() { defer wg.Done(); latest, latestErr = m.latestVersion(ctx, s.id) }()
+	wg.Wait()
+
+	var problems []string
+	if st.Installed {
+		if versionErr != nil {
+			problems = append(problems, "could not read the version")
+		} else {
+			st.Version = version
+		}
+		st.Auth, st.Account = authState, authAccount
+	}
+	if latestErr != nil {
 		problems = append(problems, "could not check for updates")
 	} else {
 		st.Latest = latest
 		st.UpdateAvailable = st.Installed && st.Version != "" && compareVersions(st.Version, latest) < 0
-	}
-	if st.Installed && s.authArgs != nil {
-		st.Auth, st.Account = m.auth(ctx, s, path)
 	}
 	st.Problem = strings.Join(problems, "; ")
 	m.lastM.Lock()

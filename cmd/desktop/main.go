@@ -6,6 +6,7 @@ import (
 	_ "embed"
 	"log"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/egoist/mygo"
@@ -52,8 +53,9 @@ func main() {
 	mygo.Bind(app.Plugins{L: link})
 	mygo.Bind(app.Chat{L: link})
 	mygo.Bind(app.LLM{L: link})
-	mygo.Bind(app.Mail{L: link})
+	mygo.Bind(app.Dictation{L: link})
 	mygo.Bind(app.CLIRuntimes{L: link})
+	mygo.Bind(app.Mail{L: link})
 	mygo.Bind(app.Drive{L: link})
 	mygo.Bind(app.Machines{L: link})
 	mygo.Bind(app.Applications{L: link})
@@ -62,10 +64,14 @@ func main() {
 	mygo.App.WhenReady(func() {
 		win := mygo.NewWindow(mygo.WindowOptions{
 			Title: "Orole OS", Width: 1360, Height: 860, MinWidth: 960, MinHeight: 600,
-			BackgroundColor: "#070b14", StateKey: "main", URL: "/",
+			BackgroundColor: "#0f1420", StateKey: "main", URL: "/", Hidden: true,
 			TitleBarStyle: mygo.TitleBarHidden, TitleBarHeight: 40,
-		})
 			Page: mygo.PageOptions{DevTools: devTools()},
+		})
+		// Show on first paint instead of an empty WebView2 frame; the timer guards a page that never reports ready.
+		show := sync.OnceFunc(win.Show)
+		win.OnReadyToShow(show)
+		time.AfterFunc(3*time.Second, show)
 		if err := win.SetIcon(windowIcon); err != nil {
 			log.Printf("window icon: %v", err)
 		}

@@ -1,5 +1,5 @@
 import { Tooltip, TooltipPopup, TooltipTrigger } from "@/components/ui/tooltip";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { GitBranch, Home, Plus, RefreshCw, Trash2 } from "lucide-react";
 import type { Worktree } from "@/mygo";
 import { inDesktop } from "@/lib/backend";
@@ -15,12 +15,19 @@ import { NeedsDesktop } from "@/features/shared/States";
 import { ConfirmDialog, CreateWorktreeDialog } from "@/features/projects/dialogs";
 
 export function WorktreesView() {
-  const { projects, worktrees, loaded, loading, error, load, removeWorktree } = useProjects();
+  const { projects, worktrees, loaded, loading, error, load, loadStatus, removeWorktree } = useProjects();
   const [creatingIn, setCreatingIn] = useState<string | null>(null);
   const [removing, setRemoving] = useState<Worktree | null>(null);
   const [force, setForce] = useState(false);
+  const [checking, setChecking] = useState(false);
 
-  useEffect(() => { void load(); }, [load]);
+  // The list is quick; ahead/behind and dirty counts run `git status` and arrive afterwards.
+  const refresh = useCallback(async () => {
+    await load();
+    setChecking(true);
+    try { await loadStatus(); } finally { setChecking(false); }
+  }, [load, loadStatus]);
+  useEffect(() => { void refresh(); }, [refresh]);
 
   const rows = useMemo(() => projects.flatMap((p) => (worktrees[p.id] ?? []).map((w) => ({ p, w }))), [projects, worktrees]);
 
@@ -40,7 +47,7 @@ export function WorktreesView() {
       <div className="flex h-9 shrink-0 items-center gap-2 border-b px-3">
         <span className="text-muted-foreground text-xs">{rows.length} {rows.length === 1 ? "worktree" : "worktrees"}</span>
         <span className="flex-1" />
-        <Button size="xs" variant="outline" onClick={() => void load()} disabled={loading} aria-label="Refresh">{loading ? <Spinner className="size-3.5" /> : <RefreshCw />}</Button>
+        <Button size="xs" variant="outline" onClick={() => void refresh()} disabled={loading || checking} aria-label="Refresh">{loading || checking ? <Spinner className="size-3.5" /> : <RefreshCw />}</Button>
         <Menu>
           <MenuTrigger render={<Button size="xs" />}><Plus />New worktree</MenuTrigger>
           <MenuPopup align="end" className="min-w-44">
@@ -62,9 +69,10 @@ export function WorktreesView() {
                     <Tooltip><TooltipTrigger render={<div tabIndex={0} className="truncate font-mono text-[11px] text-muted-foreground"  />}>{w.path}</TooltipTrigger><TooltipPopup><span className="max-w-sm whitespace-pre-wrap break-words">{w.path}</span></TooltipPopup></Tooltip>
                   </TableCell>
                   <TableCell className="font-mono text-xs">{w.branch || (w.detached ? `detached @ ${w.head.slice(0, 7)}` : "-")}</TableCell>
-                  <TableCell className="font-mono text-xs tabular-nums">{w.upstream ? `↑${w.ahead} ↓${w.behind}` : <span className="text-muted-foreground">no upstream</span>}</TableCell>
+                  <TableCell className="font-mono text-xs tabular-nums">{!w.statusKnown && state !== "error" ? <span className="text-muted-foreground" aria-label="Checking">…</span> : w.upstream ? `↑${w.ahead} ↓${w.behind}` : <span className="text-muted-foreground">no upstream</span>}</TableCell>
                   <TableCell>
                     {state === "error" ? <Tooltip><TooltipTrigger render={<span tabIndex={0}  className="text-destructive-foreground text-xs" />}>unreadable</TooltipTrigger><TooltipPopup><span className="max-w-sm whitespace-pre-wrap break-words">{w.error}</span></TooltipPopup></Tooltip>
+                      : !w.statusKnown ? <span className="text-muted-foreground text-xs" aria-label="Checking">…</span>
                       : w.dirty === 0 ? <span className="text-muted-foreground text-xs">clean</span>
                       : <Tooltip><TooltipTrigger render={<Badge tabIndex={0} variant="warning"  />}>{w.dirty}</TooltipTrigger><TooltipPopup><span className="max-w-sm whitespace-pre-wrap break-words">{`${w.staged} staged, ${w.unstaged} unstaged, ${w.untracked} untracked`}</span></TooltipPopup></Tooltip>}
                   </TableCell>

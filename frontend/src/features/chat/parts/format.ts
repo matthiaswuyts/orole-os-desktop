@@ -16,6 +16,8 @@ const TOOLS: Record<string, ToolWords> = {
   search_history: { running: "Searching this conversation", done: "Searched this conversation", noun: "History search" },
   save_profile: { running: "Writing my instructions", done: "Wrote my instructions", noun: "Instructions" },
   update_instructions: { running: "Updating my instructions", done: "Updated my instructions", noun: "Instructions" },
+  orole_get_skill: { running: "Reading a skill", done: "Read a skill", noun: "Skill" },
+  propose_skill: { running: "Drafting a skill", done: "Drafted a skill", noun: "Skill draft" },
 };
 
 const humanize = (name: string) => name.replace(/[_-]+/g, " ").trim() || "tool";
@@ -28,7 +30,7 @@ export function toolNoun(name: string): string {
 
 /** The row label for a tool id and state ("Searched the web", "Web search failed"). */
 export function toolLabel(name: string | undefined, state: StepState): string {
-  const words = TOOLS[name ?? ""];
+  const words = TOOLS[name ?? ""] ?? (name?.startsWith("show_") ? { running: "Preparing a visual", done: "Showed a visual", noun: "Visual" } : undefined);
   const noun = words?.noun ?? humanize(name ?? "");
   switch (state) {
     case "running": return words?.running ?? `Using ${noun}`;
@@ -36,6 +38,23 @@ export function toolLabel(name: string | undefined, state: StepState): string {
     case "error": return `${noun[0]!.toUpperCase()}${noun.slice(1)} failed`;
     case "stopped": return `${noun[0]!.toUpperCase()}${noun.slice(1)} did not finish`;
   }
+}
+
+/**
+ * What the assistant is doing right now, for the working line of a reply still in progress: the tool or handoff that is
+ * running, else "Writing the reply" once answer text has started, else "Thinking" (including the gaps between tool calls,
+ * when nothing else on screen moves). "Starting" while the reply is still queued.
+ */
+export function currentPhase(parts: readonly MsgPart[], status: string | undefined): string {
+  if (status === "pending") return "Starting";
+  for (let i = parts.length - 1; i >= 0; i--) {
+    const part = parts[i]!;
+    if (part.type === "delegation" && stepState(part, true) === "running") return `Waiting for ${part.name?.trim() || "another bot"}`;
+    if (part.type === "tool" && stepState(part, true) === "running") return toolLabel(part.name, "running");
+    if (part.type === "text" && !part.hidden && part.text) return "Writing the reply";
+    if (part.type === "tool" || part.type === "delegation") break; // the latest step has finished: the model is working on what comes next
+  }
+  return "Thinking";
 }
 
 /** Whether the message can still change (queued, streaming) as opposed to settled. */

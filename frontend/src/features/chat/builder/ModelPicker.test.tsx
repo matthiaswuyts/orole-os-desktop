@@ -5,7 +5,6 @@ vi.mock("@/lib/backend", () => ({ inDesktop: true }));
 vi.mock("@/mygo", async () => (await import("./testing")).mygoMock);
 
 import { useLLM } from "@/stores/llm";
-import { useUI } from "@/stores/ui";
 import { ModelPicker } from "./ModelPicker";
 import { useModelOptions } from "./modelOptions";
 import { bridge, model, provider, resetBridge } from "./testing";

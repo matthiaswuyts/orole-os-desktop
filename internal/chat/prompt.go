@@ -56,6 +56,8 @@ func buildSystem(in systemInput) string {
 	}
 	b.WriteString("\n\n")
 	b.WriteString(standingRules)
+	b.WriteString("\n\n")
+	b.WriteString(chatStyle)
 	for _, s := range in.Sections {
 		b.WriteString("\n\n")
 		b.WriteString(s)
@@ -107,7 +109,12 @@ func historyText(m Message) string {
 		switch p.Type {
 		case PartText, PartQuestion:
 			sep("\n\n")
-			b.WriteString(p.Text)
+			if m.Role == "user" && strings.HasPrefix(m.Author, ReportPrefix) {
+				// What another bot reported back came from its own tools and the web: data, not instructions.
+				b.WriteString(fenceReport(p.Text))
+			} else {
+				b.WriteString(p.Text)
+			}
 		case PartReport:
 			// A research report is built from web content: the model sees it as data, not as its own words.
 			if m.Role == "assistant" && p.Text != "" {
@@ -204,4 +211,10 @@ func attachmentTokens(atts []attachmentInput) int64 {
 		}
 	}
 	return n
+}
+
+// fenceReport is how the model sees what another bot reported back: it came from that bot's own tools and the
+// web, so it is data, not instructions.
+func fenceReport(text string) string {
+	return "A bot you handed a task to reported back:\n" + Fence("bot report", text)
 }

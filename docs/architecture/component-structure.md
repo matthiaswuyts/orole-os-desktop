@@ -168,6 +168,8 @@ badge or keyboard-hint footer. Project selection includes Create new project wit
 losing the draft. System choices use real box names/status and scope available projects.
 Worktree choices include a new isolated worktree, current checkout and existing
 registered worktrees. Folderless projects use their managed workspace.
+The permission mode (Manual, Auto or YOLO) sits beside the worktree menu; a mode the selected agent cannot run
+falls back to Manual.
 
 `AgentModelPicker` uses a compact provider-logo/model/effort trigger (for example,
 Opus 5.5 · X-High), with searchable provider and model pages in one popover.
@@ -262,7 +264,7 @@ desktop-required preview message names `go tool mygo dev`, not Vite-only startup
 
 ## Skills and MCP servers
 
-Settings > Skills and Settings > MCP configure things once for every harness.
+Settings > Skills and Settings > Integrations (connectors and MCP servers in one list) configure things once for every harness.
 
 - `features/skills/SkillsView.tsx`: the central skill registry (`Skills.*`). Lists skills with search and an
   enable switch, edits `SKILL.md` (a new skill starts from `skillTemplate`; saving goes through the daemon,
@@ -272,11 +274,16 @@ Settings > Skills and Settings > MCP configure things once for every harness.
   The list is metadata-only: opening an editor fetches the full body with `Skills.get(name)`. Only the latest
   open request may populate the editor; closing or starting a new draft discards pending results. The editor
   cannot save while a body is loading, and save completion cannot overwrite another selected draft.
-- `features/mcp/McpView.tsx`: wraps the `MCPSettings` panel (add server, OAuth, enable, tools, policy) in
-  Settings > MCP; Mail and Drive still embed the panel for their setup screens.
-  Configuration search, palette commands, onboarding links, and the MCP status-bar button open these Settings sections.
-  The MCP page offers generic Add by URL, without Mail/Drive quick-add buttons. The add-server
-  form uses `display: contents` so its scrollable body and footer participate in the popup's
+- `features/integrations/Integrations.tsx`: Settings > Integrations, the one place to connect services. Rows come from
+  `directory.ts` (official remote MCP servers plus the built-in GitHub integration) with company marks from the bundled
+  simple-icons set (`BrandLogo`); Add registers the server (`MCP.add`, OAuth) and starts sign-in when it answers
+  `auth_required` (`useConnect.ts`). "Custom connector" takes only a name and URL. Registered servers appear under
+  Connected with Manage, which opens `features/mcp/ServerDetail.tsx`: logo, Reauthenticate/Sign in, Disconnect, tool chips (click to turn a tool off), server URL, and a closed Advanced section (OAuth client, per-tool permission levels, diagnostics). Directory
+  entries must answer 401 with protected-resource metadata and offer dynamic client registration; servers needing a
+  pre-registered client go through Custom connector and Manage. The old Settings > MCP section id still resolves here.
+  Mail and Drive embed `MCPSettings` (adapter mode) in their setup screens.
+  Configuration search, palette commands, onboarding links and the status-bar button open this section.
+  The custom dialog form uses `display: contents` so its scrollable body and footer participate in the popup's
   flex layout and stay inside its rounded border.
 Generated images remain available within task conversations. The separate Images page, gallery,
 sidebar entry, composer shortcut, and deep link have been removed.
@@ -284,33 +291,53 @@ sidebar entry, composer shortcut, and deep link have been removed.
 ## Task view
 
 `features/tasks/TaskView.tsx` is a chat-only agent session, without a tab strip or duplicate header.
-`TaskHeader` replaces the generic page title in `AppShell` while a task is open: task title, bundled
-provider logo, model/reasoning, box, directory, branch, elapsed time, status, PR link, Back and Stop.
-Truncated metadata remains available in a tooltip; controls stay outside the native window-drag region.
-Remove, Resume and Restart fresh are not offered in task chat. Returning to the dashboard restores its page title.
-The titlebar's command-palette plus button is removed; the keyboard shortcut remains.
-`TaskSheets` opens Changes (diff and publishing) from the titlebar, and a Terminal sheet only for local
-terminal-mode sessions. Sheets retain accessible titles, close controls and focus handling.
-Review decisions stay in the Review view.
+`TaskHeader` replaces the generic page title in `AppShell` while a task is open: its bundled provider
+logo and task title are the only task-specific titlebar content. Returning to the dashboard restores
+its page title. The titlebar's command-palette plus button is removed; the keyboard shortcut remains.
 
-`features/tasks/TaskView.tsx` wraps the real conversation and composer in `TaskCanvas`; file, image,
-and diff selections open a responsive side canvas without removing chat or the titlebar Changes sheet.
+`features/tasks/TaskView.tsx` wraps the real conversation and composer in `TaskCanvas`; file and
+image selections open a responsive side canvas without removing chat.
 
-- **Feed/navigation** (`Feed.tsx`, `lib/taskEvents.ts`): `chat_types.go` defines structured provider
+- **Feed/navigation** (`Feed.tsx`, `RunEntries.tsx`, `lib/taskEvents.ts`): `chat_types.go` defines structured provider
   payloads; `taskChatTypes.ts` mirrors `Event.data` payloads not reachable through generated services.
   Feed items normalize provider events without inferring unsupported hierarchy, progress, citations, or
   context data. Search covers loaded transcript events only; loading older history remains available.
-  Day boundaries use local calendar time. Follow-scroll pauses when the reader leaves the end, retains
-  the anchor when older pages prepend, and offers a return-to-latest control.
+  Day boundaries use local calendar time and are the only dates in the feed; a row's exact time is only its
+  hover `title`. Follow-scroll pauses when the reader leaves the end, retains the anchor when older pages
+  prepend, and offers a return-to-latest control.
+- **Runs** (`groupRuns` in `lib/taskEvents.ts`, `elements/run-activity.tsx`): the feed shows one entry per user
+  message and one collapsed `RunActivity` per assistant turn (the events between two user messages). Reasoning,
+  tool calls, sources, sub-agents, interim assistant messages, system notes and already-decided approvals fold into
+  the run in recorded order; the closing assistant message(s) (those after the turn's last activity), reported
+  files and images stay outside it. Pending approvals and questions, errors, policy notices and a failed turn's
+  result go in the always-visible `attention` slot. The status row reads the live activity (`Working`), `Needs your input`,
+  or `Worked for 2m 13s` (first to last event of the turn, omitted when under a second or unknown), with
+  failed/stopped/incomplete variants. Open state is per run key, collapsed by default and preserved across updates;
+  a search hit inside a collapsed run opens it. A turn with only a plain answer renders no run row.
+- **Tool rows** (`lib/toolLabels.ts`, `elements/tool-timeline.tsx`): each step is `{verb, chip, icon}` in plain words:
+  `Ran` + the real command with a PowerShell/cmd/bash wrapper stripped, `Searched the web` + the query (no chip when
+  empty), `Read` + file name, `Edited` + files with +/- counts, `Searched files`, `Used <server> · <tool>`, otherwise a
+  humanized name. A failed tool shows an explicit `Failed` state. The raw tool name, complete input and output sit behind
+  the row's own disclosure (`ToolDetails`), never as primary text.
 - **Activity/artifacts**: correlated tool call/results, policy decisions, questions/answers, provider
   child-agent state, real sources, files and image-generation stages appear only where the harness reports
-  them. Questions and tool permissions have separate daemon APIs and lifecycles. Follow-up queue states
-  are daemon-owned and durable; restart never replays ambiguous sends. Queue dispatch never launches an
+  them. A running image generation shows the `ImageGeneration` element (dot grid, shimmering `Generating`,
+  prompt); the real `TaskImage` replaces it once the artifact exists, and there is no regenerate control because
+  no regenerate action exists. Questions and tool permissions have separate daemon APIs and lifecycles. Follow-up
+  queue states are daemon-owned and durable; restart never replays ambiguous sends. Queue dispatch never launches an
   agent process.
-- **Canvas/files** (`TaskCanvas.tsx`, `TaskFileTree.tsx`): navigation is limited to reported/changed
-  files; `Agents.taskFile` reads through an OS-rooted local workspace boundary. Previews are bounded,
-  inert text/raster data; remote sessions do not receive local-file access. Diffs use the existing
-  daemon git operation and `DiffView`.
+- **Tool permissions** (`TaskApprovalCard`, `elements/permission-grant.tsx`, `lib/permissionLabels.ts`): a compact
+  card in plain words: the capability (`Run a command`, `Edit files`, `Use <MCP server>`, `Access the network`...),
+  the requesting agent, and the reach the approval would grant (the full command and folder, or the file paths, in
+  scrollable wrapped monospace; never truncated). Only `Deny` and `Allow once` are offered, because the daemon request
+  carries no wider grant; the decision still goes through `Agents.approve` and Go decides. Consent stays bound to
+  the complete request snapshot (tool and exact `inputJSON`): a changed snapshot under the same ID starts over, and a
+  request without its complete input cannot be approved. All text is untrusted, escaped (control and directional
+  characters shown as `\uXXXX`) and rendered inert; the raw request is behind `Details`. A resolved request is one
+  badge (`Allowed once` / `Denied`, plus a reason only when one exists).
+- **Canvas/files** (`TaskCanvas.tsx`): reported files and generated images open from their corresponding
+  feed cards. `Agents.taskFile` reads through an OS-rooted local workspace boundary. Previews are bounded,
+  inert text/raster data; remote sessions do not receive local-file access.
 - **Markdown** (`components/Markdown.tsx`, `react-markdown` + `remark-gfm`): agent text is untrusted.
   No raw HTML is parsed; images are local daemon-returned raster `data:` URLs, and links open only http(s)
   through `Shell.openExternal`. Code uses lazy CodeMirror/Lezer highlighting; unknown languages remain
@@ -320,8 +347,22 @@ and diff selections open a responsive side canvas without removing chat or the t
   before acceptance; queued messages retain their own model/effort selection until dispatch.
   Cancellation/resume and uncertain-delivery state remain explicit. Context shows nullable
   provider-reported measurements only, never an inferred token breakdown.
-  Optional Web Speech dictation requires an explicit cloud-processing disclosure and consent; transcripts
-  remain editable and are never sent automatically. Unsupported desktop WebViews can use text input.
+  The Code composer is one rounded surface (`InputGroup`): attachment chips and the draft on top, then a single
+  toolbar. Left: attach and `PermissionModeSelect`; right: model/reasoning picker, dictation (`ComposerVoice compact quiet`),
+  context ring and send. The folder, branch and "Local checkout" line sits quietly under the surface.
+- **Permission modes**: `PermissionModeSelect` (Base UI Select) offers Manual, Auto and YOLO with a one-line description each.
+  Auto reads "The agent decides which actions are safe"; where the harness has no such mode the option is badged
+  Approximated with the daemon's explanation (`HarnessOption.permissionModes`). YOLO opens an AlertDialog explaining
+  that no prompts will be shown and only then sends `confirmYolo`; the daemon enforces the confirmation, the
+  `agents` setting that can turn YOLO off (Settings > System > Task permissions) and everything else. In a running task the
+  choice calls `Agents.setPermissionMode`; the control is disabled with the daemon's reason (`followup.permissionModeReason`)
+  for terminal, remote and read-only review sessions. Home reuses the control: the default is Manual, Auto is remembered in
+  `localStorage` (`orole.task.permissionMode`), and YOLO never is.
+  Optional dictation (`ComposerVoice`) records the microphone with `getUserMedia` + `MediaRecorder` (the packaged
+  WebView2 has no speech service, so the Web Speech API is not used) and sends the recording to the daemon
+  (`Dictation.transcribe`), which transcribes it with OpenAI using the user's own OpenAI API key. It requires an
+  explicit consent disclosure that audio goes to OpenAI; without a connected key it shows a setup state that opens
+  Settings > AI providers. Transcripts remain editable and are never sent automatically.
 - **Harness limits**: installed Claude Code 2.1.289, Codex CLI 0.156.1, and Oh My Pi 18.8.4 protocols
   were inspected. Codex and OMP support typed question responses and authoritative context occupancy;
   Claude contributes only fields its stream actually reports. Sources are structured harness output,
@@ -479,7 +520,7 @@ Everything else lives in the bot settings panel below. There is no separate bot 
 
 **Bot settings panel.** `BotPanel` is a right-hand panel (toggle in the title bar, "Bot settings" in menus) with the
 avatar, an editable name and description, and three flat tabs (no cards, little text): Persona (model, reasoning,
-Executive assistant switch), Tools (built-in tools, MCP tools, skills, skill proposals) and Knowledge (memory scopes
+Executive assistant switch), Tools (built-in tools, Integrations / MCP servers, skills) and Knowledge (memory scopes
 and grants, uploaded documents). One form drives all tabs with a shared Save/Discard bar. Instructions have no
 editor: the bot writes them in its setup interview (`save_profile`) and rewrites them with `update_instructions`
 (offered to every finished bot, only on the user's request; Persona shows them read-only). Saving keeps `setup`.

@@ -81,12 +81,12 @@ type BotLimits struct {
 
 // BotConfig is stored as JSON in bots.config. It never contains secrets.
 type BotConfig struct {
-	Tools     []BotTool     `json:"tools"`
-	MCPTools  []string      `json:"mcpTools"`            // "<serverId>/<tool>" allow-list, default none
-	Skills    []string      `json:"skills"`              // enabled registry skill names
-	Executive bool          `json:"executive,omitempty"` // an executive assistant may ask every other bot (ask_bot)
-	Memory    []ScopeAccess `json:"memory"`              // grants beyond the private scope
-	Limits    BotLimits     `json:"limits"`
+	Tools      []BotTool     `json:"tools"`
+	MCPServers []string      `json:"mcpServers"`          // ids of the MCP servers (integrations) the bot may use: every tool of each, default none
+	Skills     []string      `json:"skills"`              // enabled registry skill names
+	Executive  bool          `json:"executive,omitempty"` // an executive assistant may ask every other bot (ask_bot)
+	Memory     []ScopeAccess `json:"memory"`              // grants beyond the private scope
+	Limits     BotLimits     `json:"limits"`
 	// Setup marks a freshly created bot that still has to learn its purpose: it is offered the setup
 	// tools (ask_user, save_profile) until it saves its own instructions.
 	Setup bool `json:"setup,omitempty"`
@@ -164,6 +164,14 @@ type RunState struct {
 	BotID     string `json:"botId"`
 	Running   bool   `json:"running"`
 	MessageID string `json:"messageId,omitempty"` // the assistant message being produced
+	// Paused is true while the bot's queue is on hold: messages wait and the next one starts only after Resume.
+	Paused bool `json:"paused,omitempty"`
+}
+
+// QueueItemRef identifies one waiting message of a bot's queue.
+type QueueItemRef struct {
+	BotID     string `json:"botId"`
+	MessageID string `json:"messageId"`
 }
 
 // Part types.
