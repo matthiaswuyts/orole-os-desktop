@@ -31,6 +31,7 @@ vi.mock("@/mygo", () => ({
 import { BotActions } from "@/features/chat/BotHeader";
 import { Conversation } from "@/features/chat/Conversation";
 import { useChat } from "@/stores/chat";
+import { useChatDrafts } from "@/stores/chatDrafts";
 import { useChatMessages } from "@/stores/chatMessages";
 import { useDaemon } from "@/stores/daemon";
 import { useLLM } from "@/stores/llm";
@@ -54,7 +55,8 @@ beforeEach(() => {
   vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
   useDaemon.setState({ link: "connected" });
   useChat.setState({ bots: [bot()], selectedBotId: "a", running: {}, builder: { open: false, botId: null }, settingsOpen: false, available: true, ready: true, loading: false, error: null });
-  useChatMessages.setState({ byBot: {}, runs: {}, paused: {}, drafts: {}, problems: {} });
+  useChatMessages.setState({ byBot: {}, runs: {}, paused: {}, problems: {} });
+  useChatDrafts.setState({ drafts: {} });
   Element.prototype.scrollTo = () => {};
   useLLM.setState({
     providers: [{ id: "openrouter", name: "OpenRouter", kind: "builtin", connected: true }], ready: true, defaults: { chatModel: "openrouter/claude", memoryModel: "" },
@@ -197,7 +199,7 @@ describe("composer", () => {
     expect(bridge.send.mock.calls[0]![0].clientNonce).toMatch(/\S/);
     await waitFor(() => expect(box()).toHaveValue(""));
     expect(await screen.findByText("hello")).toBeInTheDocument();
-    expect(useChatMessages.getState().drafts.a?.text).toBe("");
+    expect(useChatDrafts.getState().drafts.a?.text).toBe("");
   });
 
   it("shows Dictate when empty, Send once there is text, and never sends whitespace", async () => {
@@ -237,7 +239,7 @@ describe("composer", () => {
 
   it("shows text put in the draft from elsewhere in the message box", async () => {
     await open([msg(1), msg(2)]);
-    act(() => useChatMessages.getState().setDraft("a", { text: "> quoted\n\n" }));
+    act(() => useChatDrafts.getState().setDraft("a", { text: "> quoted\n\n" }));
     await waitFor(() => expect(box().value).toBe("> quoted\n\n"));
   });
 

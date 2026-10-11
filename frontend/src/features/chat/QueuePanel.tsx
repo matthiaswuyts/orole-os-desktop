@@ -1,7 +1,9 @@
 import { CornerDownRightIcon, PauseIcon, PlayIcon, XIcon } from "lucide-react";
+import { memo } from "react";
+import { useShallow } from "zustand/react/shallow";
 import { Button } from "@/components/ui/button";
 import type { Bot, Message } from "@/mygo";
-import { selectConversation, useBotRunning, useChatMessages } from "@/stores/chatMessages";
+import { selectConversation, useChatMessages } from "@/stores/chatMessages";
 import { messageText } from "./parts/format";
 
 /** The user's messages the daemon is holding behind the active reply, oldest first. */
@@ -20,11 +22,10 @@ function preview(message: Message): string {
  * its own, and the whole queue can be paused (the bot finishes what it is doing, then holds) and resumed.
  * Pausing is the daemon's; this only shows its state and sends the request.
  */
-export function QueuePanel({ bot }: { bot: Bot }) {
-  const conversation = useChatMessages(selectConversation(bot.id));
+export const QueuePanel = memo(function QueuePanel({ bot, running }: { bot: Bot; running: boolean }) {
+  // Shallow: the waiting messages themselves do not change while the reply streams, so neither does this panel.
+  const waiting = useChatMessages(useShallow((s) => waitingMessages(selectConversation(bot.id)(s).messages)));
   const paused = useChatMessages((s) => s.paused[bot.id] ?? false);
-  const running = useBotRunning(bot.id);
-  const waiting = waitingMessages(conversation.messages);
   if (waiting.length === 0) return null;
   const title = paused ? `Paused · ${waiting.length} waiting` : running ? `Waiting · ${bot.name} is working` : `Starting next · ${waiting.length} waiting`;
   return <section data-slot="queue-panel" aria-label="Queued messages" className="mx-auto -mb-3 flex w-full max-w-3xl shrink-0 flex-col px-4">
@@ -44,4 +45,4 @@ export function QueuePanel({ bot }: { bot: Bot }) {
       </ol>
     </div>
   </section>;
-}
+});

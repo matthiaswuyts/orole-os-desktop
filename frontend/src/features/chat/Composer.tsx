@@ -1,6 +1,6 @@
 import { ComposerPrimitive, useAui, useAuiState } from "@assistant-ui/react";
 import { ArrowUpIcon, FlaskConicalIcon, PaperclipIcon, PlusIcon, SquareIcon, XIcon } from "lucide-react";
-import { useEffect, useRef, useState, type KeyboardEvent } from "react";
+import { memo, useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { ComposerAttachmentChip, ComposerAttachments } from "@/components/assistant-ui/elements/composer-attachments";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -8,7 +8,8 @@ import { Menu, MenuCheckboxItem, MenuItem, MenuPopup, MenuTrigger } from "@/comp
 import { ComposerVoice } from "@/features/tasks/ComposerVoice";
 import { cn } from "@/lib/utils";
 import type { Bot } from "@/mygo";
-import { useBotRunning, useChatMessages } from "@/stores/chatMessages";
+import { useChatDrafts } from "@/stores/chatDrafts";
+import { useChatMessages } from "@/stores/chatMessages";
 import { chipOf, useCanSend } from "./composerState";
 import { MentionHighlight } from "./MentionHighlight";
 import { MentionTrigger } from "./MentionTrigger";
@@ -24,39 +25,38 @@ function pickFiles(add: (file: File) => Promise<void>) {
   input.click();
 }
 
-export function Composer({ bot }: { bot: Bot }) {
+export const Composer = memo(function Composer({ bot, running }: { bot: Bot; running: boolean }) {
   const aui = useAui();
-  const running = useBotRunning(bot.id);
   const attachments = useAuiState((s) => s.composer.attachments);
   const text = useAuiState((s) => s.composer.text);
   const canSend = useCanSend();
   const [dictating, setDictating] = useState(false);
   const hasResearch = bot.config.tools.some((tool) => tool.id === "research");
-  const research = useChatMessages((s) => s.drafts[bot.id]?.research ?? false) && hasResearch;
+  const research = useChatDrafts((s) => s.drafts[bot.id]?.research ?? false) && hasResearch;
   const failed = attachments.some((attachment) => attachment.status.type === "incomplete");
   const hasContent = text.trim() !== "" || attachments.length > 0;
   const targets = useMentionTargets(bot);
   const mirror = useRef<HTMLDivElement>(null);
 
-  // The composer lives and dies with the bot's conversation; its text is kept per bot in the store.
+  // The composer lives and dies with the bot's conversation; its text is kept per bot in the store, and text put in
+  // the draft from elsewhere (Add to chat on a selected passage) shows up in the box.
+  // Subscribed outside render: every keystroke changes the draft, and it would otherwise cost a second render each.
   useEffect(() => {
-    const text = useChatMessages.getState().drafts[bot.id]?.text;
-    if (text) aui.composer.setText(text);
+    const sync = (text: string) => { if (text !== aui.composer.getState().text) aui.composer.setText(text); };
+    sync(useChatDrafts.getState().drafts[bot.id]?.text ?? "");
+    return useChatDrafts.subscribe((state, previous) => {
+      const text = state.drafts[bot.id]?.text ?? "";
+      if (text !== (previous.drafts[bot.id]?.text ?? "")) sync(text);
+    });
   }, [aui, bot.id]);
 
-  // Text put in the draft from elsewhere (Add to chat on a selected passage) shows up in the box.
-  const draftText = useChatMessages((s) => s.drafts[bot.id]?.text ?? "");
-  useEffect(() => {
-    if (draftText !== aui.composer.getState().text) aui.composer.setText(draftText);
-  }, [aui, draftText]);
-
   const send = () => { if (canSend) aui.composer.send(); };
-  const setResearch = (on: boolean) => useChatMessages.getState().setDraft(bot.id, { research: on });
+  const setResearch = (on: boolean) => useChatDrafts.getState().setDraft(bot.id, { research: on });
   const addDictation = (value: string) => {
     const current = aui.composer.getState().text;
     const next = current ? `${current}${/\s$/.test(current) ? "" : " "}${value}` : value;
     aui.composer.setText(next);
-    useChatMessages.getState().setDraft(bot.id, { text: next });
+    useChatDrafts.getState().setDraft(bot.id, { text: next });
   };
   /** Backspace/Delete next to a mention removes all of it, as one unit; returns whether it did. */
   const removeMention = (event: KeyboardEvent<HTMLTextAreaElement>): boolean => {
@@ -67,7 +67,7 @@ export function Composer({ bot }: { bot: Bot }) {
     event.preventDefault();
     const next = el.value.slice(0, cut.from) + el.value.slice(cut.to);
     aui.composer.setText(next);
-    useChatMessages.getState().setDraft(bot.id, { text: next });
+    useChatDrafts.getState().setDraft(bot.id, { text: next });
     requestAnimationFrame(() => el.setSelectionRange(cut.from, cut.from));
     return true;
   };
@@ -97,7 +97,7 @@ export function Composer({ bot }: { bot: Bot }) {
             rows={1}
             maxRows={8}
             className="relative block max-h-48 min-h-9 w-full resize-none overflow-y-auto bg-transparent px-1 py-2 text-sm text-transparent caret-foreground outline-none selection:bg-primary/25 selection:text-transparent placeholder:text-muted-foreground"
-            onChange={(event) => useChatMessages.getState().setDraft(bot.id, { text: event.target.value })}
+            onChange={(event) => useChatDrafts.getState().setDraft(bot.id, { text: event.target.value })}
             onScroll={(event) => { if (mirror.current) mirror.current.scrollTop = event.currentTarget.scrollTop; }}
             onKeyDown={(event) => {
               if ((event.key === "Backspace" || event.key === "Delete") && removeMention(event)) return;
@@ -117,4 +117,4 @@ export function Composer({ bot }: { bot: Bot }) {
     {failed && <p role="status" className="px-1 text-xs text-muted-foreground">Remove files that could not be attached to send your message.</p>}
     <MentionTrigger targets={targets} />
   </ComposerPrimitive.Root></ComposerPrimitive.TriggerPopoverRoot>;
-}
+});

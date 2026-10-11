@@ -109,6 +109,9 @@ notes. See `docs/development/updates.md`.
 ### Removed
 - Unused frontend dependencies: `@tanstack/react-query`, `cn`, `@fontsource-variable/dm-sans`,
   `@fontsource-variable/geist`.
+- Chat: a streaming reply no longer re-renders the whole conversation. The rail's preview of a reply
+  updates at most once a second, the open conversation ignores preview and run-flag changes, bots and
+  the run state are read once per thread, and composer drafts live in their own store.
 
 ### Fixed
 - Terminals: a program that floods its terminal (`cat` of a huge file, a runaway build log) no longer gets
