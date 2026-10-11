@@ -145,10 +145,17 @@ func (g Git) CreateBranch(ctx context.Context, projectID, worktreeID, name, star
 // Worktrees is the bound service for git worktrees.
 type Worktrees struct{ L *Link }
 
-// List returns worktrees of a project, or of every project when projectID is "".
+// List returns worktrees of a project, or of every project when projectID is "", without git status (fast).
 func (w Worktrees) List(ctx context.Context, projectID string) ([]projects.Worktree, error) {
 	var out []projects.Worktree
 	err := w.L.call(ctx, "worktrees.list", map[string]string{"projectId": projectID}, &out)
+	return out, err
+}
+
+// Status is List plus ahead/behind and change counts per worktree; it runs `git status` and can be slow in large repositories.
+func (w Worktrees) Status(ctx context.Context, projectID string) ([]projects.Worktree, error) {
+	var out []projects.Worktree
+	err := w.L.call(ctx, "worktrees.status", map[string]string{"projectId": projectID}, &out)
 	return out, err
 }
 

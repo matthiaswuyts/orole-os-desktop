@@ -33,6 +33,7 @@ beforeEach(() => {
   for (const fn of Object.values(bridge)) if (vi.isMockFunction(fn)) fn.mockReset();
   bridge.providers.mockResolvedValue([none]);
   bridge.defaults.mockResolvedValue(defaults);
+  localStorage.clear(); // the stores keep a last-known snapshot there
   useDaemon.setState({ link: "connected" });
   useLLM.setState({ providers: [], defaults: null, models: {}, busy: {}, ready: false, loading: false, error: null });
 });
@@ -57,6 +58,14 @@ describe("llm snapshot", () => {
     bridge.providers.mockResolvedValue([connected]);
     act(() => bridge.changed?.({ id: "openrouter" }));
     await waitFor(() => expect(useLLM.getState().providers[0]?.connected).toBe(true));
+  });
+
+  it("shows the last known providers at once while the daemon is still answering", async () => {
+    localStorage.setItem("orole.snapshot.v1.llm-providers", JSON.stringify({ providers: [connected], defaults }));
+    bridge.providers.mockReturnValue(new Promise(() => {}));
+    stopSync = useLLM.getState().startSync();
+    expect(useLLM.getState().ready).toBe(true);
+    expect(useLLM.getState().providers).toEqual([connected]);
   });
 
   it("retracts readiness and cached models when the daemon goes offline mid-request", async () => {

@@ -3,17 +3,17 @@ import { FOCUS_MIN_INTERVAL_MS } from "@/lib/focus";
 import type { Project, Worktree } from "@/mygo";
 
 const project = (id: string, over: Partial<Project> = {}): Project => ({ id, name: id, machineId: "local", path: `C:\\${id}`, remoteUrl: "", lastOpened: 0, createdAt: 0, worktreeRoot: "", worktreeRootCustom: false, missing: false, isGit: true, ...over });
-const wt = (id: string, projectId: string, over: Partial<Worktree> = {}): Worktree => ({ id, projectId, name: id, path: `C:\\${id}`, branch: "main", head: "", baseRef: "", isMain: false, detached: false, locked: false, prunable: false, createdAt: 0, upstream: "", ahead: 0, behind: 0, staged: 0, unstaged: 0, untracked: 0, dirty: 0, ...over });
+const wt = (id: string, projectId: string, over: Partial<Worktree> = {}): Worktree => ({ id, projectId, name: id, path: `C:\\${id}`, branch: "main", head: "", baseRef: "", isMain: false, detached: false, locked: false, prunable: false, createdAt: 0, upstream: "", ahead: 0, behind: 0, staged: 0, unstaged: 0, untracked: 0, dirty: 0, statusKnown: false, ...over });
 
 const mocks = vi.hoisted(() => ({
-  list: vi.fn(), create: vi.fn(), remove: vi.fn(), wtList: vi.fn(), wtCreate: vi.fn(), wtRemove: vi.fn(),
+  list: vi.fn(), create: vi.fn(), remove: vi.fn(), wtList: vi.fn(), wtStatus: vi.fn(), wtCreate: vi.fn(), wtRemove: vi.fn(),
   handlers: new Map<string, () => void>(),
 }));
 
 vi.mock("@/lib/backend", () => ({ inDesktop: true, previewKey: "x" }));
 vi.mock("@/mygo", () => ({
   Projects: { list: mocks.list, create: mocks.create, remove: mocks.remove, open: vi.fn(), setWorktreeRoot: vi.fn() },
-  Worktrees: { list: mocks.wtList, create: mocks.wtCreate, remove: mocks.wtRemove },
+  Worktrees: { list: mocks.wtList, status: mocks.wtStatus, create: mocks.wtCreate, remove: mocks.wtRemove },
   events: {
     projectsChanged: { on: (f: () => void) => { mocks.handlers.set("p", f); return () => mocks.handlers.delete("p"); } },
     worktreesChanged: { on: (f: () => void) => { mocks.handlers.set("w", f); return () => mocks.handlers.delete("w"); } },
@@ -38,6 +38,41 @@ describe("projects store", () => {
     mocks.list.mockResolvedValue([project("a"), project("b", { isGit: false })]);
     await useProjects.getState().load();
     expect(useProjects.getState().projects.map((p) => p.id)).toEqual(["a", "b"]);
+  });
+
+  it("shows projects before any worktree list is read, and one failing repository does not hide the others", async () => {
+    mocks.list.mockResolvedValue([project("slow"), project("bad"), project("ok")]);
+    let release: (v: Worktree[]) => void = () => {};
+    mocks.wtList.mockImplementation((id: string) => id === "slow" ? new Promise<Worktree[]>((r) => { release = r; }) : id === "bad" ? Promise.reject(new Error("context deadline exceeded")) : Promise.resolve([wt("w-ok", "ok", { isMain: true })]));
+    await useProjects.getState().load();
+    expect(useProjects.getState()).toMatchObject({ loaded: true, loading: false, error: null, worktrees: {} });
+    expect(useProjects.getState().projects.map((p) => p.id)).toEqual(["slow", "bad", "ok"]);
+    expect(mocks.wtList).not.toHaveBeenCalled();
+    releases.push(useProjects.getState().watchWorktrees());
+    await vi.waitFor(() => expect(useProjects.getState().worktrees.ok).toHaveLength(1));
+    expect(useProjects.getState().worktrees.slow).toBeUndefined();
+    release([wt("w-slow", "slow", { isMain: true })]);
+    await vi.waitFor(() => expect(useProjects.getState().worktrees.slow).toHaveLength(1));
+    const s = useProjects.getState();
+    expect(s.error).toBeNull();
+    expect(s.worktreesError).toBe("context deadline exceeded");
+    expect(s.worktrees.bad).toBeUndefined();
+  });
+
+  it("keeps already-read git status when the quick list refreshes, and loads status per project", async () => {
+    mocks.list.mockResolvedValue([project("a")]);
+    mocks.wtList.mockResolvedValue([wt("w1", "a", { isMain: true })]);
+    mocks.wtStatus.mockResolvedValue([wt("w1", "a", { isMain: true, dirty: 2, ahead: 1, statusKnown: true })]);
+    await useProjects.getState().load();
+    await useProjects.getState().loadWorktrees();
+    expect(useProjects.getState().worktrees.a![0]!.statusKnown).toBe(false);
+    await useProjects.getState().loadStatus();
+    expect(useProjects.getState().worktrees.a![0]).toMatchObject({ dirty: 2, ahead: 1, statusKnown: true });
+    await useProjects.getState().loadWorktrees(true);
+    expect(useProjects.getState().worktrees.a![0]).toMatchObject({ dirty: 2, ahead: 1, statusKnown: true });
+    mocks.wtStatus.mockRejectedValue(new Error("git status timed out"));
+    await useProjects.getState().loadStatus();
+    expect(useProjects.getState().worktrees.a![0]!.error).toBe("git status timed out");
   });
 
   it("surfaces daemon errors instead of faking data", async () => {

@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { errText } from "@/features/projects/dialogs";
 import { avatarSeed } from "@/lib/botAvatar";
 import { useChat } from "@/stores/chat";
+import { useLLM } from "@/stores/llm";
 import { initialForm, toInput, validate } from "./botForm";
 import { Block, ExecutiveCard } from "./controls";
 import { BuilderMenu } from "./BuilderMenu";
@@ -26,9 +27,12 @@ export function NewBot() {
   const [attempted, setAttempted] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const models = useModelOptions(model);
+  // Every bot gets an explicit model: the one picked, else the default chat model from AI settings.
+  const defaultModel = useLLM((s) => s.defaults?.chatModel ?? "");
+  const chosen = model || defaultModel;
+  const models = useModelOptions(chosen);
 
-  const form = { ...initialForm(), name, model, avatar: avatarSeed(name) };
+  const form = { ...initialForm(), name, model: chosen, avatar: avatarSeed(name) };
   const nameProblem = validate(form).name;
 
   async function create() {

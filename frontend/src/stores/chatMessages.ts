@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { Chat, events, type Message, type SendRequest } from "@/mygo";
 import { inDesktop } from "@/lib/backend";
 import { onFocusRefresh } from "@/lib/focus";
+import { useChatDrafts } from "@/stores/chatDrafts";
 import { useChat } from "@/stores/chat";
 import { useDaemon } from "@/stores/daemon";
 
@@ -23,9 +24,6 @@ export interface Conversation {
   browsing: boolean;
 }
 
-/** The composer's per-bot state kept while another bot is open. */
-export interface Draft { text: string; research: boolean }
-
 /** Something the user should see about the last action; a failed send carries its request so Retry is idempotent. */
 export interface Problem { message: string; request?: SendRequest }
 
@@ -35,7 +33,8 @@ interface State {
   byBot: Record<string, Conversation>;
   /** Run state from chat.run events (absent until the daemon has said something). */
   runs: Record<string, boolean>;
-  drafts: Record<string, Draft>;
+  /** Bots whose queue is on hold (chat.run events): waiting messages start only after `resumeQueue`. */
+  paused: Record<string, boolean>;
   problems: Record<string, Problem>;
   load: (botId: string) => Promise<void>;
   loadOlder: (botId: string) => Promise<void>;
@@ -44,10 +43,13 @@ interface State {
   send: (botId: string, input: SendInput) => Promise<boolean>;
   retrySend: (botId: string) => Promise<boolean>;
   cancel: (botId: string) => Promise<void>;
+  pauseQueue: (botId: string) => Promise<void>;
+  resumeQueue: (botId: string) => Promise<void>;
+  /** Drops one message that is still waiting in the bot's queue. */
+  cancelQueued: (botId: string, messageId: string) => Promise<void>;
   regenerate: (botId: string, messageId: string) => Promise<void>;
   clear: (botId: string) => Promise<boolean>;
   dismissProblem: (botId: string) => void;
-  setDraft: (botId: string, patch: Partial<Draft>) => void;
   startSync: () => () => void;
 }
 
@@ -100,7 +102,7 @@ function trim(conversation: Conversation, messages: Message[]): Pick<Conversatio
 
 /** The daemon owns conversations. This is a disposable, event-synchronized window onto each one that has been opened. */
 export const useChatMessages = create<State>((set, get) => ({
-  byBot: {}, runs: {}, drafts: {}, problems: {},
+  byBot: {}, runs: {}, paused: {}, problems: {},
   async load(botId) {
     if (!inDesktop || botId.startsWith(DRAFT_PREFIX)) return;
     const request = ++token;
@@ -150,6 +152,15 @@ export const useChatMessages = create<State>((set, get) => ({
   async cancel(botId) {
     try { await Chat.cancel(botId); } catch (cause) { setProblem(botId, { message: `Could not stop the reply: ${describe(cause)}` }); }
   },
+  async pauseQueue(botId) {
+    try { await Chat.pauseQueue(botId); } catch (cause) { setProblem(botId, { message: `Could not pause the queue: ${describe(cause)}` }); }
+  },
+  async resumeQueue(botId) {
+    try { await Chat.resumeQueue(botId); } catch (cause) { setProblem(botId, { message: `Could not resume the queue: ${describe(cause)}` }); }
+  },
+  async cancelQueued(botId, messageId) {
+    try { await Chat.cancelQueued({ botId, messageId }); } catch (cause) { setProblem(botId, { message: `Could not cancel the message: ${describe(cause)}` }); }
+  },
   async regenerate(botId, messageId) {
     try { await Chat.regenerate({ botId, messageId }); } catch (cause) { setProblem(botId, { message: `Could not regenerate the reply: ${describe(cause)}` }); }
   },
@@ -165,7 +176,6 @@ export const useChatMessages = create<State>((set, get) => ({
     }
   },
   dismissProblem: (botId) => set((state) => ({ problems: omit(state.problems, botId) })),
-  setDraft: (botId, change) => set((state) => ({ drafts: { ...state.drafts, [botId]: { ...(state.drafts[botId] ?? { text: "", research: false }), ...change } } })),
   startSync() {
     if (!inDesktop) return () => {};
     if (++subscribers === 1) {
@@ -184,13 +194,14 @@ export const useChatMessages = create<State>((set, get) => ({
           return { byBot: { ...state.byBot, [message.botId]: { ...current, ...(isNew ? trim(current, messages) : { messages }) } } };
         });
       });
-      const offRun = events.chatRun.on(({ botId, running }) => {
-        set((state) => ({ runs: { ...state.runs, [botId]: running } }));
+      const offRun = events.chatRun.on(({ botId, running, paused }) => {
+        set((state) => ({ runs: { ...state.runs, [botId]: running }, paused: { ...state.paused, [botId]: paused === true } }));
       });
       const offBot = events.chatBot.on(({ id, action }) => {
         if (action === "archived") {
           latest.delete(id); older.delete(id); live.delete(id);
-          set((state) => ({ byBot: omit(state.byBot, id), runs: omit(state.runs, id), problems: omit(state.problems, id), drafts: omit(state.drafts, id) }));
+          set((state) => ({ byBot: omit(state.byBot, id), runs: omit(state.runs, id), paused: omit(state.paused, id), problems: omit(state.problems, id) }));
+          useChatDrafts.getState().dropDraft(id);
         } else if (action === "cleared") {
           latest.delete(id); older.delete(id); live.delete(id);
           set((state) => state.byBot[id] ? { byBot: { ...state.byBot, [id]: { ...EMPTY, loaded: true } } } : state);

@@ -1,6 +1,6 @@
 import { AssistantRuntimeProvider, ThreadPrimitive, useAui, useAuiState } from "@assistant-ui/react";
 import { ArrowDownIcon, RotateCcwIcon, XIcon } from "lucide-react";
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { MessageActions, MessagePair } from "@/components/assistant-ui/elements/message-pair";
 import { BotAvatar } from "@/components/shell/BotAvatar";
 import { Button } from "@/components/ui/button";
@@ -15,7 +15,9 @@ import { CopyButton } from "./parts/Sources";
 import { SOURCE_KEY } from "./runtime/convert";
 import { useChatRuntime } from "./runtime/useChatRuntime";
 import { ThreadSearch } from "./ThreadSearch";
-import { targetsFor } from "./mentions";
+import { QueuePanel } from "./QueuePanel";
+import { SelectionMenu } from "./SelectionMenu";
+import { targetsFor, useBotInfos, useRegistrySkills, type BotInfo, type MentionTarget } from "./mentions";
 
 /** How close to the top (px) the reader gets before the next older page is fetched. */
 const LOAD_OLDER_AT = 160;
@@ -25,13 +27,11 @@ function isDaemonMessage(value: unknown): value is Message {
 }
 
 /** One message: the shared renderer, the hover actions, and Retry for a failed last reply. */
-function Turn({ bot }: { bot: Bot }) {
+const Turn = memo(function Turn({ bot, bots, targets, running }: { bot: Bot; bots: readonly BotInfo[]; targets: readonly MentionTarget[]; running: boolean }) {
   const raw: unknown = useAuiState((s) => s.message.metadata.custom?.[SOURCE_KEY]);
   const isLast = useAuiState((s) => s.message.isLast);
-  const running = useBotRunning(bot.id);
-  const bots = useChat((s) => s.bots);
-  const targets = useMemo(() => targetsFor(bots, bot.id), [bots, bot.id]);
-  if (!isDaemonMessage(raw) || (raw.role === "user" && !hasVisibleParts(raw.parts))) return null;
+  // A message still waiting for the bot is listed in the queue above the composer, not in the thread.
+  if (!isDaemonMessage(raw) || (raw.role === "user" && !hasVisibleParts(raw.parts)) || (raw.role === "user" && raw.author === "user" && raw.status === "pending")) return null;
   const assistant = raw.role !== "user";
   const settled = raw.status !== "running" && raw.status !== "pending";
   const canRegenerate = assistant && isLast && !running;
@@ -43,13 +43,12 @@ function Turn({ bot }: { bot: Bot }) {
       onAnswer={canRegenerate && raw.status === "complete" ? (text) => void useChatMessages.getState().send(bot.id, { text }) : undefined}
       actions={assistant && settled && <MessageActions regenerate={canRegenerate}><CopyButton text={messageText(raw)} label="Copy response" /></MessageActions>} />
   </MessagePair>;
-}
+});
 
 function EmptyConversation({ bot }: { bot: Bot }) {
   return <div data-slot="conversation-empty" className="mx-auto my-auto flex max-w-md flex-col items-center gap-2 py-12 text-center">
     <BotAvatar name={bot.name} avatar={bot.avatar} className="size-14 text-xl" />
     <h3 className="text-base font-semibold">{bot.name}</h3>
-    {bot.description && <p className="selectable text-sm text-muted-foreground">{bot.description}</p>}
     <p className="text-sm text-muted-foreground">Say hello to start the conversation.</p>
   </div>;
 }
@@ -65,10 +64,14 @@ function LiveStatus({ running }: { running: boolean }) {
   return <div role="status" aria-live="polite" className="sr-only">{text}</div>;
 }
 
-function Thread({ bot }: { bot: Bot }) {
+function Thread({ bot, running }: { bot: Bot; running: boolean }) {
   const aui = useAui();
   const conversation = useChatMessages(selectConversation(bot.id));
-  const running = useBotRunning(bot.id);
+  // Read once for the whole thread: each turn gets them as props, so a streaming reply never makes every turn re-subscribe.
+  const bots = useBotInfos();
+  const builtin = useRegistrySkills((s) => s.builtin);
+  const targets = useMemo(() => targetsFor(bots, bot.id, builtin), [bots, bot.id, builtin]);
+  const renderTurn = useCallback(() => <Turn bot={bot} bots={bots} targets={targets} running={running} />, [bot, bots, targets, running]);
   const problem = useChatMessages((s) => s.problems[bot.id]);
   const viewport = useRef<HTMLDivElement>(null);
   const thread = useRef<HTMLDivElement>(null);
@@ -114,10 +117,11 @@ function Thread({ bot }: { bot: Bot }) {
   return <>
     <ThreadPrimitive.Root ref={thread} className="relative flex min-h-0 flex-1 flex-col">
       {searching && <ThreadSearch messages={conversation.messages} scope={thread} onClose={closeSearch} />}
+      <SelectionMenu botId={bot.id} root={thread} />
       <ThreadPrimitive.Viewport ref={viewport} role="region" aria-label={`Conversation with ${bot.name}`} tabIndex={0}
         onScroll={(event) => { if (event.currentTarget.scrollTop < LOAD_OLDER_AT) loadOlder(); }}
         className="flex min-h-0 flex-1 flex-col overflow-y-auto outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring">
-        <div className="mx-auto flex min-h-full w-full max-w-3xl shrink-0 flex-col gap-5 px-4 pt-6 pb-12">
+        <div className="mx-auto flex min-h-full w-full max-w-3xl shrink-0 flex-col gap-3 px-4 pt-6 pb-12">
           {!conversation.loaded && !conversation.error && <p role="status" className="m-auto text-sm text-muted-foreground">Loading conversation…</p>}
           {!conversation.loaded && conversation.error && <div role="alert" className="m-auto flex flex-col items-center gap-2 text-center text-sm">
             <p className="selectable text-destructive-foreground">Could not load this conversation: {conversation.error}</p>
@@ -130,7 +134,7 @@ function Thread({ bot }: { bot: Bot }) {
           {conversation.loaded && !conversation.hasMore && conversation.messages[0] && (
             <time dateTime={new Date(conversation.messages[0].createdAt).toISOString()} className="self-center text-muted-foreground text-xs">{startedAt(conversation.messages[0].createdAt)}</time>
           )}
-          <ThreadPrimitive.Messages>{() => <Turn bot={bot} />}</ThreadPrimitive.Messages>
+          <ThreadPrimitive.Messages>{renderTurn}</ThreadPrimitive.Messages>
         </div>
       </ThreadPrimitive.Viewport>
       <ThreadPrimitive.ScrollToBottom asChild>
@@ -143,16 +147,18 @@ function Thread({ bot }: { bot: Bot }) {
       <Button type="button" variant="ghost" size="icon-xs" aria-label="Dismiss" onClick={() => useChatMessages.getState().dismissProblem(bot.id)}><XIcon aria-hidden /></Button>
     </div>}
     <LiveStatus running={running} />
-    <Composer bot={bot} />
+    <QueuePanel bot={bot} running={running} />
+    <Composer bot={bot} running={running} />
   </>;
 }
 
 /** One bot's conversation: scrolling thread backed by the daemon, composer. Mount it keyed by bot id. */
 export function Conversation({ bot }: { bot: Bot }) {
-  const runtime = useChatRuntime(bot);
+  const running = useBotRunning(bot.id);
+  const runtime = useChatRuntime(bot, running);
   return <AssistantRuntimeProvider runtime={runtime}>
     <div data-slot="conversation" className="flex h-full min-h-0 flex-col">
-      <Thread bot={bot} />
+      <Thread bot={bot} running={running} />
     </div>
   </AssistantRuntimeProvider>;
 }

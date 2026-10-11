@@ -7,7 +7,6 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"database/sql"
 	"fmt"
 	"io"
 	"os"
@@ -16,11 +15,9 @@ import (
 	"strings"
 
 	"github.com/rayorole/orole-os-desktop/internal/credentials"
-	"github.com/rayorole/orole-os-desktop/internal/daemon"
+	"github.com/rayorole/orole-os-desktop/internal/daemon/api"
 	"github.com/rayorole/orole-os-desktop/internal/daemon/control"
 	"github.com/rayorole/orole-os-desktop/internal/platform"
-
-	_ "modernc.org/sqlite"
 )
 
 // Report is the diagnostics snapshot.
@@ -32,7 +29,7 @@ type Report struct {
 	Endpoint        string                   `json:"endpoint"`
 	LogPath         string                   `json:"logPath"`
 	DaemonExe       string                   `json:"daemonExe"`
-	Daemon          *daemon.Health           `json:"daemon,omitempty"`
+	Daemon          *api.Health              `json:"daemon,omitempty"`
 	DaemonError     string                   `json:"daemonError,omitempty"`
 	DBSchemaVersion int                      `json:"dbSchemaVersion"` // -1 = unknown
 	DBSource        string                   `json:"dbSource"`
@@ -49,7 +46,9 @@ type Check struct {
 }
 
 // Collect builds a Report for dataDir. logLines is the number of log lines to include.
-func Collect(ctx context.Context, appVersion, dataDir, daemonExe string, logLines int) Report {
+// readSchema reads the schema version straight from orole.db when the daemon is down;
+// nil (the CLI, which must not link sqlite) reports the version as unavailable.
+func Collect(ctx context.Context, appVersion, dataDir, daemonExe string, logLines int, readSchema func(path string) (int, error)) Report {
 	r := Report{
 		AppVersion: appVersion, GoVersion: runtime.Version(), Platform: runtime.GOOS + "/" + runtime.GOARCH,
 		DataDir: dataDir, Endpoint: control.NewClientEndpoint(dataDir), DaemonExe: daemonExe,
@@ -69,7 +68,9 @@ func Collect(ctx context.Context, appVersion, dataDir, daemonExe string, logLine
 		r.DBSchemaVersion, r.DBSource = h.DBVersion, "daemon"
 	} else {
 		r.DaemonError = err.Error()
-		if v, err := ReadSchemaVersion(filepath.Join(dataDir, "orole.db")); err == nil {
+		if readSchema == nil {
+			r.DBSource = "unavailable (daemon not running)"
+		} else if v, err := readSchema(filepath.Join(dataDir, "orole.db")); err == nil {
 			r.DBSchemaVersion, r.DBSource = v, "orole.db (read-only)"
 		} else {
 			r.DBSource = err.Error()
@@ -77,24 +78,6 @@ func Collect(ctx context.Context, appVersion, dataDir, daemonExe string, logLine
 	}
 	r.LogTail, _ = TailFile(r.LogPath, logLines)
 	return r
-}
-
-// ReadSchemaVersion opens the database read-only (never migrating) and returns
-// the highest applied migration.
-func ReadSchemaVersion(path string) (int, error) {
-	if _, err := os.Stat(path); err != nil {
-		return -1, err
-	}
-	db, err := sql.Open("sqlite", "file:"+filepath.ToSlash(path)+"?mode=ro&_pragma=busy_timeout(2000)")
-	if err != nil {
-		return -1, err
-	}
-	defer db.Close()
-	var v sql.NullInt64
-	if err := db.QueryRow(`SELECT MAX(version) FROM schema_migrations`).Scan(&v); err != nil {
-		return -1, err
-	}
-	return int(v.Int64), nil
 }
 
 // CheckCredentials round-trips a throwaway secret through the OS credential store.

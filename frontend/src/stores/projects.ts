@@ -45,6 +45,8 @@ interface State {
   loadWorktrees: (force?: boolean) => Promise<void>;
   /** Marks the caller as showing worktrees: loads them now and keeps them fresh until the returned release is called. */
   watchWorktrees: () => () => void;
+  /** Reads ahead/behind and change counts per worktree (runs `git status`; slow in big repos), one project at a time. */
+  loadStatus: () => Promise<void>;
   /** Whether the New project dialog is open (one instance, mounted in App). */
   newProjectOpen: boolean;
   setNewProjectOpen: (open: boolean) => void;
@@ -115,21 +117,41 @@ export const useProjects = create<State>((set, get) => ({
     if (!due.length) return Promise.resolve();
     worktreesInFlight = (async () => {
       try {
-        const lists = await Promise.all(due.map(async (p) => [p.id, await Worktrees.list(p.id)] as const));
-        const at = Date.now();
-        set((s) => ({
-          worktrees: { ...s.worktrees, ...Object.fromEntries(lists.filter(([id]) => s.projects.some((p) => p.id === id))) },
-          worktreesAt: { ...s.worktreesAt, ...Object.fromEntries(lists.map(([id]) => [id, at])) },
-          worktreesError: null,
+        // Per project: one unreadable repository must not hide every other project; its previous worktrees stay.
+        let failure: string | null = null;
+        await Promise.all(due.map(async (p) => {
+          try {
+            const fresh = await Worktrees.list(p.id);
+            set((s) => {
+              if (!s.projects.some((x) => x.id === p.id)) return s;
+              // A list carries no git status; keep the ahead/behind and change counts `loadStatus` already read.
+              const known = new Map((s.worktrees[p.id] ?? []).filter((w) => w.statusKnown).map((w) => [w.id, w]));
+              const merged = fresh.map((w) => { const old = known.get(w.id); return old && !w.error ? { ...w, upstream: old.upstream, ahead: old.ahead, behind: old.behind, staged: old.staged, unstaged: old.unstaged, untracked: old.untracked, dirty: old.dirty, statusKnown: true } : w; });
+              return { worktrees: { ...s.worktrees, [p.id]: merged }, worktreesAt: { ...s.worktreesAt, [p.id]: Date.now() } };
+            });
+          } catch (e) {
+            failure = msg(e);
+          }
         }));
-      } catch (e) {
-        set({ worktreesError: msg(e) });
+        set({ worktreesError: failure });
       } finally {
         worktreesInFlight = null;
       }
       if (worktreesQueued) { worktreesQueued = false; await get().loadWorktrees(true); }
     })();
     return worktreesInFlight;
+  },
+
+  async loadStatus() {
+    if (!inDesktop) return;
+    await Promise.all(get().projects.filter((p) => !p.missing && p.isGit).map(async (p) => {
+      try {
+        const list = await Worktrees.status(p.id);
+        set((s) => s.projects.some((x) => x.id === p.id) ? { worktrees: { ...s.worktrees, [p.id]: list } } : s);
+      } catch (e) {
+        set((s) => ({ worktrees: { ...s.worktrees, [p.id]: (s.worktrees[p.id] ?? []).map((w) => ({ ...w, error: msg(e) })) } }));
+      }
+    }));
   },
 
   watchWorktrees() {
