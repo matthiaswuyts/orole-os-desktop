@@ -20,7 +20,16 @@ function mount() {
   </div>);
 }
 
+/** Selects with the mouse: press, drag (the selection changes), release. */
 function select(startId: string, endId = startId) {
+  const el = document.getElementById(startId)!;
+  fireEvent.mouseDown(el);
+  setSelection(startId, endId);
+  fireEvent.mouseUp(el);
+  act(() => { vi.runOnlyPendingTimers(); });
+}
+
+function setSelection(startId: string, endId = startId) {
   const range = document.createRange();
   range.setStart(document.getElementById(startId)!.firstChild!, 4);
   range.setEnd(document.getElementById(endId)!.firstChild!, 9);
@@ -31,11 +40,12 @@ function select(startId: string, endId = startId) {
 }
 
 beforeEach(() => {
+  vi.useFakeTimers();
   Range.prototype.getBoundingClientRect = () => ({ left: 100, right: 220, top: 40, bottom: 58, width: 120, height: 18, x: 100, y: 40, toJSON: () => ({}) });
   send.mockReset();
   useChatMessages.setState({ send });
 });
-afterEach(() => { cleanup(); window.getSelection()?.removeAllRanges(); });
+afterEach(() => { vi.useRealTimers(); cleanup(); window.getSelection()?.removeAllRanges(); });
 
 describe("selection menu", () => {
   it("appears under text selected in a bot reply and sends the quoted passage with the chosen request", () => {
@@ -69,10 +79,33 @@ describe("selection menu", () => {
     expect(screen.queryByRole("group")).toBeNull();
   });
 
+  it("waits until the mouse is released: nothing shows while the selection is still being dragged", () => {
+    mount();
+    fireEvent.mouseDown(document.getElementById("p1")!);
+    setSelection("p1");
+    act(() => { vi.advanceTimersByTime(2000); });
+    expect(screen.queryByRole("group")).toBeNull();
+    fireEvent.mouseUp(document.getElementById("p1")!);
+    act(() => { vi.runOnlyPendingTimers(); });
+    expect(screen.getByRole("group", { name: "Ask about the selected text" })).toBeInTheDocument();
+  });
+
+  it("appears after a keyboard selection has been still for a moment, not while it grows", () => {
+    mount();
+    setSelection("p1");
+    expect(screen.queryByRole("group")).toBeNull();
+    act(() => { vi.advanceTimersByTime(200); });
+    setSelection("p1"); // still changing: the wait starts over
+    act(() => { vi.advanceTimersByTime(200); });
+    expect(screen.queryByRole("group")).toBeNull();
+    act(() => { vi.advanceTimersByTime(200); });
+    expect(screen.getByRole("group", { name: "Ask about the selected text" })).toBeInTheDocument();
+  });
+
   it("goes away when the selection is cleared or Escape is pressed", () => {
     mount();
     select("p1");
-    act(() => { window.getSelection()!.removeAllRanges(); document.dispatchEvent(new Event("selectionchange")); });
+    act(() => { window.getSelection()!.removeAllRanges(); document.dispatchEvent(new Event("selectionchange")); vi.runOnlyPendingTimers(); });
     expect(screen.queryByRole("group")).toBeNull();
     select("p1");
     fireEvent.keyDown(document, { key: "Escape" });
