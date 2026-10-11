@@ -66,20 +66,35 @@ var ompThinkingLevels = []string{"off", "minimal", "low", "medium", "high", "xhi
 // carries MCP calls); the always-ask approval mode keeps every call to it behind approval.
 const ompReadOnlyTools = "read,glob,grep,web_search,todo"
 
-// ompApprovalMode maps Orole's permission modes (Claude Code vocabulary) onto omp's
-// --approval-mode and, for "plan", a read-only tool set. omp defaults to yolo (never ask),
-// which would bypass Orole's approvals, so the default here is always-ask.
+// ompApprovalMode maps Orole's permission modes onto omp's --approval-mode and, for "plan", a
+// read-only tool set. omp defaults to yolo (never ask), which would bypass Orole's approvals, so
+// Manual is always-ask. omp has no AI reviewer: Auto is its `write` mode, which runs reads and
+// file edits and still asks before commands (reported as approximated).
 func ompApprovalMode(mode string) (approval string, tools string, err error) {
 	switch mode {
-	case "", "default":
+	case "", PermManual:
 		return "always-ask", "", nil
-	case "acceptEdits":
+	case PermAuto:
 		return "write", "", nil
-	case "plan":
+	case PermYolo:
+		return "yolo", "", nil
+	case PermPlan:
 		return "always-ask", ompReadOnlyTools, nil
 	}
 	return "", "", fmt.Errorf("unsupported permission mode %q", mode)
 }
+
+// PermissionModes: omp has no model-decides mode, so Auto is approximated.
+func (Omp) PermissionModes(context.Context, Detection) []PermissionModeSupport {
+	return []PermissionModeSupport{
+		modeSupport(PermManual, false, "Oh My Pi asks before every tool call that is not a read."),
+		modeSupport(PermAuto, true, "Oh My Pi has no mode where the AI decides; Auto approves file edits and still asks before running commands."),
+		modeSupport(PermYolo, false, "Oh My Pi runs every tool call without asking."),
+	}
+}
+
+// omp's RPC protocol has no approval-mode setter (--approval-mode is a launch flag), so ompProc
+// does not implement permissionModeProcess: the manager resumes the conversation with the new mode.
 
 func (o Omp) Start(ctx context.Context, h *Host, spec LaunchSpec) (Process, error) {
 	if !localMachine(spec.Machine) {

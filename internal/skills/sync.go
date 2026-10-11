@@ -111,7 +111,7 @@ func (y *Syncer) State(harness string) ([]SyncState, error) {
 	if err != nil {
 		return nil, err
 	}
-	enabled, err := y.Store.Enabled()
+	enabled, err := y.Store.EnabledForHarnesses()
 	if err != nil {
 		return nil, err
 	}
@@ -183,7 +183,7 @@ func (y *Syncer) Sync(harness string) ([]SyncState, error) {
 	if err != nil {
 		return nil, err
 	}
-	enabled, err := y.Store.Enabled()
+	enabled, err := y.Store.EnabledForHarnesses()
 	if err != nil {
 		return nil, err
 	}

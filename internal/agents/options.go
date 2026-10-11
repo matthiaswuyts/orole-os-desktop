@@ -40,6 +40,9 @@ type HarnessOption struct {
 	// Models are the models the harness itself reports (nil = it does not list any; a custom id may
 	// still be entered when CustomModel is set).
 	Models []ModelOption `json:"models"`
+	// PermissionModes is how this harness realises Manual, Auto and YOLO (empty = it has its own
+	// approvals and Orole modes do not apply).
+	PermissionModes []PermissionModeSupport `json:"permissionModes"`
 }
 
 // ModelOption is one model a harness reports, with the reasoning levels that model supports.
@@ -152,7 +155,7 @@ func (m *Manager) Options(ctx context.Context, machine string) (LaunchOptions, e
 	if localMachine(machine) {
 		out.Worktree = m.cfg.Worktrees != nil
 		for _, d := range m.Detect(ctx, false) {
-			h := HarnessOption{ID: d.Kind, Name: d.Name, Available: d.Installed, Executable: d.Path, Version: d.Version, Modes: d.Modes, Reasoning: []string{}, Models: []ModelOption{}, CustomModel: d.Kind != "custom", Structured: slices.Contains(d.Modes, ModeStructured), Interactive: slices.Contains(d.Modes, ModeTerminal), UnavailableReason: d.Error}
+			h := HarnessOption{ID: d.Kind, Name: d.Name, Available: d.Installed, Executable: d.Path, Version: d.Version, Modes: d.Modes, Reasoning: []string{}, Models: []ModelOption{}, CustomModel: d.Kind != "custom", Structured: slices.Contains(d.Modes, ModeStructured), Interactive: slices.Contains(d.Modes, ModeTerminal), UnavailableReason: d.Error, PermissionModes: d.PermissionModes}
 			if d.Installed && (d.Kind == "claude" || d.Kind == "codex") {
 				h.Reasoning = advertisedReasoning(d.Kind, localHelp(ctx, d.Path))
 				if d.Kind == "codex" {
@@ -173,6 +176,9 @@ func (m *Manager) Options(ctx context.Context, machine string) (LaunchOptions, e
 			if d.Installed && d.Kind == "omp" {
 				h.Reasoning = advertisedReasoning(d.Kind, localHelp(ctx, d.Path))
 				h.Models = ompModels.list(ctx, d.Path)
+			}
+			if h.PermissionModes == nil {
+				h.PermissionModes = []PermissionModeSupport{}
 			}
 			out.Harnesses = append(out.Harnesses, h)
 		}
@@ -220,7 +226,7 @@ func (m *Manager) Options(ctx context.Context, machine string) (LaunchOptions, e
 		if d.Path != "" && ((d.Kind == "claude" && (!strings.Contains(d.Help, "--print") || !strings.Contains(d.Help, "--output-format"))) || (d.Kind == "codex" && (!strings.Contains(d.Help, "exec") || !strings.Contains(d.Help, "--config")))) {
 			reason = "Installed CLI does not advertise the required remote process flags"
 		}
-		h := HarnessOption{ID: d.Kind, Name: m.AdapterName(d.Kind), Available: d.Path != "" && reason == "", Executable: d.Path, Version: d.Version, Reasoning: advertisedReasoning(d.Kind, d.Help), Models: []ModelOption{}, CustomModel: true, Modes: []Mode{ModeProcess}, UnavailableReason: reason}
+		h := HarnessOption{ID: d.Kind, Name: m.AdapterName(d.Kind), Available: d.Path != "" && reason == "", Executable: d.Path, Version: d.Version, Reasoning: advertisedReasoning(d.Kind, d.Help), Models: []ModelOption{}, CustomModel: true, Modes: []Mode{ModeProcess}, UnavailableReason: reason, PermissionModes: remotePermissionModes(d.Kind, d.Help)}
 		out.Harnesses = append(out.Harnesses, h)
 	}
 	for _, d := range env.Directories {

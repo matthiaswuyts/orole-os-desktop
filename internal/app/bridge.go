@@ -12,6 +12,7 @@ import (
 
 	"github.com/egoist/mygo"
 	"github.com/rayorole/orole-os-desktop/internal/daemon"
+	"github.com/rayorole/orole-os-desktop/internal/daemon/api"
 	"github.com/rayorole/orole-os-desktop/internal/daemon/control"
 	"github.com/rayorole/orole-os-desktop/internal/ipc"
 	"github.com/rayorole/orole-os-desktop/internal/terminals"
@@ -193,7 +194,7 @@ func (l *Link) call(ctx context.Context, method string, params, out any) error {
 	case "mcp.call", "mail.send", "mail.reply", "mail.trash", "drive.trash",
 		"mail.folders", "mail.list", "mail.search", "mail.thread",
 		"drive.list", "drive.search", "drive.stat", "drive.preview",
-		"plugins.trust", "plugins.run", "llm.manifests.trust",
+		"plugins.trust", "plugins.run", "llm.manifests.trust", "cli.providers.install", "cli.providers.login",
 		"github.issue.agent.start", "github.issue.pr.publish",
 		"agents.start", "agents.restart", "agents.prompt", "agents.sendMessage", "agents.check", "agents.review",
 		"agents.handoff", "agents.reviewWith", "agents.tryN", "applications.launch",
@@ -212,8 +213,8 @@ func (l *Link) call(ctx context.Context, method string, params, out any) error {
 type Daemon struct{ L *Link }
 
 // Health returns the daemon's status snapshot.
-func (d Daemon) Health(ctx context.Context) (daemon.Health, error) {
-	var h daemon.Health
+func (d Daemon) Health(ctx context.Context) (api.Health, error) {
+	var h api.Health
 	err := d.L.call(ctx, "daemon.health", struct{}{}, &h)
 	return h, err
 }

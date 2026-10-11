@@ -233,7 +233,7 @@ func (c *cli) diagnostics(args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return usageError(err.Error())
 	}
-	r := diagnostics.Collect(c.ctx, version, c.dir, c.daemonExe(), 20)
+	r := diagnostics.Collect(c.ctx, version, c.dir, c.daemonExe(), 20, nil)
 	if *asJSON {
 		enc := json.NewEncoder(c.out)
 		enc.SetIndent("", "  ")

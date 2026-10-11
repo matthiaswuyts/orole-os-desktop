@@ -146,10 +146,21 @@ func build(ctx context.Context, r wtRow, w git.WorktreeInfo) Worktree {
 	}
 	wt.Upstream, wt.Ahead, wt.Behind = st.Branch.Upstream, st.Branch.Ahead, st.Branch.Behind
 	wt.Staged, wt.Unstaged, wt.Untracked, wt.Dirty = st.Staged, st.Unstaged, st.Untracked, st.Dirty
+	wt.StatusKnown = true
 	return wt
 }
 
+// List reads git's worktree list only: no per-worktree `git status`, so it stays fast in large repositories.
 func (m *worktreeManager) List(ctx context.Context, projectID string) ([]Worktree, error) {
+	return m.list(ctx, projectID, false)
+}
+
+// ListStatus is List plus live git status for every worktree.
+func (m *worktreeManager) ListStatus(ctx context.Context, projectID string) ([]Worktree, error) {
+	return m.list(ctx, projectID, true)
+}
+
+func (m *worktreeManager) list(ctx context.Context, projectID string, withStatus bool) ([]Worktree, error) {
 	p, err := m.s.Get(ctx, projectID)
 	if err != nil {
 		return nil, err
@@ -177,6 +188,18 @@ func (m *worktreeManager) List(ctx context.Context, projectID string) ([]Worktre
 		}
 	}
 	out := make([]Worktree, len(rows))
+	if !withStatus {
+		for i, r := range rows {
+			w := byPath[pathKey(r.path)]
+			wt := Worktree{ID: r.id, ProjectID: r.projectID, Name: r.name, Path: r.path, Branch: w.Branch, Head: w.Head, BaseRef: r.baseRef,
+				IsMain: r.isMain, Detached: w.Detached, Locked: w.Locked, Prunable: w.Prunable, CreatedAt: r.createdAt}
+			if w.Prunable {
+				wt.Error = "directory is missing (prunable)"
+			}
+			out[i] = wt
+		}
+		return out, nil
+	}
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, 4)
 	for i, r := range rows {
@@ -220,6 +243,7 @@ func (m *worktreeManager) lookup(ctx context.Context, id string) (wtRow, git.Wor
 	if errors.Is(err, sql.ErrNoRows) {
 		return r, git.WorktreeInfo{}, Project{}, fmt.Errorf("%w: worktree %s", ErrNotFound, id)
 	}
+
 	if err != nil {
 		return r, git.WorktreeInfo{}, Project{}, err
 	}

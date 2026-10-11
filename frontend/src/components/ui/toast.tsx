@@ -1,21 +1,24 @@
 "use client";
 
 import { Toast } from "@base-ui/react/toast";
+import { Snake } from "loading-dev";
 import {
   CircleAlertIcon,
   CircleCheckIcon,
   InfoIcon,
-  LoaderCircleIcon,
   TriangleAlertIcon,
 } from "lucide-react";
 import type React from "react";
 import { cn } from "@/lib/utils";
 import { buttonVariants } from "@/components/ui/button";
 
+/** The snake animates itself, so the spin/opacity classes meant for static icons are dropped. */
+const LoadingIcon = () => <Snake size={16} />;
+
 const TOAST_ICONS = {
   error: CircleAlertIcon,
   info: InfoIcon,
-  loading: LoaderCircleIcon,
+  loading: LoadingIcon,
   success: CircleCheckIcon,
   warning: TriangleAlertIcon,
 } as const;

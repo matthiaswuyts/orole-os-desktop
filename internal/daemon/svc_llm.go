@@ -10,6 +10,7 @@ import (
 	"github.com/rayorole/orole-os-desktop/internal/database"
 	"github.com/rayorole/orole-os-desktop/internal/llm"
 	"github.com/rayorole/orole-os-desktop/internal/llm/builtin"
+	"github.com/rayorole/orole-os-desktop/internal/llm/cli"
 	"github.com/rayorole/orole-os-desktop/internal/llm/openaicompat"
 )
 
@@ -39,6 +40,14 @@ func (s settingsKV) Set(ctx context.Context, key, value string) error {
 // and audited without the key.
 func (d *Daemon) registerLLM() {
 	reg, store := builtin.Registry(), llmCredentialStore()
+	if d.CLI != nil {
+		// Account providers: the user's own Claude, ChatGPT and Grok plans through the vendors' CLIs. They need no key.
+		for _, desc := range []llm.Descriptor{cli.ClaudeDescriptor(d.CLI), cli.CodexDescriptor(d.CLI), cli.GrokDescriptor(d.CLI)} {
+			if err := reg.Register(desc); err != nil {
+				d.Log.Error("account provider unavailable", "id", desc.ID, "err", err)
+			}
+		}
+	}
 	mgr, err := llm.NewManager(llm.ManagerConfig{
 		Registry:    reg,
 		Credentials: store,

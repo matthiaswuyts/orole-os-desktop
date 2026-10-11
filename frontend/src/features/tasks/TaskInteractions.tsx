@@ -1,15 +1,13 @@
-import { useId, useState } from "react";
-import { BotIcon, ShieldCheckIcon } from "lucide-react";
+import { useState } from "react";
+import { BotIcon } from "lucide-react";
 import { Agents, type PermissionRequest } from "@/mygo";
 import type { SubagentData } from "@/lib/taskChatTypes";
 import { useAgents } from "@/stores/agents";
-import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Card, CardHeader, CardTitle, CardDescription, CardPanel, CardFooter } from "@/components/ui/card";
-import { Checkbox } from "@/components/ui/checkbox";
-import { Field, FieldLabel } from "@/components/ui/field";
-import { Input } from "@/components/ui/input";
+import { Card, CardHeader, CardTitle, CardDescription, CardPanel } from "@/components/ui/card";
+import { PermissionGrant, type GrantScope } from "@/components/assistant-ui/elements/permission-grant";
 import { useAction } from "@/features/agents/format";
+import { describePermission } from "@/lib/permissionLabels";
 
 export { QuestionCard } from "./QuestionCard";
 
@@ -20,14 +18,25 @@ interface ApprovalDecision {
 interface TaskApprovalProps {
   sessionId: string;
   request: PermissionRequest;
+  /** Who is asking: the agent's name. */
+  requester?: string;
   resolved?: boolean;
   decision?: ApprovalDecision;
 }
 
+/** Disclose invisible controls and directional characters instead of rendering them; line breaks and tabs stay readable. */
+const CONTROLS = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u061c\u200b-\u200f\u2028-\u202e\u2060-\u206f\ufeff]/g;
+const CONTROLS_AND_LINES = /[\u0000-\u001f\u007f-\u009f\u061c\u200b-\u200f\u2028-\u202e\u2060-\u206f\ufeff]/g;
+const escapeControl = (character: string) => `\\u${character.charCodeAt(0).toString(16).padStart(4, "0")}`;
+
 /** Preserve exact JSON digits and disclose invisible controls instead of reserializing input. */
-function approvalText(value: string): string {
-  return value.replace(/[\u0000-\u001f\u007f-\u009f\u061c\u200b-\u200f\u2028-\u202e\u2060-\u206f\ufeff]/g,
-    (character) => `\\u${character.charCodeAt(0).toString(16).padStart(4, "0")}`);
+export function approvalText(value: string): string {
+  return value.replace(CONTROLS_AND_LINES, escapeControl);
+}
+
+/** Multi-line text such as a command or a file list: real line breaks, every other control escaped. */
+function approvalLines(value: string): string {
+  return value.replace(CONTROLS, escapeControl);
 }
 
 export function TaskApprovalCard(props: TaskApprovalProps) {
@@ -35,57 +44,42 @@ export function TaskApprovalCard(props: TaskApprovalProps) {
   return <ApprovalRequest key={JSON.stringify([props.sessionId, props.request.id, props.request.tool, props.request.inputJSON])} {...props} />;
 }
 
-function ApprovalRequest({ sessionId, request, resolved = false, decision }: TaskApprovalProps) {
+function ApprovalRequest({ sessionId, request, requester = "The agent", resolved = false, decision }: TaskApprovalProps) {
   const action = useAction();
-  const titleId = useId();
-  const reasonId = useId();
-  const [reviewed, setReviewed] = useState(false);
-  const [reason, setReason] = useState("");
   const [receipt, setReceipt] = useState<ApprovalDecision | null>(null);
   const confirmed = decision ?? receipt;
   const pending = !resolved && !confirmed;
   const complete = !!request.inputJSON;
+  const { capability, reach } = describePermission(request);
 
-  const decide = (allow: boolean) => {
-    if (!pending || action.busy || (allow && (!complete || !reviewed))) return;
+  const decide = (scope: GrantScope) => {
+    const allow = scope !== "denied";
+    if (!pending || action.busy || (allow && !complete)) return;
     void action.run(async () => {
-      await Agents.approve(sessionId, request.id, allow, reason);
+      // The daemon decides and audits; this only relays the one decision the request offers.
+      await Agents.approve(sessionId, request.id, allow, "");
       // An acknowledged decision is a receipt, even if refreshing the session then fails.
-      setReceipt({ allow, reason });
+      setReceipt({ allow, reason: "" });
       useAgents.getState().upsert(await Agents.get(sessionId));
     });
   };
 
-  return <Card aria-labelledby={titleId} className="min-w-0">
-    <CardHeader>
-      <CardTitle id={titleId} className="flex items-center gap-2"><ShieldCheckIcon aria-hidden className="size-4" />Tool permission</CardTitle>
-      <CardDescription>{pending ? "Review this action before granting permission. Approval applies only to this request." : "Permission request history"}</CardDescription>
-    </CardHeader>
-    <CardPanel className="flex flex-col gap-3">
-      <strong aria-label="Complete tool name" className="selectable whitespace-pre-wrap break-all font-mono text-sm">{approvalText(JSON.stringify(request.tool))}</strong>
-      <p className="text-xs text-muted-foreground">Complete tool arguments. Control and directional characters are shown as escapes; this is untrusted agent input.</p>
-      {complete ? <pre aria-label="Complete tool arguments" tabIndex={0} className="selectable max-h-72 overflow-auto whitespace-pre-wrap break-all rounded-lg bg-muted/40 p-3 font-mono text-xs focus-visible:outline-2 focus-visible:outline-ring">{approvalText(request.inputJSON)}</pre>
-        : <p role="alert" className="text-xs text-destructive-foreground">The complete input is unavailable. This request cannot be approved.</p>}
-      {pending && <>
-        <label className="flex min-h-9 items-start gap-2 text-sm"><Checkbox checked={reviewed} disabled={!complete || action.busy} onCheckedChange={setReviewed} />I reviewed the complete tool name and arguments.</label>
-        <Field>
-          <FieldLabel htmlFor={reasonId}>Reason (optional)</FieldLabel>
-          <Input id={reasonId} value={reason} disabled={action.busy} onChange={(event) => setReason(event.target.value)} />
-        </Field>
-      </>}
-    </CardPanel>
-    <CardFooter className="flex flex-col items-start gap-2">
-      {pending ? <div className="flex flex-wrap gap-2">
-        <Button type="button" size="sm" disabled={!complete || !reviewed || action.busy} loading={action.busy} onClick={() => decide(true)}>Allow once</Button>
-        <Button type="button" size="sm" variant="outline" disabled={action.busy} onClick={() => decide(false)}>Deny</Button>
-      </div> : <div role="status" className="flex flex-col gap-2 text-xs">
-        <Badge variant={confirmed ? confirmed.allow ? "success" : "secondary" : "outline"}>{confirmed ? confirmed.allow ? "Allowed once" : "Denied" : "No longer pending"}</Badge>
-        <p>{confirmed ? "Decision acknowledged. Tool execution status is reported separately." : "No decision receipt is available for this request."}</p>
-        {confirmed?.reason && <p className="whitespace-pre-wrap break-words">Reason: {approvalText(confirmed.reason)}</p>}
-      </div>}
-      {action.error && <p role="alert" className="whitespace-pre-wrap break-words text-xs text-destructive-foreground">{action.error}</p>}
-    </CardFooter>
-  </Card>;
+  return <PermissionGrant
+    capability={approvalText(capability)}
+    requester={approvalText(requester)}
+    reach={reach.map(({ label, value }) => ({ label, value: approvalLines(value) }))}
+    scope={pending ? "pending" : confirmed ? confirmed.allow ? "once" : "denied" : "closed"}
+    onGrant={decide}
+    busy={action.busy}
+    blocked={complete ? undefined : "The complete input is unavailable. This request cannot be approved."}
+    error={action.error}
+    reason={confirmed?.reason ? approvalText(confirmed.reason) : undefined}
+    details={<div className="flex min-w-0 flex-col gap-2">
+      <p className="text-muted-foreground">Complete tool name. Control and directional characters are shown as escapes; this is untrusted agent input.</p>
+      <strong aria-label="Complete tool name" className="selectable whitespace-pre-wrap break-all font-mono">{approvalText(JSON.stringify(request.tool))}</strong>
+      {complete && <pre aria-label="Complete tool arguments" tabIndex={0} className="selectable m-0 max-h-72 overflow-auto whitespace-pre-wrap break-all rounded-md bg-muted/40 p-2 font-mono focus-visible:outline-2 focus-visible:outline-ring">{approvalText(request.inputJSON)}</pre>}
+    </div>}
+  />;
 }
 
 /** IDs, task text and status come only from provider events; they are not Orole session links. */

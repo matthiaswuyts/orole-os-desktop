@@ -1,9 +1,8 @@
-import { useEffect, type ReactNode } from "react";
+import { lazy, Suspense, useEffect, useState, type ReactNode } from "react";
 import { PanelLeftOpen } from "lucide-react";
 import { Tooltip, TooltipPopup, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Sidebar } from "./Sidebar";
 import { StatusBar } from "./StatusBar";
-import { CommandPalette } from "./CommandPalette";
 import { useUI } from "@/stores/ui";
 import { inDesktop } from "@/lib/backend";
 import { navItem } from "@/lib/nav";
@@ -15,8 +14,18 @@ import { TaskHeader } from "@/features/tasks/TaskHeader";
 import { BotActions, BotTitle } from "@/features/chat/BotHeader";
 import { useChat, useSelectedBot } from "@/stores/chat";
 
+const loadPalette = () => import("./CommandPalette").then((m) => ({ default: m.CommandPalette }));
+const CommandPalette = lazy(loadPalette);
+
 export function AppShell({ children }: { children: ReactNode }) {
-  const { setFocused, sidebarOpen, toggleSidebar, view } = useUI();
+  const { setFocused, sidebarOpen, toggleSidebar, view, paletteOpen, setPalette } = useUI();
+  // The palette lives in its own chunk: mounted on first open, then kept so the close animation and state survive.
+  const [paletteMounted, setPaletteMounted] = useState(false);
+  if (paletteOpen && !paletteMounted) setPaletteMounted(true);
+  useEffect(() => {
+    const t = setTimeout(() => void loadPalette(), 1500);
+    return () => clearTimeout(t);
+  }, []);
   useEffect(() => {
     const f = () => setFocused(document.hasFocus() && !document.hidden);
     window.addEventListener("focus", f); window.addEventListener("blur", f); document.addEventListener("visibilitychange", f);
@@ -24,10 +33,12 @@ export function AppShell({ children }: { children: ReactNode }) {
     return () => { window.removeEventListener("focus", f); window.removeEventListener("blur", f); document.removeEventListener("visibilitychange", f); };
   }, [setFocused]);
   useEffect(() => {
-    const k = (e: KeyboardEvent) => { if (e.ctrlKey && e.key.toLowerCase() === "b") { e.preventDefault(); toggleSidebar(); } };
+    const k = (e: KeyboardEvent) => { if (e.ctrlKey && e.key.toLowerCase() === "b") { e.preventDefault(); toggleSidebar(); }
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") { e.preventDefault(); setPalette(!useUI.getState().paletteOpen); }
+    };
     window.addEventListener("keydown", k);
     return () => window.removeEventListener("keydown", k);
-  }, [toggleSidebar]);
+  }, [toggleSidebar, setPalette]);
   const n = navItem(view);
   const task = useAgents((state) => view === "agents" && state.available && !state.offline && state.openId ? state.sessions[state.openId] : undefined);
   const link = useDaemon((state) => state.link);
@@ -63,7 +74,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         </div>
         <StatusBar />
       </div>
-      <CommandPalette />
+      {paletteMounted && <Suspense fallback={null}><CommandPalette /></Suspense>}
     </TooltipProvider>
   );
 }

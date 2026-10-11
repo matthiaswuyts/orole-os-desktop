@@ -92,7 +92,7 @@ The daemon listens only on `127.0.0.1:<random>/callback`, for five minutes, and 
 Live redirect acceptance remains **unverified**: metadata does not describe redirect matching rules, and login/client registration is unavailable. The server's client registration must permit native loopback redirects at arbitrary ports per RFC 8252, or an administrator must provide a compatible client. Do not assume a wildcard or specific URI is accepted merely because it appears in an example.
 
 To authorize:
-1. In Settings > MCP servers, quick-add Orole Mail or Orole Drive.
+1. In Settings > Integrations, quick-add Orole Mail or Orole Drive.
 2. Obtain a public native client ID from the server administrator, or host a client metadata JSON document at an HTTPS URL that the server can retrieve (the server advertises CIMD support). Configure its allowed redirect URIs for the loopback callback and native-port matching. The document must identify its own URL as `client_id`, list `authorization_code` and `refresh_token` grants, `code` response type, and `none` token endpoint authentication.
 3. Enter the registered client ID/document URL in the server settings. Select scopes explicitly if desired; `offline_access` is added when advertised.
 4. Click Authorize, authenticate in the system browser, review consent, and allow the redirect back to Orole OS.
@@ -193,7 +193,6 @@ The focused reproduction commands (no external Mail/Drive credentials) are:
 ```powershell
 go test -race ./internal/drive ./internal/policy ./internal/daemon -run 'TestOnlyCompleteUnchangedBoundedTextHasShareDigest|TestRequireOnce|TestDriveScopedHandoff' -count=1
 go test -race ./internal/agents -run '^TestScopedPromptRevalidatesAfterAuthorization$' -count=1
-bun run --cwd frontend test -- src/features/drive/DriveActions.test.tsx src/features/drive/preview.test.ts
 ```
 
 The daemon smoke creates temporary SQLite state and an in-process official SDK

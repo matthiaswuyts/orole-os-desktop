@@ -18,14 +18,6 @@ export function CommandPalette() {
   const [running, setRunning] = useState(false);
   const [cancelled, setCancelled] = useState(false);
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") { e.preventDefault(); setPalette(!useUI.getState().paletteOpen); }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [setPalette]);
-
   const reset = (open: boolean) => { if (!open) { searchController.current?.abort(); setQ(""); setFilter(null); setRemote({}); setActionError(""); setCancelled(false); } setPalette(open); };
 
   useEffect(() => {

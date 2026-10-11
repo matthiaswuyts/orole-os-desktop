@@ -30,6 +30,7 @@ const (
 	CodeVersion         = "version_mismatch"
 	CodeInternal        = "internal"
 	CodeDenied          = "denied"
+	CodeTooLarge        = "too_large"
 )
 
 // Message is any frame on the wire.
