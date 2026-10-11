@@ -426,9 +426,11 @@ and composer).
 
 The daemon owns every conversation. `stores/chatMessages.ts` is a disposable, event-synchronised window per bot:
 the latest page on `load`, older pages on `loadOlder` (`beforeSeq`), `chat.message` events upsert by id (a
-streaming snapshot replaces its message in place; `draft:` ids and bots never opened are ignored), reconnect and
-window focus refetch the latest page and merge it with what events delivered meanwhile, and stale responses are
-dropped by request token. About 300 messages per bot stay in memory unless the reader has paged back. `send`
+streaming snapshot replaces its message in place; `draft:` ids and bots never opened are ignored),
+`chat.message.delta` events append streamed text to the matching part (dropped unless message, part type and UTF-16
+length line up; the next snapshot repairs the window), reconnect and window focus refetch the latest page and merge
+it with what events delivered meanwhile, and stale responses are dropped by request token. About 300 messages per
+bot stay in memory unless the reader has paged back. `send`
 stores nothing optimistically: it upserts the user message the daemon returns and the reply arrives by event; a
 failed send keeps its exact request (same `clientNonce`) so Retry is idempotent. Composer drafts and the
 research toggle are kept per bot.

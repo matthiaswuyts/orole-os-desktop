@@ -80,4 +80,4 @@ Typed contracts live in `internal/chat/api.go`, `internal/chat/memory_api.go` an
 `chat.bots.list|get|save|archive|export|import`, `chat.messages.list`, `chat.send|cancel|regenerate|clear`, `chat.draft.send`,
 `chat.attachments.begin|chunk|commit|discard|read`, `chat.tools.list`, `chat.memory.*`, `chat.knowledge.*`, `chat.skills.pending.*`,
 `llm.providers.list|connect|disconnect|test`, `llm.models`, `llm.defaults.get|set`, `llm.openrouter.auth.start|finish`,
-`llm.manifests.list|save|trust|remove`. Events: `chat.message`, `chat.run`, `chat.bot`, `chat.memory`, `llm.changed`.
+`llm.manifests.list|save|trust|remove`. Events: `chat.message`, `chat.message.delta`, `chat.run`, `chat.bot`, `chat.memory`, `llm.changed`.

@@ -25,10 +25,30 @@ React (features/chat, stores/chat*.ts)  --MyGo Chat / LLM--> internal/app (state
 ## Run lifecycle
 `chat.send` stores the user message, then the engine (one active run per bot; further sends are queued) assembles
 the prompt (bot instructions, standing rules, memory snapshot taken once per run, recalled facts, rolling summary,
-recent messages, current attachments), streams from the provider, runs client tools, and publishes `chat.message`
-snapshots (at most one per 50 ms plus the final). Statuses: `pending`, `running`, `complete`, `incomplete`
-(daemon restarted mid-run), `error`, `canceled`. Budgets: steps (default 8) and tool calls (default 20) per turn,
-doom-loop detection, cancellation through `chat.cancel`.
+recent messages, current attachments), streams from the provider, runs client tools, and publishes the growing reply
+(at most one event per 50 ms). Streamed text goes out as `chat.message.delta` (`MessageDelta`: message id, part
+index, part type, the part's UTF-16 length before the append, the appended text), built in linear time by a per-part
+`strings.Builder` in the sink. Anything a delta cannot express (a new part, tool row, citation, usage, a checkpoint at
+a tool boundary, the final state) is a full `chat.message` snapshot, and one is also sent at least every 2 s, so a
+window that opened mid-reply or missed an event recovers; the frontend applies a delta only when message, part type
+and length line up and otherwise waits for the next snapshot. Statuses: `pending`, `running`, `complete`,
+`incomplete` (daemon restarted mid-run), `error`, `canceled`. Budgets: steps (default 8) and tool calls (default 20)
+per turn, doom-loop detection, cancellation through `chat.cancel`.
+
+Locking: `Manager.mu` guards only in-memory run state (runs, queues, waits, nonces) and is never held across SQLite
+work. Everything that stores a message for one bot and starts or queues its runs (`Send`, `Regenerate`, the setup
+greeting, delegation, Archive/Clear) holds that bot's lock (`lockBot`, always taken before `mu`), which keeps message
+order and queue order identical. The `ask_bot` wait edge is recorded in the same critical section as the deadlock
+check.
+
+## History and compaction
+`fitHistory` loads only the text-bearing parts of the newest messages (a SQLite `json_each` projection: text,
+question, report, attachment names; no tool rows, citations, reasoning or UI specs) until about 90 % of the model's
+context window is loaded; each message's token estimate is computed once. When the input exceeds 75 % of the window
+(or 60 messages if the window is unknown) the older backlog is streamed to the memory model 200 messages at a time
+(text clipped to what the summariser reads) and folded into `conversation_summaries`. A failed summarisation is
+remembered per conversation and not retried for 1 minute, doubling per consecutive failure up to 30 minutes; the reply
+still carries the "could not be summarised" notice, and a success clears the backoff.
 
 ## Tools
 - Hosted: OpenRouter `openrouter:web_search` / `web_fetch` / `datetime`, OpenAI `web_search`. A tool is offered only
@@ -87,6 +107,15 @@ parts only); Enter / Shift+Enter step through matches and scroll to the message,
 ## Attachments
 Chunked upload (1 MiB chunks, 20 MiB per file, 10 per message), type sniffed from content, stored
 content-addressed at `<DataDir>/chat/attachments/<sha256>`; staged uploads expire after 24 h.
+
+## Provider streams: idle timeout and retry
+All three streaming providers open the request with `llm.DoRetry`: a 429 or 5xx answer is retried (3 tries, jittered
+exponential backoff from 0.5 s capped at 8 s; a `Retry-After` of up to 5 s is waited out, a longer one is returned so
+the user sees "try again in N seconds"). Quota, auth, context-length and other 4xx errors are final. Retrying only
+happens before the response body is handed to the caller, so a stream that delivered even one delta is never
+replayed. `llm.ReadSSE` closes a stream that delivers no byte for 90 s (`DefaultSSEIdle`; keep-alive comments count,
+time spent in the consumer does not) and reports it as an `ErrNetwork` error. Tests tune both through `llm.WithRetry`
+and `llm.WithSSEIdle`.
 
 ## Security
 Keys: Credential Manager only, never returned to the UI. All external content is fenced as untrusted. Policy decisions

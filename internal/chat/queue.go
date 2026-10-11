@@ -90,13 +90,16 @@ func (m *Manager) Send(ctx context.Context, req SendRequest) (Message, error) {
 		return Message{}, err
 	}
 
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.closed {
+	unlock := m.lockBot(req.BotID)
+	defer unlock()
+	if m.isClosed() {
 		return Message{}, ErrClosed
 	}
 	if req.ClientNonce != "" {
-		if id, ok := m.nonces.get(req.BotID, req.ClientNonce); ok {
+		m.mu.Lock()
+		id, ok := m.nonces.get(req.BotID, req.ClientNonce)
+		m.mu.Unlock()
+		if ok {
 			if msg, err := m.store.getMessage(ctx, id); err == nil {
 				return msg, nil
 			}
@@ -105,34 +108,45 @@ func (m *Manager) Send(ctx context.Context, req SendRequest) (Message, error) {
 	if _, err := m.store.getBot(ctx, req.BotID, false); err != nil {
 		return Message{}, err
 	}
-	first := turn{mode: req.Mode, skills: skills}
+	// One turn per answering bot: the first mention (or the conversation's own bot) and one for each further mention.
+	turns := []turn{{mode: req.Mode, skills: skills}}
 	if len(mentions) > 0 {
-		first.responder = mentions[0]
+		turns[0].responder = mentions[0]
+		for _, id := range mentions[1:] {
+			turns = append(turns, turn{responder: id, skills: skills})
+		}
 	}
-	msg, err := m.submitLocked(ctx, Message{BotID: req.BotID, Role: "user", Author: "user"}, text, ids, first)
+	msg, err := m.submit(ctx, Message{BotID: req.BotID, Role: "user", Author: "user"}, text, ids, turns...)
 	if err != nil {
 		return Message{}, err
 	}
-	if st := m.runs[req.BotID]; st != nil {
-		for _, id := range mentions[min(1, len(mentions)):] {
-			st.queue = append(st.queue, turn{userMsgID: msg.ID, responder: id, skills: skills})
-		}
-	}
 	if req.ClientNonce != "" {
+		m.mu.Lock()
 		m.nonces.put(req.BotID, req.ClientNonce, msg.ID)
+		m.mu.Unlock()
 	}
 	return msg, nil
 }
 
-// submitLocked stores msg (a user message of msg.BotID) with the given text and attachments,
-// publishes it and queues t to answer it, or starts the bot's worker when it is idle. The message
-// is stored pending while it waits behind an active run. The caller holds m.mu and has verified
-// that the bot exists.
-func (m *Manager) submitLocked(ctx context.Context, msg Message, text string, attachmentIDs []string, t turn) (Message, error) {
+// submit stores msg (a user message of msg.BotID) with the given text and attachments, publishes it
+// and queues turns (each answers the message) behind the bot's active run, or starts the bot's worker
+// when it is idle. The message is stored pending while it waits behind an active run.
+//
+// The caller holds lockBot(msg.BotID) and has verified that the bot exists. That lock is what keeps
+// the order of messages and turns identical for one bot, so the SQLite work here runs outside the
+// global m.mu, which is only held to read and change the in-memory run state.
+func (m *Manager) submit(ctx context.Context, msg Message, text string, attachmentIDs []string, turns ...turn) (Message, error) {
+	m.mu.Lock()
+	if m.closed {
+		m.mu.Unlock()
+		return Message{}, ErrClosed
+	}
 	st := m.runs[msg.BotID]
 	if st != nil && len(st.queue) >= maxQueued {
+		m.mu.Unlock()
 		return Message{}, busyf("Too many messages are waiting. Wait for the bot to catch up.")
 	}
+	m.mu.Unlock()
 	msg.ID, msg.Status, msg.CreatedAt = newID(), StatusComplete, m.nowMs()
 	if st != nil {
 		msg.Status = StatusPending
@@ -140,14 +154,29 @@ func (m *Manager) submitLocked(ctx context.Context, msg Message, text string, at
 	if err := m.store.insertUserMessage(ctx, &msg, text, attachmentIDs); err != nil {
 		return Message{}, err
 	}
-	m.cancelIdleLocked(msg.BotID)
 	m.publishMessage(msg)
-	t.userMsgID = msg.ID
-	if st != nil {
-		st.queue = append(st.queue, t)
-	} else {
-		m.startLocked(msg.BotID, t)
+	for i := range turns {
+		turns[i].userMsgID = msg.ID
 	}
+
+	m.mu.Lock()
+	if m.closed {
+		m.mu.Unlock()
+		// The daemon began shutting down while the message was being stored: it will never run.
+		if err := m.store.setStatus(context.WithoutCancel(ctx), msg.ID, StatusCanceled, "Not sent: Orole was closed before this message was processed."); err != nil {
+			m.log.Warn("chat: cancel message stored during shutdown", "err", err)
+		}
+		return Message{}, ErrClosed
+	}
+	m.cancelIdleLocked(msg.BotID)
+	// Only a bot-lock holder starts runs, so a run seen above is either still there or has finished
+	// meanwhile; in the second case the pending message is answered by a fresh worker, which marks it complete.
+	if cur := m.runs[msg.BotID]; cur != nil {
+		cur.queue = append(cur.queue, turns...)
+	} else {
+		m.startLocked(msg.BotID, turns...)
+	}
+	m.mu.Unlock()
 	return msg, nil
 }
 
@@ -170,9 +199,10 @@ func containsString(s []string, v string) bool {
 	return false
 }
 
-// startLocked launches the worker for a bot. The caller holds m.mu and has verified there is no run.
-func (m *Manager) startLocked(botID string, first turn) {
-	st := &runState{done: make(chan struct{}), queue: []turn{first}}
+// startLocked launches the worker for a bot, first answering turns in order. The caller holds m.mu
+// and has verified there is no run.
+func (m *Manager) startLocked(botID string, turns ...turn) {
+	st := &runState{done: make(chan struct{}), queue: turns}
 	m.runs[botID] = st
 	m.wg.Add(1)
 	go m.pump(botID, st)
@@ -213,12 +243,15 @@ func (m *Manager) pump(botID string, st *runState) {
 
 // Regenerate resets the latest assistant reply in place (same message id) and runs it again.
 func (m *Manager) Regenerate(ctx context.Context, req RegenerateRequest) error {
+	unlock := m.lockBot(req.BotID)
+	defer unlock()
 	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.closed {
+	closed, running := m.closed, m.runs[req.BotID] != nil
+	m.mu.Unlock()
+	if closed {
 		return ErrClosed
 	}
-	if m.runs[req.BotID] != nil {
+	if running {
 		return busyf("The bot is still replying. Stop it first, then regenerate.")
 	}
 	if _, err := m.store.getBot(ctx, req.BotID, false); err != nil {
@@ -241,11 +274,16 @@ func (m *Manager) Regenerate(ctx context.Context, req RegenerateRequest) error {
 			mode = ModeResearch
 		}
 	}
-	m.cancelIdleLocked(req.BotID)
 	responder := strings.TrimPrefix(last.Author, "bot:")
 	if !strings.HasPrefix(last.Author, "bot:") || responder == req.BotID {
 		responder = ""
 	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.closed {
+		return ErrClosed
+	}
+	m.cancelIdleLocked(req.BotID)
 	m.startLocked(req.BotID, turn{userMsgID: user.ID, mode: mode, asstID: last.ID, responder: responder})
 	return nil
 }
@@ -322,14 +360,19 @@ func (m *Manager) abandonDelegated(ctx context.Context, botID, userMsgID string)
 // whenIdle stops the bot's run (dropping its queue), then runs fn while no new run can start.
 func (m *Manager) whenIdle(ctx context.Context, botID string, fn func() error) error {
 	for {
+		unlock := m.lockBot(botID)
 		m.mu.Lock()
 		if m.closed {
 			m.mu.Unlock()
+			unlock()
 			return ErrClosed
 		}
 		st := m.runs[botID]
 		if st == nil {
-			defer m.mu.Unlock()
+			// No run exists and only holders of the bot lock can start one, so fn runs with the bot
+			// idle without the global lock being held across its SQLite work.
+			m.mu.Unlock()
+			defer unlock()
 			if _, err := m.store.getBot(ctx, botID, false); err != nil {
 				return err
 			}
@@ -338,6 +381,7 @@ func (m *Manager) whenIdle(ctx context.Context, botID string, fn func() error) e
 		dropped, cancel, done := st.queue, st.cancel, st.done
 		st.queue = nil
 		m.mu.Unlock()
+		unlock()
 		m.dropQueued(ctx, dropped)
 		if cancel != nil {
 			cancel()

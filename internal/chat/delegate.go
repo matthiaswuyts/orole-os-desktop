@@ -74,20 +74,29 @@ func (m *Manager) Ask(ctx context.Context, from RunContext, calleeID, question s
 // submitDelegation stores the question in the callee's conversation and queues (or starts) its turn.
 // It refuses to queue behind a callee that is itself blocked, directly or through other
 // delegations, waiting for the caller: neither run could ever finish.
+//
+// The wait edge is recorded in the same critical section as the cycle check, before the message is
+// stored, so two asks that would deadlock each other cannot both pass the check; the edge is taken
+// back when storing fails. The callee's bot lock serialises the store and queue step.
 func (m *Manager) submitDelegation(ctx context.Context, caller, callee Bot, question string, t turn) (Message, error) {
+	unlock := m.lockBot(callee.ID)
+	defer unlock()
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	if m.closed {
+		m.mu.Unlock()
 		return Message{}, ErrClosed
 	}
 	if m.waitsOnLocked(callee.ID, caller.ID) {
+		m.mu.Unlock()
 		return Message{}, fmt.Errorf("%s is waiting for %s to finish, so asking it now would deadlock", callee.Name, caller.Name)
 	}
-	msg, err := m.submitLocked(ctx, Message{BotID: callee.ID, Role: "user", Author: BotPrefix + caller.ID}, question, nil, t)
+	m.waits[caller.ID] = append(m.waits[caller.ID], callee.ID)
+	m.mu.Unlock()
+	msg, err := m.submit(ctx, Message{BotID: callee.ID, Role: "user", Author: BotPrefix + caller.ID}, question, nil, t)
 	if err != nil {
+		m.stopWaiting(caller.ID, callee.ID)
 		return Message{}, err
 	}
-	m.waits[caller.ID] = append(m.waits[caller.ID], callee.ID)
 	return msg, nil
 }
 

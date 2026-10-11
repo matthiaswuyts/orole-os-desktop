@@ -1,11 +1,12 @@
 import { renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { BotChange, Message, MessagesRequest, RunState, SendRequest } from "@/mygo";
+import type { BotChange, Message, MessageDelta, MessagesRequest, RunState, SendRequest } from "@/mygo";
 
 const bridge = vi.hoisted(() => ({
   messages: vi.fn(), send: vi.fn(), cancel: vi.fn(), regenerate: vi.fn(), clear: vi.fn(),
   run: null as ((s: RunState) => void) | null,
   message: null as ((m: Message) => void) | null,
+  delta: null as ((d: MessageDelta) => void) | null,
   bot: null as ((c: BotChange) => void) | null,
 }));
 
@@ -16,11 +17,12 @@ vi.mock("@/mygo", () => ({
   events: {
     chatRun: { on: (f: (s: RunState) => void) => { bridge.run = f; return () => { bridge.run = null; }; } },
     chatMessage: { on: (f: (m: Message) => void) => { bridge.message = f; return () => { bridge.message = null; }; } },
+    chatMessageDelta: { on: (f: (d: MessageDelta) => void) => { bridge.delta = f; return () => { bridge.delta = null; }; } },
     chatBot: { on: (f: (c: BotChange) => void) => { bridge.bot = f; return () => { bridge.bot = null; }; } },
   },
 }));
 
-import { MAX_IN_MEMORY, mergeLatest, upsert, useBotRunning, useChatMessages } from "@/stores/chatMessages";
+import { MAX_IN_MEMORY, applyDelta, mergeLatest, upsert, useBotRunning, useChatMessages } from "@/stores/chatMessages";
 import { useChat } from "@/stores/chat";
 import { useDaemon } from "@/stores/daemon";
 
@@ -115,6 +117,41 @@ describe("event sync", () => {
     const list = useChatMessages.getState().byBot.a!.messages;
     expect(list.map((m) => m.id)).toEqual(["m1", "m2", "m3"]);
     expect(list[2]).toMatchObject({ status: "complete", parts: [{ text: "Hello there" }] });
+  });
+
+  it("appends streamed deltas to the running message, in order, and a snapshot replaces the accumulated text", () => {
+    const delta = (from: number, text: string): MessageDelta => ({ botId: "a", messageId: "m3", part: 0, type: "text", from, text });
+    bridge.message!(msg(3, { status: "running", parts: [{ type: "text", text: "Hel" }] }));
+    bridge.delta!(delta(3, "lo"));
+    bridge.delta!(delta(5, " there"));
+    expect(useChatMessages.getState().byBot.a!.messages[2]!.parts[0]!.text).toBe("Hello there");
+    bridge.message!(msg(3, { status: "complete", parts: [{ type: "text", text: "Hello there!" }] }));
+    expect(useChatMessages.getState().byBot.a!.messages[2]).toMatchObject({ status: "complete", parts: [{ text: "Hello there!" }] });
+  });
+
+  it("drops a delta that does not line up and recovers on the next snapshot", () => {
+    bridge.message!(msg(3, { status: "running", parts: [{ type: "text", text: "Hel" }] }));
+    bridge.delta!({ botId: "a", messageId: "m3", part: 0, type: "text", from: 10, text: "lost the middle" }); // missed an event
+    bridge.delta!({ botId: "a", messageId: "m3", part: 0, type: "text", from: 0, text: "dup" }); // replayed
+    bridge.delta!({ botId: "a", messageId: "m3", part: 4, type: "text", from: 3, text: "no such part" });
+    bridge.delta!({ botId: "a", messageId: "m3", part: 0, type: "reasoning", from: 3, text: "wrong kind" });
+    bridge.delta!({ botId: "a", messageId: "ghost", part: 0, type: "text", from: 0, text: "unknown message" });
+    expect(useChatMessages.getState().byBot.a!.messages[2]!.parts).toEqual([{ type: "text", text: "Hel" }]);
+    bridge.message!(msg(3, { status: "running", parts: [{ type: "text", text: "Hello wor" }] }));
+    bridge.delta!({ botId: "a", messageId: "m3", part: 0, type: "text", from: 9, text: "ld" });
+    expect(useChatMessages.getState().byBot.a!.messages[2]!.parts[0]!.text).toBe("Hello world");
+  });
+
+  it("ignores deltas for bots never loaded and for draft: conversations", () => {
+    bridge.delta!({ botId: "never", messageId: "m3", part: 0, type: "text", from: 0, text: "x" });
+    bridge.delta!({ botId: "draft:1", messageId: "m3", part: 0, type: "text", from: 0, text: "x" });
+    expect(Object.keys(useChatMessages.getState().byBot)).toEqual(["a"]);
+  });
+
+  it("counts the offset in UTF-16 units, as JavaScript strings do", () => {
+    const base = msg(3, { status: "running", parts: [{ type: "text", text: "a😀" }] }); // 3 UTF-16 units, 5 UTF-8 bytes
+    expect(applyDelta(base, { botId: "a", messageId: "m3", part: 0, type: "text", from: 3, text: "!" })?.parts[0]?.text).toBe("a😀!");
+    expect(applyDelta(base, { botId: "a", messageId: "m3", part: 0, type: "text", from: 5, text: "!" })).toBeNull();
   });
 
   it("ignores events for bots never loaded and for draft: conversations", () => {

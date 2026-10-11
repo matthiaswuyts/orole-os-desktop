@@ -86,7 +86,7 @@ func (m *Manager) DraftSend(ctx context.Context, req DraftRequest) (Message, err
 			m.emit("chat.run", RunState{BotID: key})
 		}()
 		asst := Message{ID: newID(), BotID: key, Role: "assistant", Author: "bot:draft", Status: StatusRunning, CreatedAt: m.nowMs(), Parts: []MsgPart{}}
-		s := newSink(asst, nil, m.publishMessage)
+		s := newSink(asst, nil, m.publishMessage, m.publishDelta)
 		m.emit("chat.run", RunState{BotID: key, Running: true, MessageID: asst.ID})
 		s.checkpoint()
 		rc := RunContext{Bot: bot, MessageID: asst.ID, Actor: "bot:draft", Emit: s.upsertTool}

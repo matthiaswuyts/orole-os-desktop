@@ -11,6 +11,7 @@ import (
 	"os"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -523,7 +524,7 @@ func TestStreamHTTPErrorMapping(t *testing.T) {
 				w.WriteHeader(tc.status)
 				io.WriteString(w, tc.body)
 			})
-			ch, err := p.Stream(context.Background(), llm.Request{Model: "m"})
+			ch, err := p.Stream(llm.WithRetry(context.Background(), llm.NoRetry), llm.Request{Model: "m"})
 			if ch != nil {
 				t.Fatalf("channel returned with error status: %v", ch)
 			}
@@ -922,5 +923,89 @@ func TestLive(t *testing.T) {
 	}
 	if strings.TrimSpace(text.String()) == "" {
 		t.Error("empty answer")
+	}
+}
+
+var fastRetry = llm.RetryPolicy{Attempts: 3, Base: time.Millisecond, Cap: 2 * time.Millisecond, MaxRetryAfter: time.Second}
+
+func TestStreamRetriesRateLimitBeforeTheFirstByte(t *testing.T) {
+	var hits atomic.Int32
+	p, _ := newTestProvider(t, func(w http.ResponseWriter, _ *http.Request) {
+		if hits.Add(1) == 1 {
+			w.Header().Set("Retry-After", "0.01")
+			w.WriteHeader(http.StatusTooManyRequests)
+			io.WriteString(w, `{"error":{"code":429,"message":"Rate limit exceeded: free-models-per-min"}}`)
+			return
+		}
+		sse(w, `{"choices":[{"delta":{"content":"hello"},"finish_reason":"stop"}]}`, `[DONE]`)
+	})
+	ch, err := p.Stream(llm.WithRetry(context.Background(), fastRetry), llm.Request{Model: "m"})
+	if err != nil {
+		t.Fatalf("Stream: %v", err)
+	}
+	var text strings.Builder
+	for _, d := range collect(t, ch) {
+		if d.Kind == llm.DeltaText {
+			text.WriteString(d.Text)
+		}
+	}
+	if text.String() != "hello" || hits.Load() != 2 {
+		t.Fatalf("text %q after %d requests, want hello after 2", text.String(), hits.Load())
+	}
+}
+
+func TestStreamNeverRetriesAfterDeltas(t *testing.T) {
+	var hits atomic.Int32
+	p, _ := newTestProvider(t, func(w http.ResponseWriter, _ *http.Request) {
+		hits.Add(1)
+		sse(w, `{"choices":[{"delta":{"content":"partial"}}]}`)
+		panic(http.ErrAbortHandler) // the connection dies mid-answer
+	})
+	ch, err := p.Stream(llm.WithRetry(context.Background(), fastRetry), llm.Request{Model: "m"})
+	if err != nil {
+		t.Fatalf("Stream: %v", err)
+	}
+	ds := collect(t, ch)
+	var text strings.Builder
+	for _, d := range ds {
+		if d.Kind == llm.DeltaText {
+			text.WriteString(d.Text)
+		}
+	}
+	if text.String() != "partial" {
+		t.Fatalf("text = %q, want the delivered delta exactly once", text.String())
+	}
+	if last := ds[len(ds)-1]; last.Kind != llm.DeltaError {
+		t.Fatalf("last delta = %+v, want a terminal error", last)
+	}
+	if hits.Load() != 1 {
+		t.Fatalf("requests = %d: a stream that already delivered text was replayed", hits.Load())
+	}
+}
+
+func TestStreamCancelsAStalledStream(t *testing.T) {
+	p, _ := newTestProvider(t, func(w http.ResponseWriter, r *http.Request) {
+		sse(w, `{"choices":[{"delta":{"content":"partial"}}]}`)
+		<-r.Context().Done() // the connection is alive but the provider never sends another byte
+	})
+	ctx := llm.WithSSEIdle(llm.WithRetry(context.Background(), fastRetry), 150*time.Millisecond)
+	start := time.Now()
+	ch, err := p.Stream(ctx, llm.Request{Model: "m"})
+	if err != nil {
+		t.Fatalf("Stream: %v", err)
+	}
+	ds := collect(t, ch)
+	var text strings.Builder
+	for _, d := range ds {
+		if d.Kind == llm.DeltaText {
+			text.WriteString(d.Text)
+		}
+	}
+	last := ds[len(ds)-1]
+	if text.String() != "partial" || last.Kind != llm.DeltaError || last.Err == nil || last.Err.Code != llm.ErrNetwork || !strings.Contains(last.Err.Message, "stopped responding") {
+		t.Fatalf("text %q, last delta %+v: want the delivered text, then a network error naming the stall", text.String(), last)
+	}
+	if time.Since(start) > 3*time.Second {
+		t.Fatalf("took %v to give up on a 150ms idle limit", time.Since(start))
 	}
 }

@@ -20,7 +20,7 @@ function event(name: string) {
 }
 
 /** Delivers a bridge event to every current subscriber. */
-export function emit(name: "chatMessage" | "chatRun" | "chatMemory" | "chatBot" | "llmChanged", payload: unknown) {
+export function emit(name: "chatMessage" | "chatMessageDelta" | "chatRun" | "chatMemory" | "chatBot" | "llmChanged", payload: unknown) {
   for (const listener of [...(listeners.get(name) ?? [])]) (listener as (p: unknown) => void)(payload);
 }
 
@@ -43,7 +43,7 @@ export const mygoMock = {
   LLM: bridge.llm,
   Daemon: { health: vi.fn() },
   events: {
-    chatMessage: event("chatMessage"), chatRun: event("chatRun"), chatMemory: event("chatMemory"), chatBot: event("chatBot"),
+    chatMessage: event("chatMessage"), chatMessageDelta: event("chatMessageDelta"), chatRun: event("chatRun"), chatMemory: event("chatMemory"), chatBot: event("chatBot"),
     llmChanged: event("llmChanged"), daemonState: event("daemonState"),
   },
 };

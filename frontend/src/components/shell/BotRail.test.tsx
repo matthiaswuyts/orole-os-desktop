@@ -21,6 +21,7 @@ vi.mock("@/mygo", async (importOriginal) => {
     events: {
       chatRun: { on: (f: (s: RunState) => void) => { bridge.run = f; return () => { bridge.run = null; }; } },
       chatMessage: { on: (f: (m: Message) => void) => { bridge.message = f; return () => { bridge.message = null; }; } },
+      chatMessageDelta: { on: () => none() },
       chatBot: { on: (_f: (c: BotChange) => void) => none() },
     },
   };

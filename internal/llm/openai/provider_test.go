@@ -456,7 +456,7 @@ func TestStreamHTTPErrorMapping(t *testing.T) {
 				w.WriteHeader(tc.status)
 				io.WriteString(w, tc.body)
 			})
-			ch, err := p.Stream(context.Background(), llm.Request{Model: "gpt-4o"})
+			ch, err := p.Stream(llm.WithRetry(context.Background(), llm.NoRetry), llm.Request{Model: "gpt-4o"})
 			if ch != nil {
 				t.Fatal("channel returned with an error status")
 			}

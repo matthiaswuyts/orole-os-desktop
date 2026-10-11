@@ -584,24 +584,6 @@ func (s *store) pageMessages(ctx context.Context, req MessagesRequest) (MessageP
 	return page, nil
 }
 
-// between returns messages with afterSeq < seq < beforeSeq in ascending order.
-func (s *store) between(ctx context.Context, botID string, afterSeq, beforeSeq int64) ([]Message, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT `+msgCols+` FROM messages WHERE bot_id=? AND seq>? AND seq<? ORDER BY seq`, botID, afterSeq, beforeSeq)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []Message
-	for rows.Next() {
-		m, err := scanMessage(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, m)
-	}
-	return out, rows.Err()
-}
-
 // clearConversation deletes messages, the summary and the bot's sent attachments (except files kept
 // as knowledge). It returns the blob hashes that may have become unreferenced.
 func (s *store) clearConversation(ctx context.Context, botID string) ([]string, error) {
