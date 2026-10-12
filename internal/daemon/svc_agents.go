@@ -9,6 +9,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/rayorole/orole-os-desktop/internal/agents"
 	"github.com/rayorole/orole-os-desktop/internal/agents/orchestrate"
@@ -16,6 +18,7 @@ import (
 	"github.com/rayorole/orole-os-desktop/internal/events"
 	"github.com/rayorole/orole-os-desktop/internal/ipc"
 	"github.com/rayorole/orole-os-desktop/internal/policy"
+	"github.com/rayorole/orole-os-desktop/internal/pricing"
 	"github.com/rayorole/orole-os-desktop/internal/projects"
 )
 
@@ -24,9 +27,11 @@ import (
 // Sessions, events and the orchestration journal persist in SQLite.
 //
 // IPC methods: agents.detect/list/get/start/stop/restart/prompt/setPermissionMode/approve/events/transcript/
-// remove/diff/review/check/hook, agents.handoff/reviewWith/loopUntil/tryN/runs/cancelRun.
+// remove/diff/review/check/hook/usage, agents.handoff/reviewWith/loopUntil/tryN/runs/cancelRun.
 // agents.list takes {limit, offset} (default page 200, at most 500) and returns sessions
 // newest first; callers page until a page comes back shorter than the limit.
+// agents.usage takes agents.UsageQuery and returns agents.UsageStats: token usage and spend from
+// the usage ledger, priced with the models.dev catalogue (refreshed at most daily, see pricing).
 // Events: agents.updated (Session: status and other durable changes), agents.delta
 // (SessionDelta: display fields changed on a hot path), agents.event (Event),
 // agents.removed ({id}), agents.run (Run).
@@ -175,6 +180,9 @@ func (d *Daemon) registerAgents() {
 		wt = agentWorktrees{d: d}
 	}
 	tasks := newTaskEvents(d.Events, d.reportToOwner)
+	prices := pricing.Embedded()
+	refresher := &pricing.Refresher{Catalog: prices, Dir: filepath.Join(d.DataDir, "pricing"), Delay: time.Minute, Log: d.Log}
+	refresher.LoadCache()
 	d.Agents = agents.NewManager(agents.Config{
 		Store:            agents.NewStore(d.DB),
 		Host:             &agents.Host{Terminals: d.Terminals, DataDir: d.DataDir, HookExe: exe, GatewayExe: d.gatewayExe},
@@ -247,10 +255,20 @@ func (d *Daemon) registerAgents() {
 			return nil
 		},
 		Finished: tasks.finished,
+		Prices:   prices,
 	})
 	orch := orchestrate.New(d.Agents, d.IPC.Publish)
-	d.agentsShutdown = func() { orch.Shutdown(); d.Agents.Shutdown() }
+	pricesCtx, stopPrices := context.WithCancel(context.Background())
+	var pricesRun sync.WaitGroup
+	d.agentsShutdown = func() {
+		stopPrices()
+		pricesRun.Wait()
+		orch.Shutdown()
+		d.Agents.Shutdown()
+	}
 	d.agentsStart = func() {
+		// Only the daemon that owns the endpoint downloads prices; a refused second one never starts.
+		pricesRun.Go(func() { refresher.Run(pricesCtx) })
 		if lost, err := d.Agents.Recover(); err != nil {
 			d.Log.Warn("agent recovery failed", "err", err)
 		} else if lost > 0 {
@@ -369,6 +387,13 @@ func (d *Daemon) registerAgents() {
 	})
 	handle(d, "agents.remove", func(ctx context.Context, p idArg) (none, error) {
 		return none{}, mapErr(m.Remove(ctx, p.ID))
+	})
+	handle(d, "agents.usage", func(ctx context.Context, p agents.UsageQuery) (agents.UsageStats, error) {
+		s, err := m.Usage(ctx, p)
+		if errors.Is(err, agents.ErrBadUsageQuery) {
+			return s, bad(err.Error())
+		}
+		return s, err
 	})
 	handle(d, "agents.diff", func(ctx context.Context, p idArg) (agents.ReviewDiff, error) {
 		r, err := m.Diff(ctx, p.ID)

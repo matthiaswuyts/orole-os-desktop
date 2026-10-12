@@ -205,6 +205,15 @@ func (a Agents) Remove(ctx context.Context, id string) error {
 	return a.L.call(ctx, "agents.remove", map[string]string{"id": id}, nil)
 }
 
+// Usage reports agent token usage and spend: 24-hour, 7-day and all-time windows, per agent,
+// per local day for a year, and the most recently updated sessions. Spend is the harness's own
+// reported cost where it gives one, else the models.dev list price; unpriced models are named.
+func (a Agents) Usage(ctx context.Context, q agents.UsageQuery) (agents.UsageStats, error) {
+	var out agents.UsageStats
+	err := a.L.call(ctx, "agents.usage", q, &out)
+	return out, err
+}
+
 // Diff returns the changes a session made relative to the commit it started from.
 func (a Agents) Diff(ctx context.Context, id string) (agents.ReviewDiff, error) {
 	var out agents.ReviewDiff

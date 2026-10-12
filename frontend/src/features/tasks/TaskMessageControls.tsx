@@ -12,7 +12,7 @@ import { Separator } from "@/components/ui/separator";
 import { ComposerAttachmentChip, ComposerAttachments } from "@/components/assistant-ui/elements/composer-attachments";
 import { ProviderLogo } from "@/features/agents/ProviderLogo";
 import { ModelSelectorSearch } from "@/features/home/ModelSelectorSearch";
-import { effortChoices, effortLabel, modelLabel } from "@/features/home/model-options";
+import { effortChoices, effortLabel, modelTitle } from "@/features/home/model-options";
 import type { TaskMessage } from "./useTaskMessage";
 
 interface TaskMessageControlProps {
@@ -92,7 +92,7 @@ export function TaskModelPicker({ message, disabled = false }: TaskMessageContro
   const [page, setPage] = useState<"settings" | "models">("settings");
   const modelButton = useRef<HTMLButtonElement>(null);
   const model = message.models.find((option) => option.id === message.model);
-  const label = modelLabel(model ?? (message.model ? { id: message.model, name: message.model } : undefined));
+  const label = modelTitle(model ?? (message.model ? { id: message.model, name: message.model } : undefined));
   const unavailable = disabled || message.busy;
   // Empty means keep the existing effort, so Auto is offered only while that is the session's actual setting.
   const choices = effortChoices(message.levels).filter((value) => value !== "" || !message.session.reasoning);
@@ -114,7 +114,7 @@ export function TaskModelPicker({ message, disabled = false }: TaskMessageContro
         kind="models"
         disabled={unavailable || !message.canChooseModel}
         selected={message.model}
-        options={message.models.map((option) => ({ value: option.id, label: modelLabel(option), disabled: !!message.modelBlockedReason(option), description: message.modelBlockedReason(option) || (option.default ? "Provider default" : undefined) }))}
+        options={message.models.map((option) => ({ value: option.id, label: modelTitle(option), disabled: !!message.modelBlockedReason(option), description: message.modelBlockedReason(option) || (option.default ? "Provider default" : undefined) }))}
         onBack={back}
         onSelect={(id) => { if (unavailable || !message.canChooseModel) return; message.chooseModel(id); back(); }}
       /> : <div className="flex flex-col">

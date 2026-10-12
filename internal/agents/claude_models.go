@@ -28,9 +28,10 @@ var claudeModelCache struct {
 	models []ModelOption
 }
 
-// claudeModels reads the installed CLI's catalog, not account entitlements. SDK
-// initialization requires no user message or model turn. An isolated config and
-// working directory keep startup writes out of the user's Claude configuration.
+// claudeModels reads the installed CLI's catalog for the signed-in account, so models the
+// account is entitled to (such as Fable) are listed as they are in Claude Code itself. SDK
+// initialization requires no user message or model turn, and a throwaway working directory
+// with session persistence off keeps the probe out of the user's projects and history.
 func claudeModels(ctx context.Context, bin string) ([]ModelOption, error) {
 	claudeModelCache.mu.Lock()
 	defer claudeModelCache.mu.Unlock()
@@ -56,7 +57,7 @@ func listClaudeModels(ctx context.Context, bin string) ([]ModelOption, error) {
 	cmd := exec.CommandContext(ctx, bin, "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
 		"--no-session-persistence", "--safe-mode", "--strict-mcp-config", "--tools", "", "--settings", `{"disableAllHooks":true}`)
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "CLAUDE_CONFIG_DIR="+dir, "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1", "DISABLE_AUTOUPDATER=1")
+	cmd.Env = append(os.Environ(), "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1", "DISABLE_AUTOUPDATER=1")
 	cmd.Stdin = strings.NewReader(`{"type":"control_request","request_id":"` + claudeModelsRequestID + `","request":{"subtype":"initialize"}}` + "\n")
 	cmd.Stderr = io.Discard
 	cmd.WaitDelay = time.Second

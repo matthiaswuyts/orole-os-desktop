@@ -181,29 +181,37 @@ func (m *Manager) permissionControl(s Session, ls *liveSess) (ok, restarts bool,
 
 // ---- Claude Code capability probe ----
 
-type autoProbe struct {
+type helpProbe struct {
 	size int64
 	mod  time.Time
-	auto bool
+	help string
 }
 
-var claudeAutoCache sync.Map // executable path -> autoProbe
+var claudeHelpCache sync.Map // executable path -> helpProbe
 
-// claudeSupportsAuto reports whether this Claude Code build lists `auto` among its
-// --permission-mode choices. The probe is cached per executable build.
-func claudeSupportsAuto(ctx context.Context, path string) bool {
+// claudeHelp is this Claude Code build's --help text, cached per executable build so
+// capability checks cost one probe until the CLI updates.
+func claudeHelp(ctx context.Context, path string) string {
 	fi, err := os.Stat(path)
 	if err != nil {
-		return false
+		return ""
 	}
-	if v, ok := claudeAutoCache.Load(path); ok {
-		if p := v.(autoProbe); p.size == fi.Size() && p.mod.Equal(fi.ModTime()) {
-			return p.auto
+	if v, ok := claudeHelpCache.Load(path); ok {
+		if p := v.(helpProbe); p.size == fi.Size() && p.mod.Equal(fi.ModTime()) {
+			return p.help
 		}
 	}
-	auto := strings.Contains(localHelp(ctx, path), `"auto"`)
-	claudeAutoCache.Store(path, autoProbe{fi.Size(), fi.ModTime(), auto})
-	return auto
+	help := localHelp(ctx, path)
+	if help != "" {
+		claudeHelpCache.Store(path, helpProbe{fi.Size(), fi.ModTime(), help})
+	}
+	return help
+}
+
+// claudeSupportsAuto reports whether this Claude Code build lists `auto` among its
+// --permission-mode choices.
+func claudeSupportsAuto(ctx context.Context, path string) bool {
+	return strings.Contains(claudeHelp(ctx, path), `"auto"`)
 }
 
 // ---- Manager.SetPermissionMode ----

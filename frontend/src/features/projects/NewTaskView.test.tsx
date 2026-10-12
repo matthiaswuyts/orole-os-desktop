@@ -57,10 +57,10 @@ it("is a page for the project it was opened from, not the project Home last used
   const started = Promise.withResolvers<Session>(); api.start.mockReturnValue(started.promise);
   fireEvent.click(await ready());
   expect(useUI.getState().view).toBe("agents");
-  expect(Object.values(useAgents.getState().launches)[0]).toMatchObject({ status: "starting", title: "Fix the login redirect", projectId: "p1", worktree: true });
+  expect(Object.values(useAgents.getState().launches)[0]).toMatchObject({ status: "starting", title: "Fix the login redirect", projectId: "p1", worktree: false });
   started.resolve(session("s1", {}));
   await waitFor(() => expect(useAgents.getState().openId).toBe("s1"));
-  expect(api.start).toHaveBeenCalledWith(expect.objectContaining({ projectId: "p1", prompt: "Fix the login redirect", machine: "local", mode: "structured", newWorktree: true }));
+  expect(api.start).toHaveBeenCalledWith(expect.objectContaining({ projectId: "p1", prompt: "Fix the login redirect", machine: "local", mode: "structured", newWorktree: false }));
 });
 
 it("starts on the remote system of a remote project", async () => {
@@ -135,11 +135,11 @@ it("returns to the view it was opened from and starts a fresh page each time", a
 
 it("does not offer a project menu once the page has a project, but does when there is none to start from", () => {
   open("p1");
-  expect(screen.queryByRole("button", { name: "Project" })).toBeNull();
+  expect(screen.queryByRole("button", { name: /^Project:/ })).toBeNull();
   cleanup();
   useProjects.setState({ projects: [] });
   open(null);
-  expect(screen.getByRole("button", { name: "Project" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /^Project:/ })).toBeInTheDocument();
 });
 
 it("marks the repository with GitHub, the host with its operating system and the folder with a folder icon", () => {

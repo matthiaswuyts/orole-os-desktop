@@ -7,7 +7,7 @@ import { useSettings } from "@/stores/settings";
 import { useUI } from "@/stores/ui";
 import { useDashboard } from "@/stores/dashboard";
 import { useAgents } from "@/stores/agents";
-import { NotImplemented } from "@/features/shared/States";
+import { NotImplemented, ViewBoundary } from "@/features/shared/States";
 import { views } from "@/features/registry";
 import { navItem } from "@/lib/nav";
 import { PolicyApprovals } from "@/features/mcp/PolicyApprovals";
@@ -27,7 +27,12 @@ const SettingsWindow = lazy(() => import("@/features/settings/SettingsWindow").t
 function ViewHost() {
   const view = useUI((s) => s.view);
   const V = views[view];
-  return V ? <V /> : <NotImplemented app={navItem(view).label} />;
+  const app = navItem(view).label;
+  return <ViewBoundary key={view} app={app}>
+    <Suspense fallback={<div role="status" className="p-6 text-muted-foreground">Loading…</div>}>
+      {V ? <V /> : <NotImplemented app={app} />}
+    </Suspense>
+  </ViewBoundary>;
 }
 
 function MainApp() {
@@ -46,9 +51,7 @@ function MainApp() {
       <NativeNavigation />
       <StartupScreen>
       <AppShell>
-        <Suspense fallback={<div role="status" className="p-6 text-muted-foreground">Loading…</div>}>
-          <ViewHost />
-        </Suspense>
+        <ViewHost />
         <PolicyApprovals />
         <PluginContributions />
         <AudioFeedback />

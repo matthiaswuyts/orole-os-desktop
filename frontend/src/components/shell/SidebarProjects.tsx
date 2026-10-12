@@ -53,9 +53,9 @@ export function SidebarProjects() {
   const add = () => setNewProjectOpen(true);
 
   return (
-    <section aria-label="Projects" className="mt-1 flex min-h-0 flex-1 flex-col overflow-auto">
+    <section aria-label="Code" className="flex shrink-0 flex-col">
       <div className="flex h-6 shrink-0 items-center gap-1 px-1 text-muted-foreground text-xs">
-        <span className="flex-1">Projects</span>
+        <h2 className="flex-1 font-medium">Code</h2>
         {available && (
           <button type="button" aria-label="New project" onClick={add} className="inline-flex size-5 items-center justify-center rounded text-muted-foreground outline-none hover:bg-sidebar-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring"><Plus className="size-3.5" /></button>
         )}

@@ -48,9 +48,11 @@ async function fill(text = "Plan this research") {
   return start;
 }
 
-it("shows the task page before the daemon answers: the message, the agent starting and a disabled composer", async () => {
+it("shows the task page before the daemon answers: the message, the workspace being prepared and a disabled composer", async () => {
   const started = Promise.withResolvers<Session>(); api.start.mockReturnValue(started.promise);
-  render(<Host />); fireEvent.click(await fill("Plan this research\nwith a second line"));
+  render(<Host />); const start = await fill("Plan this research\nwith a second line");
+  fireEvent.click(screen.getByRole("button", { name: /^Worktree:/ })); fireEvent.click(await screen.findByRole("menuitemradio", { name: /New worktree/ }));
+  fireEvent.click(start);
   expect(useUI.getState().view).toBe("agents");
   expect(screen.getByRole("log", { name: "Task conversation" })).toHaveTextContent("Plan this research");
   expect(screen.getByText(/with a second line/, { selector: "p.selectable" })).toBeInTheDocument();
@@ -87,7 +89,7 @@ it("stays on the page with the error when the start fails, and Try again sends t
   expect(screen.getByText("Plan this research", { selector: "p.selectable" })).toBeInTheDocument();
   expect(useUI.getState().view).toBe("agents");
   fireEvent.click(screen.getByRole("button", { name: "Try again" }));
-  expect(screen.getByRole("status")).toHaveTextContent("Preparing workspace…");
+  expect(screen.getByRole("status")).toHaveTextContent("Starting Codex…");
   await waitFor(() => expect(screen.getByText("Task task")).toBeInTheDocument());
   expect(api.start).toHaveBeenCalledTimes(2);
   expect(api.start.mock.calls[1]![0]).toEqual(api.start.mock.calls[0]![0]);

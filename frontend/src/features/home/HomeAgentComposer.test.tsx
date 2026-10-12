@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { HarnessOption, LaunchOptions, Machine, Project, Worktree } from "@/mygo";
 const api = vi.hoisted(() => ({ options: vi.fn(), start: vi.fn(), upload: vi.fn(), discard: vi.fn(), toast: vi.fn() }));
@@ -26,7 +26,9 @@ beforeEach(() => {
 });
 afterEach(cleanup);
 async function fill() { fireEvent.change(screen.getByLabelText("Task for your agent"), { target: { value: "Plan this research" } }); const start = screen.getByRole("button", { name: "Start task" }); await waitFor(() => expect(start).toBeEnabled()); return start; }
-function menu(name: string) { fireEvent.click(screen.getByRole("button", { name })); }
+function menu(name: string | RegExp) { fireEvent.click(screen.getByRole("button", { name })); }
+/** The effort slider moves by keyboard: Home is Auto, then one step per level. */
+function effort(steps: number) { const slider = screen.getByRole("slider", { name: "Reasoning effort" }); fireEvent.keyDown(slider, { key: "Home" }); for (let i = 0; i < steps; i++) fireEvent.keyDown(slider, { key: "ArrowRight" }); return slider; }
 it("shows the task page at once and opens the started task when the daemon answers", async () => {
  const started = Promise.withResolvers<{ id: string; updatedAt: string }>(); api.start.mockReturnValue(started.promise);
  render(<HomeAgentComposer />); fireEvent.click(await fill());
@@ -46,27 +48,26 @@ it("keeps missing attached folders unavailable", async () => {
  expect(screen.getByRole("button", { name: "Start task" })).toBeDisabled();
 });
 it("opens project creation without discarding the prompt", async () => {
- render(<HomeAgentComposer />); await fill(); menu("Project"); fireEvent.click(await screen.findByRole("menuitem", { name: /Create new project/ }));
+ render(<HomeAgentComposer />); await fill(); menu(/^Project:/); fireEvent.click(await screen.findByRole("menuitem", { name: /Create new project/ }));
  expect(useProjects.getState().newProjectOpen).toBe(true); expect(screen.getByLabelText("Task for your agent")).toHaveValue("Plan this research");
 });
 it("launches in the selected existing worktree rather than creating another", async () => {
  useProjects.setState({ projects: [{ ...project, path: "C:\\repo", isGit: true }], worktrees: { notes: [{ id: "wt", projectId: "notes", branch: "fix-login", path: "C:\\trees\\fix", isMain: false, error: "" } as Worktree] } });
- render(<HomeAgentComposer />); const start = await fill(); menu("Worktree"); fireEvent.click(await screen.findByRole("menuitemradio", { name: "fix-login" })); fireEvent.click(start);
+ render(<HomeAgentComposer />); const start = await fill(); menu(/^Worktree:/); fireEvent.click(await screen.findByRole("menuitemradio", { name: "fix-login" })); fireEvent.click(start);
  await waitFor(() => expect(api.start).toHaveBeenCalledWith(expect.objectContaining({ projectId: "notes", dir: "C:\\trees\\fix", newWorktree: false })));
 });
 it("drops unsupported reasoning when changing models", async () => {
  render(<HomeAgentComposer />); const start = await fill(); menu("Agent, model and reasoning");
- const slider = await screen.findByRole("slider", { name: "Reasoning effort" });
- fireEvent.change(slider, { target: { value: "2" } });
- expect(slider).toHaveAttribute("aria-valuetext", "High");
- fireEvent.click(screen.getByRole("button", { name: "Change model" }));
- fireEvent.click(await screen.findByRole("option", { name: "Model B" }));
+ await screen.findByRole("slider", { name: "Reasoning effort" });
+ expect(effort(2)).toHaveAttribute("aria-valuetext", "High");
+ fireEvent.click(screen.getByRole("radio", { name: /Model B/ }));
+ expect(screen.queryByRole("slider")).not.toBeInTheDocument();
  fireEvent.click(screen.getByRole("button", { name: "Agent, model and reasoning" })); fireEvent.click(start);
  await waitFor(() => expect(api.start).toHaveBeenCalledWith(expect.objectContaining({ model: "model-b", reasoning: "" })));
 });
 it("switches system and launches only with its approved project and process capabilities", async () => {
  api.options.mockImplementation(async (machine: string) => machine === "local" ? options : { ...options, machine, worktree: false, harnesses: [{ ...harness, structured: false, modes: ["process"] }], projects: [{ id: "remote:/work", name: "Remote work", path: "/work", machine, git: true }] });
- render(<HomeAgentComposer />); await fill(); menu("Execution system"); fireEvent.click(await screen.findByRole("menuitemradio", { name: /gpu/ }));
+ render(<HomeAgentComposer />); await fill(); menu(/^Run on:/); fireEvent.click(await screen.findByRole("menuitemradio", { name: /gpu/ }));
  await screen.findByText("Remote work"); const start = screen.getByRole("button", { name: "Start task" }); await waitFor(() => expect(start).toBeEnabled()); fireEvent.click(start);
  await waitFor(() => expect(api.start).toHaveBeenCalledWith(expect.objectContaining({ machine: "remote", projectId: "", dir: "/work", mode: "process", newWorktree: false })));
 });
@@ -119,29 +120,28 @@ it("rejects oversized files without sending their bytes and lets the user recove
  expect(start).toBeEnabled();
 });
 
-async function pickProvider(name: string) {
- fireEvent.click(screen.getByRole("button", { name: "Change provider" }));
- fireEvent.click(await screen.findByRole("option", { name }));
+function pickProvider(name: string) {
+ fireEvent.click(within(screen.getByRole("radiogroup", { name: "Agent" })).getByRole("radio", { name: new RegExp(name) }));
 }
-async function pickModel(name: string) {
- fireEvent.click(screen.getByRole("button", { name: "Change model" }));
- fireEvent.click(await screen.findByRole("option", { name }));
+function pickModel(name: string) {
+ fireEvent.click(within(screen.getByRole("radiogroup", { name: "Model" })).getByRole("radio", { name: new RegExp(name) }));
 }
 it("restores each provider's model and effort after switching and reopening Home", async () => {
  const codex = { ...harness, models: [...harness.models!, { id: "model-c", name: "Model C", reasoning: ["low", "high"], default: false }] };
  const claude = { ...harness, id: "claude", name: "Claude Code", models: [{ id: "opus", name: "Opus 5.5", reasoning: ["low", "high"], default: true }] };
  api.options.mockResolvedValue({ ...options, harnesses: [codex, claude] });
  const view = render(<HomeAgentComposer />); await fill(); menu("Agent, model and reasoning");
- await pickModel("Model C");
- fireEvent.change(screen.getByRole("slider", { name: "Reasoning effort" }), { target: { value: "2" } });
- await pickProvider("Claude Code");
- fireEvent.change(screen.getByRole("slider", { name: "Reasoning effort" }), { target: { value: "1" } });
- await pickProvider("Codex");
+ await screen.findByRole("radiogroup", { name: "Model" });
+ pickModel("Model C");
+ effort(2);
+ pickProvider("Claude Code");
+ effort(1);
+ pickProvider("Codex");
  expect(screen.getByRole("slider", { name: "Reasoning effort" })).toHaveAttribute("aria-valuetext", "High");
- expect(screen.getByRole("button", { name: "Change model" })).toHaveTextContent("Model C");
- await pickProvider("Claude Code");
+ expect(screen.getByRole("radio", { name: /Model C/ })).toHaveAttribute("aria-checked", "true");
+ pickProvider("Claude Code");
  expect(screen.getByRole("slider", { name: "Reasoning effort" })).toHaveAttribute("aria-valuetext", "Low");
- await pickProvider("Codex"); view.unmount();
+ pickProvider("Codex"); view.unmount();
  render(<HomeAgentComposer />); const start = await fill();
  expect(screen.getByRole("button", { name: "Agent, model and reasoning" })).toHaveTextContent("Model C");
  fireEvent.click(start);
@@ -150,12 +150,12 @@ it("restores each provider's model and effort after switching and reopening Home
 
 it("retains preferred effort through unsupported models but remembers an explicit Auto choice", async () => {
  const view = render(<HomeAgentComposer />); await fill(); menu("Agent, model and reasoning");
- fireEvent.change(await screen.findByRole("slider", { name: "Reasoning effort" }), { target: { value: "2" } });
- await pickModel("Model B");
+ await screen.findByRole("slider", { name: "Reasoning effort" }); effort(2);
+ pickModel("Model B");
  expect(screen.queryByRole("slider")).not.toBeInTheDocument();
- await pickModel("Model A");
+ pickModel("Model A");
  expect(screen.getByRole("slider", { name: "Reasoning effort" })).toHaveAttribute("aria-valuetext", "High");
- fireEvent.change(screen.getByRole("slider", { name: "Reasoning effort" }), { target: { value: "0" } });
+ effort(0);
  view.unmount(); render(<HomeAgentComposer />); const start = await fill(); fireEvent.click(start);
  await waitFor(() => expect(api.start).toHaveBeenCalledWith(expect.objectContaining({ reasoning: "" })));
 });

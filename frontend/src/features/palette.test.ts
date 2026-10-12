@@ -47,9 +47,9 @@ it("keeps ordinary configuration results in their Settings section", async () =>
   expect(api.openSettings).toHaveBeenCalledWith("customization");
 });
 
-it("opens the Automations view in Bots mode focused on a saved automation", async () => {
+it("opens the Automations view focused on a saved automation", async () => {
   api.automations.mockResolvedValue([{ definition: { id: "nightly", name: "Nightly triage", enabled: true, trigger: { type: "schedule" } } }]);
   const [hit] = await provider("automations").search("triage", signal());
   hit!.run();
-  expect(useUI.getState()).toMatchObject({ view: "automations", mode: "chat", automationFocus: "nightly" });
+  expect(useUI.getState()).toMatchObject({ view: "automations", automationFocus: "nightly" });
 });

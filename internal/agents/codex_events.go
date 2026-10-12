@@ -123,23 +123,51 @@ func (p *codexProc) notification(method string, raw json.RawMessage) {
 	switch method {
 	case "thread/tokenUsage/updated":
 		if mine {
+			type breakdown struct {
+				Input     *int64 `json:"inputTokens"`
+				Output    *int64 `json:"outputTokens"`
+				Cached    *int64 `json:"cachedInputTokens"`
+				Reasoning *int64 `json:"reasoningOutputTokens"`
+				Total     *int64 `json:"totalTokens"`
+			}
 			var u struct {
 				TokenUsage struct {
-					Last struct {
-						Input  *int64 `json:"inputTokens"`
-						Output *int64 `json:"outputTokens"`
-						Cached *int64 `json:"cachedInputTokens"`
-						Total  *int64 `json:"totalTokens"`
-					} `json:"last"`
-					Window *int64 `json:"modelContextWindow"`
+					Total  *breakdown `json:"total"`
+					Last   breakdown  `json:"last"`
+					Window *int64     `json:"modelContextWindow"`
 				} `json:"tokenUsage"`
 			}
 			if json.Unmarshal(raw, &u) == nil {
+				last := u.TokenUsage.Last
 				for _, e := range usageEvent(ContextUsage{Source: "codex:thread/tokenUsage/updated:last",
-					InputTokens: u.TokenUsage.Last.Input, OutputTokens: u.TokenUsage.Last.Output,
-					CachedTokens: u.TokenUsage.Last.Cached, ContextTokens: u.TokenUsage.Last.Total,
+					InputTokens: last.Input, OutputTokens: last.Output,
+					CachedTokens: last.Cached, ContextTokens: last.Total,
 					ContextWindow: u.TokenUsage.Window}) {
 					p.emit(e)
+				}
+				// "last" is one model request. Codex repeats the notification (rate-limit updates)
+				// with the same totals; only a changed cumulative total is a new request. The first
+				// report of a process outside a turn restates a resumed thread's history and only
+				// sets the baseline.
+				fresh := true
+				if total := u.TokenUsage.Total; total != nil && total.Total != nil {
+					p.mu.Lock()
+					if p.billedSeen {
+						fresh = *total.Total != p.billedTotal
+					} else {
+						fresh = p.turn != ""
+					}
+					p.billedSeen, p.billedTotal = true, *total.Total
+					p.mu.Unlock()
+				}
+				if fresh {
+					// OpenAI counts cached input inside inputTokens.
+					input, cached := valueOr0(last.Input), valueOr0(last.Cached)
+					for _, e := range tokensEvent(TokenUsage{Source: "codex:thread/tokenUsage/updated:last",
+						Input: input - min(cached, input), CacheRead: min(cached, input), Output: valueOr0(last.Output),
+						Reasoning: valueOr0(last.Reasoning)}) {
+						p.emit(e)
+					}
 				}
 			}
 		}

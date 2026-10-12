@@ -53,7 +53,8 @@ export function useHomeTaskLaunch({ launcher = "home", initialProjectId, initial
   const trees = project ? worktrees[project.id] ?? [] : [];
   const preferredTree = worktreeChoice?.project === project?.id ? worktreeChoice?.value : undefined;
   const tree = preferredTree && trees.find((w) => w.id === preferredTree && !w.error);
-  const worktree = tree ? tree.id : preferredTree === "current" ? "current" : canIsolate ? "new" : "current";
+  // The current checkout unless a new worktree (or an existing one) was picked for this project.
+  const worktree = tree ? tree.id : preferredTree === "new" && canIsolate ? "new" : "current";
   const [kind, setKind] = useState(() => draft?.harness ?? localStorage.getItem("orole.task.harness") ?? "");
   const harnesses = (source.options?.harnesses ?? []).filter((h) => machine === "local" ? h.structured && h.modes.includes("structured") : h.modes.includes("process"));
   const harness = harnesses.find((h) => h.id === kind && h.available) ?? harnesses.find((h) => h.available);

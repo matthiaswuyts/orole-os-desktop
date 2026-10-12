@@ -206,7 +206,7 @@ describe("selection", () => {
   it("open() selects the bot and shows the chat view", () => {
     useChat.getState().open("a");
     expect(useChat.getState().selectedBotId).toBe("a");
-    expect(useUI.getState()).toMatchObject({ view: "chat", mode: "chat" });
+    expect(useUI.getState()).toMatchObject({ view: "chat" });
   });
 
   it("opens the builder for a new or an existing bot", () => {

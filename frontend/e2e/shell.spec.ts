@@ -1,6 +1,6 @@
 import AxeBuilder from "@axe-core/playwright";
 import { expect, test, type Page } from "@playwright/test";
-import { addNotes, emptyDashboard, moveAndResizeNotes, readDashboard, removeNotes, runPaletteCommand } from "./helpers/dashboard";
+import { addClock, addNotes, emptyDashboard, moveAndResizeNotes, readDashboard, removeNotes, runPaletteCommand } from "./helpers/dashboard";
 
 async function audit(page: Page) {
   const results = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa", "wcag21aa", "wcag22aa"]).analyze();
@@ -78,22 +78,24 @@ test("theme and density keyboard changes persist after reload", async ({ page })
   await expect(page.getByLabel("Reduce motion", { exact: true })).toHaveValue("on");
 });
 
-test("dashboard widgets add, drag, resize, notes and remove survive reload", async ({ page }) => {
+test("dashboard widgets add, reorder, resize, notes and remove survive reload", async ({ page }) => {
   await emptyDashboard(page);
   await addNotes(page);
+  await addClock(page);
+  const notes = async () => (await readDashboard(page)).find((w) => w.type === "notes");
   await page.getByRole("textbox", { name: "Notes", exact: true }).fill("Persist this dashboard note.");
-  await expect.poll(async () => (await readDashboard(page))[0]?.config?.text).toBe("Persist this dashboard note.");
-  const before = (await readDashboard(page))[0]!;
+  await expect.poll(async () => (await notes())?.config?.text).toBe("Persist this dashboard note.");
+  expect((await readDashboard(page)).map((w) => w.type)).toEqual(["notes", "clock"]);
+  expect((await notes())?.size).toBe("m");
   await moveAndResizeNotes(page);
-  await expect.poll(async () => (await readDashboard(page))[0]?.x).toBeGreaterThan(before.x);
-  await expect.poll(async () => (await readDashboard(page))[0]?.h).toBeGreaterThan(before.h);
-  await expect.poll(async () => (await readDashboard(page))[0]?.w).toBeGreaterThan(before.w);
+  await expect.poll(async () => (await readDashboard(page)).map((w) => w.type)).toEqual(["clock", "notes"]);
+  await expect.poll(async () => (await notes())?.size).toBe("l");
   const saved = await readDashboard(page);
   await page.reload();
   await expect(page.getByRole("textbox", { name: "Notes", exact: true })).toHaveValue("Persist this dashboard note.");
   expect(await readDashboard(page)).toEqual(saved);
   await removeNotes(page);
-  await expect.poll(async () => (await readDashboard(page)).length).toBe(0);
+  await expect.poll(async () => (await readDashboard(page)).map((w) => w.type)).toEqual(["clock"]);
   await page.reload();
   await expect(page.getByRole("region", { name: "Notes", exact: true })).toHaveCount(0);
 });

@@ -36,8 +36,38 @@ notes. See `docs/development/updates.md`.
 - Automations can watch GitHub (new commits on a branch, pull requests opened or merged, failed workflow runs, new issues)
   and deployments of connected integrations such as Vercel or Railway. Orole checks every minute or two (it never opens a
   network port), starts from what already exists, and runs the flow once for each new item.
+- Home has an Overview: tasks started, completed, pull requests and lines changed for this week, month or year, each
+  compared with the same point of the previous one; a year-long activity graph; and your current and longest streaks with
+  your busiest month and weekday. It is computed from your tasks; the former Activity heat graph widget becomes this Overview.
+- New Home widgets: Recent tasks (opens a task in one click), Running now (what each working agent is doing and for how
+  long) and Quick actions (new task, new automation, review and settings, plus commands you ran recently from search).
+- The daemon keeps a token usage ledger for Claude Code, Codex and Oh My Pi tasks (input, output, cache reads and writes,
+  reasoning) per task, model and quarter hour, and counts each task's tool calls and failed tool calls. `agents.usage` (`Agents.usage`)
+  reports the last 24 hours, 7 days and all time, usage per agent, a year of daily totals and the latest tasks. Spend is
+  the harness's own reported cost where it gives one (Claude Code, Oh My Pi), otherwise the models.dev list price; models
+  without a known price are named instead of guessed. Prices ship built in and refresh from models.dev at most once a day.
+  Usage is recorded from this version on; terminal and custom-command tasks report none.
+- Home usage widgets built on `agents.usage`: Needs you (tasks waiting on a permission, question or reply, held MCP actions
+  and automation approvals, each opening where it is decided), Sessions (last 24 hours with the agents that ran them), Tokens
+  and Spend (24 hours, 7 days or all time, with the average per active day and a trend line; spend reads "≥" with the models
+  it excludes while some have no price), All time totals, By agent (tokens and spend per harness) and Latest sessions (tool
+  calls, failed tools and tokens; a row opens the task). They are on the default Home layout; saved layouts keep theirs.
 
 ### Changed
+- The Code Home and New task composers are rebuilt on HextaUI's agent Prompt Input: the prompt sits in a card with attach,
+  permission mode, the agent menu and send; a footer row below picks where it runs, the project and the worktree. The agent menu
+  now shows every agent (with its version, or why it is unavailable) beside its models, searchable once an agent lists seven or
+  more, with 1–9 to pick a model and an animated reasoning-effort slider. Enter starts the task; Shift+Enter adds a line.
+- The status bar shows `bots active/total` next to the tasks count: bots replying right now out of all your bots. Clicking it
+  opens chat.
+- The sidebar is one list instead of Bots and Code tabs: Search, then Home, Tasks, Review, Issues and Automations, then the
+  Agents section (your bots) and the Code section (projects and their tasks), which scroll together. "Switch to Bots/Code"
+  commands are gone; "Go to …" commands and the bots' Chat entries in the palette remain.
+- New tasks start in the project's current checkout by default; New worktree is still one pick away in the composer footer.
+- Claude models are named in full with their version, such as "Claude Opus 5.0" and "Claude Fable 5.1", and the 1M variants
+  say "1M context". Agent versions show without the CLI's suffix.
+- The Claude model list is read with your signed-in account, so models your plan includes (such as Fable) are offered as in
+  Claude Code itself; it was previously read signed out and showed only the base catalog.
 - Workspaces are removed: the sidebar workspace switcher and Settings > Workspaces are gone. Home keeps one widget dashboard
   (stored as the `dashboard` setting); the first existing workspace's widgets and notes carry over, other workspaces are dropped.
 - Automations moved to the Bots side of the app. The Bots sidebar now has the same Search (Ctrl+K) as Code, an Automations
@@ -47,9 +77,18 @@ notes. See `docs/development/updates.md`.
   then drag blocks from the library into the flow or add them with +, reorder by drag or keyboard, nest conditions, and set
   each block in the inspector, where the daemon's problems appear on the right field. The Runs tab shows each run block by
   block with links to the code tasks and bot conversations it started. The old form editor is gone.
+- Home's widgets sit in one centered column. Drag a widget by its heading (or focus its move handle and use Space and the
+  arrow keys) to reorder it, and pick Small, Medium, Large or Full width, optionally Tall, from its menu. Customize has a
+  widget gallery and Reset layout. Saved layouts are carried over in their existing order and closest size.
 
 ### Fixed
+- Home widget rows always reach the column's right edge: when the sizes in a row add up to less than the full width (a
+  Medium next to a Small), the last widget in the row widens to fill it instead of leaving a gap.
 - The "Jump to latest" buttons on chat and task pages are opaque again in dark themes instead of see-through.
+- Claude Code builds older than `--system-prompt-snapshot` (such as 2.1.250) can start tasks again; the option is passed only
+  when the installed CLI lists it, instead of failing with "unknown option".
+- A screen whose code fails to load (for example after the dev server re-bundles or restarts) or that crashes now shows an error
+  with a Reload button inside that screen, instead of blanking the whole window.
 
 ## 0.2.0 - 2026-10-12
 

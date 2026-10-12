@@ -16,6 +16,7 @@ import (
 	"github.com/rayorole/orole-os-desktop/internal/events"
 	"github.com/rayorole/orole-os-desktop/internal/github"
 	"github.com/rayorole/orole-os-desktop/internal/machines"
+	"github.com/rayorole/orole-os-desktop/internal/pricing"
 )
 
 // Config wires a Manager.
@@ -62,6 +63,8 @@ type Config struct {
 	TitlesEnabled func() bool
 	// TitleTimeout bounds one naming request (default 15 s).
 	TitleTimeout time.Duration
+	// Prices prices the usage ledger in Usage (default: the embedded models.dev snapshot).
+	Prices *pricing.Catalog
 }
 
 // Manager owns every live agent process and the session records.
@@ -114,6 +117,9 @@ type liveSess struct {
 	// expectPrompt is the prompt we typed/passed ourselves, so the matching
 	// UserPromptSubmit hook doesn't record it twice.
 	expectPrompt string
+	// toolIDs are the tool calls of the current turn already counted in Session.ToolCalls, so a
+	// result whose call was never reported is counted once. Guarded by controlMu.
+	toolIDs map[string]bool
 }
 
 // NewManager creates a manager. Call Recover once at startup.
@@ -129,6 +135,9 @@ func NewManager(cfg Config) *Manager {
 	}
 	if cfg.MaxLive <= 0 {
 		cfg.MaxLive = 16
+	}
+	if cfg.Prices == nil {
+		cfg.Prices = pricing.Embedded()
 	}
 	if len(cfg.Adapters) == 0 {
 		cfg.Adapters = []Adapter{Claude{}, Codex(), Omp{}, OpenCode(), Gemini(), Custom{}}
@@ -1325,6 +1334,10 @@ func (m *Manager) apply(id string, e Event) {
 		m.applyTitle(id, e.Text, true) // a name, not history: neither recorded nor published as an event
 		return
 	}
+	if e.Kind == EvTokens {
+		m.recordTokens(ls, e) // billed usage feeds the ledger; it is not history
+		return
+	}
 	e = m.record(id, e)
 	if m.applyChatEvent(id, e) {
 		return
@@ -1355,12 +1368,27 @@ func (m *Manager) apply(id string, e Event) {
 			wakeIdle(s)
 		})
 	case EvTool:
+		counted := ls.countTool(e.Data, false)
 		m.mutateHot(id, func(s *Session) {
 			s.Activity, s.Tail = truncate(e.Text, 160), truncate(e.Text, 200)
+			if counted {
+				s.ToolCalls++
+			}
 			wakeIdle(s)
 		})
 	case EvToolResult:
-		m.mutateHot(id, func(s *Session) { s.Tail = lastLines(e.Text, 3) })
+		var td ToolData
+		_ = json.Unmarshal(e.Data, &td)
+		counted, failed := ls.countTool(e.Data, true), td.Status == "error"
+		m.mutateHot(id, func(s *Session) {
+			s.Tail = lastLines(e.Text, 3)
+			if counted {
+				s.ToolCalls++
+			}
+			if failed {
+				s.FailedTools++
+			}
+		})
 	case EvActivity:
 		m.mutateHot(id, func(s *Session) { s.Activity = truncate(e.Text, 160) })
 	case EvWorking:
@@ -1405,6 +1433,7 @@ func (m *Manager) apply(id string, e Event) {
 		m.mu.Lock()
 		ls.deliveryUncertain = false // observed completion; paused entries still require explicit resume
 		m.mu.Unlock()
+		ls.toolIDs = nil // a turn's call ids are not reused by its results after it ends
 		ok := true
 		_ = json.Unmarshal(data["ok"], &ok)
 		result := str("result")
@@ -1448,6 +1477,28 @@ func (m *Manager) apply(id string, e Event) {
 			}
 		}
 	}
+}
+
+// countTool reports whether a tool event adds a call to Session.ToolCalls: a call counts unless its
+// id was already counted this turn, a result only when its call never arrived. A call without an
+// id (Claude terminal hooks) always counts; a result without one never does. The caller holds
+// controlMu.
+func (ls *liveSess) countTool(data json.RawMessage, result bool) bool {
+	var ref struct {
+		ID string `json:"id"`
+	}
+	_ = json.Unmarshal(data, &ref)
+	if ref.ID == "" {
+		return !result
+	}
+	if ls.toolIDs[ref.ID] {
+		return false
+	}
+	if ls.toolIDs == nil {
+		ls.toolIDs = map[string]bool{}
+	}
+	ls.toolIDs[ref.ID] = true
+	return true
 }
 
 func wakeIdle(s *Session) {

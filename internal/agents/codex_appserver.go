@@ -220,6 +220,10 @@ type codexProc struct {
 	inputs      map[string]codexInput    // by immutable Orole question id
 	live        map[string]string        // streamed text per item id, for the activity line
 	liveAt      time.Time
+	// billedTotal is the thread's cumulative token total at the last billed tokenUsage notification
+	// (billedSeen = one arrived), so repeats with an unchanged total are not billed twice.
+	billedTotal int64
+	billedSeen  bool
 }
 
 func startCodexProc(dir, bin string) (*codexProc, error) {

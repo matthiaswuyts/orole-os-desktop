@@ -127,6 +127,10 @@ type Session struct {
 	Deletions    int    `json:"deletions"`
 	Turns        int    `json:"turns"`   // completed turns
 	Prompts      int    `json:"prompts"` // prompts sent
+	// ToolCalls counts the tool calls structured harnesses (and Claude hooks) reported; FailedTools
+	// those whose result was an error.
+	ToolCalls   int `json:"toolCalls,omitempty"`
+	FailedTools int `json:"failedTools,omitempty"`
 	// Pending are the permission requests awaiting a decision (runtime state).
 	Pending   []PermissionRequest `json:"pending"`
 	Usage     *ContextUsage       `json:"usage,omitempty"`
@@ -157,6 +161,8 @@ type SessionDelta struct {
 	Files          *int          `json:"files,omitempty"`
 	Additions      *int          `json:"additions,omitempty"`
 	Deletions      *int          `json:"deletions,omitempty"`
+	ToolCalls      *int          `json:"toolCalls,omitempty"`
+	FailedTools    *int          `json:"failedTools,omitempty"`
 	Usage          *ContextUsage `json:"usage,omitempty"`
 }
 

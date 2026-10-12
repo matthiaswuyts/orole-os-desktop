@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -120,7 +121,7 @@ func (c Claude) Start(ctx context.Context, h *Host, spec LaunchSpec) (Process, e
 		// Lets set_permission_mode reach bypassPermissions later; it does not activate it.
 		args = append(args, "--allow-dangerously-skip-permissions")
 	}
-	args, err = claudeStructuredArgs(h, spec, args)
+	args, err = claudeStructuredArgs(h, spec, args, strings.Contains(claudeHelp(ctx, path), "--system-prompt-snapshot"))
 	if err != nil {
 		return nil, err
 	}
@@ -156,7 +157,9 @@ func (p *claudeProc) SetPermissionMode(mode string) (bool, error) {
 
 // Files keep arbitrary JSON, multiline prompts and large skill indexes out of command
 // lines. These are daemon-owned session files, never native Claude configuration.
-func claudeStructuredArgs(h *Host, spec LaunchSpec, args []string) ([]string, error) {
+// snapshot says whether this Claude Code build accepts --system-prompt-snapshot; older
+// builds reject it as an unknown option (and have no snapshot to go stale).
+func claudeStructuredArgs(h *Host, spec LaunchSpec, args []string, snapshot bool) ([]string, error) {
 	if spec.Gateway == nil && spec.SkillsPrompt == "" {
 		return args, nil
 	}
@@ -188,7 +191,9 @@ func claudeStructuredArgs(h *Host, spec LaunchSpec, args []string) ([]string, er
 	}
 	// Claude otherwise reuses the original system-prompt snapshot on resume,
 	// ignoring changes to the central skills index (including removal of all skills).
-	args = append(args, "--system-prompt-snapshot", "off")
+	if snapshot {
+		args = append(args, "--system-prompt-snapshot", "off")
+	}
 	return args, nil
 }
 
@@ -280,6 +285,12 @@ type claudeMsg struct {
 	Usage      *claudeUsage `json:"usage"`
 	ModelUsage map[string]struct {
 		ContextWindow *int64 `json:"contextWindow"`
+		// Cumulative for the Claude Code process (all turns so far), unlike result.usage.
+		Input         *int64   `json:"inputTokens"`
+		Output        *int64   `json:"outputTokens"`
+		CacheRead     *int64   `json:"cacheReadInputTokens"`
+		CacheCreation *int64   `json:"cacheCreationInputTokens"`
+		CostUSD       *float64 `json:"costUSD"`
 	} `json:"modelUsage"`
 	IsError   bool   `json:"is_error"`
 	Result    string `json:"result"`
@@ -307,6 +318,15 @@ type claudeUsage struct {
 	Output        *int64 `json:"output_tokens"`
 	Cached        *int64 `json:"cache_read_input_tokens"`
 	CacheCreation *int64 `json:"cache_creation_input_tokens"`
+	OutputDetails *struct {
+		Thinking *int64 `json:"thinking_tokens"`
+	} `json:"output_tokens_details"`
+}
+
+// claudeBilled is one model's cumulative modelUsage reading.
+type claudeBilled struct {
+	input, output, cacheRead, cacheWrite int64
+	cost                                 float64
 }
 
 type claudeInput struct {
@@ -435,6 +455,59 @@ type claudeDecoder struct {
 	subagents map[string]SubagentData
 	// wantMode is the --permission-mode requested at launch; init reports what Claude Code did.
 	wantMode string
+	// billed is the last modelUsage reading per model; results report its growth as EvTokens.
+	billed map[string]claudeBilled
+}
+
+// billedTokens turns a result into EvTokens. modelUsage is cumulative for this process and
+// split by model (it includes subagents and side requests), so each model's growth since the
+// previous result is billed once, with its reported cost. Without token counts in modelUsage
+// the per-turn result.usage is billed for the session's model instead.
+func (d *claudeDecoder) billedTokens(m claudeMsg) []Event {
+	var thinking int64
+	if m.Usage != nil && m.Usage.OutputDetails != nil {
+		thinking = valueOr0(m.Usage.OutputDetails.Thinking)
+	}
+	var out []Event
+	names := make([]string, 0, len(m.ModelUsage))
+	for name, u := range m.ModelUsage {
+		if u.Input != nil || u.Output != nil || u.CacheRead != nil || u.CacheCreation != nil {
+			names = append(names, name)
+		}
+	}
+	slices.Sort(names)
+	for _, name := range names {
+		u := m.ModelUsage[name]
+		cur := claudeBilled{input: valueOr0(u.Input), output: valueOr0(u.Output), cacheRead: valueOr0(u.CacheRead), cacheWrite: valueOr0(u.CacheCreation)}
+		if u.CostUSD != nil {
+			cur.cost = *u.CostUSD
+		}
+		prev := d.billed[name]
+		if cur.input < prev.input || cur.output < prev.output || cur.cacheRead < prev.cacheRead || cur.cacheWrite < prev.cacheWrite {
+			prev = claudeBilled{} // a counter went backwards: a new accumulation started
+		}
+		if d.billed == nil {
+			d.billed = map[string]claudeBilled{}
+		}
+		d.billed[name] = cur
+		t := TokenUsage{Source: "claude:result:modelUsage", Provider: "anthropic", Model: name,
+			Input: cur.input - prev.input, Output: cur.output - prev.output,
+			CacheRead: cur.cacheRead - prev.cacheRead, CacheWrite: cur.cacheWrite - prev.cacheWrite}
+		if name == m.Model || len(names) == 1 {
+			t.Reasoning = thinking
+		}
+		if u.CostUSD != nil {
+			cost := cur.cost - prev.cost
+			t.CostUSD = &cost
+		}
+		out = append(out, tokensEvent(t)...)
+	}
+	if len(names) == 0 && m.Usage != nil {
+		out = tokensEvent(TokenUsage{Source: "claude:result:usage", Provider: "anthropic", Model: m.Model,
+			Input: valueOr0(m.Usage.Input), Output: valueOr0(m.Usage.Output), CacheRead: valueOr0(m.Usage.Cached),
+			CacheWrite: valueOr0(m.Usage.CacheCreation), Reasoning: thinking})
+	}
+	return out
 }
 
 func (d *claudeDecoder) decode(p *pipeProc, line []byte) []Event {
@@ -471,6 +544,9 @@ func (d *claudeDecoder) decode(p *pipeProc, line []byte) []Event {
 	}
 	if m.Type == "control_request" && m.Request.Subtype == "can_use_tool" && m.Request.ToolName == "AskUserQuestion" {
 		return d.askInput(p, m)
+	}
+	if m.Type == "result" {
+		canceled = append(canceled, d.billedTokens(m)...)
 	}
 	events := append(canceled, decodeClaudeMessage(p, m)...)
 	if m.Type == "system" && m.Subtype == "init" && m.PermissionMode != "" && d.wantMode != "" && m.PermissionMode != d.wantMode {

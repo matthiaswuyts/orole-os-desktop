@@ -1,5 +1,4 @@
 @import "@xterm/xterm/css/xterm.css";
-@import "react-grid-layout/css/styles.css";
 @import "tailwindcss";
 
 /* Latin subsets only (the fontsource packages ship every script); the families keep the names the tokens below use. */
@@ -370,5 +369,3 @@
 :root { --titlebar-h: var(--mygo-titlebar-height, 40px); }
 .titlebar-drag { --app-region: drag; }
 .titlebar-nodrag { --app-region: no-drag; }
-.react-grid-item.react-grid-placeholder { background: var(--foreground); opacity: 0.06; border-radius: var(--radius-lg); }
-.react-grid-item > .react-resizable-handle::after { border-color: color-mix(in srgb, var(--foreground) 30%, transparent); }

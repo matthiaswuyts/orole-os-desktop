@@ -9,7 +9,7 @@ frontend/src/
   components/
     ui/                      coss/Base UI primitives (button, dialog, menu, switch, table, ...)
     shell/                   AppShell, Sidebar, SidebarProjects, StatusBar, CommandPalette, Logo
-    widgets/                 Widget, WidgetGrid, registry.tsx (widget registry), builtin.tsx
+    widgets/                 Widget, WidgetGrid, frame.ts (sizes, fillRows row filling), registry.tsx (widget registry), builtin.tsx
     ascii/                   AsciiBackground.tsx (one canvas band per window), motion.test.ts
   features/                  one directory per view
     registry.tsx             ViewId -> lazy component; a view missing here renders NotImplemented
@@ -99,6 +99,12 @@ retaining PID 2340.
 Home has one widget layout, stored as the `dashboard` setting (`stores/dashboard.ts`; browser preview uses localStorage).
 Saves are debounced and serialized so a slow write cannot overwrite a newer one. Migration 0102 dropped the former
 `workspaces` table and carried the first workspace's layout over.
+
+The layout is an ordered list of `{id,type,size,tall?,config?}` (`normalizeWidgets`). Layouts saved by the former
+free-form grid (`{x,y,w,h}`) are ordered by row then column, their width maps to the nearest size (a tie goes to the larger)
+and a height of 9+ rows becomes Tall; saved `activity-heatmap` widgets become the full-width `overview`. Adding a widget is
+one `WidgetDef` in `components/widgets/registry.tsx` plus its component; `Widget` provides the card, the shared
+loading/error/offline/not-connected states, the drag handle and the size menu.
 
 ## Sound feedback
 

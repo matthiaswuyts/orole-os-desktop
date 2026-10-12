@@ -60,7 +60,7 @@ export function ServerSettings({ server, connector, changed, onRemoved }: {
   return (
     <section aria-label={server.name} className="flex max-w-2xl min-w-0 flex-col gap-5">
       <header className="flex flex-wrap items-center gap-3">
-        <span className="flex size-12 shrink-0 items-center justify-center rounded-xl border bg-card"><BrandLogo icon={connector?.icon} className="size-6" /></span>
+        <span className="flex size-12 shrink-0 items-center justify-center rounded-xl border bg-card"><BrandLogo logo={connector?.logo} className="size-6" /></span>
         <div className="min-w-0 flex-1">
           <h2 className="truncate text-base font-medium">{server.name}</h2>
           <div className="flex items-center gap-2 text-muted-foreground">{connector?.category && <span>{connector.category}</span>}<Badge variant={status.variant}>{status.label}</Badge></div>
