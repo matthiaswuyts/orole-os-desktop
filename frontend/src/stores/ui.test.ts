@@ -69,6 +69,26 @@ describe("ui mode", () => {
     useUI.getState().setMode("code");
     expect(useUI.getState()).toMatchObject({ mode: "code", view: "review" });
   });
+
+  it("puts Automations in Bots mode and remembers it as the Bots view", async () => {
+    const useUI = await fresh();
+    useUI.getState().setView("review");
+    useUI.getState().setView("automations");
+    expect(useUI.getState()).toMatchObject({ mode: "chat", view: "automations", lastCodeView: "review" });
+    expect(localStorage.getItem("orole.mode")).toBe("chat");
+    useUI.getState().setMode("code");
+    expect(useUI.getState().view).toBe("review");
+    useUI.getState().setMode("chat");
+    expect(useUI.getState().view).toBe("automations");
+  });
+
+  it("focusAutomation opens the Automations view with the flow handed off", async () => {
+    const useUI = await fresh();
+    useUI.getState().focusAutomation("nightly");
+    expect(useUI.getState()).toMatchObject({ mode: "chat", view: "automations", automationFocus: "nightly" });
+    useUI.getState().focusAutomation(null);
+    expect(useUI.getState()).toMatchObject({ view: "automations", automationFocus: null });
+  });
 });
 
 describe("opening settings", () => {

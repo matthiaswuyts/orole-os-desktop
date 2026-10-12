@@ -206,6 +206,7 @@ const (
 	PartNotice     = "notice"     // engine notices (compaction, budget stop)
 	PartQuestion   = "question"   // a question with suggested answers (ask_user)
 	PartUI         = "ui"         // structured component (table, chart, diagram, ...) shown by the `show` tool
+	PartTask       = "task"       // code task started by start_task: ID task id, Title its title, Name the harness
 )
 
 // MsgPart is one renderable piece of a message; fields are used per Type.

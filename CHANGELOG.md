@@ -8,6 +8,15 @@ notes. See `docs/development/updates.md`.
 
 ## Unreleased
 
+### Changed
+- Automations moved to the Bots side of the app. The Bots sidebar now has the same Search (Ctrl+K) as Code, an Automations
+  entry (with a badge when a run waits for your approval) and a "Bots" list with a + button; each bot shows a status dot
+  (responding, waiting for you, idle). The palette finds bots and automations and has "New automation".
+- Automations are built as flows: pick a trigger (manual, schedule, app event, GitHub or deployment watch, local webhook),
+  then drag blocks from the library into the flow or add them with +, reorder by drag or keyboard, nest conditions, and set
+  each block in the inspector, where the daemon's problems appear on the right field. The Runs tab shows each run block by
+  block with links to the code tasks and bot conversations it started. The old form editor is gone.
+
 ### Added
 - Automations can start on app events: a task is created, changes status, waits for you, finishes or fails, a pull request is
   opened, a project is added, or a bot replies. Each event carries the task's title, project, branch, status and last message.
@@ -18,6 +27,9 @@ notes. See `docs/development/updates.md`.
 - Bots can run code tasks. Turn on "Runs code tasks" in a bot's panel and it can start a coding agent in one of your projects,
   check on any task, and message or stop the ones it started. You approve every start, bots never use YOLO, and the bot tells
   you in its chat when its task finishes, fails or needs you ("Code task update", with a link to the task).
+- A bot's reply shows each code task it started as a chip with live status (working, done, needs you, failed) and the coding
+  agent it runs on. Clicking a chip opens the task beside the conversation, with the agent's live activity and a composer to
+  message that agent directly; "Open in Tasks" moves it to the Tasks view.
 - Automations can watch GitHub (new commits on a branch, pull requests opened or merged, failed workflow runs, new issues)
   and deployments of connected integrations such as Vercel or Railway. Orole checks every minute or two (it never opens a
   network port), starts from what already exists, and runs the flow once for each new item.

@@ -8,7 +8,8 @@ import { inDesktop } from "@/lib/backend";
 import { useDaemon } from "@/stores/daemon";
 import { useUI } from "@/stores/ui";
 import { api } from "./api";
-import { RunStatus, duration } from "./RunHistory";
+import { duration } from "./flow";
+import { RunStatus } from "./RunsPanel";
 import { useAutomationResource } from "./useAutomationResource";
 
 export function AutomationResultsWidget({ onRemove }: WidgetProps) {

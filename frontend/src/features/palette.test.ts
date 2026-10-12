@@ -3,12 +3,12 @@ import { domainProviders } from "./palette";
 import { useUI } from "@/stores/ui";
 
 const api = vi.hoisted(() => ({
-  projects: vi.fn(), agents: vi.fn(), agent: vi.fn(), settings: vi.fn(),
+  projects: vi.fn(), agents: vi.fn(), agent: vi.fn(), settings: vi.fn(), automations: vi.fn(),
   openProjectTasks: vi.fn(), openTask: vi.fn(), upsertAgent: vi.fn(), openSettings: vi.fn().mockResolvedValue(undefined),
 }));
 vi.mock("@/lib/backend", () => ({ inDesktop: true }));
 vi.mock("@/mygo", () => ({
-  Projects: { list: api.projects }, Agents: { list: api.agents, get: api.agent }, Search: { query: api.settings }, Desktop: { openSettings: api.openSettings },
+  Projects: { list: api.projects }, Agents: { list: api.agents, get: api.agent }, Automations: { list: api.automations }, Search: { query: api.settings }, Desktop: { openSettings: api.openSettings },
 }));
 vi.mock("@/features/projects/tasks", () => ({ openProjectTasks: api.openProjectTasks, openTask: api.openTask }));
 vi.mock("@/stores/agents", () => ({ useAgents: { getState: () => ({ upsert: api.upsertAgent }) } }));
@@ -45,4 +45,11 @@ it("keeps ordinary configuration results in their Settings section", async () =>
   const [hit] = await provider("settings").search("theme", signal());
   hit!.run();
   expect(api.openSettings).toHaveBeenCalledWith("customization");
+});
+
+it("opens the Automations view in Bots mode focused on a saved automation", async () => {
+  api.automations.mockResolvedValue([{ definition: { id: "nightly", name: "Nightly triage", enabled: true, trigger: { type: "schedule" } } }]);
+  const [hit] = await provider("automations").search("triage", signal());
+  hit!.run();
+  expect(useUI.getState()).toMatchObject({ view: "automations", mode: "chat", automationFocus: "nightly" });
 });

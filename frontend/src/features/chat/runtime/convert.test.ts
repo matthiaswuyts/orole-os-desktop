@@ -35,12 +35,13 @@ describe("convertMessage", () => {
     ]);
   });
 
-  it("maps report, delegation, memory and notice to named data parts", () => {
+  it("maps report, delegation, memory, notice and task to named data parts", () => {
     const parts: MsgPart[] = [
       { type: "report", title: "R", text: "# R" }, { type: "delegation", name: "Coder", status: "done" },
       { type: "memory", text: "likes tea" }, { type: "notice", text: "Compacted" },
+      { type: "task", id: "t1", title: "Fix login", name: "claude" },
     ];
-    expect(content(message(parts)).map((p) => p.type)).toEqual(["data-report", "data-delegation", "data-memory", "data-notice"]);
+    expect(content(message(parts)).map((p) => p.type)).toEqual(["data-report", "data-delegation", "data-memory", "data-notice", "data-task"]);
     expect(content(message(parts))[0]).toMatchObject({ data: parts[0] });
   });
 

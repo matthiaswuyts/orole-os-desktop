@@ -17,6 +17,7 @@ import { splitQuote } from "../quote";
 import { splitBubbles } from "./bubbles";
 import { cn } from "@/lib/utils";
 import { WorkingStatus } from "@/components/assistant-ui/elements/working-status";
+import { TaskChips } from "./TaskChip";
 
 /** Whether a user message has anything to draw (the setup kickoff is text the user never sees). */
 export const hasVisibleParts = (parts: readonly MsgPart[]): boolean => parts.some((p) => p.type === "attachment" || (p.type === "text" && !p.hidden));
@@ -40,9 +41,9 @@ export function Bubble({ children, className }: { children: ReactNode; className
 
 /**
  * Renders what an assistant message holds: the work it did behind one collapsed timeline (steps, web search, research
- * outline), then the answer in order (text, report, questions, notices), then the memory it wrote as chips. Sources live in the
+ * outline), then the answer in order (text, report, questions, notices, the code tasks it started), then the memory it wrote as chips. Sources live in the
  * timeline and, for a report, in its "N sources" popover; they are never listed in the answer.
- * Pure over its props, so the builder preview can use it without a runtime.
+ * Pure over its props (task chips read live task state from the agents store), so the builder preview can use it without a runtime.
  */
 export function MessageParts({ message, onAnswer, botName = "This bot", botAvatar = "", bots = [], onOpenBot }: { message: Pick<Message, "parts" | "status"> & Partial<Pick<Message, "createdAt">>; /** Sends the user's answer to a question; absent = questions are read-only. */ onAnswer?: (answer: string) => void; /** Who wrote the message, named in its handoffs. */ botName?: string; botAvatar?: string; /** Every bot, to draw the avatars of the bots a handoff names. */ bots?: readonly BotRef[]; /** Opens another bot's conversation (a handoff's worker); absent = no link. */ onOpenBot?: (botId: string) => void }) {
   const active = isActive(message.status);
@@ -50,6 +51,8 @@ export function MessageParts({ message, onAnswer, botName = "This bot", botAvata
   const sources = sourcesOf(message.parts);
   const work = workOf(message.parts, active);
   const memory = message.parts.filter((p) => p.type === "memory");
+  // Every task the reply started is listed together, where the first one was started.
+  const tasks = message.parts.filter((p) => p.type === "task" && p.id);
   const blocks: ReactNode[] = [];
   if (work.count > 0) blocks.push(<WorkTimeline key="work" work={work} sources={sources} botName={botName} botAvatar={botAvatar} bots={bots} onOpenBot={onOpenBot} />);
   message.parts.forEach((part, i) => {
@@ -68,6 +71,9 @@ export function MessageParts({ message, onAnswer, botName = "This bot", botAvata
         break;
       case "notice":
         if (part.text) blocks.push(<NoticeLine key={i} text={part.text} />);
+        break;
+      case "task":
+        if (part === tasks[0]) blocks.push(<TaskChips key="tasks" parts={tasks} />);
         break;
       default:
         break; // work rows go to the timeline, memory writes to the chips below; citations ride along; attachments belong to user messages

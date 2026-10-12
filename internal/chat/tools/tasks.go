@@ -148,7 +148,9 @@ func (t Tasks) Call(ctx context.Context, rc chat.RunContext, name string, args j
 		if err != nil {
 			return errResult("the task did not start: %s", err)
 		}
-		return taskResult("Started. You will get a report when it finishes, fails or needs the user.", info, nil)
+		res, err := taskResult("Started. You will get a report when it finishes, fails or needs the user.", info, nil)
+		res.Parts = []chat.MsgPart{{Type: chat.PartTask, ID: info.ID, Title: oneLine(info.Title, 120), Name: info.Harness}}
+		return res, err
 	case toolListTasks:
 		var in struct {
 			Limit int `json:"limit"`

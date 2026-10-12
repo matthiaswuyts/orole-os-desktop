@@ -38,6 +38,10 @@ export interface ChatState {
   /** The slim settings panel beside the conversation (name, description, instructions, model). */
   settingsOpen: boolean;
   setSettingsOpen: (open: boolean) => void;
+  /** The code task shown in the side pane beside the conversation; it and the settings panel are never open together. */
+  taskPaneId: string | null;
+  openTaskPane: (taskId: string) => void;
+  closeTaskPane: () => void;
 }
 
 const readSelected = (): string | null => {
@@ -118,7 +122,7 @@ function dropPreviews() {
 
 /** The daemon owns bots and conversations. This is a disposable, event-synchronized snapshot for the rail. */
 export const useChat = create<ChatState>((set, get) => ({
-  bots: [], selectedBotId: readSelected(), running: {}, builder: { open: false, botId: null }, settingsOpen: false,
+  bots: [], selectedBotId: readSelected(), running: {}, builder: { open: false, botId: null }, settingsOpen: false, taskPaneId: null,
   available: inDesktop, ready: false, loading: false, error: null,
   async load() {
     if (!get().available) return;
@@ -169,6 +173,7 @@ export const useChat = create<ChatState>((set, get) => ({
             return {
               bots: state.bots.filter((b) => b.id !== id), running,
               selectedBotId: state.selectedBotId === id ? null : state.selectedBotId,
+              taskPaneId: state.selectedBotId === id ? null : state.taskPaneId,
               builder: state.builder.botId === id ? { open: false, botId: null } : state.builder,
             };
           });
@@ -203,7 +208,8 @@ export const useChat = create<ChatState>((set, get) => ({
   },
   select(botId) {
     writeSelected(botId);
-    set({ selectedBotId: botId });
+    // A task pane belongs to the conversation it was opened from.
+    set((state) => ({ selectedBotId: botId, taskPaneId: state.selectedBotId === botId ? state.taskPaneId : null }));
   },
   open(botId) {
     get().select(botId);
@@ -211,7 +217,9 @@ export const useChat = create<ChatState>((set, get) => ({
   },
   openBuilder: (botId) => set({ builder: { open: true, botId: botId === "new" ? null : botId } }),
   closeBuilder: () => set({ builder: { open: false, botId: null } }),
-  setSettingsOpen: (settingsOpen) => set({ settingsOpen }),
+  setSettingsOpen: (settingsOpen) => set((state) => ({ settingsOpen, taskPaneId: settingsOpen ? null : state.taskPaneId })),
+  openTaskPane: (taskPaneId) => set({ taskPaneId, settingsOpen: false }),
+  closeTaskPane: () => set({ taskPaneId: null }),
 }));
 
 /** Fields a conversation depends on; `running` and the rail preview are derived and change while a reply streams. */

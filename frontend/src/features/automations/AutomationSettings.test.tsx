@@ -8,7 +8,7 @@ vi.mock("@/stores/daemon", () => ({ useDaemon: (selector: (state: { link: string
 vi.mock("./api", () => ({ api: mocks, errorText: (error: unknown) => error instanceof Error ? error.message : String(error) }));
 import { AutomationSettings } from "./AutomationSettings";
 
-const config: Config = { globalConcurrency: 8, perAutomation: 2, webhookEnabled: false, webhookPort: 8765, hasSecret: true };
+const config: Config = { globalConcurrency: 8, perAutomation: 2, webhookEnabled: false, webhookPort: 8765, hasSecret: true, retentionDays: 0, retentionMaxRuns: 0 };
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.link = "online";

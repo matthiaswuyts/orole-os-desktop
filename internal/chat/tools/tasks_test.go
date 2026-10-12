@@ -25,7 +25,7 @@ func (f *fakeTasks) Harnesses(context.Context) ([]string, error) {
 }
 func (f *fakeTasks) Start(_ context.Context, actor string, s TaskStart) (TaskInfo, error) {
 	f.starts, f.actors = append(f.starts, s), append(f.actors, actor)
-	t := TaskInfo{ID: "t-new", Title: s.Title, Status: "working", Live: true, Owner: actor}
+	t := TaskInfo{ID: "t-new", Title: s.Title, Harness: s.Harness, Status: "working", Live: true, Owner: actor}
 	f.tasks[t.ID] = t
 	return t, nil
 }
@@ -73,12 +73,16 @@ func TestStartTaskRunsAsTheBotInASafePermissionMode(t *testing.T) {
 	f := &fakeTasks{tasks: map[string]TaskInfo{}}
 	tool := Tasks{Runtime: f}
 	rc := chat.RunContext{BotID: "b1", Bot: coder()}
-	res, err := tool.Call(context.Background(), rc, toolStartTask, json.RawMessage(`{"projectId":"p1","harness":"claude","prompt":"Fix the login bug","newWorktree":true}`))
+	res, err := tool.Call(context.Background(), rc, toolStartTask, json.RawMessage(`{"projectId":"p1","harness":"claude","prompt":"Fix the login bug","title":"Fix login","newWorktree":true}`))
 	if err != nil || res.IsError || !res.Untrusted {
 		t.Fatalf("start: %+v %v", res, err)
 	}
 	if len(f.starts) != 1 || f.actors[0] != "bot:b1" || f.starts[0].PermissionMode != "manual" || !f.starts[0].NewWorktree {
 		t.Fatalf("start request: %+v as %v", f.starts, f.actors)
+	}
+	want := chat.MsgPart{Type: chat.PartTask, ID: "t-new", Title: "Fix login", Name: "claude"}
+	if len(res.Parts) != 1 || res.Parts[0].Type != want.Type || res.Parts[0].ID != want.ID || res.Parts[0].Title != want.Title || res.Parts[0].Name != want.Name {
+		t.Fatalf("parts = %+v, want the task chip %+v", res.Parts, want)
 	}
 	res, _ = tool.Call(context.Background(), rc, toolStartTask, json.RawMessage(`{"projectId":"p1","harness":"claude","prompt":"x","permissionMode":"yolo"}`))
 	if !res.IsError || len(f.starts) != 1 {

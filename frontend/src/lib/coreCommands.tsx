@@ -1,5 +1,5 @@
 import { createElement } from "react";
-import { Code } from "lucide-react";
+import { Code, Workflow } from "lucide-react";
 import { CHAT, NAV } from "@/lib/nav";
 import { registerCommands, type Command } from "@/lib/commands";
 import { useSettings } from "@/stores/settings";
@@ -18,7 +18,7 @@ export function registerCoreCommands() {
   }));
   const s = () => useSettings.getState();
   const cmds: Command[] = [
-    { id: "mode.chat", title: "Switch to Chat", category: "Navigate", keywords: ["bots", "contacts", "conversation", "mode"], icon: createElement(CHAT.icon), run: () => useUI.getState().setMode("chat") },
+    { id: "mode.chat", title: "Switch to Bots", category: "Navigate", keywords: ["chat", "bots", "contacts", "conversation", "automations", "mode"], icon: createElement(CHAT.icon), run: () => useUI.getState().setMode("chat") },
     { id: "mode.code", title: "Switch to Code", category: "Navigate", keywords: ["tasks", "projects", "agents", "mode"], icon: createElement(Code), run: () => useUI.getState().setMode("code") },
     { id: "settings.skills", title: "Open Skills settings", category: "Settings", keywords: ["skills", "harness"], run: () => useUI.getState().openSettings("skills") },
     { id: "settings.mcp", title: "Open integrations and MCP servers", category: "Settings", keywords: ["integrations", "connectors", "mcp", "servers", "tools"], run: () => useUI.getState().openSettings("integrations") },
@@ -30,6 +30,7 @@ export function registerCoreCommands() {
     { id: "ascii.pause", title: "Toggle background animation", category: "Appearance", keywords: ["ascii", "pause", "play"], run: () => s().set("ascii", { paused: !s().ascii.paused }) },
     { id: "ascii.hide", title: "Toggle ASCII background", category: "Appearance", run: () => s().set("ascii", { enabled: !s().ascii.enabled }) },
     { id: "task.new", title: "New task…", category: "Tasks", keywords: ["agent", "claude", "codex", "omp", "start"], run: () => useProjects.getState().openNewTask() },
+    { id: "automation.new", title: "New automation…", category: "Automations", keywords: ["flow", "workflow", "trigger", "bot", "schedule"], icon: createElement(Workflow), run: () => useUI.getState().focusAutomation("new") },
   ];
   const offCommands = registerCommands([...go, ...cmds]);
 

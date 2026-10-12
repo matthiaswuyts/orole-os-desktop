@@ -1,5 +1,6 @@
-import { Bot, ChevronDown, Code, PanelLeftClose, Search } from "lucide-react";
-import { PRIMARY, SETTINGS, type NavItem } from "@/lib/nav";
+import { useEffect, useState } from "react";
+import { Bot, ChevronDown, Code, PanelLeftClose } from "lucide-react";
+import { AUTOMATIONS, PRIMARY, SETTINGS, type NavItem } from "@/lib/nav";
 import { cn } from "@/lib/utils";
 import { useUI, type Mode } from "@/stores/ui";
 import { useWorkspaces } from "@/stores/workspaces";
@@ -12,7 +13,8 @@ import { useAgentCounts, useAgents } from "@/stores/agents";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsList, TabsTab } from "@/components/ui/tabs";
 import { BotRail } from "./BotRail";
-import { Desktop } from "@/mygo";
+import { SidebarSearch } from "./SidebarSearch";
+import { Automations, Desktop } from "@/mygo";
 import { inDesktop } from "@/lib/backend";
 
 const row = "flex h-side-row w-full items-center gap-2 rounded-md px-2 text-left text-sidebar-foreground text-sm outline-none hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring";
@@ -22,13 +24,27 @@ const MODES: { id: Mode; label: string; icon: typeof Code }[] = [
   { id: "code", label: "Code", icon: Code },
 ];
 
+/** Automation runs waiting for an approval, refreshed while the Bots sidebar is shown. 0 when unknown. */
+function usePendingApprovals(active: boolean) {
+  const [count, setCount] = useState(0);
+  useEffect(() => {
+    if (!active || !inDesktop) return;
+    let live = true;
+    const load = () => Automations.approvals().then((items) => { if (live) setCount(items.length); }).catch((error: unknown) => console.warn("Could not load automation approvals", error));
+    void load();
+    const timer = window.setInterval(load, 30_000);
+    return () => { live = false; window.clearInterval(timer); };
+  }, [active]);
+  return active ? count : 0;
+}
+
 /** Workspace controls, navigation, projects, and settings. */
 export function Sidebar() {
   const view = useUI((s) => s.view);
   const mode = useUI((s) => s.mode);
   const setView = useUI((s) => s.setView);
   const setMode = useUI((s) => s.setMode);
-  const setPalette = useUI((s) => s.setPalette);
+  const approvals = usePendingApprovals(mode === "chat");
   const toggleSidebar = useUI((s) => s.toggleSidebar);
   const list = useWorkspaces((s) => s.list);
   const activeId = useWorkspaces((s) => s.activeId);
@@ -44,6 +60,7 @@ export function Sidebar() {
         <n.icon className="size-3.5 shrink-0" /><span className="truncate">{n.label}</span>
         {n.id === "agents" && agentCounts.needsYou > 0 && <Badge size="sm" variant="warning" className="ml-auto">{agentCounts.needsYou}</Badge>}
         {n.id === "review" && agentCounts.reviewable > 0 && <Badge size="sm" variant="secondary" className="ml-auto">{agentCounts.reviewable}</Badge>}
+        {n.id === "automations" && approvals > 0 && <Badge size="sm" variant="warning" className="ml-auto" aria-label={`${approvals} awaiting approval`}>{approvals}</Badge>}
       </button>
     );
   };
@@ -78,10 +95,11 @@ export function Sidebar() {
             ))}
           </TabsList>
         </Tabs>
-        {mode !== "chat" && <button type="button" onClick={() => setPalette(true)} aria-label="Search (Ctrl+K)" className="flex h-7 items-center gap-2 rounded-md border bg-background/40 px-2 text-muted-foreground text-sm outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring">
-          <Search className="size-3.5" /><span className="flex-1 text-left">Search</span><KbdGroup aria-label="Ctrl+K"><Kbd>Ctrl</Kbd><Kbd>K</Kbd></KbdGroup>
-        </button>}
-        {mode === "chat" ? <BotRail /> : <>
+        <SidebarSearch />
+        {mode === "chat" ? <>
+          <div className="flex flex-col gap-px">{item(AUTOMATIONS)}</div>
+          <BotRail />
+        </> : <>
           <div className="flex flex-col gap-px">
             {PRIMARY.map(item)}
           </div>
