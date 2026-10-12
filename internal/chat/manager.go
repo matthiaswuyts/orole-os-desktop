@@ -419,6 +419,7 @@ func portableInput(in BotInput) BotInput {
 	in.Config.MCPServers = nil
 	in.Config.Skills = nil
 	in.Config.Executive = false
+	in.Config.CodeTasks = false
 	in.Config.Memory = nil
 	return in
 }

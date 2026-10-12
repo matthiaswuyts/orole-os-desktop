@@ -5,7 +5,7 @@ import type { Message, MsgPart } from "@/mygo";
 export const SOURCE_KEY = "message";
 
 /** Daemon part types that assistant-ui has no native part for; they travel as named `data` parts. */
-const DATA_PARTS: Record<string, true> = { report: true, delegation: true, memory: true, notice: true, attachment: true };
+const DATA_PARTS: Record<string, true> = { report: true, delegation: true, memory: true, notice: true, attachment: true, task: true };
 
 type Content = Exclude<ThreadMessageLike["content"], string>;
 type Part = Content[number];
@@ -54,7 +54,7 @@ const cache = new WeakMap<Message, ThreadMessageLike>();
 
 /**
  * A daemon message as assistant-ui's ThreadMessageLike: text, reasoning and tool rows map to the native parts,
- * citations to `source` parts, user attachments to attachments, and report/delegation/memory/notice to `data-*`
+ * citations to `source` parts, user attachments to attachments, and report/delegation/memory/notice/task to `data-*`
  * parts rendered by name. The original rides along in `metadata.custom` so rendering never loses a field.
  * A "system" message is shown as the bot's (the daemon only uses it for engine output).
  */

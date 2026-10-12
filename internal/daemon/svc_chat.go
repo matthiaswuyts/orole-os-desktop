@@ -29,15 +29,22 @@ func chatError(err error) error {
 // registrars (registerChatMemory, registerChatTools) attach them with SetMemory / AddTools.
 // Memory, knowledge, skill and tool-info IPC methods are registered by those registrars.
 func (d *Daemon) registerChat() {
+	replies := newBotReplies(d.Events)
 	m, err := chat.New(chat.Config{
 		DB: d.DB.DB, DataDir: d.DataDir, LLM: d.LLM, Log: d.Log,
-		Publish: func(event string, payload any) { d.IPC.Publish(event, payload) },
+		Publish: func(event string, payload any) {
+			d.IPC.Publish(event, payload)
+			replies.observe(event, payload)
+		},
 	})
 	if err != nil {
 		d.Log.Error("chat service unavailable", "err", err)
 		return
 	}
 	d.Chat = m
+	if d.Automations != nil {
+		d.Automations.SetBotMessenger(botAutomation{d: d})
+	}
 
 	handle(d, "chat.bots.list", func(ctx context.Context, _ none) ([]chat.Bot, error) {
 		out, err := m.Bots(ctx)

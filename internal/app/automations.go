@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"github.com/rayorole/orole-os-desktop/internal/automations"
+	"github.com/rayorole/orole-os-desktop/internal/events"
 )
 
 // Automations forwards typed requests to the daemon-owned automation engine.
@@ -73,5 +74,12 @@ func (s Automations) Preview(ctx context.Context, schedule string) ([]string, er
 func (s Automations) Templates(ctx context.Context) ([]automations.Definition, error) {
 	var out []automations.Definition
 	err := s.L.call(ctx, "automations.templates", nil, &out)
+	return out, err
+}
+
+// Events lists the application event topics flows can start on.
+func (s Automations) Events(ctx context.Context) ([]events.Topic, error) {
+	var out []events.Topic
+	err := s.L.call(ctx, "automations.events", nil, &out)
 	return out, err
 }

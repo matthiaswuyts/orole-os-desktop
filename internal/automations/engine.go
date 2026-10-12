@@ -47,6 +47,9 @@ type Engine struct {
 	tools       ToolInvoker
 	agents      AgentControl
 	github      GitHubQuery
+	bots        BotMessenger
+	watchers    map[string]WatchSource
+	watchWake   chan struct{} // definitions changed: the watch loop rereads them
 	commands    CommandRunner
 	notifier    Notifier
 	authorize   func(context.Context, policy.Request) error
@@ -83,7 +86,7 @@ func New(o Options) *Engine {
 	if o.Commands == nil {
 		o.Commands = ExecRunner{}
 	}
-	e := &Engine{db: o.DB, bus: o.Bus, credentials: o.Credentials, clock: o.Clock, log: o.Log, auditFn: o.Audit, changedFn: o.Changed, commands: o.Commands, notifier: o.Notifier, authorize: o.Authorize, config: DefaultConfig(), active: map[string]context.CancelFunc{}, live: map[string]Run{}, counts: map[string]int{}, wakeC: make(chan struct{}, 1)}
+	e := &Engine{db: o.DB, bus: o.Bus, credentials: o.Credentials, clock: o.Clock, log: o.Log, auditFn: o.Audit, changedFn: o.Changed, commands: o.Commands, notifier: o.Notifier, authorize: o.Authorize, config: DefaultConfig(), active: map[string]context.CancelFunc{}, live: map[string]Run{}, counts: map[string]int{}, wakeC: make(chan struct{}, 1), watchWake: make(chan struct{}, 1)}
 	var raw string
 	if err := e.db.QueryRow(`SELECT value FROM settings WHERE key='automations.config'`).Scan(&raw); err == nil {
 		_ = json.Unmarshal([]byte(raw), &e.config)
@@ -93,18 +96,22 @@ func New(o Options) *Engine {
 func (e *Engine) SetToolInvoker(v ToolInvoker)   { e.deps.Lock(); e.tools = v; e.deps.Unlock() }
 func (e *Engine) SetAgentControl(v AgentControl) { e.deps.Lock(); e.agents = v; e.deps.Unlock() }
 func (e *Engine) SetGitHubQuery(v GitHubQuery)   { e.deps.Lock(); e.github = v; e.deps.Unlock() }
+func (e *Engine) SetBotMessenger(v BotMessenger) { e.deps.Lock(); e.bots = v; e.deps.Unlock() }
 func (e *Engine) RegisterSecret(v string)        { e.redact.Register(v) }
 func (e *Engine) StepTypes() []StepType {
 	e.deps.RLock()
 	defer e.deps.RUnlock()
-	list := catalog()
-	for i := range list {
-		s := &list[i]
+	list := []StepType{}
+	for _, s := range catalog() {
 		switch s.Type {
+		case "branch":
+			continue // compiled form of a condition, never authored
 		case "mcp.tool":
 			s.Available = e.tools != nil
-		case "agent.start", "agent.prompt", "agent.wait":
+		case "task.start", "task.prompt", "task.wait":
 			s.Available = e.agents != nil
+		case "bot.tell":
+			s.Available = e.bots != nil
 		case "github.query":
 			s.Available = e.github != nil
 		case "notify":
@@ -113,6 +120,7 @@ func (e *Engine) StepTypes() []StepType {
 		if !s.Available {
 			s.Reason = "Backing integration is not available in this daemon"
 		}
+		list = append(list, s)
 	}
 	return list
 }
@@ -146,9 +154,10 @@ func (e *Engine) Start(ctx context.Context) error {
 		return err
 	}
 	e.pumpLocked()
-	e.wg.Add(1)
+	e.wg.Add(2)
 	e.mu.Unlock()
 	go e.loop()
+	go e.watchLoop()
 	if e.config.WebhookEnabled {
 		if err := e.startWebhook(e.config.WebhookPort); err != nil {
 			return err
@@ -191,7 +200,7 @@ func (e *Engine) changed(id string) {
 }
 func (e *Engine) finished(r Run) {
 	if terminal(r.Status) {
-		e.bus.Publish(events.Event{Topic: "automation.run.finished", Chain: r.Chain, Data: map[string]any{"automationId": r.AutomationID, "runId": r.ID, "status": r.Status, "name": r.Name}})
+		e.bus.Publish(events.Event{Topic: events.TopicAutomationRun, Chain: r.Chain, Data: map[string]any{"automationId": r.AutomationID, "runId": r.ID, "status": r.Status, "name": r.Name}})
 	}
 }
 func (e *Engine) Run(ctx context.Context, id string) (Run, error) {
@@ -352,8 +361,9 @@ func (e *Engine) execute(ctx context.Context, r Run) error {
 	_ = json.Unmarshal(r.TriggerData, &trigger)
 	outputs := map[string]any{}
 	env := map[string]any{"trigger": map[string]any{"type": r.TriggerType, "data": trigger}, "event": trigger, "steps": outputs, "run": map[string]any{"id": r.ID, "automationId": r.AutomationID}}
-	for i := 0; i < len(r.Definition.Steps); {
-		s := r.Definition.Steps[i]
+	flat := flatten(r.Definition.Steps)
+	for i := 0; i < len(flat); {
+		s := flat[i]
 		j, exists := journals[s.ID]
 		sp, _ := spec(s.Type)
 		if exists && j.Status == "running" && sp.SideEffect && s.Strategy == "at-most-once" {
@@ -393,8 +403,8 @@ func (e *Engine) execute(ctx context.Context, r Run) error {
 				break
 			}
 			found := false
-			for next := i + 1; next < len(r.Definition.Steps); next++ {
-				if r.Definition.Steps[next].ID == target {
+			for next := i + 1; next < len(flat); next++ {
+				if flat[next].ID == target {
 					i = next
 					found = true
 					break

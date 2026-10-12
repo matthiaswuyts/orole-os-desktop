@@ -13,7 +13,7 @@ import (
 var ErrNotFound = errors.New("automation or run not found")
 
 func (e *Engine) Save(ctx context.Context, d Definition) (SaveResult, error) {
-	d = Normalize(d)
+	d = Normalize(Upgrade(d))
 	issues := Validate(d)
 	if len(issues) > 0 {
 		return SaveResult{Definition: d, Issues: issues}, nil
@@ -46,6 +46,11 @@ func (e *Engine) Save(ctx context.Context, d Definition) (SaveResult, error) {
 	return SaveResult{Definition: d, Issues: issues, Saved: err == nil}, err
 }
 func (e *Engine) List(ctx context.Context) ([]Summary, error) {
+	// Read the small watch table first so this call never holds two connections.
+	watches, err := e.watchStatus(ctx)
+	if err != nil {
+		return nil, err
+	}
 	rows, err := e.db.QueryContext(ctx, `SELECT a.definition,coalesce((SELECT status FROM automation_runs r WHERE r.automation_id=a.id ORDER BY created_at DESC LIMIT 1),''),coalesce((SELECT created_at FROM automation_runs r WHERE r.automation_id=a.id ORDER BY created_at DESC LIMIT 1),0) FROM automations a ORDER BY a.name`)
 	if err != nil {
 		return nil, err
@@ -60,6 +65,18 @@ func (e *Engine) List(ctx context.Context) ([]Summary, error) {
 		}
 		if err := json.Unmarshal([]byte(b), &s.Definition); err != nil {
 			return nil, err
+		}
+		s.Definition = Upgrade(s.Definition)
+		s.Issues = Validate(s.Definition)
+		if s.Definition.Enabled && s.Definition.Trigger.Type == "schedule" {
+			if sc, err := ParseSchedule(s.Definition.Trigger.Schedule, nil); err == nil {
+				if next, ok := sc.Next(e.clock.Now()); ok {
+					s.NextRunAt = next.UnixMilli()
+				}
+			}
+		}
+		if w, ok := watches[s.Definition.ID]; ok && s.Definition.Trigger.Type == "watch" {
+			s.Watch = &w
 		}
 		out = append(out, s)
 	}
@@ -101,7 +118,9 @@ func scanRun(s scanner) (Run, error) {
 	if err = json.Unmarshal([]byte(chain), &r.Chain); err != nil {
 		return r, err
 	}
-	err = json.Unmarshal([]byte(definition), &r.Definition)
+	if err = json.Unmarshal([]byte(definition), &r.Definition); err == nil {
+		r.Definition = Upgrade(r.Definition)
+	}
 	r.Name = r.Definition.Name
 	return r, err
 }

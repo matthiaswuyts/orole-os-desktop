@@ -10,18 +10,43 @@ notes. See `docs/development/updates.md`.
 
 ### Added
 - Skills settings are redesigned with Yours and Discover tabs. Discover browses and searches the skills.sh catalogue
-  (Most installed, Trending); a skill is added from a preview that shows its full SKILL.md and flags script files, then is
-  available to every agent through Orole. Adding does not change your agents' own skill folders.
+  (Most installed, Trending, and skills.sh's topics such as Marketing and Design); a skill is added from a preview that shows
+  its full SKILL.md and flags script files, then is available to every agent through Orole. Adding does not change your agents'
+  own skill folders.
+- Yours lists every skill with a source badge (the agent's own logo for skills imported from Claude Code, Codex or Oh My Pi) and when
+  it was added. A skill opens on its own page with Overview and Contents tabs instead of an editor beside the list.
 - Agent syncing is easier to read: one "Used by" line shows which agents are up to date and one "Update agents" button copies
   skills into Claude Code, Codex and Oh My Pi; a help popover explains how skills reach agents and holds the details.
 - Integrations directory: PostHog, Resend, Firecrawl, Clay, Apollo, Figma, Mobbin and Similarweb (one-click browser sign-in), Paper
   (local: connects to Paper Desktop at `http://127.0.0.1:29979/mcp` while it is running with a file open, no sign-in), and Gmail,
   Google Drive and Google Calendar (Google's remote MCP servers; you supply an OAuth client from your own Google Cloud project).
   Notion and Sentry were already listed.
+- Automations can start on app events: a task is created, changes status, waits for you, finishes or fails, a pull request is
+  opened, a project is added, or a bot replies. Each event carries the task's title, project, branch, status and last message.
+- Automation flows have condition lanes: a Condition block runs one lane or the other and the flow continues after it. New
+  blocks: Ask a bot (the message lands in the bot's conversation; optionally wait for its reply), Start / Message / Wait for a
+  code task, and Wait. Existing automations are upgraded automatically; a jump that has no lane equivalent is flagged and the
+  automation will not run until it is rebuilt.
+- Bots can run code tasks. Turn on "Runs code tasks" in a bot's panel and it can start a coding agent in one of your projects,
+  check on any task, and message or stop the ones it started. You approve every start, bots never use YOLO, and the bot tells
+  you in its chat when its task finishes, fails or needs you ("Code task update", with a link to the task).
+- A bot's reply shows each code task it started as a chip with live status (working, done, needs you, failed) and the coding
+  agent it runs on. Clicking a chip opens the task beside the conversation, with the agent's live activity and a composer to
+  message that agent directly; "Open in Tasks" moves it to the Tasks view.
+- Automations can watch GitHub (new commits on a branch, pull requests opened or merged, failed workflow runs, new issues)
+  and deployments of connected integrations such as Vercel or Railway. Orole checks every minute or two (it never opens a
+  network port), starts from what already exists, and runs the flow once for each new item.
 
 ### Changed
 - Workspaces are removed: the sidebar workspace switcher and Settings > Workspaces are gone. Home keeps one widget dashboard
   (stored as the `dashboard` setting); the first existing workspace's widgets and notes carry over, other workspaces are dropped.
+- Automations moved to the Bots side of the app. The Bots sidebar now has the same Search (Ctrl+K) as Code, an Automations
+  entry (with a badge when a run waits for your approval) and a "Bots" list with a + button; each bot shows a status dot
+  (responding, waiting for you, idle). The palette finds bots and automations and has "New automation".
+- Automations are built as flows: pick a trigger (manual, schedule, app event, GitHub or deployment watch, local webhook),
+  then drag blocks from the library into the flow or add them with +, reorder by drag or keyboard, nest conditions, and set
+  each block in the inspector, where the daemon's problems appear on the right field. The Runs tab shows each run block by
+  block with links to the code tasks and bot conversations it started. The old form editor is gone.
 
 ### Fixed
 - The "Jump to latest" buttons on chat and task pages are opaque again in dark themes instead of see-through.

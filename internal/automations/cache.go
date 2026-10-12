@@ -41,12 +41,17 @@ type defSnapshot struct {
 	exact     map[string][]*defEntry // enabled event triggers by literal topic
 	wildcards []*defEntry            // enabled event triggers using "*" or "prefix.*"
 	schedules []*defEntry            // enabled schedule triggers
+	watches   []*defEntry            // enabled, valid watch triggers
 }
 
 func (e *Engine) invalidateDefinitions() {
 	e.defMu.Lock()
 	e.defSnap = nil
 	e.defMu.Unlock()
+	select {
+	case e.watchWake <- struct{}{}:
+	default:
+	}
 }
 
 func (e *Engine) snapshot(ctx context.Context) (*defSnapshot, error) {
@@ -70,6 +75,15 @@ func (e *Engine) snapshot(ctx context.Context) (*defSnapshot, error) {
 		if json.Unmarshal([]byte(raw), &it.def) != nil {
 			continue
 		}
+		if it.def.SchemaVersion != SchemaVersion {
+			// The run snapshot must be the document that runs, so store the upgraded form.
+			it.def = Upgrade(it.def)
+			b, err := json.Marshal(it.def)
+			if err != nil {
+				continue
+			}
+			raw = string(b)
+		}
 		it.raw = raw
 		it.issues = Validate(it.def)
 		s.byID[it.def.ID] = it
@@ -77,7 +91,7 @@ func (e *Engine) snapshot(ctx context.Context) (*defSnapshot, error) {
 			continue
 		}
 		t := it.def.Trigger
-		if t.Filter != "" && (t.Type == "event" || t.Type == "webhook") {
+		if t.Filter != "" && (t.Type == "event" || t.Type == "webhook" || t.Type == "watch") {
 			if it.filter, err = expr.Parse(t.Filter); err != nil {
 				it.filter, it.filterBad = nil, true
 			}
@@ -93,6 +107,10 @@ func (e *Engine) snapshot(ctx context.Context) (*defSnapshot, error) {
 			if sc, err := ParseSchedule(t.Schedule, nil); err == nil {
 				it.sched = sc
 				s.schedules = append(s.schedules, it)
+			}
+		case "watch":
+			if len(it.issues) == 0 && !it.filterBad && t.Watch != nil {
+				s.watches = append(s.watches, it)
 			}
 		}
 	}

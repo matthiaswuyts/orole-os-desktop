@@ -174,6 +174,7 @@ func (d *Daemon) registerAgents() {
 	if d.Projects != nil {
 		wt = agentWorktrees{d: d}
 	}
+	tasks := newTaskEvents(d.Events, d.reportToOwner)
 	d.Agents = agents.NewManager(agents.Config{
 		Store:            agents.NewStore(d.DB),
 		Host:             &agents.Host{Terminals: d.Terminals, DataDir: d.DataDir, HookExe: exe, GatewayExe: d.gatewayExe},
@@ -199,7 +200,11 @@ func (d *Daemon) registerAgents() {
 			}
 			return out, nil
 		},
-		Publish:       d.IPC.Publish,
+		Publish: func(event string, data any) {
+			d.IPC.Publish(event, data)
+			tasks.observe(event, data)
+		},
+		Created:       tasks.created,
 		Audit:         d.audit,
 		YoloEnabled:   d.yoloEnabled,
 		TitleAccount:  d.agentTitleAccount,
@@ -211,6 +216,9 @@ func (d *Daemon) registerAgents() {
 			actor := "user"
 			if chain := events.ChainFrom(ctx); len(chain) > 0 {
 				actor = "automation:" + chain[len(chain)-1]
+			}
+			if a := agents.ActorFrom(ctx); a != "" {
+				actor = a
 			}
 			return d.Policy.Require(ctx, policy.Request{
 				Actor: actor, Action: action, Resource: resource, Detail: detail,
@@ -238,11 +246,7 @@ func (d *Daemon) registerAgents() {
 			}
 			return nil
 		},
-		Finished: func(s agents.Session) {
-			if d.Events != nil {
-				d.Events.Publish(events.Event{Topic: "agent.finished", Data: map[string]any{"id": s.ID, "status": string(s.Status)}, Chain: s.Chain})
-			}
-		},
+		Finished: tasks.finished,
 	})
 	orch := orchestrate.New(d.Agents, d.IPC.Publish)
 	d.agentsShutdown = func() { orch.Shutdown(); d.Agents.Shutdown() }

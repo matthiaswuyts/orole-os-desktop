@@ -196,6 +196,16 @@ describe("report-back messages", () => {
     expect(screen.queryByText(/Handoff by/)).toBeNull();
     expect(screen.getByText("Grok Bot is a new app from Acme.")).toBeInTheDocument();
   });
+
+  it("draws a code task's report as a collapsed card that opens the task", () => {
+    const open = vi.fn();
+    const report = message([{ type: "text", text: "Task \"Fix login\" finished." }], { role: "user", author: "task:t-42" });
+    render(<ChatMessageView message={report} botName="Atlas" botAvatar="" onOpenTask={open} />);
+    expect(screen.getByText("Code task update")).toBeInTheDocument();
+    expect(screen.queryByText("You said:")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Open task" }));
+    expect(open).toHaveBeenCalledExactlyOnceWith("t-42");
+  });
 });
 
 describe("quoted user messages", () => {

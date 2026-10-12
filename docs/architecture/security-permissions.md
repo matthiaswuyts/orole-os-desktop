@@ -40,9 +40,10 @@ Single place that answers "may this actor do this?". Inputs: actor, action, reso
 - Defaults: read -> allow, write/destructive -> ask, unclassified -> deny. User-requested `agent.start`,
   `agent.prompt`, `agent.restart` and `agent.permissionMode` are allowed without a second confirmation: submitting the task
   or choosing its Manual/Auto/YOLO mode is the instruction. YOLO has its own gate in the agents manager (explicit
-  `confirmYolo`, the `agents.yoloDisabled` setting, never from an automation; audited as `agent.yolo`), and it
+  `confirmYolo`, the `agents.yoloDisabled` setting, never from an automation or a bot; audited as `agent.yolo`), and it
   does not bypass this engine for Orole's own MCP tools. Stored ask/deny rules still win.
-  Automation/agent-originated launches, actual tool actions, and external hints do not receive this default.
+  Automation/bot/agent-originated launches, actual tool actions, and external hints do not receive this default: a bot
+  acting through `agents.WithActor` is the actor `bot:<id>`, an automation `automation:<id>`.
   Annotations from servers never unlock more than ask.
 - `ask` parks the request (max 100 pending, 5 min timeout) until the UI resolves it; destructive actions cannot be remembered.
 - Every decision is written to `audit_events`. Pending-approval text is sanitised with `internal/untrusted`.

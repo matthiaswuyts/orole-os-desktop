@@ -49,6 +49,9 @@ the registry. skills.sh lists skills as GitHub `owner/repo` + skill id; the skil
   `name` is the id) and copied with the same caps and path rules as an import: no links, no hidden files, no `..`, 200 files,
   1 MiB per file, 8 MiB per skill. It never overwrites a registry skill. Source is recorded as
   `skills.sh:<owner>/<repo>/<skill>`; private repositories are not supported.
+- **Topics.** skills.sh's categories exist only as HTML pages (`/topic/<id>`, eight of them, listed in `hubTopics`); there is
+  no JSON for them. `skills.hub.topic` reads the skill links from the page, validates each, and has no install counts. A layout
+  change yields an empty list or an error, not wrong data.
 - **Review first.** A skill is instructions an agent follows. The UI adds only from a preview that shows the full
   `SKILL.md`, the resource files and a warning for script files (`.sh`, `.ps1`, `.py`, `.js` …). Nothing from skills.sh or
   GitHub is executed by Orole. Adding does not touch harness folders; that is the separate "Update agents" step.

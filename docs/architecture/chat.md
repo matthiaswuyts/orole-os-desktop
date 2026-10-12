@@ -97,6 +97,35 @@ minutes running), so the user can ask for status. Handoff state lives in memory:
 `incomplete` and no report is delivered. A user stopping the callee reports "stopped" to the asker. Consolidation
 treats messages authored by another bot as untrusted. Delegation rows carry `MsgPart.botId` of the callee.
 
+An automation's `bot.tell` block calls `Manager.Deliver`: the message is stored in the bot's conversation as a user
+message with author `automation:<automationId>` and answered through the same queue. The turn's system-prompt addendum
+names the automation and says quoted event fields are data from other apps and that nobody can answer follow-ups. With
+`wait`, the automation step blocks on the turn's outcome (the same result channel handoffs use) and returns the reply.
+Delivery state is not durable: a daemon restart while a waiting step runs leaves the automation journal `uncertain`.
+
+## Code tasks
+A bot with `BotConfig.codeTasks` (Settings panel: "Runs code tasks"; off by default, never exported) gets
+`start_task`, `list_tasks`, `task_status`, `message_task` and `stop_task` (`internal/chat/tools/tasks.go`, backed by
+`daemon/bot_tasks.go`). Bots cannot run commands themselves; a code task is a coding agent (Claude Code, Codex, ...)
+in a registered local project. The runtime passes `agents.WithActor(ctx, "bot:<id>")`: the session records it as
+`Session.Owner`, the agent runtime asks the shared policy as that actor (`agent.start`, `agent.prompt` are destructive,
+so every start and follow-up is approved unless the user stores a rule), and YOLO is refused. Bots may read any task
+but message or stop only tasks they own. Task text (activity, last message, transcript) reaches the model as fenced
+untrusted data.
+
+When a task a bot owns finishes a turn, needs the user, or fails, `daemon/app_events.go` calls
+`Manager.ReportTask`: the state is stored in the bot's conversation as a user message authored `task:<taskId>`,
+fenced as "code task report", and the bot answers it with an addendum to tell the user what happened (only the user
+can answer a task's questions). The UI draws it as a collapsed "Code task update" card with "Open task". The bot's
+system prompt lists its running tasks, fenced. Reports are best effort: they are not replayed after a daemon restart.
+
+A successful `start_task` also stores a `task` part on the reply (`id` task id, `title` title at start, `name` harness).
+The conversation draws the tasks a reply started as chips (`features/chat/parts/TaskChip.tsx`) whose status glyph and
+title come live from the agents store (`useTaskSession` fetches a task the list does not hold with `Agents.get`).
+A chip, or a report's "Open task", opens `TaskPane` beside the conversation (`useChat.taskPaneId`; it replaces the
+settings panel and closes when another bot is selected): the Tasks view's own `TaskView`, so the feed and composer
+talk to that task directly. Below a `@3xl` chat container the pane overlays the conversation instead of splitting it.
+
 ## @mentions and skills
 Typing `@` in the composer opens the assistant-ui trigger popover: the other bots and the skills this bot has been
 given. A pick is plain `@Name` text; on send the frontend resolves names to ids (`SendRequest.Mentions`,

@@ -4,18 +4,55 @@ Automations are daemon-owned. The desktop `Automations` service forwards typed I
 
 ## Authoring and running
 
-The Automations view lists enabled definitions and their last result. Run now works even for a disabled definition; disabling stops automatic triggers, not existing runs. History shows step status, attempts, duration and redacted output. Pending human approvals can be approved or rejected; cancellation is explicit. The dashboard's Recent automation results widget uses the same daemon data. Browser preview has no backend and reports this honestly.
+The Automations view lives in Bots mode (sidebar: Search, Automations, Bots). Its list shows each flow's trigger in words, block count, enabled switch, last result, next scheduled run, last watch check and validation issues; pending approvals are approved or rejected at the top. The builder (`features/automations/FlowBuilder.tsx`) is a trigger card plus a vertical block stack with condition lanes; blocks come from the daemon's `automations.stepTypes` catalog (grouped library, drag via `@dnd-kit` with pointer and keyboard sensors, or `+`), the inspector renders fields by kind (bot, project and harness pickers included) and shows save issues by path. Pure tree operations live in `flow.ts`. Run now works even for a disabled flow; disabling stops automatic triggers, not existing runs. The Runs tab shows the step timeline (hidden `:join` rows, the lane a condition took) with links to started tasks and bot conversations; cancellation is explicit. The dashboard's Recent automation results widget uses the same daemon data. Browser preview has no backend and reports this honestly.
 
-The structured editor supports adding, moving and removing typed steps. Unavailable integration adapters appear disabled with a reason. Parameter and schema errors are returned as field paths. A conditional branch targets a later step ID or `end`; backwards jumps are rejected. Conditional `when` guards can skip individual steps. The three example templates open unsaved drafts: “Notify me when CI fails”, “Morning GitHub issues”, and “Run tests after agent finishes”. Supply real repository/project/directory values and save to create a definition. The schedule editor previews the next five times using the daemon's local timezone.
+Parameter and schema errors are returned as field paths (`steps.1.then.0.params.prompt`). Unavailable integration adapters appear disabled with a reason. Conditional `when` guards can skip individual steps. Templates open unsaved drafts: “Tell me when an agent needs me”, “Have a bot review finished tasks”, “Nightly code task”, “Notify me when CI fails” and “Morning GitHub issues”. Empty pickers (repository, project, bot, task prompt) must be filled in before the flow validates. The schedule editor previews the next five times using the daemon's local timezone. `automations.list` summaries carry the definition's validation issues and, for enabled schedules, the next fire time.
 
-The CI template is a scheduled check every 15 minutes, not a nonexistent CI push watcher. Select a real repository and ref; failed checks branch to notification. Persistent failures notify each time. GitHub query results include `checks`, `failed`, `repo`, and `ref` for the checks kind.
+### Flow schema v2
+
+A definition is a tree. A `condition` step evaluates its expression and runs its `then` or `else` lane, then the flow continues after the condition. Lanes nest at most three deep; a flow has at most 50 blocks, lanes included; step IDs are unique across the whole tree. A condition cannot have a `when` guard and always stops the run when its expression fails. The runner executes `flatten(steps)`: each condition compiles to a forward `branch` that keeps the condition's step ID (its output is `{condition, next}`), and when both lanes have blocks a hidden `<id>:join` jump follows the `then` lane. Journals therefore show `branch` rows for conditions; the builder hides `:join` rows.
+
+Stored schema v1 documents (flat steps with forward `branch` jumps) are upgraded when read (`Upgrade`): `agent.start/prompt/wait` become `task.start/prompt/wait` (`adapter`→`harness`, `agentId`→`taskId`, `until: finished`), and a jump whose `then` (or `else`) is the very next step becomes a condition whose lane runs up to the other target. Any other jump has no lane equivalent: it is kept, reported as an issue, and the flow cannot run until it is rebuilt. Run snapshots are upgraded the same way; a compiled condition keeps the step IDs an in-flight v1 journal recorded. Saving always stores v2.
+
+### Blocks
+
+| Type | Group | What it does |
+| --- | --- | --- |
+| `bot.tell` | Bots | Stores the message in the bot's conversation, authored `automation:<id>`, and queues a turn behind anything the bot is doing. The bot is told the message came from the named automation and that quoted event fields are data. With `wait`, the step returns `{messageId, status, reply}` once the bot answered and fails if the turn did not complete. |
+| `task.start` | Tasks | Starts a code task in a registered project (`harness`, `prompt`, optional `title`, `model`, `newWorktree`) in `manual` or `auto` permission mode. The agent runtime still requires the shared policy's `agent.start` approval for `automation:<id>`; YOLO is refused. Output: the task fields of the event payload plus `result`, `files`, `additions`, `deletions`. Supports `strategy: key` through the agent journal. |
+| `task.prompt` | Tasks | Sends a follow-up to a task through the orchestrator journal. |
+| `task.wait` | Tasks | Waits until the task is done or ended (`until: finished`), or also until it needs you (`until: attention`). Ending failed, stopped or lost fails the step with the task state in the output. The run keeps its execution slot while waiting; raise the step and flow timeouts for long tasks. |
+| `delay` | Logic | Waits 1–1440 minutes; its step timeout is raised to cover the wait. It keeps the execution slot. |
+| `condition`, `approval` | Logic | Lanes (above) and the durable human approval. |
+| `notify`, `http.request` (“Call webhook”) | Notify | Unchanged. |
+| `github.query`, `mcp.tool` | Integrations | Unchanged; `mcp.tool` reaches connected integrations such as Vercel or Railway through `InvokeChecked`. |
+| `command.run`, `test.run` | Run | Unchanged. |
+
+Event payloads arrive under `event.data` (for example `{{ event.data.title }}`); `trigger.data` is the whole event (`topic`, `data`, `time`).
+
+The CI template is a scheduled check every 15 minutes, not a CI push watcher. GitHub query results include `checks`, `failed`, `repo`, and `ref` for the checks kind.
 
 ## Triggers and provenance
 
 - Manual: authenticated `automations.run` IPC.
 - Schedule: five-field cron (`minute hour day month weekday`), lists/ranges/steps, month/weekday names, common aliases, or `every 15m`/`every 2h`/`every 1d`. Minimum interval one minute. Fixed wall times follow local DST, skipping nonexistent times and the second occurrence of repeated times. Restricted day-of-month and weekday use cron's OR semantics. After downtime/sleep, `skip` consumes missed slots without running; `run-once` fires once, never a backlog burst. Ninety seconds of lateness is scheduling grace.
-- Application event: exact topic, `prefix.*`, or `*`, with optional filter. `internal/events` has bounded, nonblocking subscriber queues; a full queue drops the newest event and increments `Subscription.Dropped`. This bus is not a durable message broker.
+- Application event: exact topic, `prefix.*`, or `*`, with optional filter. `internal/events` has bounded, nonblocking subscriber queues; a full queue drops the newest event and increments `Subscription.Dropped`. This bus is not a durable message broker. `automations.events` returns the topic catalog (`events.Catalog`) with each topic's payload fields; the builder offers only those.
 - Webhook: opt-in loopback listener, described below.
+- Watch: the daemon polls an integration, since Orole has no network listener. `trigger.watch` is `{source, kind, ...}`: GitHub `push` (commits of `branch`, default branch when empty), `pr_opened`, `pr_merged`, `workflow_failed` (optionally one branch) and `issue_opened` for `repo`, using the signed-in GitHub client with ETag caching; or `mcp` `deployment`, which calls a connected integration tool that lists deployments (`server`, `tool`, `args`; for example Vercel `list_deployments` or Railway `list-deployments`) through `InvokeChecked` as `automation:<id>`, finds the first JSON array of objects (structured content or JSON text, GraphQL `edges` included) and keys each by id (`uid`/`id`/`deploymentId`) plus state (`state`/`readyState`/`status`), so a state change is a new item; `states` limits which states run. Polls run one at a time every `intervalSec` (default 60 s GitHub, 120 s MCP, minimum 30), with exponential backoff up to 30 minutes after a failure; with no watch triggers the loop arms no timer. The first poll after a watch is created or changed records a baseline and runs nothing; afterwards each unseen item runs the flow once, oldest first, with `event = {topic: "<source>.<kind>", data, time}` (filters apply). `automation_watch_state` (migration 0103) keeps the watch configuration, the last 500 keys and the last error; the trigger key `watch|<id>|<item>` also deduplicates durably. `automations.list` reports each watch's last poll, error and seen count. Delivery is up to one interval late; instant delivery needs the user's own tunnel to the local webhook.
+
+| Topic | When | Publisher |
+| --- | --- | --- |
+| `task.created` | A code task was launched (never for a retried idempotency key) | `agents.Config.Created` |
+| `task.status` | A task's status changed (`from` holds the previous one) | agent runtime `agents.updated` |
+| `agent.waiting` | A task needs a permission decision or an answer | agent runtime `agents.updated` |
+| `agent.finished` | A task finished a turn (`result` holds its summary) | `agents.Config.Finished` |
+| `agent.failed` | A task or its process failed | agent runtime `agents.updated` |
+| `pr.opened` | Publishing opened a pull request for the task | agent runtime `agents.updated` |
+| `project.created` | A project was added or created | `projects.add` / `projects.create` |
+| `bot.message` | A bot completed a reply (builder drafts excluded) | chat runtime `chat.message` |
+| `automation.run.finished`, `github.changed`, `mcp.tool.called` | As named | engine, GitHub service, MCP manager |
+
+Task topics share one payload (`id`, `title`, `kind`, `status`, `projectId`, `project`, `branch`, `activity`, `lastMessage`, `error`, `prUrl`); free text is clipped to 2000 characters and is untrusted data. Status transitions are relative to the last state this daemon run observed: a session from a previous run reports `agent.waiting`/`agent.failed` but no `task.status` until its next change.
 
 Modules publish facts through `d.Events.Publish(events.Event{Topic,Data,Chain})`. Capture `events.ChainFrom(ctx)` when automation-driven work starts and persist it with work that outlives the call. The chain contains causing automation IDs; an ID cannot reappear, and the maximum chain length is three. Automation completion publishes `automation.run.finished`. Event filters access `event.topic` and `event.data`; templates also access `trigger.data`, `run.id`, and `steps.<id>.output`. Agent and integration payloads are untrusted data, not instructions.
 
@@ -128,7 +165,7 @@ Supply `body` as the exact JSON byte sequence and `base_url` as the configured l
 
 ## API and verification
 
-IPC: `automations.list/save/delete/run/cancel/runs/run.detail/approvals.list/approve`, plus `automations.stepTypes`, `automations.config`, `automations.config.set`, `automations.webhook.generateSecret`, `automations.schedule.preview`, and `automations.templates`. Run/journal changes publish `automations.run` over IPC; the current frontend refreshes visible resources every five seconds.
+IPC: `automations.list/save/delete/run/cancel/runs/run.detail/approvals.list/approve`, plus `automations.stepTypes`, `automations.events`, `automations.config`, `automations.config.set`, `automations.webhook.generateSecret`, `automations.schedule.preview`, and `automations.templates`. Run/journal changes publish `automations.run` over IPC; the current frontend refreshes visible resources every five seconds.
 
 Run `go test -race ./internal/automations/... ./internal/events/...` and `go vet ./internal/automations/... ./internal/events/...`. Tests inject clock, tool, notification, resolver and dialer implementations. Authorization regressions use the real shared policy with a child-process filesystem effect and a real HTTP server; missing/denied policy produces no effect, while approval permits dispatch. Crash tests close the first runner's database mid-operation and reopen it, exercising unfinished journal recovery without repeating finished actions.
 

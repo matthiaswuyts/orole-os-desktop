@@ -79,6 +79,7 @@ func (d *Daemon) registerGitHub() {
 	g.registerIssueAgents()
 	if d.Automations != nil {
 		d.Automations.SetGitHubQuery(g)
+		d.Automations.SetWatchSource("github", ghWatch{g: g})
 	}
 }
 
@@ -145,7 +146,7 @@ func (g *ghService) invalidate(ctx context.Context, reason string) {
 	g.mu.Unlock()
 	g.d.IPC.Publish("github.changed", map[string]string{"reason": reason})
 	if g.d.Events != nil {
-		g.d.Events.Publish(events.Event{Topic: "github.changed", Data: map[string]any{"reason": reason}, Chain: events.ChainFrom(ctx)})
+		g.d.Events.Publish(events.Event{Topic: events.TopicGitHubChanged, Data: map[string]any{"reason": reason}, Chain: events.ChainFrom(ctx)})
 	}
 }
 

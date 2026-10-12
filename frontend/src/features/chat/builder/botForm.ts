@@ -32,12 +32,14 @@ export interface FormState {
   maxToolCalls: string;
   /** An executive assistant may ask every other bot. */
   executive: boolean;
+  /** May start, watch and steer code tasks (coding agents on this PC). */
+  codeTasks: boolean;
 }
 
 /** A new bot starts with every built-in tool on; each can be switched off in its settings. */
 export const initialForm = (): FormState => ({
   name: "", avatar: "", color: "", description: "", instructions: "", model: "", reasoning: "",
-  tools: Object.values(TOOL_IDS), mcpServers: [], skills: [], memory: [], maxSteps: "", maxToolCalls: "", executive: false,
+  tools: Object.values(TOOL_IDS), mcpServers: [], skills: [], memory: [], maxSteps: "", maxToolCalls: "", executive: false, codeTasks: false,
 });
 
 export type Action =
@@ -81,6 +83,7 @@ export function formFromInput(bot: Pick<BotInput, "name" | "avatar" | "color" | 
     memory: (config.memory ?? []).map((a) => ({ ...a })),
     maxSteps: limit(config.limits?.maxSteps), maxToolCalls: limit(config.limits?.maxToolCalls),
     executive: config.executive ?? false,
+    codeTasks: config.codeTasks ?? false,
   };
 }
 
@@ -107,6 +110,7 @@ export function toInput(form: FormState, id: string): BotInput {
       memory: form.memory,
       limits: { maxSteps: integer(form.maxSteps), maxToolCalls: integer(form.maxToolCalls) },
       ...(form.executive ? { executive: true } : {}),
+      ...(form.codeTasks ? { codeTasks: true } : {}),
     },
   };
 }

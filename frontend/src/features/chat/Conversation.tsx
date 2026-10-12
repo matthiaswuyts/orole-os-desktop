@@ -39,6 +39,7 @@ const Turn = memo(function Turn({ bot, bots, targets, running }: { bot: Bot; bot
     <ChatMessageView message={raw} botName={bot.name} botAvatar={bot.avatar}
       bots={bots} handoffSettled={!isLast} mentionTargets={targets}
       onOpenBot={(botId) => useChat.getState().open(botId)}
+      onOpenTask={(taskId) => useChat.getState().openTaskPane(taskId)}
       onRetry={canRegenerate ? () => void useChatMessages.getState().regenerate(bot.id, raw.id) : undefined}
       onAnswer={canRegenerate && raw.status === "complete" ? (text) => void useChatMessages.getState().send(bot.id, { text }) : undefined}
       actions={assistant && settled && <MessageActions regenerate={canRegenerate}><CopyButton text={messageText(raw)} label="Copy response" /></MessageActions>} />

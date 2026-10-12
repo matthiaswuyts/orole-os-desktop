@@ -3,6 +3,9 @@ import { Desktop } from "@/mygo";
 import { inDesktop } from "@/lib/backend";
 
 export type ViewId = "home" | "agents" | "review" | "issues" | "automations" | "new-task" | "settings" | "chat";
+/** Views that belong to the Bots mode (the `chat` mode id predates the "Bots" label). */
+export type BotsView = "chat" | "automations";
+const isBotsView = (view: ViewId): view is BotsView => view === "chat" || view === "automations";
 /** The sidebar's two worlds. Settings is reachable from both and belongs to neither. */
 export type Mode = "code" | "chat";
 
@@ -29,8 +32,14 @@ function saveMode(mode: Mode) {
 interface UIState {
   view: ViewId;
   mode: Mode;
-  /** Last Code-mode view, restored when switching back from Chat. Chat mode always shows `chat`. */
-  lastCodeView: Exclude<ViewId, "chat" | "settings">;
+  /** Last Code-mode view, restored when switching back from Bots. */
+  lastCodeView: Exclude<ViewId, BotsView | "settings">;
+  /** Last Bots-mode view (the conversation or Automations), restored when switching back from Code. */
+  lastBotsView: BotsView;
+  /** Saved automation the Automations view should open, set by the palette; the view clears it once handled. */
+  automationFocus: string | null;
+  /** Opens the Automations view focused on one flow (`"new"` starts a new one); `null` clears the handoff. */
+  focusAutomation: (id: string | null) => void;
   setMode: (m: Mode) => void;
   settingsSection: string;
   /** Tab (or in-page anchor) inside the settings section; "" = the section's first. */
@@ -51,9 +60,15 @@ export const useUI = create<UIState>((set, get) => {
     view: mode === "chat" ? "chat" : "home",
     mode,
     lastCodeView: "home",
+    lastBotsView: "chat",
+    automationFocus: null,
+    focusAutomation: (automationFocus) => {
+      set({ automationFocus });
+      if (automationFocus !== null) get().setView("automations");
+    },
     setMode: (next) => {
       saveMode(next);
-      set(next === "chat" ? { mode: next, view: "chat" } : { mode: next, view: get().lastCodeView });
+      set({ mode: next, view: next === "chat" ? get().lastBotsView : get().lastCodeView });
     },
     settingsSection: "customization",
     settingsTab: "",
@@ -72,9 +87,14 @@ export const useUI = create<UIState>((set, get) => {
     windowFocused: true,
     setView: (view) => {
       // Settings keeps whichever mode is active; every other view picks its own.
-      const mode = view === "settings" ? get().mode : view === "chat" ? "chat" : "code";
+      const bots = isBotsView(view);
+      const mode = view === "settings" ? get().mode : bots ? "chat" : "code";
       saveMode(mode);
-      set((s) => ({ view, mode, lastCodeView: mode === "code" && view !== "settings" ? view as UIState["lastCodeView"] : s.lastCodeView }));
+      set((s) => ({
+        view, mode,
+        lastBotsView: bots ? view : s.lastBotsView,
+        lastCodeView: !bots && view !== "settings" ? view : s.lastCodeView,
+      }));
     },
     setPalette: (paletteOpen) => set({ paletteOpen }),
     setFocused: (windowFocused) => set({ windowFocused }),

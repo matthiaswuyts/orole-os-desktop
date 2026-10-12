@@ -240,6 +240,11 @@ export interface BotConfig {
   skills: string[];
   /** an executive assistant may ask every other bot (ask_bot) */
   executive?: boolean;
+  /**
+   * CodeTasks lets the bot start, watch and steer code tasks: coding agents that run commands and edit files on
+   * this PC. Every start and message still goes through the shared permission policy as "bot:<id>".
+   */
+  codeTasks?: boolean;
   /** grants beyond the private scope */
   memory: ScopeAccess[];
   limits: BotLimits;
@@ -2480,6 +2485,11 @@ export interface Session {
   group: string;
   /** Chain records automation provenance for lifecycle events, never tool authority. */
   chain?: string[];
+  /**
+   * Owner is the principal that started the session through WithActor ("bot:<id>"); "" for the user.
+   * It decides who may steer the task and who hears about its progress, never tool authority.
+   */
+  owner?: string;
   /** see Review* constants */
   review: string;
   reviewNote: string;
@@ -2697,11 +2707,17 @@ export interface Step {
    * (the user explicitly asserts that repeating the action is safe).
    */
   strategy: string;
+  /** Then and Else are the lanes of a "condition" step; empty for every other type. */
+  then?: Step[];
+  else?: Step[];
 }
 
 export interface StepType {
   type: string;
   label: string;
+  /** Bots | Tasks | Notify | Integrations | Logic | Run */
+  group: string;
+  description: string;
   available: boolean;
   reason: string;
   sideEffect: boolean;
@@ -2713,6 +2729,12 @@ export interface Summary {
   definition: Definition;
   lastStatus: string;
   lastRunAt: number;
+  /** next scheduled fire time; 0 when not scheduled */
+  nextRunAt: number;
+  /** Issues are the definition's validation problems; a flow with issues cannot run. */
+  issues: AutomationsIssue[];
+  /** Watch is the last poll of a watch trigger; nil before its first poll. */
+  watch?: WatchStatus;
 }
 
 /** SyncState is one harness's view of the registry. */
@@ -2801,6 +2823,22 @@ export interface ToolsRequest {
   model: string;
 }
 
+/** Topic describes a published topic for the flow builder. */
+export interface Topic {
+  topic: string;
+  label: string;
+  group: string;
+  fields: TopicField[];
+}
+
+/** TopicField is one key of a topic's Data, available to filters as event.data.<name>. */
+export interface TopicField {
+  name: string;
+  /** string | number | boolean */
+  type: string;
+  label: string;
+}
+
 /**
  * TranscribeRequest is one recording. DataBase64 is the raw container (webm, ogg, mp4, ...) the
  * browser's MediaRecorder produced.
@@ -2823,6 +2861,8 @@ export interface Trigger {
   catchUp: string;
   event: string;
   filter: string;
+  /** Watch configures a "watch" trigger. */
+  watch?: Watch;
 }
 
 /** TryParams configures TryN. */
@@ -2891,6 +2931,43 @@ export interface User {
   html_url: string;
   type: string;
   name?: string;
+}
+
+/**
+ * Watch is a "watch" trigger: the daemon polls an integration (there is no network
+ * listener) and runs the flow once for every item it has not seen before. The first
+ * poll after the watch is created or changed only records a baseline.
+ */
+export interface Watch {
+  /** github | mcp */
+  source: string;
+  /**
+   * Kind is, for github: push | pr_opened | pr_merged | workflow_failed | issue_opened;
+   * for mcp: deployment.
+   */
+  kind: string;
+  /** github: owner/name */
+  repo?: string;
+  /** github push and workflow_failed: branch ("" = default branch / any) */
+  branch?: string;
+  /**
+   * Server and Tool name a connected MCP integration tool that lists deployments (Vercel
+   * list_deployments, Railway list-deployments...); Args are its arguments.
+   */
+  server?: string;
+  tool?: string;
+  args?: Record<string, unknown>;
+  /** States limits mcp deployment items to these states (case-insensitive); empty = any change. */
+  states?: string[];
+  /** 0 = default (60 s GitHub, 120 s MCP); minimum 30 */
+  intervalSec?: number;
+}
+
+/** WatchStatus is a watch trigger's last poll, for the builder. */
+export interface WatchStatus {
+  polledAt: number;
+  error: string;
+  seen: number;
 }
 
 /** WorkflowRun is a GitHub Actions run. */
@@ -3630,6 +3707,10 @@ export const Automations = {
   },
   detail(id: string): Promise<Detail> {
     return call("Automations.Detail", id);
+  },
+  /** Events lists the application event topics flows can start on. */
+  events(): Promise<Topic[]> {
+    return call("Automations.Events");
   },
   generateSecret(): Promise<void> {
     return call("Automations.GenerateSecret");

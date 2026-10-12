@@ -8,7 +8,6 @@ import { useChat } from "@/stores/chat";
 import { useHasProvider } from "@/stores/llm";
 import { useUI } from "@/stores/ui";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "@/components/ui/menu";
 import { Skeleton } from "@/components/ui/skeleton";
 import { toastManager } from "@/components/ui/toast";
@@ -28,25 +27,26 @@ function useMinuteTick() {
   }, []);
 }
 
-/** Chat mode's sidebar: one contact row per bot, with its last message and a live "responding" dot. */
+/** Bots mode's bot list: a "Bots" header with a new-bot button, then one contact row per bot with a status dot. */
 export function BotRail() {
   const { bots, selectedBotId, available, ready, error, load, startSync } = useChat();
+  // On the Automations view no conversation is on screen, so no bot row is current.
+  const chatView = useUI((s) => s.view === "chat");
   const hasProvider = useHasProvider();
-  const [filter, setFilter] = useState("");
   const [focusId, setFocusId] = useState<string | null>(null);
   const list = useRef<HTMLUListElement>(null);
   useMinuteTick();
   useEffect(() => startSync(), [startSync]);
 
-  const query = filter.trim().toLocaleLowerCase();
   const visible = useMemo(
     // Pinned bots first; the sort is stable, so each group keeps the list's own order.
-    () => (query ? bots.filter((b) => b.name.toLocaleLowerCase().includes(query)) : [...bots]).sort((a, b) => Number(!!b.config.pinned) - Number(!!a.config.pinned)),
-    [bots, query],
+    () => [...bots].sort((a, b) => Number(!!b.config.pinned) - Number(!!a.config.pinned)),
+    [bots],
   );
   const tabStop = visible.find((b) => b.id === focusId)?.id ?? visible.find((b) => b.id === selectedBotId)?.id ?? visible[0]?.id;
   const noProvider = hasProvider === false;
-  const newBot = () => useChat.getState().openBuilder("new");
+  // The builder lives in the chat view; from Automations it has to switch there first.
+  const newBot = () => { useChat.getState().openBuilder("new"); useUI.getState().setView("chat"); };
 
   const move = (event: KeyboardEvent<HTMLUListElement>) => {
     const rows = Array.from(list.current?.querySelectorAll<HTMLElement>("[data-bot-row]") ?? []);
@@ -84,25 +84,21 @@ export function BotRail() {
       </div>
     );
   } else if (bots.length > 0) {
-    body = visible.length === 0 ? <p className={note}>No bots match “{filter.trim()}”.</p> : (
+    body = (
       <ul ref={list} aria-label="Bots" onKeyDown={move} className="flex flex-col gap-px">
-        {visible.map((bot) => <BotRow key={bot.id} bot={bot} selected={bot.id === selectedBotId} tabStop={bot.id === tabStop} onFocus={() => setFocusId(bot.id)} />)}
+        {visible.map((bot) => <BotRow key={bot.id} bot={bot} selected={chatView && bot.id === selectedBotId} tabStop={bot.id === tabStop} onFocus={() => setFocusId(bot.id)} />)}
       </ul>
     );
   }
 
   return (
-    <section aria-label="Bots" className="flex min-h-0 flex-1 flex-col gap-1.5 overflow-auto">
-      {available && (
-        <div className="flex items-center gap-1">
-          {ready && bots.length > 0
-            ? <Input nativeInput size="sm" type="search" aria-label="Search bots" placeholder="Search bots" value={filter} onChange={(e) => setFilter(e.target.value)} className="min-w-0 flex-1" />
-            : <span className="flex-1" />}
-          {!(ready && bots.length === 0) && <Button size="icon-sm" variant="outline" onClick={newBot} disabled={noProvider} aria-label="New bot" title={noProvider ? "Connect a provider before creating a bot" : "New bot"}>
-            <Plus />
-          </Button>}
-        </div>
-      )}
+    <section aria-label="Bots" className="flex min-h-0 flex-1 flex-col gap-1 overflow-auto">
+      <div className="flex h-6 shrink-0 items-center gap-1 pr-0.5 pl-2">
+        <h2 className="flex-1 font-medium text-muted-foreground text-xs">Bots</h2>
+        {available && !(ready && bots.length === 0 && !noProvider) && <Button size="icon-xs" variant="ghost" onClick={newBot} disabled={noProvider} aria-label="New bot" title={noProvider ? "Connect a provider before creating a bot" : "New bot"}>
+          <Plus />
+        </Button>}
+      </div>
       {available && noProvider && (
         <div role="note" className="mx-1 flex flex-col items-start gap-2 rounded-md border bg-background/40 p-2">
           <p className="text-muted-foreground text-xs">Bots call a model provider directly. Connect OpenRouter or OpenAI to start chatting.</p>
@@ -140,9 +136,10 @@ function BotRow({ bot, selected, tabStop, onFocus }: { bot: Bot; selected: boole
       >
         <span className="relative shrink-0">
           <BotAvatar name={bot.name} avatar={bot.avatar} className="size-6" />
-          {running
-            ? <span aria-hidden="true" data-status="responding" className="absolute -right-0.5 -bottom-0.5 size-2.5 animate-pulse rounded-full bg-info ring-2 ring-sidebar motion-reduce:animate-none" />
-            : awaiting && <span aria-hidden="true" data-status="waiting" className="absolute -right-0.5 -bottom-0.5 size-2.5 rounded-full bg-warning ring-2 ring-sidebar" />}
+          <span aria-hidden="true" data-status={running ? "responding" : awaiting ? "waiting" : "idle"} className={cn(
+            "absolute -top-0.5 -right-0.5 size-2 rounded-full ring-2 ring-sidebar",
+            running ? "animate-pulse bg-primary motion-reduce:animate-none" : awaiting ? "bg-warning" : "bg-muted-foreground/40",
+          )} />
         </span>
         <span className="flex min-w-0 flex-1 flex-col">
           <span className="flex items-center gap-1.5">

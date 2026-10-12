@@ -1,4 +1,4 @@
-import { Agents, Projects, Search } from "@/mygo";
+import { Agents, Automations, Projects, Search } from "@/mygo";
 import { inDesktop } from "@/lib/backend";
 import { fuzzyScore, registerProvider, type Command, type SearchProvider } from "@/lib/commands";
 import { useAgents } from "@/stores/agents";
@@ -37,6 +37,18 @@ export const domainProviders: SearchProvider[] = [
           useAgents.getState().upsert(current);
           openTask(current.id);
         },
+      })));
+    },
+  },
+  {
+    id: "automations", label: "Automations",
+    async search(query, signal) {
+      if (!inDesktop || signal.aborted) return [];
+      const summaries = await Automations.list();
+      if (signal.aborted) return [];
+      return matches(query, summaries.map(({ definition }) => ({
+        id: `automation.${definition.id}`, title: definition.name || definition.id, category: `Automation · ${definition.trigger.type}${definition.enabled ? "" : " · off"}`,
+        run: () => useUI.getState().focusAutomation(definition.id),
       })));
     },
   },

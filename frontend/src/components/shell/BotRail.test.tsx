@@ -86,7 +86,7 @@ describe("BotRail states", () => {
     loaded({ bots: [] });
     render(<BotRail />);
     expect(screen.queryByRole("button", { name: /Create your first bot/ })).toBeNull();
-    expect(screen.queryByRole("button", { name: /^New bot$/ })).toBeNull();
+    expect(screen.getByRole("button", { name: /^New bot$/ })).toBeDisabled();
     fireEvent.click(screen.getByRole("button", { name: /Connect a provider/ }));
     expect(bridge.openSettings).toHaveBeenCalledWith("ai"); // settings open in their own window
     expect(useUI.getState().settingsSection).toBe("ai");
@@ -150,14 +150,23 @@ describe("BotRail rows", () => {
     expect(screen.getByRole("button", { name: /^Travel/ })).not.toHaveAttribute("aria-current");
   });
 
-  it("filters bots by name", () => {
+  it("shows no current bot on the Automations view, and a click returns to that bot's chat", () => {
+    useUI.setState({ view: "automations", mode: "chat" });
+    loaded({ selectedBotId: "coder" });
     render(<BotRail />);
-    const filter = screen.getByRole("searchbox", { name: "Search bots" });
-    fireEvent.change(filter, { target: { value: "code" } });
-    expect(screen.getAllByRole("button", { name: /^(Travel|Coder|Quiet)/ })).toHaveLength(1);
-    expect(screen.getByRole("button", { name: /^Coder/ })).toBeInTheDocument();
-    fireEvent.change(filter, { target: { value: "zzz" } });
-    expect(screen.getByText(/No bots match/)).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Bots" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Coder/ })).not.toHaveAttribute("aria-current");
+    fireEvent.click(screen.getByRole("button", { name: /^Coder/ }));
+    expect(useUI.getState()).toMatchObject({ view: "chat", mode: "chat" });
+    expect(screen.getByRole("button", { name: /^Coder/ })).toHaveAttribute("aria-current", "true");
+  });
+
+  it("New bot from the Automations view opens the builder in the chat view", () => {
+    useUI.setState({ view: "automations", mode: "chat" });
+    render(<BotRail />);
+    fireEvent.click(screen.getByRole("button", { name: /^New bot$/ }));
+    expect(useChat.getState().builder).toEqual({ open: true, botId: null });
+    expect(useUI.getState().view).toBe("chat");
   });
 
   it("updates previews and the Responding dot from live events through the real sync", async () => {

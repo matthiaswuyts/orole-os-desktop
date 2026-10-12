@@ -113,17 +113,20 @@ type Session struct {
 	PRNumber int    `json:"prNumber"`
 	Group    string `json:"group"` // try-N-ways group
 	// Chain records automation provenance for lifecycle events, never tool authority.
-	Chain        []string `json:"chain,omitempty"`
-	Review       string   `json:"review"` // see Review* constants
-	ReviewNote   string   `json:"reviewNote"`
-	CheckState   string   `json:"checkState"`
-	CheckCommand string   `json:"checkCommand"`
-	CheckOutput  string   `json:"checkOutput"`
-	Files        int      `json:"files"`
-	Additions    int      `json:"additions"`
-	Deletions    int      `json:"deletions"`
-	Turns        int      `json:"turns"`   // completed turns
-	Prompts      int      `json:"prompts"` // prompts sent
+	Chain []string `json:"chain,omitempty"`
+	// Owner is the principal that started the session through WithActor ("bot:<id>"); "" for the user.
+	// It decides who may steer the task and who hears about its progress, never tool authority.
+	Owner        string `json:"owner,omitempty"`
+	Review       string `json:"review"` // see Review* constants
+	ReviewNote   string `json:"reviewNote"`
+	CheckState   string `json:"checkState"`
+	CheckCommand string `json:"checkCommand"`
+	CheckOutput  string `json:"checkOutput"`
+	Files        int    `json:"files"`
+	Additions    int    `json:"additions"`
+	Deletions    int    `json:"deletions"`
+	Turns        int    `json:"turns"`   // completed turns
+	Prompts      int    `json:"prompts"` // prompts sent
 	// Pending are the permission requests awaiting a decision (runtime state).
 	Pending   []PermissionRequest `json:"pending"`
 	Usage     *ContextUsage       `json:"usage,omitempty"`

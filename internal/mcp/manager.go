@@ -153,7 +153,7 @@ func (m *Manager) publish(event string, data any) {
 }
 
 func (m *Manager) publishToolEvent(ctx context.Context, id, tool string, success bool) {
-	m.events.Publish(events.Event{Topic: "mcp.tool.called", Chain: events.ChainFrom(ctx),
+	m.events.Publish(events.Event{Topic: events.TopicMCPToolCalled, Chain: events.ChainFrom(ctx),
 		Data: map[string]any{"serverId": id, "tool": tool, "success": success}})
 }
 

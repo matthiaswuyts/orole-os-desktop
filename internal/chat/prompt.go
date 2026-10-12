@@ -109,9 +109,9 @@ func historyText(m Message) string {
 		switch p.Type {
 		case PartText, PartQuestion:
 			sep("\n\n")
-			if m.Role == "user" && strings.HasPrefix(m.Author, ReportPrefix) {
-				// What another bot reported back came from its own tools and the web: data, not instructions.
-				b.WriteString(fenceReport(p.Text))
+			if fenced, ok := fenceAuthored(m.Role, m.Author, p.Text); ok {
+				// What another bot or a code task reported came from tools and the web: data, not instructions.
+				b.WriteString(fenced)
 			} else {
 				b.WriteString(p.Text)
 			}
@@ -217,4 +217,22 @@ func attachmentTokens(atts []attachmentInput) int64 {
 // web, so it is data, not instructions.
 func fenceReport(text string) string {
 	return "A bot you handed a task to reported back:\n" + Fence("bot report", text)
+}
+
+// fenceTaskReport is how the model sees a code task's progress: the agent's own words, data, not instructions.
+func fenceTaskReport(text string) string {
+	return "A code task you started changed state:\n" + Fence("code task report", text)
+}
+
+// fenceAuthored fences the text of a user-role message that another bot or a code task produced.
+func fenceAuthored(role, author, text string) (string, bool) {
+	switch {
+	case role != "user":
+		return text, false
+	case strings.HasPrefix(author, ReportPrefix):
+		return fenceReport(text), true
+	case strings.HasPrefix(author, TaskPrefix):
+		return fenceTaskReport(text), true
+	}
+	return text, false
 }

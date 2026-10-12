@@ -11,6 +11,8 @@ import { Conversation } from "./Conversation";
 import { BotPanel } from "./BotPanel";
 
 const NewBot = lazy(() => import("./builder/NewBot").then((m) => ({ default: m.NewBot })));
+// Split out like the builder: the task feed and composer load only when a task is opened beside the conversation.
+const TaskPane = lazy(() => import("./TaskPane").then((m) => ({ default: m.TaskPane })));
 
 function CenteredCard({ icon, title, children, action }: { icon?: React.ReactNode; title: string; children?: React.ReactNode; action?: React.ReactNode }) {
   return <div className="flex h-full items-center justify-center p-6">
@@ -45,6 +47,7 @@ export function ChatView() {
   const botCount = useChat((s) => s.bots.length);
   const bot = useSelectedBot();
   const settingsOpen = useChat((s) => s.settingsOpen);
+  const taskPaneId = useChat((s) => s.taskPaneId);
 
   useEffect(() => useChat.getState().startSync(), []);
 
@@ -70,8 +73,10 @@ export function ChatView() {
       ? <NoBots />
       : <CenteredCard title="Pick a bot"><p>Choose a bot from the list to open its conversation.</p></CenteredCard>;
   }
-  return <div className="flex h-full min-w-0">
+  // The container sizes the task pane: beside the conversation when there is room, over it when there is not.
+  return <div className="@container/chat relative flex h-full min-w-0 overflow-hidden">
     <div className="min-w-0 flex-1"><Conversation key={bot.id} bot={bot} /></div>
     {settingsOpen && <BotPanel bot={bot} />}
+    {taskPaneId && <Suspense fallback={null}><TaskPane key={taskPaneId} taskId={taskPaneId} /></Suspense>}
   </div>;
 }
