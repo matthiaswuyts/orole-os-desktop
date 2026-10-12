@@ -124,11 +124,13 @@ func (m *Manager) runTurn(ctx context.Context, botID string, t turn) {
 		defer cancel()
 		return m.store.updateMessage(pc, msg)
 	}
+	asst.Automations = slices.Clone(t.automations)
 	s := newSink(asst, persist, m.publishMessage, m.publishDelta)
 	m.emit("chat.run", RunState{BotID: botID, Running: true, MessageID: asst.ID})
 	s.checkpoint()
 
-	rc := RunContext{BotID: bot.ID, Bot: bot, MessageID: asst.ID, Actor: "bot:" + bot.ID, Depth: t.depth, Chain: t.chain, Emit: s.upsertTool}
+	rc := RunContext{BotID: bot.ID, Bot: bot, MessageID: asst.ID, Actor: "bot:" + bot.ID, Depth: t.depth, Chain: t.chain,
+		Automations: slices.Clone(t.automations), Author: user.Author, Emit: s.upsertTool}
 	status, errText := m.executeTurn(ctx, bot, convo, rc, user, t, s)
 	if status == StatusCanceled && m.ctx.Err() != nil {
 		status = StatusIncomplete // the daemon is shutting down, not the user stopping the run

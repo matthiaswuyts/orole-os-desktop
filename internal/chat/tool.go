@@ -22,6 +22,12 @@ type RunContext struct {
 	// first (empty for a user-initiated run). A tool calling Delegator.Ask sets it to the chain of
 	// the asking run plus the asking bot; the delegated run receives it unchanged.
 	Chain []string
+	// Automations is the automation chain behind this run (outermost first): set when an automation
+	// delivered the message, inherited by hand-offs and their reports; empty for user-started runs.
+	Automations []string
+	// Author of the message this run answers: "user", or "automation:<id>", "bot:<id>",
+	// "report:<id>", "task:<id>" for turns nobody typed.
+	Author string
 	// Emit publishes a UI part on the running assistant message (progress, citations).
 	// It is a no-op for background work. Tools must keep parts small.
 	Emit func(MsgPart)

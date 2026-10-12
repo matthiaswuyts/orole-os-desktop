@@ -82,6 +82,8 @@ notes. See `docs/development/updates.md`.
   widget gallery and Reset layout. Saved layouts are carried over in their existing order and closest size.
 
 ### Fixed
+- A bot's reply to a message from an automation now carries that automation's chain on the "Bot replied" event. A flow that
+  starts on a bot reply and messages the same bot can no longer loop; it stops at the chain limit like any other flow.
 - Home widget rows always reach the column's right edge: when the sizes in a row add up to less than the full width (a
   Medium next to a Small), the last widget in the row widens to fill it instead of leaving a gap.
 - The "Jump to latest" buttons on chat and task pages are opaque again in dark themes instead of see-through.

@@ -126,6 +126,18 @@ func TestBotRepliesPublishOnceForCompletedAssistantReplies(t *testing.T) {
 	}
 }
 
+func TestBotRepliesKeepTheAutomationChain(t *testing.T) {
+	bus := events.NewBus()
+	sub := bus.Subscribe(events.TopicBotMessage, 8)
+	defer sub.Close()
+	text := []chat.MsgPart{{Type: chat.PartText, Text: "ok"}}
+	newBotReplies(bus).observe("chat.message", chat.Message{ID: "m1", BotID: "b", Role: "assistant", Status: chat.StatusComplete, Parts: text, Automations: []string{"a1"}})
+	got := drain(sub)
+	if len(got) != 1 || !slices.Equal(got[0].Chain, []string{"a1"}) {
+		t.Fatalf("got %+v", got)
+	}
+}
+
 func TestEveryCatalogTopicIsUnique(t *testing.T) {
 	seen := map[string]bool{}
 	for _, topic := range events.Catalog() {

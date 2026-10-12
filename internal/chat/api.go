@@ -274,6 +274,11 @@ type Message struct {
 	Error     string        `json:"error,omitempty"`
 	Model     string        `json:"model,omitempty"`
 	CreatedAt int64         `json:"createdAt"`
+	// Automations is the automation chain of the turn this reply answers (automations.Run.Chain:
+	// the flows that led to it, outermost first); empty for turns the user started. It exists only
+	// in the process, on the published snapshots of a reply, so bot.message events stay chain-bounded.
+	// It is never stored or sent to the UI.
+	Automations []string `json:"-"`
 }
 
 // Text is the message's plain text: its text parts joined, without tool or structured parts.

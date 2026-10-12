@@ -49,7 +49,7 @@ The CI template is a scheduled check every 15 minutes, not a CI push watcher. Gi
 | `agent.failed` | A task or its process failed | agent runtime `agents.updated` |
 | `pr.opened` | Publishing opened a pull request for the task | agent runtime `agents.updated` |
 | `project.created` | A project was added or created | `projects.add` / `projects.create` |
-| `bot.message` | A bot completed a reply (builder drafts excluded) | chat runtime `chat.message` |
+| `bot.message` | A bot completed a reply (builder drafts excluded). A reply to a message an automation sent (`bot.tell`), and replies in hand-offs and reports that follow from it, carry that run's chain | chat runtime `chat.message` |
 | `automation.run.finished`, `github.changed`, `mcp.tool.called` | As named | engine, GitHub service, MCP manager |
 
 Task topics share one payload (`id`, `title`, `kind`, `status`, `projectId`, `project`, `branch`, `activity`, `lastMessage`, `error`, `prUrl`); free text is clipped to 2000 characters and is untrusted data. Status transitions are relative to the last state this daemon run observed: a session from a previous run reports `agent.waiting`/`agent.failed` but no `task.status` until its next change.

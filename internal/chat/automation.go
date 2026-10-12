@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"unicode/utf8"
 )
@@ -28,9 +29,10 @@ type Delivery struct {
 // Deliver stores text in botID's conversation as a message authored by the automation and
 // queues a turn for it, behind anything the bot is already doing, exactly like a message
 // from the user: the bot answers with its own instructions, memory and tools, and the
-// exchange is visible in its chat. With wait, Deliver blocks until that turn ends (or ctx
-// ends; the turn still completes) and returns the reply.
-func (m *Manager) Deliver(ctx context.Context, botID, automationID, automationName, text string, wait bool) (Delivery, error) {
+// exchange is visible in its chat. chain is the delivering run's automation chain (ending
+// with automationID); the reply carries it so flows it triggers stay bounded. With wait,
+// Deliver blocks until that turn ends (or ctx ends; the turn still completes) and returns the reply.
+func (m *Manager) Deliver(ctx context.Context, botID, automationID, automationName, text string, chain []string, wait bool) (Delivery, error) {
 	text = strings.TrimRight(text, " \t\r\n")
 	if strings.TrimSpace(text) == "" || len(text) > MaxMessageTextLen || !utf8.ValidString(text) {
 		return Delivery{}, invalidf("The message for the bot is empty or longer than %d KiB.", MaxMessageTextLen>>10)
@@ -43,7 +45,7 @@ func (m *Manager) Deliver(ctx context.Context, botID, automationID, automationNa
 		return Delivery{}, fmt.Errorf("the bot for this step no longer exists: %w", err)
 	}
 	result := make(chan handoffResult, 1)
-	t := turn{extra: fmt.Sprintf(automationExtra, oneLine(automationName, 120))}
+	t := turn{extra: fmt.Sprintf(automationExtra, oneLine(automationName, 120)), automations: slices.Clone(chain)}
 	if wait {
 		t.result = result
 	}

@@ -13,7 +13,7 @@ import (
 func TestDeliverWaitsForTheBotsReplyInItsOwnConversation(t *testing.T) {
 	e := newEnv(t, func(int, llm.Request) []llm.Delta { return []llm.Delta{llmtest.Text("Reviewed: two files changed")} })
 	b := e.bot("Reviewer")
-	d, err := e.m.Deliver(context.Background(), b.ID, "auto-1", "Review finished tasks", "Task \"Fix login\" finished.", true)
+	d, err := e.m.Deliver(context.Background(), b.ID, "auto-1", "Review finished tasks", "Task \"Fix login\" finished.", []string{"auto-1"}, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -34,7 +34,7 @@ func TestDeliverWithoutWaitReturnsOnceQueued(t *testing.T) {
 	release := make(chan struct{})
 	e := newEnv(t, func(int, llm.Request) []llm.Delta { <-release; return []llm.Delta{llmtest.Text("ok")} })
 	b := e.bot("Busy")
-	d, err := e.m.Deliver(context.Background(), b.ID, "auto-1", "Flow", "hello", false)
+	d, err := e.m.Deliver(context.Background(), b.ID, "auto-1", "Flow", "hello", []string{"auto-1"}, false)
 	close(release)
 	if err != nil || d.Status != "queued" || d.Reply != "" {
 		t.Fatalf("delivery = %+v %v", d, err)
@@ -45,14 +45,42 @@ func TestDeliverWithoutWaitReturnsOnceQueued(t *testing.T) {
 func TestDeliverRefusesUnknownBotsAndEmptyMessages(t *testing.T) {
 	e := newEnv(t, func(int, llm.Request) []llm.Delta { return []llm.Delta{llmtest.Text("x")} })
 	b := e.bot("Real")
-	if _, err := e.m.Deliver(context.Background(), "missing", "auto-1", "Flow", "hi", false); err == nil {
+	if _, err := e.m.Deliver(context.Background(), "missing", "auto-1", "Flow", "hi", []string{"auto-1"}, false); err == nil {
 		t.Fatal("delivered to a bot that does not exist")
 	}
-	if _, err := e.m.Deliver(context.Background(), b.ID, "auto-1", "Flow", "  \n", false); !errors.Is(err, ErrInvalid) {
+	if _, err := e.m.Deliver(context.Background(), b.ID, "auto-1", "Flow", "  \n", []string{"auto-1"}, false); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("empty message: %v", err)
 	}
 	if len(e.history(b.ID)) != 0 {
 		t.Fatal("a refused delivery stored a message")
+	}
+}
+
+// A reply to a delivered message carries the delivering run's chain, so a flow triggered by
+// bot.message is bounded by the chain rules; the user's own turns carry none.
+func TestDeliveredRepliesCarryTheAutomationChain(t *testing.T) {
+	e := newEnv(t, func(int, llm.Request) []llm.Delta { return []llm.Delta{llmtest.Text("done")} })
+	b := e.bot("Watcher")
+	if _, err := e.m.Deliver(context.Background(), b.ID, "auto-2", "Flow", "check", []string{"auto-1", "auto-2"}, true); err != nil {
+		t.Fatal(err)
+	}
+	e.idle(b.ID)
+	e.send(b.ID, "hello")
+	e.idle(b.ID)
+	var final []Message
+	for _, m := range e.rec.messages(b.ID) {
+		if m.Role == "assistant" && m.Status == StatusComplete {
+			final = append(final, m)
+		}
+	}
+	if len(final) < 2 {
+		t.Fatalf("completed replies: %+v", final)
+	}
+	if got := final[0].Automations; len(got) != 2 || got[0] != "auto-1" || got[1] != "auto-2" {
+		t.Fatalf("delivered reply chain = %v", got)
+	}
+	if got := final[len(final)-1].Automations; len(got) != 0 {
+		t.Fatalf("user reply chain = %v", got)
 	}
 }
 

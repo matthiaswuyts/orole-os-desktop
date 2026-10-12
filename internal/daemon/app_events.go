@@ -172,7 +172,8 @@ func (b *botReplies) observe(event string, payload any) {
 	b.next = (b.next + 1) % len(b.ring)
 	b.done[m.ID] = struct{}{}
 	b.mu.Unlock()
-	b.bus.Publish(events.Event{Topic: events.TopicBotMessage, Data: map[string]any{
+	// The chain bounds flows triggered by this reply exactly like the flow that caused it.
+	b.bus.Publish(events.Event{Topic: events.TopicBotMessage, Chain: m.Automations, Data: map[string]any{
 		"botId": m.BotID, "messageId": m.ID, "text": clip(m.Text()),
 	}})
 }
