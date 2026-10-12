@@ -378,11 +378,18 @@ type ompMessage struct {
 	Content      json.RawMessage `json:"content"`
 	StopReason   string          `json:"stopReason"`
 	ErrorMessage string          `json:"errorMessage"`
+	Provider     string          `json:"provider"`
+	Model        string          `json:"model"`
 	Usage        *struct {
-		Input   *int64 `json:"input"`
-		Output  *int64 `json:"output"`
-		Cached  *int64 `json:"cacheRead"`
-		Context *int64 `json:"contextTokens"`
+		Input      *int64 `json:"input"` // uncached
+		Output     *int64 `json:"output"`
+		Cached     *int64 `json:"cacheRead"`
+		CacheWrite *int64 `json:"cacheWrite"`
+		Reasoning  *int64 `json:"reasoningTokens"` // subset of output
+		Context    *int64 `json:"contextTokens"`
+		Cost       *struct {
+			Total *float64 `json:"total"`
+		} `json:"cost"`
 	} `json:"usage"`
 	StopDetails *struct {
 		Type        string `json:"type"`
@@ -767,6 +774,13 @@ func (s *ompState) messageEnd(line []byte) []Event {
 	if u := m.Message.Usage; u != nil {
 		out = append(out, usageEvent(ContextUsage{Source: "omp:message_end:usage", InputTokens: u.Input,
 			OutputTokens: u.Output, CachedTokens: u.Cached, ContextTokens: u.Context})...)
+		billed := TokenUsage{Source: "omp:message_end:usage", Provider: m.Message.Provider, Model: m.Message.Model,
+			Input: valueOr0(u.Input), Output: valueOr0(u.Output), CacheRead: valueOr0(u.Cached),
+			CacheWrite: valueOr0(u.CacheWrite), Reasoning: valueOr0(u.Reasoning)}
+		if u.Cost != nil {
+			billed.CostUSD = u.Cost.Total
+		}
+		out = append(out, tokensEvent(billed)...)
 	}
 	if detail := m.Message.StopDetails; detail != nil && (detail.Type == "refusal" || detail.Type == "sensitive") {
 		out = append(out, Event{Kind: EvGuardrail, Data: jraw(GuardrailData{ID: m.MessageID, Kind: detail.Type,

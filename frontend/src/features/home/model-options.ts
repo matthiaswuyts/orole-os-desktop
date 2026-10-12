@@ -1,21 +1,38 @@
 import type { HarnessOption, ModelOption } from "@/mygo";
 
-/** Display-only formatting: selectors sent to the daemon are never rewritten. */
-export function modelLabel(model: Pick<ModelOption, "id" | "name"> | undefined): string {
-  if (!model) return "Provider default";
+function claudeModel(model: Pick<ModelOption, "id" | "name">) {
   const name = model.name.trim();
   const resolved = name.match(/\((claude-[^)]+)\)/i)?.[1];
-  const candidate = resolved || name || model.id;
-  const claude = candidate.match(/(?:claude[- /])?(opus|sonnet|haiku|fable)[- ](\d+)(?:[.-](\d+))?/i);
-  if (claude) {
-    const family = claude[1]!.charAt(0).toUpperCase() + claude[1]!.slice(1).toLowerCase();
-    const minor = claude[3] && claude[3].length < 4 ? `.${claude[3]}` : "";
-    const context = /\[1m\]|\(1m context\)/i.test(`${model.id} ${name}`) ? " (1M)" : "";
-    return `${family} ${claude[2]}${minor}${context}`;
-  }
-  const clean = candidate.replace(/\s*\((?:default|recommended)\)\s*/gi, " ").replace(/^claude\s+/i, "").trim();
+  const match = (resolved || name || model.id).match(/(?:claude[- /])?(opus|sonnet|haiku|fable)[- ](\d+)(?:[.-](\d+))?/i);
+  if (!match) return null;
+  const family = match[1]!.charAt(0).toUpperCase() + match[1]!.slice(1).toLowerCase();
+  // A long trailing number is a release date (claude-haiku-4-5-20251001), not a minor version.
+  const minor = match[3] && match[3].length < 4 ? match[3] : "0";
+  const long = /\[1m\]|\(1m context\)/i.test(`${model.id} ${name}`);
+  // Claude Code marks only its 1M variants; other windows are not reported, so none is claimed.
+  return { name: `Claude ${family} ${match[2]}.${minor}`, context: long ? "1M" : "" };
+}
+
+/** Display-only formatting: selectors sent to the daemon are never rewritten. Claude models read "Claude Opus 5.0". */
+export function modelLabel(model: Pick<ModelOption, "id" | "name"> | undefined): string {
+  if (!model) return "Provider default";
+  const claude = claudeModel(model);
+  if (claude) return claude.name;
+  const name = model.name.trim();
+  const clean = (name || model.id).replace(/\s*\((?:default|recommended)\)\s*/gi, " ").replace(/^claude\s+/i, "").trim();
   if (!clean || /^default$/i.test(clean)) return "Provider default";
   return clean.replace(/^(?:openai\/)?gpt-/i, "GPT-");
+}
+
+/** The context window, like "1M", where the harness's catalog identifies it; empty when it does not. */
+export function modelContext(model: Pick<ModelOption, "id" | "name"> | undefined): string {
+  return model ? claudeModel(model)?.context ?? "" : "";
+}
+
+/** Name and context window together, for places with room for one label. */
+export function modelTitle(model: Pick<ModelOption, "id" | "name"> | undefined): string {
+  const context = modelContext(model);
+  return context ? `${modelLabel(model)} · ${context} context` : modelLabel(model);
 }
 
 export function providerLabel(provider: Pick<HarnessOption, "id" | "name">): string {

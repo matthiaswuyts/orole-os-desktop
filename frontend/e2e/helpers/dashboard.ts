@@ -1,13 +1,13 @@
 import { expect, type Page } from "@playwright/test";
 
-export interface SavedWidget { id: string; type: string; x: number; y: number; w: number; h: number; config?: Record<string, unknown> }
+export interface SavedWidget { id: string; type: string; size: "s" | "m" | "l" | "full"; tall?: boolean; config?: Record<string, unknown> }
 
 /** Widgets the browser preview persisted under the `dashboard` setting. */
 export function readDashboard(page: Page): Promise<SavedWidget[]> {
   return page.evaluate(() => (JSON.parse(localStorage.getItem("orole.preview.settings") ?? "{}").dashboard?.widgets ?? []) as SavedWidget[]);
 }
 
-/** Start from an empty Home dashboard so the Notes widget under test is the only one. */
+/** Start from an empty Home dashboard so the widgets under test are the only ones. */
 export async function emptyDashboard(page: Page) {
   await page.evaluate(() => {
     const settings = JSON.parse(localStorage.getItem("orole.preview.settings") ?? "{}");
@@ -16,32 +16,40 @@ export async function emptyDashboard(page: Page) {
   await page.reload();
 }
 
-export async function addNotes(page: Page) {
+async function addWidget(page: Page, gallery: RegExp, region: string) {
   await page.getByRole("button", { name: "Customize", exact: true }).press("Enter");
-  await page.getByRole("button", { name: /^Notes Free-form notes/ }).press("Enter");
+  await page.getByRole("button", { name: gallery }).press("Enter");
   await page.keyboard.press("Escape");
-  await expect(page.getByRole("region", { name: "Notes", exact: true })).toBeVisible();
+  await expect(page.getByRole("region", { name: region, exact: true })).toBeVisible();
 }
 
-/** Exercise the real grid's pointer handlers, not store setters or synthetic layout callbacks. */
+export const addNotes = (page: Page) => addWidget(page, /^Notes Free-form notes/, "Notes");
+export const addClock = (page: Page) => addWidget(page, /^Clock & calendar Current time/, "Clock & calendar");
+
+/**
+ * Exercise the real dnd-kit pointer sensor and the widget size menu, not store setters: drag the
+ * Notes heading past the Clock widget added after it, then make Notes large.
+ */
 export async function moveAndResizeNotes(page: Page) {
   const card = page.getByRole("region", { name: "Notes", exact: true });
   await card.scrollIntoViewIfNeeded();
-  const header = card.locator(".widget-handle");
-  const box = await header.boundingBox();
-  if (!box) throw new Error("Notes drag handle has no rendered bounds");
+  const box = await card.locator(".widget-handle").boundingBox();
+  const target = await page.getByRole("region", { name: "Clock & calendar", exact: true }).boundingBox();
+  if (!box || !target) throw new Error("Notes or Clock has no rendered bounds");
   await page.mouse.move(box.x + 70, box.y + box.height / 2);
   await page.mouse.down();
-  await page.mouse.move(box.x + 250, box.y + box.height / 2, { steps: 16 });
+  await page.mouse.move(target.x + target.width / 2, target.y + target.height / 2, { steps: 16 });
   await page.mouse.up();
-  const handle = card.locator("..").locator(".react-resizable-handle");
-  await handle.scrollIntoViewIfNeeded();
-  const resize = await handle.boundingBox();
-  if (!resize) throw new Error("Notes resize handle has no rendered bounds");
-  await page.mouse.move(resize.x + resize.width / 2, resize.y + resize.height / 2);
-  await page.mouse.down();
-  await page.mouse.move(resize.x + resize.width / 2 + 90, resize.y + resize.height / 2 + 46, { steps: 12 });
-  await page.mouse.up();
+  // dnd-kit swallows clicks for 50ms after a pointer drop (AbstractPointerSensor detach), so the
+  // menu's keyboard-synthesized click may be eaten if pressed immediately; retry until it opens.
+  const menu = page.getByRole("button", { name: "Notes options", exact: true });
+  const large = page.getByRole("menuitemradio", { name: "Large", exact: true });
+  await expect(async () => {
+    if (!(await large.isVisible())) await menu.press("Enter");
+    await expect(large).toBeVisible({ timeout: 500 });
+  }).toPass();
+  await large.press("Enter");
+  await page.keyboard.press("Escape");
 }
 
 export async function removeNotes(page: Page) {

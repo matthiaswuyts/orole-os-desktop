@@ -25,8 +25,15 @@ func main() {
 		}
 	}
 	cwd, _ := os.Getwd()
-	if cwd != os.Getenv("CLAUDE_CONFIG_DIR") || os.Getenv("DISABLE_AUTOUPDATER") != "1" || os.Getenv("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC") != "1" {
-		panic("discovery is not isolated")
+	if os.Getenv("DISABLE_AUTOUPDATER") != "1" || os.Getenv("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC") != "1" {
+		panic("discovery may update or phone home")
+	}
+	// The catalog is the signed-in account's, so discovery must read the user's own configuration.
+	if os.Getenv("CLAUDE_CONFIG_DIR") != os.Getenv("FAKE_CLAUDE_ACCOUNT_CONFIG") {
+		panic("discovery does not read the signed-in account")
+	}
+	if cwd == os.Getenv("CLAUDE_CONFIG_DIR") {
+		panic("discovery runs inside the user's configuration")
 	}
 	input, _ := io.ReadAll(os.Stdin)
 	var request struct {

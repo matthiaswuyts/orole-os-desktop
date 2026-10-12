@@ -1,5 +1,5 @@
 import { test, expect, nativeCall } from "./fixture";
-import { addNotes, moveAndResizeNotes, removeNotes, runPaletteCommand, type SavedWidget } from "../helpers/dashboard";
+import { addClock, addNotes, moveAndResizeNotes, removeNotes, runPaletteCommand, type SavedWidget } from "../helpers/dashboard";
 import type { NotificationList, Prefs } from "../../src/mygo";
 
 test("installed dashboard grid and palette persist through the real daemon", async ({ nativePage: page }) => {
@@ -9,13 +9,13 @@ test("installed dashboard grid and palette persist through the real daemon", asy
     await nativeCall(page, "Settings.Set", "dashboard", { widgets: [] });
     await page.reload();
     await addNotes(page);
+    await addClock(page);
+    const notes = async () => (await widgets()).find((w) => w.type === "notes");
     await page.getByRole("textbox", { name: "Notes", exact: true }).fill("Saved by the installed WebView2 application.");
-    await expect.poll(async () => (await widgets())[0]?.config?.text).toBe("Saved by the installed WebView2 application.");
-    const before = (await widgets())[0]!;
+    await expect.poll(async () => (await notes())?.config?.text).toBe("Saved by the installed WebView2 application.");
     await moveAndResizeNotes(page);
-    await expect.poll(async () => (await widgets())[0]?.x).toBeGreaterThan(before.x);
-    await expect.poll(async () => (await widgets())[0]?.h).toBeGreaterThan(before.h);
-    await expect.poll(async () => (await widgets())[0]?.w).toBeGreaterThan(before.w);
+    await expect.poll(async () => (await widgets()).map((w) => w.type)).toEqual(["clock", "notes"]);
+    await expect.poll(async () => (await notes())?.size).toBe("l");
     const saved = await widgets();
     await runPaletteCommand(page, "Theme: Orole Light");
     await expect.poll(async () => (await nativeCall<{ appearance?: { theme: string } }>(page, "Settings.All")).appearance?.theme).toBe("light");
@@ -24,7 +24,7 @@ test("installed dashboard grid and palette persist through the real daemon", asy
     await expect(page.locator("html")).not.toHaveClass(/dark/);
     expect(await widgets()).toEqual(saved);
     await removeNotes(page);
-    await expect.poll(async () => (await widgets()).length).toBe(0);
+    await expect.poll(async () => (await widgets()).map((w) => w.type)).toEqual(["clock"]);
     await page.reload();
     await expect(page.getByRole("region", { name: "Notes", exact: true })).toHaveCount(0);
   } finally {

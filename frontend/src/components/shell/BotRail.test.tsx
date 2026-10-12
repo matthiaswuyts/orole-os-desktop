@@ -54,7 +54,7 @@ beforeEach(() => {
   bridge.provider.value = true;
   localStorage.clear();
   useDaemon.setState({ link: "connected" });
-  useUI.setState({ view: "chat", mode: "chat" });
+  useUI.setState({ view: "chat" });
   loaded();
 });
 afterEach(() => { cleanup(); vi.useRealTimers(); });
@@ -141,7 +141,7 @@ describe("BotRail rows", () => {
   });
 
   it("selecting a row opens the chat view and marks it current", () => {
-    useUI.setState({ view: "settings", mode: "chat" });
+    useUI.setState({ view: "settings" });
     render(<BotRail />);
     fireEvent.click(screen.getByRole("button", { name: /^Coder/ }));
     expect(useChat.getState().selectedBotId).toBe("coder");
@@ -151,18 +151,18 @@ describe("BotRail rows", () => {
   });
 
   it("shows no current bot on the Automations view, and a click returns to that bot's chat", () => {
-    useUI.setState({ view: "automations", mode: "chat" });
+    useUI.setState({ view: "automations" });
     loaded({ selectedBotId: "coder" });
     render(<BotRail />);
-    expect(screen.getByRole("heading", { name: "Bots" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Agents" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /^Coder/ })).not.toHaveAttribute("aria-current");
     fireEvent.click(screen.getByRole("button", { name: /^Coder/ }));
-    expect(useUI.getState()).toMatchObject({ view: "chat", mode: "chat" });
+    expect(useUI.getState()).toMatchObject({ view: "chat" });
     expect(screen.getByRole("button", { name: /^Coder/ })).toHaveAttribute("aria-current", "true");
   });
 
   it("New bot from the Automations view opens the builder in the chat view", () => {
-    useUI.setState({ view: "automations", mode: "chat" });
+    useUI.setState({ view: "automations" });
     render(<BotRail />);
     fireEvent.click(screen.getByRole("button", { name: /^New bot$/ }));
     expect(useChat.getState().builder).toEqual({ open: true, botId: null });

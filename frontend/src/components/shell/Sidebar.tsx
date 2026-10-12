@@ -1,48 +1,26 @@
-import { useEffect, useState } from "react";
-import { Bot, Code, PanelLeftClose } from "lucide-react";
+import { PanelLeftClose } from "lucide-react";
 import { AUTOMATIONS, PRIMARY, SETTINGS, type NavItem } from "@/lib/nav";
 import { cn } from "@/lib/utils";
-import { useUI, type Mode } from "@/stores/ui";
+import { useUI } from "@/stores/ui";
 import { Kbd, KbdGroup } from "@/components/ui/kbd";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "@/components/ui/tooltip";
 import { SidebarProjects } from "./SidebarProjects";
 import { Logo } from "./Logo";
 import { useAgentCounts, useAgents } from "@/stores/agents";
 import { Badge } from "@/components/ui/badge";
-import { Tabs, TabsList, TabsTab } from "@/components/ui/tabs";
 import { BotRail } from "./BotRail";
 import { SidebarSearch } from "./SidebarSearch";
-import { Automations, Desktop } from "@/mygo";
+import { Desktop } from "@/mygo";
 import { inDesktop } from "@/lib/backend";
+import { useAutomationApprovals } from "@/features/automations/useApprovals";
 
 const row = "flex h-side-row w-full items-center gap-2 rounded-md px-2 text-left text-sidebar-foreground text-sm outline-none hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring";
 
-const MODES: { id: Mode; label: string; icon: typeof Code }[] = [
-  { id: "chat", label: "Bots", icon: Bot },
-  { id: "code", label: "Code", icon: Code },
-];
-
-/** Automation runs waiting for an approval, refreshed while the Bots sidebar is shown. 0 when unknown. */
-function usePendingApprovals(active: boolean) {
-  const [count, setCount] = useState(0);
-  useEffect(() => {
-    if (!active || !inDesktop) return;
-    let live = true;
-    const load = () => Automations.approvals().then((items) => { if (live) setCount(items.length); }).catch((error: unknown) => console.warn("Could not load automation approvals", error));
-    void load();
-    const timer = window.setInterval(load, 30_000);
-    return () => { live = false; window.clearInterval(timer); };
-  }, [active]);
-  return active ? count : 0;
-}
-
-/** Workspace controls, navigation, projects, and settings. */
+/** One sidebar: search, navigation (Code views, then Automations), the Agents (bots), the Code projects, and settings. */
 export function Sidebar() {
   const view = useUI((s) => s.view);
-  const mode = useUI((s) => s.mode);
   const setView = useUI((s) => s.setView);
-  const setMode = useUI((s) => s.setMode);
-  const approvals = usePendingApprovals(mode === "chat");
+  const approvals = useAutomationApprovals().length;
   const toggleSidebar = useUI((s) => s.toggleSidebar);
   const agentCounts = useAgentCounts();
   // An open task has its own highlighted row; the Tasks board is only "current" when no task is open.
@@ -73,25 +51,16 @@ export function Sidebar() {
         <Tooltip><TooltipTrigger render={<button type="button" aria-label="Hide sidebar" onClick={toggleSidebar} className="inline-flex size-6 items-center justify-center rounded-md text-muted-foreground hover:bg-sidebar-accent hover:text-foreground" />}><PanelLeftClose className="size-3.5" /></TooltipTrigger><TooltipPopup><span className="flex items-center gap-2">Hide sidebar <KbdGroup aria-label="Ctrl+B"><Kbd>Ctrl</Kbd><Kbd>B</Kbd></KbdGroup></span></TooltipPopup></Tooltip>
       </div>
       <div className="titlebar-nodrag flex min-h-0 flex-1 flex-col gap-2 px-2 pb-1">
-        <Tabs value={mode} onValueChange={(next) => setMode(next as Mode)} className="gap-0">
-          <TabsList size="sm" aria-label="Mode" className="w-full">
-            {MODES.map((m) => (
-              <TabsTab key={m.id} value={m.id} onClick={() => { if (view === "settings") setMode(m.id); }}>
-                <m.icon />{m.label}
-              </TabsTab>
-            ))}
-          </TabsList>
-        </Tabs>
         <SidebarSearch />
-        {mode === "chat" ? <>
-          <div className="flex flex-col gap-px">{item(AUTOMATIONS)}</div>
+        <div className="flex flex-col gap-px">
+          {PRIMARY.map(item)}
+          {item(AUTOMATIONS)}
+        </div>
+        {/* Agents and Code scroll together, so a long bot list never squeezes the projects out of view. */}
+        <div className="-mx-2 flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-2">
           <BotRail />
-        </> : <>
-          <div className="flex flex-col gap-px">
-            {PRIMARY.map(item)}
-          </div>
           <SidebarProjects />
-        </>}
+        </div>
       </div>
       <div className="titlebar-nodrag flex h-9 shrink-0 items-center gap-1 border-t px-2">
         <button type="button" onClick={openSettingsWindow} className={cn(row, "flex-1")}>

@@ -48,7 +48,7 @@ async function installBridge(page: Page) {
 test("sidebar tree shows the project, worktrees and the 'more worktrees' collapse", async ({ page }, testInfo) => {
   await installBridge(page);
   await page.goto("/");
-  const tree = page.getByRole("region", { name: "Projects" });
+  const tree = page.getByRole("region", { name: "Code" });
   await expect(tree.getByText("orole-os", { exact: true }).first()).toBeVisible();
   await expect(tree.getByText("local", { exact: true })).toBeVisible();
   await expect(tree.getByText("main checkout")).toBeVisible();
@@ -84,7 +84,7 @@ test("worktrees view lists, creates and removes with confirmation", async ({ pag
 test("projects view: detail, and a 6000-line diff stays virtualized", async ({ page }, testInfo) => {
   await installBridge(page);
   await page.goto("/");
-  await page.getByRole("region", { name: "Projects" }).getByText("orole-os", { exact: true }).first().click();
+  await page.getByRole("region", { name: "Code" }).getByText("orole-os", { exact: true }).first().click();
   await expect(page.getByRole("heading", { name: "orole-os" })).toBeVisible();
   await expect(page.getByText("Recent commits")).toBeVisible();
   await page.getByRole("button", { name: "View changes vs HEAD" }).click();
@@ -110,5 +110,5 @@ test("add via folder picker", async ({ page }) => {
 
 test("browser preview without a bridge shows the desktop-only state, no fake projects", async ({ page }) => {
   await page.goto("/");
-  await expect(page.getByRole("region", { name: "Projects" })).toContainText("Projects need the desktop app");
+  await expect(page.getByRole("region", { name: "Code" })).toContainText("Projects need the desktop app");
 });

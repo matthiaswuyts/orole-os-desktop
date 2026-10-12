@@ -78,6 +78,7 @@ func TestClaudeModelsDiscovery(t *testing.T) {
 	t.Setenv("FAKE_CLAUDE_MODELS_MODE", "")
 	originalConfig := t.TempDir()
 	t.Setenv("CLAUDE_CONFIG_DIR", originalConfig)
+	t.Setenv("FAKE_CLAUDE_ACCOUNT_CONFIG", originalConfig)
 	m := NewManager(Config{Adapters: []Adapter{Claude{Bin: bin}}})
 	defer m.Shutdown()
 	for range 2 {
@@ -101,7 +102,7 @@ func TestClaudeModelsDiscovery(t *testing.T) {
 		t.Fatalf("cached options started discovery %d times", len(dirs))
 	}
 	if _, err := os.Stat(strings.TrimSpace(dirs[0])); !os.IsNotExist(err) {
-		t.Fatalf("discovery configuration was not removed: %v", err)
+		t.Fatalf("discovery working directory was not removed: %v", err)
 	}
 	entries, err := os.ReadDir(originalConfig)
 	if err != nil || len(entries) != 0 {

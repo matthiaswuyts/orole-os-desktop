@@ -9,7 +9,7 @@ GitHub #7. Versions below are declared direct dependencies; `go.mod`, `go.sum`, 
 | Native desktop and generated bindings | MyGo v0.3.3, mygo-runtime ^0.3.3, WebView2 | Desktop only | NSIS-installed Windows app exercised; no Electron/Tauri; [MyGo research](../research/mygo-compatibility.md) |
 | UI | React ^19.2.8, TypeScript ~6.0.2, Vite ^8.3.0, Bun | React rendering | Strict type checking; native-bound actions unavailable in browser preview |
 | Tokens and primitives | Tailwind ^4.3.3, Base UI ^1.8.0, local coss-compatible components | Frontend | Single token/component contract; [design system](design-system.md) |
-| UI state and layouts | Zustand ^5.0.15, react-grid-layout ^2.3.0, TanStack Virtual ^3.14.13 | Client drafts; daemon persists workspace data | No separate durable GUI database |
+| UI state and layouts | Zustand ^5.0.15, @dnd-kit/core ^6.3.1 + @dnd-kit/sortable ^10.0.0, TanStack Virtual ^3.14.13 | Client drafts; daemon persists workspace data | No separate durable GUI database |
 | Background and motion | ascii.rest ^0.1.0, Motion ^14.0.0 | One Home canvas; frontend motion policy | [ASCII lifecycle and reduced motion](../research/ascii-library.md) |
 | Editor and terminal display | CodeMirror 6 packages, xterm.js ^6.0.0 | Frontend only | File writes and terminal lifetime belong to daemon |
 | Windows terminal host | UserExistsError/conpty v0.1.4 | Daemon | PowerShell/cmd exercised; terminals survive GUI restart, not daemon exit/reboot |

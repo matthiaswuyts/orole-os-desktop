@@ -32,6 +32,7 @@ prefixes (0010, 0020, ...) so concurrent work does not collide; `DB.Version()` i
 | `file_roots(id, provider, path, label, created_at, UNIQUE(provider,path))` | 0050 | approved roots for the files providers; paths stored fully resolved |
 | `agent_sessions(id, kind, status, ..., data JSON)`, `agent_events`, `agent_journal`, `agent_runs` | 0020 | agent runtime state and an at-most-once orchestration journal |
 | `agent_sessions.data.permissionMode` | 0100 | renamed to `manual \| auto \| yolo` (`default`/empty → `manual`, `acceptEdits` → `auto`; `plan` unchanged) |
+| `agent_usage(session_id FK cascade, provider, model, bucket_start, input, output, cache_read, cache_write, reasoning, reported_cost_usd, has_reported_cost)` + index on `bucket_start`; index `agent_sessions(updated_at)` | 0104 | billed tokens per session × model × 15-minute UTC bucket (`bucket_start` = Unix seconds, a multiple of 900, so each bucket lies in one local day in any zone); cost is priced at query time unless every report in the bucket carried the harness's own cost |
 
 Tables for agents, MCP, policy and notifications exist ahead of the daemon services that use them; see
 `daemon.md` for what is actually registered.

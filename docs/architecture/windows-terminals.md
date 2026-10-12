@@ -64,6 +64,49 @@ Migration `0020_agents.sql` adds `agent_sessions`, `agent_events`, `agent_journa
 worktree attempts. The desktop's bound `Agents` service forwards requests; it owns no durable state.
 Agent Dashboard and Review subscribe to the same persisted sessions through `stores/agents.ts`.
 
+### Token usage and spend
+
+Two different numbers come out of the harnesses and are never mixed. `Session.usage` (`EvUsage`) is the
+latest context reading for the composer: occupancy, not billing. Billed tokens arrive as `EvTokens`
+(`agents.TokenUsage`), which the manager folds into the `agent_usage` ledger (migration 0104: session ×
+provider × model × 15-minute UTC bucket) through the same batched writer as events; they are neither recorded as history
+nor published. Exactly one summable source per harness, so nothing is counted twice:
+
+| Harness | Billed source | Notes |
+|---|---|---|
+| Claude Code, structured | growth of `result.modelUsage` per model since the previous result | `modelUsage` and `total_cost_usd` are cumulative for the Claude Code process (they restart with each process, including `--resume`); per-model `costUSD` growth is the reported cost. Falls back to the per-turn `result.usage` when `modelUsage` has no token counts. Assistant-message usage is a context reading and never summed. `output_tokens_details.thinking_tokens` is the reasoning share |
+| Codex | `thread/tokenUsage/updated` `last` (one model request) | billed once per change of the thread's cumulative `total`, since Codex repeats the notification unchanged on rate-limit updates; the first report of a process outside a turn only sets the baseline (a resumed thread restating its history). `cachedInputTokens` is a subset of `inputTokens` and is split out as cache reads; `reasoningOutputTokens` is the reasoning share. No reported cost |
+| Oh My Pi | `message_end` usage of each assistant message | pi-ai reports uncached `input`, `output`, `cacheRead`, `cacheWrite`, `reasoningTokens` and `cost.total` with the message's `provider`/`model`. A cost of 0 means pi-ai could not price the model and is treated as no report. `get_state` context usage is occupancy only |
+
+Terminal and custom-command sessions report no usage. `Session.toolCalls` counts tool calls (a call
+once, by tool id within the turn; a result whose call never arrived counts the call; Claude terminal
+`PreToolUse` hooks count too) and `failedTools` the results with status `error`; both travel in
+`agents.delta`.
+
+`agents.usage` (`Agents.usage(query)`) answers 24-hour and 7-day windows from the quarter-hour buckets (a
+bucket counts when it starts inside the window's first quarter hour or later), all time, per agent kind for
+the requested range, 365 local days (a bucket belongs to the local day it starts in; quarter hours make that
+exact in every zone, including +05:30 and +05:45) and the most
+recently updated sessions. Sessions are counted by `started_at`. Cost is computed at query time, so a
+price refresh reprices history: a bucket whose every report carried the harness's cost uses that cost,
+otherwise the `internal/pricing` catalogue price; models it cannot price are listed in `unpriced`
+(`provider/model`, or `kind/model` without a provider) and add nothing, so the total is a lower bound.
+
+`internal/pricing` holds a trimmed models.dev snapshot (`snapshot.json`, regenerated with
+`go generate ./internal/pricing`) of list prices per million tokens. The daemon loads its cached download
+from `<data dir>/pricing/models-dev.json` when newer, and a minute after start checks hourly whether to
+download `https://models.dev/api.json` again: at most once per 24 hours, attempts included across restarts
+(`pricing/last-attempt`), 60 s timeout; any failure keeps the catalogue it has. Lookup lowercases the model,
+drops `[1m]`-style suffixes, release dates (`-20250514`, `@20250514`) and provider prefixes, and treats
+`4.1` and `4-1` alike; the provider comes from the harness (Claude Code → anthropic, Codex → openai, Oh My Pi →
+the message's provider). With no provider, a kept provider, an alias (`openai-codex`, `google-gemini-cli`...)
+or a hosted gateway (Vercel, Cloudflare AI Gateway, Requesty, ZenMux) that has no match, every kept provider
+is searched; any other provider (LM Studio, Ollama, a custom proxy) stays unpriced rather than borrowing a
+cloud price. Cache prices: a model with
+neither `cache_read` nor `cache_write` bills both cache buckets at its input price; one listed field leaves
+the other unbilled. Tiered and long-context surcharges are ignored. Prices are list prices, so subscription
+users see the API-equivalent spend.
+
 ### Adapter capabilities
 
 | Adapter | Launch and status | Resume / approval |
@@ -223,7 +266,7 @@ keep their own approvals and reject Orole modes.
 | Ended session | only recorded; the next launch uses it |
 | Terminal, remote SSH, read-only review | refused, with the reason in `followup.permissionModeReason` |
 
-Runtime IPC: `agents.detect/list/get/start/stop/restart/prompt/setPermissionMode/approve/events/transcript/remove/diff/review/check/hook`,
+Runtime IPC: `agents.detect/list/get/start/stop/restart/prompt/setPermissionMode/approve/events/transcript/remove/diff/review/check/hook/usage`,
 `agents.publish`, `agents.handoff/reviewWith/loopUntil/tryN/runs/cancelRun`. Live topics: `agents.updated`,
 `agents.delta`, `agents.event`, `agents.removed`, `agents.run`.
 

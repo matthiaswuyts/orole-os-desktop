@@ -9,6 +9,7 @@ vi.mock("@/stores/boxes", async (importOriginal) => ({ ...(await importOriginal<
 import { useBoxes } from "@/stores/boxes";
 import { useDaemon } from "@/stores/daemon";
 import { useUI } from "@/stores/ui";
+import { useChat } from "@/stores/chat";
 import { StatusBar } from "./StatusBar";
 
 beforeEach(() => {
@@ -39,5 +40,17 @@ describe("status bar", () => {
     render(<StatusBar />);
     fireEvent.click(screen.getByRole("button", { name: /tasks/ }));
     expect(useUI.getState().view).toBe("agents");
+  });
+
+  it("counts bots replying now out of all bots, ignoring stale entries for deleted bots, and opens chat", () => {
+    useChat.setState({ ready: false, bots: [], running: {} });
+    render(<StatusBar />);
+    expect(screen.getByRole("button", { name: /bots/ })).toHaveTextContent("bots —");
+    cleanup();
+    useChat.setState({ ready: true, bots: [{ id: "a" }, { id: "b" }, { id: "c" }] as never, running: { a: true, b: false, gone: true } });
+    render(<StatusBar />);
+    expect(screen.getByRole("button", { name: /bots/ })).toHaveTextContent("bots 1/3");
+    fireEvent.click(screen.getByRole("button", { name: /bots/ }));
+    expect(useUI.getState().view).toBe("chat");
   });
 });

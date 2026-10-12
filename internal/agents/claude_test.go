@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -29,7 +30,7 @@ func TestClaudeStructuredCentralConfig(t *testing.T) {
 				prompt := "## Skills\n--not-a-flag \"quoted\" & %value% 日本語\n" + strings.Repeat("skill description\n", 4000)
 				spec := LaunchSpec{SessionID: "session", Mode: ModeStructured, Model: model, Resume: resume, Gateway: gateway, SkillsPrompt: prompt}
 				base := []string{"--model", model, "--resume", resume}
-				args, err := claudeStructuredArgs(h, spec, append([]string(nil), base...))
+				args, err := claudeStructuredArgs(h, spec, append([]string(nil), base...), true)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -68,7 +69,7 @@ func TestClaudeStructuredCentralConfig(t *testing.T) {
 				}
 				// A resume replaces the per-session index rather than appending stale skills.
 				spec.Resume, spec.SkillsPrompt = "previous-session", "replacement index"
-				if _, err := claudeStructuredArgs(h, spec, nil); err != nil {
+				if _, err := claudeStructuredArgs(h, spec, nil, true); err != nil {
 					t.Fatal(err)
 				}
 				data, err = os.ReadFile(promptPath)
@@ -76,12 +77,17 @@ func TestClaudeStructuredCentralConfig(t *testing.T) {
 					t.Fatalf("resume did not refresh index: %v", err)
 				}
 				spec.SkillsPrompt = ""
-				args, err = claudeStructuredArgs(h, spec, nil)
+				args, err = claudeStructuredArgs(h, spec, nil, true)
 				if err != nil {
 					t.Fatal(err)
 				}
 				if strings.Contains(strings.Join(args, " "), "--append-system-prompt") || claudeFlag(t, args, "--system-prompt-snapshot") != "off" {
 					t.Fatal("removed skills would remain active on resume")
+				}
+				// Builds from before the flag reject it as an unknown option, so it is left out.
+				args, err = claudeStructuredArgs(h, spec, nil, false)
+				if err != nil || slices.Contains(args, "--system-prompt-snapshot") {
+					t.Fatalf("older Claude Code would fail to start: %q %v", args, err)
 				}
 			})
 		}
@@ -90,7 +96,7 @@ func TestClaudeStructuredCentralConfig(t *testing.T) {
 
 func TestClaudeStructuredConfigOptionalAndWriteErrors(t *testing.T) {
 	base := []string{"--resume", "session"}
-	args, err := claudeStructuredArgs(nil, LaunchSpec{}, base)
+	args, err := claudeStructuredArgs(nil, LaunchSpec{}, base, true)
 	if err != nil || !reflect.DeepEqual(args, base) {
 		t.Fatalf("absent central config changed launch: %q %v", args, err)
 	}
@@ -98,11 +104,11 @@ func TestClaudeStructuredConfigOptionalAndWriteErrors(t *testing.T) {
 	if err := os.WriteFile(file, []byte("file"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := claudeStructuredArgs(&Host{DataDir: file}, LaunchSpec{SessionID: "session", SkillsPrompt: "skills"}, nil); err == nil {
+	if _, err := claudeStructuredArgs(&Host{DataDir: file}, LaunchSpec{SessionID: "session", SkillsPrompt: "skills"}, nil, true); err == nil {
 		t.Fatal("ignored central configuration write error")
 	}
 	// Skill instructions do not depend on a selected model or a gateway being present.
-	args, err = claudeStructuredArgs(&Host{DataDir: t.TempDir()}, LaunchSpec{SessionID: "skills-only", SkillsPrompt: "skills"}, nil)
+	args, err = claudeStructuredArgs(&Host{DataDir: t.TempDir()}, LaunchSpec{SessionID: "skills-only", SkillsPrompt: "skills"}, nil, true)
 	if err != nil {
 		t.Fatal(err)
 	}

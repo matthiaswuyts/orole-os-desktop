@@ -56,6 +56,13 @@ export interface AgentRef {
   id: string;
 }
 
+/** AgentUsage is one harness kind's usage in UsageQuery.ByAgentRange. */
+export interface AgentUsage {
+  kind: string;
+  sessions: number;
+  tokens: TokenTotals;
+}
+
 /** Status is where a session sits in the dashboard. */
 export type AgentsStatus = "idle" | "working" | "needs-you" | "done" | "failed" | "stopped" | "lost";
 
@@ -545,6 +552,17 @@ export interface ContextUsage {
 export interface DaemonLink {
   connected: boolean;
   error?: string;
+}
+
+/** DailyUsage is one local day. */
+export interface DailyUsage {
+  /** local date "2006-01-02" */
+  day: string;
+  /** sessions started that day */
+  sessions: number;
+  /** total tokens */
+  tokens: number;
+  costUsd: number;
 }
 
 /** Decision is the outcome of a policy evaluation. */
@@ -2503,6 +2521,12 @@ export interface Session {
   turns: number;
   /** prompts sent */
   prompts: number;
+  /**
+   * ToolCalls counts the tool calls structured harnesses (and Claude hooks) reported; FailedTools
+   * those whose result was an error.
+   */
+  toolCalls?: number;
+  failedTools?: number;
   /** Pending are the permission requests awaiting a decision (runtime state). */
   pending: PermissionRequest[];
   usage?: ContextUsage;
@@ -2537,7 +2561,26 @@ export interface SessionDelta {
   files?: number;
   additions?: number;
   deletions?: number;
+  toolCalls?: number;
+  failedTools?: number;
   usage?: ContextUsage;
+}
+
+/** SessionUsage is one session's lifetime usage. */
+export interface SessionUsage {
+  id: string;
+  kind: string;
+  /** Session.Title, else the task's first line, else the project */
+  title: string;
+  project: string;
+  model: string;
+  provider: string;
+  status: string;
+  toolCalls: number;
+  failedTools: number;
+  tokens: TokenTotals;
+  startedAt: string;
+  updatedAt: string;
 }
 
 /** SettingChange is a changed setting. */
@@ -2797,6 +2840,27 @@ export interface Thread {
   messages: MailMessage[];
 }
 
+/** TokenTotals sums billed tokens and their cost. */
+export interface TokenTotals {
+  /** uncached input tokens */
+  input: number;
+  /** includes reasoning */
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+  /** informational subset of Output */
+  reasoning: number;
+  /** input + output + cacheRead + cacheWrite */
+  total: number;
+  /** harness-reported cost where given, else catalogue price; unpriced tokens add 0 */
+  costUsd: number;
+  /**
+   * Unpriced lists distinct "provider/model" (or "kind/model") with tokens but no reported cost
+   * and no catalogue price: CostUSD is then a lower bound.
+   */
+  unpriced: string[];
+}
+
 /** ToolInfo is one discovered tool. All strings are sanitised. */
 export interface ToolInfo {
   name: string;
@@ -2921,6 +2985,44 @@ export interface UpdateStatus {
 export interface UploadAttachmentSpec {
   name: string;
   dataBase64: string;
+}
+
+/** UsageQuery is the agents.usage request. */
+export interface UsageQuery {
+  /** "24h" | "7d" | "all"; default "24h" */
+  byAgentRange: string;
+  /** latest sessions to return; default 10, max 50 */
+  latest: number;
+}
+
+/** UsageStats is the agents.usage reply. */
+export interface UsageStats {
+  generatedAt: string;
+  /** last 24 hours */
+  day: UsageWindow;
+  /** last 7 days */
+  week: UsageWindow;
+  /** everything recorded */
+  all: UsageWindow;
+  /** for ByAgentRange, tokens desc */
+  byAgent: AgentUsage[];
+  /** 365 local days, oldest first, ending today */
+  daily: DailyUsage[];
+  /** most recently updated sessions first */
+  latest: SessionUsage[];
+  pricesUpdatedAt: string;
+}
+
+/** UsageWindow summarises one time window. */
+export interface UsageWindow {
+  /** sessions started in the window */
+  sessions: number;
+  /** kinds with tokens or sessions in the window, by tokens desc */
+  agents: string[];
+  /** local days in the window with tokens */
+  activeDays: number;
+  /** usage reported in the window */
+  tokens: TokenTotals;
 }
 
 /** User is a GitHub account. */
@@ -3606,6 +3708,14 @@ export const Agents = {
   /** UploadAttachment stages a file in daemon-owned storage for a subsequent task. */
   uploadAttachment(spec: UploadAttachmentSpec): Promise<Attachment> {
     return call("Agents.UploadAttachment", spec);
+  },
+  /**
+   * Usage reports agent token usage and spend: 24-hour, 7-day and all-time windows, per agent,
+   * per local day for a year, and the most recently updated sessions. Spend is the harness's own
+   * reported cost where it gives one, else the models.dev list price; unpriced models are named.
+   */
+  usage(q: UsageQuery): Promise<UsageStats> {
+    return call("Agents.Usage", q);
   },
 } as const;
 

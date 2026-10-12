@@ -9,6 +9,7 @@ export const KIND_LABEL: Record<string, string> = {
   codex: "Codex",
   opencode: "OpenCode",
   gemini: "Gemini CLI",
+  omp: "Oh My Pi",
   custom: "Custom CLI",
 };
 

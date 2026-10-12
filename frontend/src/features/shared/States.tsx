@@ -1,5 +1,5 @@
-import type { ReactNode } from "react";
-import { MonitorX, PlugZap, Hammer } from "lucide-react";
+import { Component, type ErrorInfo, type ReactNode } from "react";
+import { MonitorX, PlugZap, Hammer, TriangleAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 function Centered({ icon, title, children, action }: { icon: ReactNode; title: string; children?: ReactNode; action?: { label: string; onClick: () => void } }) {
@@ -33,4 +33,24 @@ export function NotImplemented({ app, issue, children }: { app: string; issue?: 
       {issue && <p className="mt-1 font-mono text-xs">Tracked in {issue}</p>}
     </Centered>
   );
+}
+
+/**
+ * Keeps one screen's crash, or a screen whose code failed to load (a dev server that re-bundled or restarted),
+ * inside that screen instead of blanking the whole window. Key it by view so moving to another screen recovers.
+ */
+export class ViewBoundary extends Component<{ app: string; children: ReactNode }, { error: Error | null }> {
+  state = { error: null as Error | null };
+  static getDerivedStateFromError(error: Error) { return { error }; }
+  componentDidCatch(error: Error, info: ErrorInfo) { console.error(`${this.props.app} failed to render`, error, info.componentStack); }
+  render() {
+    const { error } = this.state;
+    if (!error) return this.props.children;
+    const unloaded = /dynamically imported module|Importing a module script failed|Loading chunk/i.test(error.message);
+    return <Centered icon={<TriangleAlert />} title={unloaded ? `${this.props.app} could not be loaded` : `${this.props.app} stopped working`}
+      action={{ label: "Reload window", onClick: () => window.location.reload() }}>
+      <p>{unloaded ? "Its code could not be fetched, usually because the app was updated or the dev server restarted. Reload to fetch it again." : "Reloading the window usually recovers. Your tasks keep running in the daemon."}</p>
+      <p className="mt-2 break-words font-mono text-xs">{error.message}</p>
+    </Centered>;
+  }
 }

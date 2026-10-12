@@ -65,7 +65,7 @@ bunx playwright show-report playwright-report/browser
 `playwright.config.ts` starts Vite on `127.0.0.1:5173` and explicitly excludes `e2e/native`.
 The shell suite uses the real browser-preview behavior, not a desktop bridge shim. It covers
 Ctrl+B, Ctrl+K, palette focus/escape/keyboard execution, theme/density/reduced-motion persistence,
-workspace creation/deletion, widget add/remove, pointer drag/resize and saved notes after reload.
+workspace creation/deletion, widget add/remove, pointer reorder, menu resize and saved notes after reload.
 Light and Midnight baselines cover the shell, appearance panel, palette and Notes widget.
 Time, locale, viewport and reduced motion are fixed; the ASCII backdrop is disabled via browser
 appearance preferences. Axe checks WCAG A/AA rules without excluding failing rules or elements.
@@ -113,7 +113,7 @@ Missing opt-in/manifest or a mismatched home fails the suite, rather than skippi
 a convenient browser. The fixture never closes the attached browser, context or page; only the
 launcher owns process lifetime. Do not expose the CDP port to a network or reuse a normal profile.
 
-Native acceptance creates a uniquely named workspace through the UI, adds/edits/moves/resizes a
+Native acceptance creates a uniquely named workspace through the UI, adds/edits/reorders/resizes a
 widget, uses the palette to change theme, and checks persisted daemon records plus reloaded UI.
 It removes the widget/workspace and verifies removal after reload. Notification acceptance uses
 the actual Settings **Test notification** action with native delivery/sound disabled for the test

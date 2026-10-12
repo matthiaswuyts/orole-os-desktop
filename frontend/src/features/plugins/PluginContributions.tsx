@@ -50,7 +50,7 @@ export function PluginContributions() {
       type: pluginWidgetType(record.manifest.id, widget.id),
       title: widget.title,
       description: `${record.manifest.name} · ${widget.description || "Run an MCP action on demand."}`,
-      w: 6, h: 8,
+      size: "m", tall: true,
       component: PluginWidget,
     }))));
     return () => { offCommands(); offWidgets(); };

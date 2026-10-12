@@ -52,14 +52,15 @@ type Store struct {
 	nextEvent int64
 	queue     []Event
 	timer     *time.Timer
-	sinceTrim map[string]int  // events appended per session since its last prune
-	trimDue   map[string]bool // sessions whose history must be pruned after the next flush
-	kicked    bool            // a flush for a full batch is already scheduled
+	sinceTrim map[string]int           // events appended per session since its last prune
+	trimDue   map[string]bool          // sessions whose history must be pruned after the next flush
+	kicked    bool                     // a flush for a full batch is already scheduled
+	usage     map[usageKey]usageAmount // ledger increments not yet written (usage_ledger.go)
 }
 
 // NewStore wraps db.
 func NewStore(db DB) *Store {
-	return &Store{db: db, log: slog.Default(), sinceTrim: map[string]int{}, trimDue: map[string]bool{}}
+	return &Store{db: db, log: slog.Default(), sinceTrim: map[string]int{}, trimDue: map[string]bool{}, usage: map[usageKey]usageAmount{}}
 }
 
 // SetLogger routes the store's background write failures to log.
@@ -173,6 +174,11 @@ func (st *Store) DeleteSession(id string) error {
 	st.queue = kept
 	delete(st.sinceTrim, id)
 	delete(st.trimDue, id)
+	for k := range st.usage {
+		if k.session == id {
+			delete(st.usage, k)
+		}
+	}
 	st.evMu.Unlock()
 	// A flush already holding a batch that contains the session's events either inserted them
 	// before this delete (the cascade removes them) or fails their foreign key and drops them.
@@ -250,27 +256,35 @@ func (st *Store) QueueEvent(e *Event) error {
 			go func() { _ = st.FlushEvents() }()
 		}
 	case st.timer == nil:
-		st.timer = time.AfterFunc(eventFlushDelay, func() {
-			if err := st.FlushEvents(); err != nil {
-				st.evMu.Lock()
-				log := st.log
-				st.evMu.Unlock()
-				log.Warn("agent event write failed", "err", err)
-			}
-		})
+		st.armLocked()
 	}
 	st.evMu.Unlock()
 	return nil
 }
 
-// FlushEvents writes every queued event. Rows the database rejects (a session deleted
-// meanwhile) are dropped; the first other error is returned.
+// armLocked schedules a flush within eventFlushDelay unless one is already scheduled.
+func (st *Store) armLocked() {
+	if st.timer != nil {
+		return
+	}
+	st.timer = time.AfterFunc(eventFlushDelay, func() {
+		if err := st.FlushEvents(); err != nil {
+			st.evMu.Lock()
+			log := st.log
+			st.evMu.Unlock()
+			log.Warn("agent event write failed", "err", err)
+		}
+	})
+}
+
+// FlushEvents writes every queued event and usage-ledger increment. Rows the database rejects
+// (a session deleted meanwhile) are dropped; the first other error is returned.
 func (st *Store) FlushEvents() error {
 	st.flushMu.Lock()
 	defer st.flushMu.Unlock()
 	st.evMu.Lock()
-	batch, due := st.queue, st.trimDue
-	st.queue, st.trimDue, st.kicked = nil, map[string]bool{}, false
+	batch, due, usage := st.queue, st.trimDue, st.usage
+	st.queue, st.trimDue, st.usage, st.kicked = nil, map[string]bool{}, map[usageKey]usageAmount{}, false
 	if st.timer != nil {
 		st.timer.Stop()
 		st.timer = nil
@@ -292,6 +306,9 @@ func (st *Store) FlushEvents() error {
 	// Prune only what this batch counted, after its rows are in.
 	for id := range due {
 		st.trim(id)
+	}
+	if err := st.writeUsage(usage); err != nil && first == nil {
+		first = err
 	}
 	return first
 }

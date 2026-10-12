@@ -104,7 +104,7 @@ export function Integrations() {
   const connectedRows: ReactNode[] = [];
   if (github?.connected && matches("GitHub", "Search repos and PRs")) {
     connectedRows.push(
-      <Row key="github" icon={<BrandLogo icon={DIRECTORY[0]!.icon} />} name="GitHub" description={`Signed in as ${github.user?.login ?? "your account"}`} badge={<Badge variant="success">Connected</Badge>}>
+      <Row key="github" icon={<BrandLogo logo={DIRECTORY[0]!.logo} />} name="GitHub" description={`Signed in as ${github.user?.login ?? "your account"}`} badge={<Badge variant="success">Connected</Badge>}>
         <Button size="sm" variant="secondary" className={pill} onClick={() => setOpen("github")}>Manage</Button>
       </Row>,
     );
@@ -115,7 +115,7 @@ export function Integrations() {
     const state = STATUS[server.status];
     const pending = waiting.has(server.id) && server.status === "auth_required";
     connectedRows.push(
-      <Row key={server.id} icon={<BrandLogo icon={entry?.icon} />} name={server.name}
+      <Row key={server.id} icon={<BrandLogo logo={entry?.logo} />} name={server.name}
         description={pending ? "Finish signing in in your browser…" : server.lastError || entry?.description || new URL(server.url).host}
         badge={<Badge variant={state.variant}>{state.label}</Badge>}>
         {server.status === "auth_required" && !pending && <Button size="sm" className={pill} disabled={connect.busy === server.id} onClick={() => signIn(server)}>Sign in</Button>}
@@ -126,7 +126,7 @@ export function Integrations() {
   }
 
   const addRow = (c: Connector) => (
-    <Row key={c.id} icon={<BrandLogo icon={c.icon} />} name={c.name} description={c.description}>
+    <Row key={c.id} icon={<BrandLogo logo={c.logo} />} name={c.name} description={c.description}>
       <Button size="sm" variant="secondary" className={pill} disabled={!inDesktop || connect.busy !== null} aria-label={`Add ${c.name}`} onClick={() => add(c)}>
         {connect.busy === c.id ? "Adding…" : "Add"}
       </Button>
