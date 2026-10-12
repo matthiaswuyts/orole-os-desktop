@@ -42,12 +42,6 @@ func TestStatePersistsAcrossDaemonRestart(t *testing.T) {
 	if err := c.Call(ctx, "settings.set", map[string]any{"key": "theme", "value": "midnight"}, nil); err != nil {
 		t.Fatal(err)
 	}
-	var ws struct {
-		ID string `json:"id"`
-	}
-	if err := c.Call(ctx, "workspaces.save", map[string]any{"name": "Dev", "layout": map[string]any{"widgets": []string{"clock"}}}, &ws); err != nil || ws.ID == "" {
-		t.Fatalf("save: %v", err)
-	}
 	c.Close()
 	stop()
 	if _, err := control.Running(ctx, dir); err == nil {
@@ -64,12 +58,6 @@ func TestStatePersistsAcrossDaemonRestart(t *testing.T) {
 	var settings map[string]json.RawMessage
 	if err := c.Call(ctx, "settings.list", nil, &settings); err != nil || string(settings["theme"]) != `"midnight"` {
 		t.Fatalf("settings: %v %v", settings, err)
-	}
-	var list []struct {
-		Name string `json:"name"`
-	}
-	if err := c.Call(ctx, "workspaces.list", nil, &list); err != nil || len(list) != 1 || list[0].Name != "Dev" {
-		t.Fatalf("workspaces: %v %v", list, err)
 	}
 }
 

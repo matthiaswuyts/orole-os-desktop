@@ -8,6 +8,24 @@ notes. See `docs/development/updates.md`.
 
 ## Unreleased
 
+### Added
+- Skills settings are redesigned with Yours and Discover tabs. Discover browses and searches the skills.sh catalogue
+  (Most installed, Trending); a skill is added from a preview that shows its full SKILL.md and flags script files, then is
+  available to every agent through Orole. Adding does not change your agents' own skill folders.
+- Agent syncing is easier to read: one "Used by" line shows which agents are up to date and one "Update agents" button copies
+  skills into Claude Code, Codex and Oh My Pi; a help popover explains how skills reach agents and holds the details.
+- Integrations directory: PostHog, Resend, Firecrawl, Clay, Apollo, Figma, Mobbin and Similarweb (one-click browser sign-in), Paper
+  (local: connects to Paper Desktop at `http://127.0.0.1:29979/mcp` while it is running with a file open, no sign-in), and Gmail,
+  Google Drive and Google Calendar (Google's remote MCP servers; you supply an OAuth client from your own Google Cloud project).
+  Notion and Sentry were already listed.
+
+### Changed
+- Workspaces are removed: the sidebar workspace switcher and Settings > Workspaces are gone. Home keeps one widget dashboard
+  (stored as the `dashboard` setting); the first existing workspace's widgets and notes carry over, other workspaces are dropped.
+
+### Fixed
+- The "Jump to latest" buttons on chat and task pages are opaque again in dark themes instead of see-through.
+
 ## 0.2.0 - 2026-10-12
 
 ### Added

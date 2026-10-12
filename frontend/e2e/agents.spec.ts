@@ -14,7 +14,7 @@ async function installAgentsBridge(page: Page) {
     const get = (id: unknown) => { const s = sessions.find((x) => x.id === id); if (!s) throw new Error("Session not found"); return s; };
     const diff = { files: [{ path: "src/lib/paths.ts", status: "modified", binary: false, additions: 2, deletions: 1, hunks: [{ header: "@@ -1,3 +1,4 @@", oldStart: 1, oldLines: 3, newStart: 1, newLines: 4, lines: [{ kind: " ", text: "export function normalizePath(path: string) {", old: 1, new: 1 }, { kind: "-", text: "  return path.replace(/\\\\/g, '/');", old: 2, new: 0 }, { kind: "+", text: "  const normalized = path.replace(/\\\\/g, '/');", old: 0, new: 2 }, { kind: "+", text: "  return preserveDriveRoot(normalized);", old: 0, new: 3 }, { kind: " ", text: "}", old: 3, new: 4 }] }] }], additions: 2, deletions: 1, truncated: false };
     const handlers: Record<string, (...args: unknown[]) => unknown> = {
-      "Daemon.Health": () => ({ version: "0.1.0", memAllocMB: 24, startedAt: new Date(now).toISOString() }), "Settings.All": () => ({}), "Workspaces.List": () => [], "Workspaces.Save": (w) => ({ ...(w as object), id: "local" }),
+      "Daemon.Health": () => ({ version: "0.1.0", memAllocMB: 24, startedAt: new Date(now).toISOString() }), "Settings.All": () => ({}),
       "Projects.List": () => [{ id: "p1", name: "orole-os", path: "C:\\code\\orole-os", machineId: "local", missing: false }], "Worktrees.List": () => [],
       "Notifications.List": () => ({ items: [], sources: [], unread: 0 }), "Notifications.Prefs": () => ({ default: { enabled: true, native: false, sound: false }, sources: {} }),
       "Policy.Pending": () => [], "Plugins.List": () => [], "Desktop.Ready": () => ({ view: "", sequence: 0 }),

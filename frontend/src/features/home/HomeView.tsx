@@ -4,15 +4,14 @@ import { Button } from "@/components/ui/button";
 import { Popover, PopoverPopup, PopoverTrigger } from "@/components/ui/popover";
 import { WidgetGrid } from "@/components/widgets/WidgetGrid";
 import { useWidgetRegistry } from "@/components/widgets/registry";
-import { useWorkspaces } from "@/stores/workspaces";
+import { useDashboard } from "@/stores/dashboard";
 import { HomeAgentComposer } from "@/features/home/HomeAgentComposer";
 import { Failure } from "@/features/mcp/shared";
 
 /** The ASCII scene, task composer, and the person's own grid of widgets. */
 export function HomeView() {
-  const { list, activeId, addWidget, error } = useWorkspaces();
+  const { widgets: items, addWidget, error } = useDashboard();
   const widgets = useWidgetRegistry();
-  const ws = list.find((w) => w.id === activeId);
   return (
     <div className="absolute inset-0 overflow-y-auto bg-background">
       <div className="relative min-h-full">
@@ -23,7 +22,7 @@ export function HomeView() {
         </div>
         <div className="relative mx-auto w-full max-w-[1180px] px-6 pb-12">
           <div className="mb-2 flex items-center justify-between">
-            <h2 className="font-medium text-muted-foreground text-xs">{ws?.name ?? "Home"}</h2>
+            <h2 className="font-medium text-muted-foreground text-xs">Home</h2>
             <Popover>
               <PopoverTrigger render={<Button variant="ghost" size="xs" />}><PlusIcon />Customize</PopoverTrigger>
               <PopoverPopup align="end" className="max-h-96 w-72 overflow-y-auto">
@@ -37,8 +36,8 @@ export function HomeView() {
               </PopoverPopup>
             </Popover>
           </div>
-          <Failure error={error ? `Workspace layout could not be loaded or saved: ${error}` : null} />
-          {ws && ws.layout.widgets.length === 0 && <p className="p-6 text-center text-muted-foreground">This workspace has no widgets. Use “Customize”.</p>}
+          <Failure error={error ? `Dashboard layout could not be loaded or saved: ${error}` : null} />
+          {items.length === 0 && <p className="p-6 text-center text-muted-foreground">No widgets yet. Use “Customize”.</p>}
           <WidgetGrid />
         </div>
       </div>

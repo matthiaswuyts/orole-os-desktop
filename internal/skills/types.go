@@ -14,6 +14,7 @@ type Skill struct {
 	Files       []string `json:"files"`       // resource files next to SKILL.md, relative paths
 	Enabled     bool     `json:"enabled"`     // disabled skills are neither synced nor listed to agents
 	Source      string   `json:"source"`      // "orole" or "imported:<harness>"
+	AddedAt     int64    `json:"addedAt"`     // when it joined the registry (unix seconds)
 	UpdatedAt   int64    `json:"updatedAt"`
 }
 

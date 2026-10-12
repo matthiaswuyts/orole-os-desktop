@@ -5,7 +5,6 @@ import { inDesktop } from "@/lib/backend";
 import { startDaemonPolling } from "@/stores/daemon";
 import { useSettings } from "@/stores/settings";
 import { useUI } from "@/stores/ui";
-import { useWorkspaces } from "@/stores/workspaces";
 import { ToastProvider } from "@/components/ui/toast";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { SettingsView } from "./SettingsView";
@@ -18,7 +17,6 @@ export function SettingsWindow() {
     const section = new URLSearchParams(window.location.search).get("section");
     if (section) useUI.getState().openSettings(section);
     void useSettings.getState().load();
-    void useWorkspaces.getState().load();
     const offPolling = startDaemonPolling();
     const offSection = inDesktop ? events.settingsWindowSection.on((s) => useUI.getState().openSettings(s)) : undefined;
     return () => { offPolling(); offSection?.(); };

@@ -19,8 +19,6 @@ async function installBridge(page: Page) {
     const handlers: Record<string, (...a: any[]) => unknown> = {
       "Daemon.Health": () => ({ version: "test", pid: 1, startedAt: new Date().toISOString(), uptimeSec: 1, dbVersion: 10, platform: "windows/amd64", goVersion: "go", goroutines: 1, memAllocMB: 1, terminals: 0, protocolVersion: 1 }),
       "Settings.All": () => ({}),
-      "Workspaces.List": () => [],
-      "Workspaces.Save": (w: W) => ({ ...w, id: "ws1" }),
       "Settings.Set": () => null, "Policy.Pending": () => [], "Plugins.List": () => [],
       "Desktop.Ready": () => ({ view: "", sequence: 0 }), "Updates.Check": () => ({ enabled: false, available: false, error: "" }),
       "Agents.List": () => [], "Agents.Runs": () => [], "Agents.Detect": () => [], "Terminals.List": () => [],

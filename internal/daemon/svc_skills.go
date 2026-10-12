@@ -17,7 +17,8 @@ import (
 // harness sees them through native-directory sync and through the `orole` MCP gateway, which
 // also proxies every enabled, connected MCP server (internal/gateway).
 //
-// IPC methods: skills.list/get/save/delete/setEnabled/discover/import/syncState/sync and
+// IPC methods: skills.list/get/save/delete/setEnabled/discover/import/syncState/sync,
+// skills.hub.browse/search/describe/preview/install (skills.sh catalogue) and
 // gateway.tools/call/skills/skill. Event: skills.changed ({action, name}).
 //
 // gateway.call goes through MCP.InvokeChecked: policy decision, user approval and audit run
@@ -26,6 +27,7 @@ import (
 // mcp.call as "user"; the session id only attributes the call for policy rules and audit.
 
 func (d *Daemon) registerSkills() {
+	d.hub = skills.NewHub()
 	if exe, err := os.Executable(); err == nil {
 		d.gatewayExe = exe
 	}
@@ -152,6 +154,42 @@ func (d *Daemon) registerSkillHandlers() {
 			action = "enable"
 		}
 		return mutate(action, p.Name, func(st *skills.Store) (skills.Skill, error) { return st.SetEnabled(p.Name, p.Enabled) })
+	})
+	handle(d, "skills.hub.topics", func(ctx context.Context, _ none) ([]skills.HubTopic, error) {
+		return skills.HubTopics(), nil
+	})
+	handle(d, "skills.hub.topic", func(ctx context.Context, p struct {
+		ID string `json:"id"`
+	}) (skills.HubPage, error) {
+		page, err := d.hub.Topic(ctx, p.ID)
+		return page, skillErr(err)
+	})
+	handle(d, "skills.hub.browse", func(ctx context.Context, p struct {
+		View string `json:"view"`
+		Page int    `json:"page"`
+	}) (skills.HubPage, error) {
+		page, err := d.hub.Browse(ctx, p.View, p.Page)
+		return page, skillErr(err)
+	})
+	handle(d, "skills.hub.search", func(ctx context.Context, p struct {
+		Query string `json:"query"`
+	}) (skills.HubPage, error) {
+		page, err := d.hub.Search(ctx, p.Query)
+		return page, skillErr(err)
+	})
+	handle(d, "skills.hub.describe", func(ctx context.Context, p struct {
+		Refs []skills.HubRef `json:"refs"`
+	}) ([]skills.HubDescription, error) {
+		return d.hub.Describe(ctx, p.Refs), nil
+	})
+	handle(d, "skills.hub.preview", func(ctx context.Context, p skills.HubRef) (skills.HubPreview, error) {
+		pv, err := d.hub.Preview(ctx, p.Source, p.SkillID)
+		return pv, skillErr(err)
+	})
+	handle(d, "skills.hub.install", func(ctx context.Context, p skills.HubRef) (skills.Skill, error) {
+		return mutate("install", p.Source+"/"+p.SkillID, func(st *skills.Store) (skills.Skill, error) {
+			return d.hub.Install(ctx, st, p.Source, p.SkillID)
+		})
 	})
 	handle(d, "skills.discover", func(ctx context.Context, _ none) ([]skills.Discovered, error) {
 		st, err := d.skillStore()

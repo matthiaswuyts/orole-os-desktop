@@ -54,11 +54,53 @@ export function filterSkills(list: readonly Skill[], query: string): Skill[] {
   return q ? sorted.filter((s) => s.name.toLowerCase().includes(q) || s.description.toLowerCase().includes(q)) : sorted;
 }
 
-/** "orole" -> "Orole", "builtin" -> "Built in (bots)", "imported:claude" -> "Imported from claude". */
-export function sourceLabel(source: string): string {
-  if (source === "builtin") return "Built in (bots)";
-  if (source.startsWith("imported:")) return `Imported from ${source.slice("imported:".length)}`;
-  return source === "orole" || source === "" ? "Orole" : source;
+export type SourceKind = "orole" | "builtin" | "harness" | "hub" | "other";
+
+/**
+ * Where a skill came from, for the badge and the detail page. `creator` is who made it:
+ * "You" for skills written in Orole, the owner for skills.sh, the agent's name for imports.
+ */
+export function sourceInfo(source: string): { kind: SourceKind; label: string; harness?: string; creator: string; detail?: string } {
+  if (source === "builtin") return { kind: "builtin", label: "Built in", creator: "Orole" };
+  if (source.startsWith("imported:")) {
+    const harness = source.slice("imported:".length);
+    return { kind: "harness", harness, label: `Imported from ${harnessLabel(harness)}`, creator: harnessLabel(harness) };
+  }
+  if (source.startsWith(HUB_PREFIX)) {
+    const [owner = "", repo = ""] = source.slice(HUB_PREFIX.length).split("/");
+    return { kind: "hub", label: "From skills.sh", creator: owner, detail: `${owner}/${repo}` };
+  }
+  if (source === "orole" || source === "") return { kind: "orole", label: "Created in Orole", creator: "You" };
+  return { kind: "other", label: source, creator: source };
+}
+
+const UNITS: [number, string][] = [[60, "minute"], [3600, "hour"], [86400, "day"], [2592000, "month"], [31536000, "year"]];
+
+/** "just now", "5 minutes ago", "1 day ago", "3 months ago". Unknown (0) times give "". */
+export function timeAgo(unixSeconds: number, nowMs = Date.now()): string {
+  if (!unixSeconds) return "";
+  const seconds = Math.max(0, Math.floor(nowMs / 1000 - unixSeconds));
+  if (seconds < 60) return "just now";
+  const [size, unit] = [...UNITS].reverse().find(([s]) => seconds >= s)!;
+  const n = Math.floor(seconds / size);
+  return `${n} ${unit}${n === 1 ? "" : "s"} ago`;
+}
+
+/** Registry source of a skill added from skills.sh (mirrors skills.HubSourcePrefix in Go). */
+export const HUB_PREFIX = "skills.sh:";
+export const hubKey = (ref: { source: string; skillId: string }) => `${ref.source}/${ref.skillId}`;
+
+/** Keys ("owner/repo/skill") of the skills.sh skills already in the registry. */
+export function addedFromHub(list: readonly Skill[]): ReadonlySet<string> {
+  return new Set(list.filter((s) => s.source.startsWith(HUB_PREFIX)).map((s) => s.source.slice(HUB_PREFIX.length)));
+}
+
+/** 2_000_000 -> "2M", 733_900 -> "733.9K", 950 -> "950". */
+export function formatInstalls(n: number): string {
+  const short = (value: number, unit: string) => `${value.toFixed(1).replace(/\.0$/, "")}${unit}`;
+  if (n >= 1_000_000) return short(n / 1_000_000, "M");
+  if (n >= 1_000) return short(n / 1_000, "K");
+  return String(Math.max(0, Math.trunc(n)));
 }
 
 /** Discovered skills grouped per harness, in harness order claude, codex, omp, then the rest alphabetically. */
@@ -75,17 +117,14 @@ export function groupDiscovered(list: readonly Discovered[]): { harness: string;
 export const HARNESS_LABEL: Record<string, string> = { claude: "Claude Code", codex: "Codex", omp: "Oh My Pi" };
 export const harnessLabel = (harness: string) => HARNESS_LABEL[harness] ?? harness;
 
-export type GatewayTone = "success" | "warning" | "error" | "outline";
+export type AgentTone = "success" | "warning" | "error" | "outline";
 
-/** Gateway entry state as badge text and tone. */
-export function gatewayBadge(gateway: string): { label: string; tone: GatewayTone } {
-  switch (gateway) {
-    case "installed": return { label: "Gateway installed", tone: "success" };
-    case "outdated": return { label: "Gateway outdated", tone: "warning" };
-    case "missing": return { label: "Gateway missing", tone: "error" };
-    case "unsupported": return { label: "Gateway not supported", tone: "outline" };
-    default: return { label: `Gateway ${gateway || "unknown"}`, tone: "outline" };
-  }
+/** One agent (harness) in plain words: is it installed, and does it have the current skills? */
+export function agentStatus(state: SyncState): { label: string; tone: AgentTone } {
+  if (!state.available) return { label: "Not installed", tone: "outline" };
+  if (state.error) return { label: "Problem", tone: "error" };
+  if (needsSync(state)) return { label: "Needs update", tone: "warning" };
+  return { label: "Up to date", tone: "success" };
 }
 
 /** True when a Sync would change something for this harness. */

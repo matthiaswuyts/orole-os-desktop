@@ -11,6 +11,7 @@ import { Failure, Loading, useRemote } from "@/features/mcp/shared";
 import { inDesktop } from "@/lib/backend";
 import { useUI } from "@/stores/ui";
 import { BrandLogo } from "./BrandLogo";
+import { ClientConnectorDialog } from "./ClientConnectorDialog";
 import { CustomConnectorDialog } from "./CustomConnectorDialog";
 import { CATEGORIES, DIRECTORY, serverFor, type Connector } from "./directory";
 import { connectServer, useConnect } from "./useConnect";
@@ -51,6 +52,7 @@ export function Integrations() {
   const [open, setOpen] = useState<string | null>(requested === "github" ? "github" : null);
   const [query, setQuery] = useState("");
   const [custom, setCustom] = useState(false);
+  const [clientFor, setClientFor] = useState<Connector | null>(null);
   const [waiting, setWaiting] = useState<ReadonlySet<string>>(new Set());
   const connect = useConnect(servers.reload);
   useEffect(() => { if (!inDesktop) return; void load(); return startSync(); }, [load, startSync]);
@@ -80,8 +82,9 @@ export function Integrations() {
 
   const add = (c: Connector) => {
     if (c.native === "github") { setOpen("github"); return; }
+    if (c.client) { connect.clearError(); setClientFor(c); return; }
     void connect.run(c.id, async () => {
-      const { id, signingIn } = await connectServer(c.name, c.url!);
+      const { id, signingIn } = await connectServer(c.name, c.url!, { local: c.local });
       if (signingIn) setWaiting((current) => new Set(current).add(id));
     });
   };
@@ -140,7 +143,7 @@ export function Integrations() {
         <Button variant="outline" disabled={!inDesktop} onClick={() => { connect.clearError(); setCustom(true); }}><Plus />Custom connector</Button>
       </div>
       {desktopHint}
-      <Failure error={servers.error ?? (custom ? null : connect.error)} retry={servers.error ? servers.reload : undefined} />
+      <Failure error={servers.error ?? (custom || clientFor ? null : connect.error)} retry={servers.error ? servers.reload : undefined} />
       {servers.loading && !servers.data && <Loading>Loading connections…</Loading>}
       {connectedRows.length > 0 && <Section title="Connected">{connectedRows}</Section>}
       {featured.length > 0 && <Section title="Featured">{featured.map(addRow)}</Section>}
@@ -154,6 +157,12 @@ export function Integrations() {
           const { id, signingIn } = await connectServer(name, url);
           if (signingIn) setWaiting((current) => new Set(current).add(id));
           setCustom(false);
+        })} />
+      <ClientConnectorDialog connector={clientFor} busy={connect.busy === clientFor?.id} error={connect.error} onClose={() => setClientFor(null)}
+        onAdd={(c, client) => void connect.run(c.id, async () => {
+          const { id, signingIn } = await connectServer(c.name, c.url!, { client });
+          if (signingIn) setWaiting((current) => new Set(current).add(id));
+          setClientFor(null);
         })} />
     </div>
   );

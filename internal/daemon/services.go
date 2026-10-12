@@ -9,19 +9,10 @@ import (
 	"runtime"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/rayorole/orole-os-desktop/internal/daemon/api"
 	"github.com/rayorole/orole-os-desktop/internal/ipc"
 	"github.com/rayorole/orole-os-desktop/internal/terminals"
 )
-
-// Workspace is a named layout.
-type Workspace struct {
-	ID       string          `json:"id"`
-	Name     string          `json:"name"`
-	Position int             `json:"position"`
-	Layout   json.RawMessage `json:"layout"`
-}
 
 // registerServices wires every daemon module. Each module lives in its own file
 // (svc_<name>.go) and adds one line here.
@@ -97,57 +88,6 @@ func (d *Daemon) registerCore() {
 			d.IPC.Publish("settings.changed", map[string]any{"key": p.Key, "value": p.Value})
 		}
 		return none{}, err
-	})
-
-	// Workspaces: layouts persist here.
-	handle(d, "workspaces.list", func(ctx context.Context, _ none) ([]Workspace, error) {
-		rows, err := d.DB.QueryContext(ctx, `SELECT id,name,position,layout FROM workspaces ORDER BY position, created_at`)
-		if err != nil {
-			return nil, err
-		}
-		defer rows.Close()
-		out := []Workspace{}
-		for rows.Next() {
-			var w Workspace
-			var l string
-			if err := rows.Scan(&w.ID, &w.Name, &w.Position, &l); err != nil {
-				return nil, err
-			}
-			w.Layout = json.RawMessage(l)
-			out = append(out, w)
-		}
-		return out, rows.Err()
-	})
-	handle(d, "workspaces.save", func(ctx context.Context, w Workspace) (Workspace, error) {
-		if w.Name == "" || len(w.Name) > 80 {
-			return w, &ipc.Error{Code: ipc.CodeBadRequest, Message: "workspace needs a name (<=80 chars)"}
-		}
-		if len(w.Layout) == 0 {
-			w.Layout = json.RawMessage(`{}`)
-		}
-		if !json.Valid(w.Layout) || len(w.Layout) > 1<<20 {
-			return w, &ipc.Error{Code: ipc.CodeBadRequest, Message: "invalid layout"}
-		}
-		if w.ID == "" {
-			w.ID = uuid.NewString()
-		}
-		now := time.Now().Unix()
-		_, err := d.DB.ExecContext(ctx, `INSERT INTO workspaces(id,name,position,layout,created_at,updated_at) VALUES(?,?,?,?,?,?)
-			ON CONFLICT(id) DO UPDATE SET name=excluded.name, position=excluded.position, layout=excluded.layout, updated_at=excluded.updated_at`,
-			w.ID, w.Name, w.Position, string(w.Layout), now, now)
-		return w, err
-	})
-	handle(d, "workspaces.delete", func(ctx context.Context, p struct {
-		ID string `json:"id"`
-	}) (none, error) {
-		res, err := d.DB.ExecContext(ctx, `DELETE FROM workspaces WHERE id=?`, p.ID)
-		if err != nil {
-			return none{}, err
-		}
-		if n, _ := res.RowsAffected(); n == 0 {
-			return none{}, &ipc.Error{Code: ipc.CodeNotFound, Message: "no such workspace"}
-		}
-		return none{}, nil
 	})
 
 	// Terminals.

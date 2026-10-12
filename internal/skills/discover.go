@@ -238,7 +238,8 @@ func (s *Store) adopt(tmp, name, source string) (Skill, error) {
 	if err := os.Rename(tmp, dir); err != nil {
 		return Skill{}, err
 	}
-	doc.Skills[name] = regEntry{Enabled: true, Source: source, UpdatedAt: s.now().Unix()}
+	now := s.now().Unix()
+	doc.Skills[name] = regEntry{Enabled: true, Source: source, UpdatedAt: now, AddedAt: now}
 	if err := s.store(doc); err != nil {
 		_ = os.RemoveAll(dir)
 		return Skill{}, err

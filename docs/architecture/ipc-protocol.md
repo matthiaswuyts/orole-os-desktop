@@ -74,7 +74,7 @@ read loop stops, including after an oversized or unreadable frame.
 
 Registered with `handle(d, name, ...)` in `internal/daemon` (see `daemon.md` for what each does):
 
-`daemon.health`, `daemon.shutdown`, `settings.list`, `settings.set`, `workspaces.list|save|delete`,
+`daemon.health`, `daemon.shutdown`, `settings.list`, `settings.set`,
 `terminals.shells|list|create|write|resize|attach|close`, `projects.list|add|open|remove`,
 `git.status|diff|log|branches`, `worktrees.list|create|remove`, `github.status|login|logout|clone|issue.create|issue.update|issue.comment`,
 `files.providers|roots.list|roots.add|roots.remove|list|stat|read|write|mkdir|rename|delete|search`.

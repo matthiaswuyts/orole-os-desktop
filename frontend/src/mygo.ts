@@ -1072,6 +1072,61 @@ export interface HostMetrics {
   diskPath: string;
 }
 
+/** HubDescription is the one-line description skills.sh shows for a skill ("" when unknown). */
+export interface HubDescription {
+  source: string;
+  skillId: string;
+  description: string;
+}
+
+/** HubEntry is one skills.sh catalogue row. */
+export interface HubEntry {
+  /** GitHub "owner/repo" */
+  source: string;
+  /** the skill's directory/name inside the repository */
+  skillId: string;
+  name: string;
+  installs: number;
+  official: boolean;
+}
+
+/** HubPage is one page of a listing. */
+export interface HubPage {
+  skills: HubEntry[];
+  page: number;
+  hasMore: boolean;
+  total: number;
+}
+
+/** HubPreview is what Add will copy into the registry, shown before anything is written. */
+export interface HubPreview {
+  source: string;
+  skillId: string;
+  /** registry name (frontmatter name wins) */
+  name: string;
+  description: string;
+  /** full SKILL.md */
+  body: string;
+  /** resource files next to SKILL.md */
+  files: string[];
+  /** the subset of Files that are executable script types */
+  scripts: string[];
+  /** the skill's skills.sh page */
+  url: string;
+}
+
+/** HubRef names a skill on skills.sh. */
+export interface HubRef {
+  source: string;
+  skillId: string;
+}
+
+/** HubTopic is one of skills.sh's curated topics. */
+export interface HubTopic {
+  id: string;
+  label: string;
+}
+
 export interface Identity {
   address: string;
   fingerprint: string;
@@ -2532,6 +2587,8 @@ export interface Skill {
   enabled: boolean;
   /** "orole" or "imported:<harness>" */
   source: string;
+  /** when it joined the registry (unix seconds) */
+  addedAt: number;
   updatedAt: number;
 }
 
@@ -2855,14 +2912,6 @@ export interface WorkflowRun {
   repo: string;
 }
 
-/** Workspace is a named layout. */
-export interface Workspace {
-  id: string;
-  name: string;
-  position: number;
-  layout: unknown;
-}
-
 /** Worktree is a git worktree of a project merged with live git state. */
 export interface Worktree {
   id: string;
@@ -2932,22 +2981,6 @@ export const Settings = {
   /** Set stores one setting; value must be valid JSON. */
   set(key: string, value: unknown): Promise<void> {
     return call("Settings.Set", key, value);
-  },
-} as const;
-
-/** Workspaces is the bound service for workspace layouts. */
-export const Workspaces = {
-  /** Delete removes a workspace. */
-  delete(id: string): Promise<void> {
-    return call("Workspaces.Delete", id);
-  },
-  /** List returns workspaces in order. */
-  list(): Promise<Workspace[]> {
-    return call("Workspaces.List");
-  },
-  /** Save creates or updates a workspace. */
-  save(ws: Workspace): Promise<Workspace> {
-    return call("Workspaces.Save", ws);
   },
 } as const;
 
@@ -3515,6 +3548,34 @@ export const Skills = {
   /** Get returns one skill with its full SKILL.md. */
   get(name: string): Promise<Skill> {
     return call("Skills.Get", name);
+  },
+  /** HubBrowse lists one page of the skills.sh catalogue; view is "all-time" or "trending", pages start at 0. */
+  hubBrowse(view: string, page: number): Promise<HubPage> {
+    return call("Skills.HubBrowse", view, page);
+  },
+  /** HubDescribe returns the descriptions skills.sh shows for up to 40 skills ("" when unknown). */
+  hubDescribe(refs: HubRef[]): Promise<HubDescription[]> {
+    return call("Skills.HubDescribe", refs);
+  },
+  /** HubInstall adds a skills.sh skill to the registry. Harness folders only change on the next Sync. */
+  hubInstall(source: string, skillID: string): Promise<Skill> {
+    return call("Skills.HubInstall", source, skillID);
+  },
+  /** HubPreview downloads a skill and returns its full SKILL.md and file list. Nothing is added. */
+  hubPreview(source: string, skillID: string): Promise<HubPreview> {
+    return call("Skills.HubPreview", source, skillID);
+  },
+  /** HubSearch searches the skills.sh catalogue by name (at least two characters). */
+  hubSearch(query: string): Promise<HubPage> {
+    return call("Skills.HubSearch", query);
+  },
+  /** HubTopic lists the skills of one skills.sh topic. */
+  hubTopic(id: string): Promise<HubPage> {
+    return call("Skills.HubTopic", id);
+  },
+  /** HubTopics lists skills.sh's curated topics (no network access). */
+  hubTopics(): Promise<HubTopic[]> {
+    return call("Skills.HubTopics");
   },
   /** Import copies a discovered skill into the registry. */
   import(harness: string, name: string): Promise<Skill> {

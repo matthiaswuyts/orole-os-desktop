@@ -139,7 +139,7 @@ export function useScrollAnchor(revision: unknown, updateIds: readonly number[],
 }
 
 export function ScrollAnchor({ unseen, onJump }: { unseen: number; onJump: () => void }) {
-  return <Button size="sm" variant="outline" className="absolute bottom-3 left-1/2 -translate-x-1/2 rounded-full bg-background" onClick={onJump}>
+  return <Button size="sm" variant="outline" className="absolute bottom-3 left-1/2 -translate-x-1/2 rounded-full bg-background hover:bg-muted data-pressed:bg-muted dark:bg-background dark:hover:bg-muted dark:data-pressed:bg-muted" onClick={onJump}>
     <ArrowDown aria-hidden data-icon="inline-start" />
     <span>{unseen ? `${unseen} new ${unseen === 1 ? "update" : "updates"}` : "Jump to latest"}</span>
     <span className="sr-only">{unseen ? " — jump to latest" : ""}</span>

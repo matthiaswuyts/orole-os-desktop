@@ -16,7 +16,7 @@ const server = (id: string, over: Partial<ServerState> = {}): ServerState => ({
   createdAt: 1, status: "connected", authorized: true, toolCount: 3, ...over,
 });
 const skill = (name: string, over: Partial<Skill> = {}): Skill => ({
-  name, description: `${name} description`, body: "", files: [], enabled: true, source: "orole", updatedAt: 1, ...over,
+  name, description: `${name} description`, body: "", files: [], enabled: true, source: "orole", addedAt: 1, updatedAt: 1, ...over,
 });
 
 let latest: FormState;

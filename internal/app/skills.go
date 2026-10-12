@@ -72,6 +72,55 @@ func (s Skills) Sync(ctx context.Context, harness string) ([]skills.SyncState, e
 	return out, err
 }
 
+// HubTopics lists skills.sh's curated topics (no network access).
+func (s Skills) HubTopics(ctx context.Context) ([]skills.HubTopic, error) {
+	var out []skills.HubTopic
+	err := s.L.call(ctx, "skills.hub.topics", struct{}{}, &out)
+	return out, err
+}
+
+// HubTopic lists the skills of one skills.sh topic.
+func (s Skills) HubTopic(ctx context.Context, id string) (skills.HubPage, error) {
+	var out skills.HubPage
+	err := s.L.call(ctx, "skills.hub.topic", map[string]string{"id": id}, &out)
+	return out, err
+}
+
+// HubBrowse lists one page of the skills.sh catalogue; view is "all-time" or "trending", pages start at 0.
+func (s Skills) HubBrowse(ctx context.Context, view string, page int) (skills.HubPage, error) {
+	var out skills.HubPage
+	err := s.L.call(ctx, "skills.hub.browse", map[string]any{"view": view, "page": page}, &out)
+	return out, err
+}
+
+// HubSearch searches the skills.sh catalogue by name (at least two characters).
+func (s Skills) HubSearch(ctx context.Context, query string) (skills.HubPage, error) {
+	var out skills.HubPage
+	err := s.L.call(ctx, "skills.hub.search", map[string]string{"query": query}, &out)
+	return out, err
+}
+
+// HubDescribe returns the descriptions skills.sh shows for up to 40 skills ("" when unknown).
+func (s Skills) HubDescribe(ctx context.Context, refs []skills.HubRef) ([]skills.HubDescription, error) {
+	var out []skills.HubDescription
+	err := s.L.call(ctx, "skills.hub.describe", map[string]any{"refs": refs}, &out)
+	return out, err
+}
+
+// HubPreview downloads a skill and returns its full SKILL.md and file list. Nothing is added.
+func (s Skills) HubPreview(ctx context.Context, source, skillID string) (skills.HubPreview, error) {
+	var out skills.HubPreview
+	err := s.L.call(ctx, "skills.hub.preview", skills.HubRef{Source: source, SkillID: skillID}, &out)
+	return out, err
+}
+
+// HubInstall adds a skills.sh skill to the registry. Harness folders only change on the next Sync.
+func (s Skills) HubInstall(ctx context.Context, source, skillID string) (skills.Skill, error) {
+	var out skills.Skill
+	err := s.L.call(ctx, "skills.hub.install", skills.HubRef{Source: source, SkillID: skillID}, &out)
+	return out, err
+}
+
 // Images is the bound service for image generation through installed harnesses (Codex).
 type Images struct{ L *Link }
 

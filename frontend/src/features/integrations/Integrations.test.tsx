@@ -38,10 +38,15 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("directory", () => {
-  it("lists each endpoint once, over https", () => {
+  it("lists each endpoint once, over https unless it is a loopback desktop app", () => {
     const urls = DIRECTORY.flatMap((c) => c.url ?? []);
     expect(new Set(urls).size).toBe(urls.length);
-    for (const url of urls) expect(new URL(url).protocol).toBe("https:");
+    for (const c of DIRECTORY) {
+      if (!c.url) continue;
+      const parsed = new URL(c.url);
+      if (c.local) expect(["127.0.0.1", "localhost"]).toContain(parsed.hostname);
+      else expect(parsed.protocol).toBe("https:");
+    }
   });
 
   it("matches a registered server to its entry regardless of a trailing slash or case", () => {
@@ -79,6 +84,29 @@ describe("Integrations", () => {
     render(<Integrations />);
     fireEvent.click(await screen.findByRole("button", { name: "Add Railway" }));
     await waitFor(() => expect(api.startAuth).toHaveBeenCalledExactlyOnceWith("s1"));
+  });
+
+  it("registers a local desktop-app connector without sign-in, even while the app is not running", async () => {
+    api.add.mockResolvedValue(server({ id: "p1", name: "Paper", url: "http://127.0.0.1:29979/mcp", authKind: "none", status: "backoff", authorized: false }));
+    render(<Integrations />);
+    fireEvent.click(await screen.findByRole("button", { name: "Add Paper" }));
+    await waitFor(() => expect(api.add).toHaveBeenCalledWith(expect.objectContaining({ name: "Paper", url: "http://127.0.0.1:29979/mcp", authKind: "none" })));
+    expect(api.startAuth).not.toHaveBeenCalled();
+  });
+
+  it("asks for the user's own OAuth client for Google and always signs in, since the server never challenges", async () => {
+    api.add.mockResolvedValue(server({ id: "g1", name: "Gmail", url: "https://gmailmcp.googleapis.com/mcp/v1", status: "connected" }));
+    render(<Integrations />);
+    fireEvent.click(await screen.findByRole("button", { name: "Add Gmail" }));
+    expect(api.add).not.toHaveBeenCalled();
+    fireEvent.change(await screen.findByLabelText("Client ID"), { target: { value: "abc.apps.googleusercontent.com" } });
+    fireEvent.change(screen.getByLabelText("Client secret"), { target: { value: "s3cret" } });
+    fireEvent.click(screen.getByRole("button", { name: "Connect" }));
+    await waitFor(() => expect(api.startAuth).toHaveBeenCalledExactlyOnceWith("g1"));
+    expect(api.add).toHaveBeenCalledWith(expect.objectContaining({
+      url: "https://gmailmcp.googleapis.com/mcp/v1", authKind: "oauth", oauthClientId: "abc.apps.googleusercontent.com", clientSecret: "s3cret",
+      scopes: expect.stringContaining("gmail.readonly"),
+    }));
   });
 
   it("moves a connected entry out of the directory and offers Manage", async () => {

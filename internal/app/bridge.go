@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/egoist/mygo"
-	"github.com/rayorole/orole-os-desktop/internal/daemon"
 	"github.com/rayorole/orole-os-desktop/internal/daemon/api"
 	"github.com/rayorole/orole-os-desktop/internal/daemon/control"
 	"github.com/rayorole/orole-os-desktop/internal/ipc"
@@ -237,28 +236,6 @@ func (s Settings) All(ctx context.Context) (map[string]json.RawMessage, error) {
 // Set stores one setting; value must be valid JSON.
 func (s Settings) Set(ctx context.Context, key string, value json.RawMessage) error {
 	return s.L.call(ctx, "settings.set", map[string]any{"key": key, "value": value}, nil)
-}
-
-// Workspaces is the bound service for workspace layouts.
-type Workspaces struct{ L *Link }
-
-// List returns workspaces in order.
-func (w Workspaces) List(ctx context.Context) ([]daemon.Workspace, error) {
-	var out []daemon.Workspace
-	err := w.L.call(ctx, "workspaces.list", struct{}{}, &out)
-	return out, err
-}
-
-// Save creates or updates a workspace.
-func (w Workspaces) Save(ctx context.Context, ws daemon.Workspace) (daemon.Workspace, error) {
-	var out daemon.Workspace
-	err := w.L.call(ctx, "workspaces.save", ws, &out)
-	return out, err
-}
-
-// Delete removes a workspace.
-func (w Workspaces) Delete(ctx context.Context, id string) error {
-	return w.L.call(ctx, "workspaces.delete", map[string]string{"id": id}, nil)
 }
 
 // Terminals is the bound service for pseudoterminal sessions.

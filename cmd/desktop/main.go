@@ -32,7 +32,6 @@ func main() {
 	}
 	mygo.Bind(app.Daemon{L: link})
 	mygo.Bind(app.Settings{L: link})
-	mygo.Bind(app.Workspaces{L: link})
 	mygo.Bind(app.Terminals{L: link})
 	mygo.Bind(app.Projects{L: link})
 	mygo.Bind(app.Git{L: link})

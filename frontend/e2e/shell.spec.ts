@@ -1,10 +1,6 @@
 import AxeBuilder from "@axe-core/playwright";
 import { expect, test, type Page } from "@playwright/test";
-import { addNotes, createWorkspace, deleteWorkspace, moveAndResizeNotes, removeNotes, runPaletteCommand, type SavedWorkspace } from "./helpers/workspace";
-
-async function readWorkspaces(page: Page): Promise<SavedWorkspace[]> {
-  return page.evaluate(() => JSON.parse(localStorage.getItem("orole.preview.settings.ws") ?? "[]"));
-}
+import { addNotes, emptyDashboard, moveAndResizeNotes, readDashboard, removeNotes, runPaletteCommand } from "./helpers/dashboard";
 
 async function audit(page: Page) {
   const results = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa", "wcag21aa", "wcag22aa"]).analyze();
@@ -20,7 +16,7 @@ test.beforeEach(async ({ page }) => {
   });
   await page.clock.setFixedTime(new Date("2026-10-08T12:00:00Z"));
   await page.goto("/");
-  await expect(page.getByRole("button", { name: "Switch workspace" })).toContainText("Development");
+  await expect(page.getByRole("button", { name: "Customize" })).toBeVisible();
   await page.evaluate(() => document.fonts.ready);
 });
 
@@ -82,28 +78,24 @@ test("theme and density keyboard changes persist after reload", async ({ page })
   await expect(page.getByLabel("Reduce motion", { exact: true })).toHaveValue("on");
 });
 
-test("workspace add, drag, resize, notes, remove and delete survive reload", async ({ page }) => {
-  const name = "Browser acceptance workspace";
-  await createWorkspace(page, name);
+test("dashboard widgets add, drag, resize, notes and remove survive reload", async ({ page }) => {
+  await emptyDashboard(page);
   await addNotes(page);
-  await page.getByRole("textbox", { name: "Notes", exact: true }).fill("Persist this workspace note.");
-  await expect.poll(async () => (await readWorkspaces(page)).find((w) => w.name === name)?.layout.widgets[0]?.config?.text).toBe("Persist this workspace note.");
-  const before = (await readWorkspaces(page)).find((w) => w.name === name)!.layout.widgets[0]!;
+  await page.getByRole("textbox", { name: "Notes", exact: true }).fill("Persist this dashboard note.");
+  await expect.poll(async () => (await readDashboard(page))[0]?.config?.text).toBe("Persist this dashboard note.");
+  const before = (await readDashboard(page))[0]!;
   await moveAndResizeNotes(page);
-  await expect.poll(async () => (await readWorkspaces(page)).find((w) => w.name === name)?.layout.widgets[0]?.x).toBeGreaterThan(before.x);
-  await expect.poll(async () => (await readWorkspaces(page)).find((w) => w.name === name)?.layout.widgets[0]?.h).toBeGreaterThan(before.h);
-  await expect.poll(async () => (await readWorkspaces(page)).find((w) => w.name === name)?.layout.widgets[0]?.w).toBeGreaterThan(before.w);
-  const saved = (await readWorkspaces(page)).find((w) => w.name === name)!.layout;
+  await expect.poll(async () => (await readDashboard(page))[0]?.x).toBeGreaterThan(before.x);
+  await expect.poll(async () => (await readDashboard(page))[0]?.h).toBeGreaterThan(before.h);
+  await expect.poll(async () => (await readDashboard(page))[0]?.w).toBeGreaterThan(before.w);
+  const saved = await readDashboard(page);
   await page.reload();
-  await expect(page.getByRole("textbox", { name: "Notes", exact: true })).toHaveValue("Persist this workspace note.");
-  expect((await readWorkspaces(page)).find((w) => w.name === name)!.layout).toEqual(saved);
+  await expect(page.getByRole("textbox", { name: "Notes", exact: true })).toHaveValue("Persist this dashboard note.");
+  expect(await readDashboard(page)).toEqual(saved);
   await removeNotes(page);
-  await expect.poll(async () => (await readWorkspaces(page)).find((w) => w.name === name)?.layout.widgets.length).toBe(0);
+  await expect.poll(async () => (await readDashboard(page)).length).toBe(0);
   await page.reload();
   await expect(page.getByRole("region", { name: "Notes", exact: true })).toHaveCount(0);
-  await deleteWorkspace(page, name);
-  await page.reload();
-  expect((await readWorkspaces(page)).some((w) => w.name === name)).toBe(false);
 });
 
 for (const theme of ["Orole Midnight", "Orole Light"]) {
@@ -120,9 +112,10 @@ for (const theme of ["Orole Midnight", "Orole Light"]) {
     await expect(page).toHaveScreenshot(`${theme.toLowerCase().replaceAll(" ", "-")}-palette.png`);
     await page.keyboard.press("Escape");
     await expect(page.getByRole("dialog", { name: "Command palette" })).toBeHidden();
-    await createWorkspace(page, "Visual workspace");
+    await page.getByRole("button", { name: "Home", exact: true }).click();
+    await emptyDashboard(page);
     await addNotes(page);
-    await page.getByRole("textbox", { name: "Notes", exact: true }).fill("A quiet place for workspace notes.");
+    await page.getByRole("textbox", { name: "Notes", exact: true }).fill("A quiet place for dashboard notes.");
     await audit(page);
     await expect(page.getByRole("region", { name: "Notes", exact: true })).toHaveScreenshot(`${theme.toLowerCase().replaceAll(" ", "-")}-notes-widget.png`);
   });

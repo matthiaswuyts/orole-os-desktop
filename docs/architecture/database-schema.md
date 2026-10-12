@@ -19,7 +19,6 @@ prefixes (0010, 0020, ...) so concurrent work does not collide; `DB.Version()` i
 | Table | Migration | Purpose |
 |---|---|---|
 | `settings(key PK, value JSON, updated_at)` | 0001 | preferences |
-| `workspaces(id, name, position, layout JSON, created_at, updated_at)` | 0001 | saved layouts (widgets, tabs, panes) |
 | `machines(id, name, kind local\|remote, os, transport, address, fingerprint, created_at)` | 0001 | machine registry (remote use is planned) |
 | `projects(id, name, machine_id, path, remote_url, last_opened, UNIQUE(machine_id,path))` + `worktree_root`, `created_at` | 0001, 0010 | registered repositories |
 | `worktrees(id, project_id FK, name, path, branch, base_ref, is_main, created_at)` | 0010 | Orole metadata per git worktree; git is the source of truth for existence |

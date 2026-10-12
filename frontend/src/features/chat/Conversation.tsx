@@ -138,7 +138,7 @@ function Thread({ bot, running }: { bot: Bot; running: boolean }) {
         </div>
       </ThreadPrimitive.Viewport>
       <ThreadPrimitive.ScrollToBottom asChild>
-        <Button type="button" variant="outline" size="icon-sm" aria-label="Jump to latest" className="absolute bottom-3 left-1/2 -translate-x-1/2 rounded-full bg-background disabled:hidden"><ArrowDownIcon aria-hidden /></Button>
+        <Button type="button" variant="outline" size="icon-sm" aria-label="Jump to latest" className="absolute bottom-3 left-1/2 -translate-x-1/2 rounded-full bg-background hover:bg-muted data-pressed:bg-muted dark:bg-background dark:hover:bg-muted dark:data-pressed:bg-muted disabled:hidden"><ArrowDownIcon aria-hidden /></Button>
       </ThreadPrimitive.ScrollToBottom>
     </ThreadPrimitive.Root>
     {problem && <div role="alert" className="mx-auto flex w-full max-w-3xl items-start gap-2 px-4 pb-2 text-xs">

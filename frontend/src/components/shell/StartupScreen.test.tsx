@@ -1,7 +1,7 @@
 import { act, cleanup, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { useSettings } from "@/stores/settings";
-import { useWorkspaces } from "@/stores/workspaces";
+import { useDashboard } from "@/stores/dashboard";
 import { useAgents } from "@/stores/agents";
 import { useDaemon } from "@/stores/daemon";
 import { StartupScreen } from "./StartupScreen";
@@ -11,7 +11,7 @@ beforeEach(() => {
   vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => setTimeout(() => callback(performance.now()), 16));
   vi.stubGlobal("cancelAnimationFrame", clearTimeout);
   useSettings.setState({ loaded: false, error: null });
-  useWorkspaces.setState({ loaded: false, error: null });
+  useDashboard.setState({ loaded: false, error: null });
   useAgents.setState({ loaded: false, error: null });
   useDaemon.setState({ link: "unknown", error: null });
 });
@@ -22,7 +22,7 @@ it("waits for every startup check and never advances just because time passes", 
   expect(screen.getByRole("progressbar")).toHaveAttribute("aria-valuenow", "0");
   act(() => { vi.advanceTimersByTime(5000); });
   expect(screen.getByRole("progressbar")).toHaveAttribute("aria-valuenow", "0");
-  act(() => { useWorkspaces.setState({ loaded: true }); useDaemon.setState({ link: "connected" }); });
+  act(() => { useDashboard.setState({ loaded: true }); useDaemon.setState({ link: "connected" }); });
   expect(screen.getByRole("progressbar")).toHaveAttribute("aria-valuenow", "67");
   expect(screen.queryByRole("button", { name: "App action" })).toBeNull();
   act(() => { useSettings.setState({ loaded: true }); });
@@ -38,7 +38,7 @@ it("does not wait for the task list, which can be large and has its own loading 
   render(<StartupScreen><p>App ready</p></StartupScreen>);
   act(() => {
     useSettings.setState({ loaded: true });
-    useWorkspaces.setState({ loaded: true });
+    useDashboard.setState({ loaded: true });
     useDaemon.setState({ link: "connected" });
   });
   expect(useAgents.getState().loaded).toBe(false);
@@ -51,7 +51,7 @@ it("hands off after failed initial requests instead of trapping the user at star
   render(<StartupScreen><p>App error handling</p></StartupScreen>);
   act(() => {
     useSettings.setState({ loaded: true, error: "Settings unavailable" });
-    useWorkspaces.setState({ loaded: true, error: "Workspaces unavailable" });
+    useDashboard.setState({ loaded: true, error: "Dashboard unavailable" });
     useAgents.setState({ loaded: true, error: "Tasks unavailable" });
     useDaemon.setState({ link: "offline", error: "Daemon unavailable" });
   });
@@ -59,7 +59,7 @@ it("hands off after failed initial requests instead of trapping the user at star
   act(() => { vi.advanceTimersByTime(40); });
   expect(screen.getByText("App error handling")).toBeVisible();
   expect(useSettings.getState().error).toBe("Settings unavailable");
-  expect(useWorkspaces.getState().error).toBe("Workspaces unavailable");
+  expect(useDashboard.getState().error).toBe("Dashboard unavailable");
   expect(useAgents.getState().error).toBe("Tasks unavailable");
   expect(useDaemon.getState().link).toBe("offline");
 });

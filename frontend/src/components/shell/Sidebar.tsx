@@ -1,10 +1,8 @@
-import { Bot, ChevronDown, Code, PanelLeftClose, Search } from "lucide-react";
+import { Bot, Code, PanelLeftClose, Search } from "lucide-react";
 import { PRIMARY, SETTINGS, type NavItem } from "@/lib/nav";
 import { cn } from "@/lib/utils";
 import { useUI, type Mode } from "@/stores/ui";
-import { useWorkspaces } from "@/stores/workspaces";
 import { Kbd, KbdGroup } from "@/components/ui/kbd";
-import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "@/components/ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "@/components/ui/tooltip";
 import { SidebarProjects } from "./SidebarProjects";
 import { Logo } from "./Logo";
@@ -30,9 +28,6 @@ export function Sidebar() {
   const setMode = useUI((s) => s.setMode);
   const setPalette = useUI((s) => s.setPalette);
   const toggleSidebar = useUI((s) => s.toggleSidebar);
-  const list = useWorkspaces((s) => s.list);
-  const activeId = useWorkspaces((s) => s.activeId);
-  const select = useWorkspaces((s) => s.select);
   const agentCounts = useAgentCounts();
   // An open task has its own highlighted row; the Tasks board is only "current" when no task is open.
   const taskOpen = useAgents((s) => s.openId !== null && (!!s.sessions[s.openId] || !!s.launches[s.openId]));
@@ -56,15 +51,7 @@ export function Sidebar() {
     <nav aria-label="Applications" className="titlebar-drag flex w-64 max-w-[45vw] shrink-0 flex-col border-r bg-sidebar">
       <div className="titlebar-nodrag flex h-8 shrink-0 items-center gap-1 px-2">
         <Logo className="size-4 text-foreground" />
-        <Menu>
-          <MenuTrigger render={<button type="button" aria-label="Switch workspace" className="flex min-w-0 items-center gap-1 rounded-md px-1 text-sm outline-none hover:bg-sidebar-accent focus-visible:ring-2 focus-visible:ring-sidebar-ring" />}>
-            <span className="truncate font-medium">{list.find((w) => w.id === activeId)?.name ?? "Orole OS"}</span><ChevronDown className="size-3 opacity-60" />
-          </MenuTrigger>
-          <MenuPopup align="start" className="min-w-44">
-            {list.map((w) => <MenuItem key={w.id} onClick={() => select(w.id)}>{w.name}</MenuItem>)}
-            <MenuSeparator /><MenuItem onClick={() => useUI.getState().openSettings("workspaces")}>Manage workspaces…</MenuItem>
-          </MenuPopup>
-        </Menu>
+        <span className="truncate font-medium text-sm">Orole OS</span>
         <span className="flex-1" />
         <Tooltip><TooltipTrigger render={<button type="button" aria-label="Hide sidebar" onClick={toggleSidebar} className="inline-flex size-6 items-center justify-center rounded-md text-muted-foreground hover:bg-sidebar-accent hover:text-foreground" />}><PanelLeftClose className="size-3.5" /></TooltipTrigger><TooltipPopup><span className="flex items-center gap-2">Hide sidebar <KbdGroup aria-label="Ctrl+B"><Kbd>Ctrl</Kbd><Kbd>B</Kbd></KbdGroup></span></TooltipPopup></Tooltip>
       </div>

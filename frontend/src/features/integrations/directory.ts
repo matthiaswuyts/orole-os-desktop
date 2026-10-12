@@ -1,10 +1,11 @@
 import {
-  siCloudflare, siGithub, siIntercom, siLinear, siMixpanel, siNeon, siNetlify, siNotion, siPaypal,
-  siPrisma, siRailway, siSentry, siStripe, siSupabase, siVercel, siZapier, type SimpleIcon,
+  siCloudflare, siFigma, siGithub, siGmail, siGooglecalendar, siGoogledrive, siIntercom, siLinear, siMixpanel, siNeon, siNetlify,
+  siNotion, siPaypal, siPosthog, siPrisma, siRailway, siResend, siSentry, siSimilarweb, siStripe, siSupabase, siVercel, siZapier,
+  type SimpleIcon,
 } from "simple-icons";
 import type { ServerState } from "@/mygo";
 
-export const CATEGORIES = ["Developer", "Productivity", "Finance", "Analytics"] as const;
+export const CATEGORIES = ["Developer", "Productivity", "Finance", "Analytics", "Design"] as const;
 export type Category = (typeof CATEGORIES)[number];
 
 export interface Connector {
@@ -14,11 +15,23 @@ export interface Connector {
   /** A sentence or two for the details page. */
   about: string;
   category: Category;
-  icon: SimpleIcon;
+  /** The company's mark; entries without one in simple-icons get the plug. */
+  icon?: SimpleIcon;
   /** Shown first, before the categories. */
   featured?: boolean;
   /** Remote MCP endpoint (Streamable HTTP, OAuth). GitHub has none: it uses the local gh CLI integration. */
   url?: string;
+  /**
+   * Served by a desktop app on this machine over loopback HTTP, with no sign-in. Adding it only
+   * registers the endpoint; it connects whenever that app is running.
+   */
+  local?: boolean;
+  /**
+   * The server does not register OAuth clients itself (Google): the user supplies their own client,
+   * and these scopes are requested at sign-in. The server answers unauthenticated requests, so
+   * sign-in always starts right after adding.
+   */
+  client?: { scopes: string; help: string };
   native?: "github";
 }
 
@@ -47,6 +60,18 @@ export const DIRECTORY: Connector[] = [
   { id: "intercom", name: "Intercom", description: "Search conversations and contacts", about: "Search Intercom conversations and contacts for support context.", category: "Productivity", icon: siIntercom, url: "https://mcp.intercom.com/mcp" },
 
   { id: "paypal", name: "PayPal", description: "Invoices, orders and payments", about: "Work with PayPal invoices, orders and payments.", category: "Finance", icon: siPaypal, url: "https://mcp.paypal.com/mcp" },
+  { id: "posthog", name: "PostHog", description: "Product analytics and feature flags", about: "Query PostHog insights, events and persons, and manage feature flags, experiments and dashboards for your projects.", category: "Analytics", icon: siPosthog, url: "https://mcp.posthog.com/mcp" },
+  { id: "resend", name: "Resend", description: "Send and manage email", about: "Send email and manage Resend domains, audiences, contacts and broadcasts.", category: "Developer", icon: siResend, url: "https://mcp.resend.com/mcp" },
+  { id: "firecrawl", name: "Firecrawl", description: "Scrape, search and crawl the web", about: "Scrape pages into clean markdown, search the web, crawl and map sites, and extract structured data with Firecrawl.", category: "Developer", url: "https://mcp.firecrawl.dev/v2/mcp-oauth" },
+  { id: "paper", name: "Paper", description: "Read and edit your Paper designs", about: "Read and write the file open in Paper Desktop: generate layouts, pull in real content, or turn a selected frame into code. Paper Desktop must be running with a file open; the connection is local to this machine.", category: "Design", url: "http://127.0.0.1:29979/mcp", local: true },
+  { id: "gmail", name: "Gmail", description: "Search, read and draft email", about: "Search and read Gmail messages and threads, manage labels, and create drafts. Google does not register clients automatically: you create an OAuth client in your own Google Cloud project, and Orole asks only for the scopes listed in the setup step.", category: "Productivity", icon: siGmail, url: "https://gmailmcp.googleapis.com/mcp/v1", client: { scopes: "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.compose", help: "Enable the Gmail API and the Gmail MCP service in a Google Cloud project, then create an OAuth client of type Desktop app." } },
+  { id: "google-drive", name: "Google Drive", description: "Search and read your files", about: "Search Google Drive, read file contents and metadata, and create or copy files. Needs an OAuth client from your own Google Cloud project.", category: "Productivity", icon: siGoogledrive, url: "https://drivemcp.googleapis.com/mcp/v1", client: { scopes: "https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/drive.file", help: "Enable the Google Drive API and the Drive MCP service in a Google Cloud project, then create an OAuth client of type Desktop app." } },
+  { id: "google-calendar", name: "Google Calendar", description: "Check and manage your schedule", about: "List calendars and events, check free/busy time, and create or update events. Needs an OAuth client from your own Google Cloud project.", category: "Productivity", icon: siGooglecalendar, url: "https://calendarmcp.googleapis.com/mcp/v1", client: { scopes: "https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/calendar.events", help: "Enable the Google Calendar API and the Calendar MCP service in a Google Cloud project, then create an OAuth client of type Desktop app." } },
+  { id: "clay", name: "Clay", description: "Enrich contacts and companies", about: "Search and enrich people and companies with Clay, and work with your Clay tables.", category: "Productivity", url: "https://api.clay.com/v3/mcp" },
+  { id: "apollo", name: "Apollo", description: "Prospect people and companies", about: "Search and enrich people and organizations in Apollo.io for sales prospecting.", category: "Productivity", url: "https://mcp.apollo.io/mcp" },
+  { id: "figma", name: "Figma", description: "Read your designs", about: "Read Figma designs and their structure, variables and components to turn them into code.", category: "Design", icon: siFigma, url: "https://mcp.figma.com/mcp" },
+  { id: "mobbin", name: "Mobbin", description: "Search UI design references", about: "Search Mobbin's library of real app screens, flows and website sections for design reference.", category: "Design", url: "https://api.mobbin.com/mcp" },
+  { id: "similarweb", name: "Similarweb", description: "Website and market traffic data", about: "Look up website traffic, audience, competitors and market data from Similarweb.", category: "Analytics", icon: siSimilarweb, url: "https://mcp.similarweb.com" },
 
   { id: "mixpanel", name: "Mixpanel", description: "Query product analytics", about: "Query Mixpanel events, funnels and retention for your projects.", category: "Analytics", icon: siMixpanel, url: "https://mcp.mixpanel.com/mcp" },
 ];

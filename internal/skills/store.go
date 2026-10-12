@@ -106,6 +106,7 @@ type regEntry struct {
 	Enabled   bool   `json:"enabled"`
 	Source    string `json:"source"`
 	UpdatedAt int64  `json:"updatedAt"`
+	AddedAt   int64  `json:"addedAt,omitempty"` // 0 for skills registered before it was recorded
 }
 
 type regDoc struct {
@@ -228,7 +229,11 @@ func (s *Store) build(name string, doc regDoc, withBody bool) (Skill, error) {
 	if !has {
 		e = regEntry{Enabled: true, Source: "orole", UpdatedAt: fi.ModTime().Unix()}
 	}
-	sk := Skill{Name: name, Description: meta.Description, Files: rels, Enabled: e.Enabled, Source: e.Source, UpdatedAt: e.UpdatedAt}
+	added := e.AddedAt
+	if added == 0 {
+		added = e.UpdatedAt
+	}
+	sk := Skill{Name: name, Description: meta.Description, Files: rels, Enabled: e.Enabled, Source: e.Source, AddedAt: added, UpdatedAt: e.UpdatedAt}
 	if sk.Source == "" {
 		sk.Source = "orole"
 	}
@@ -325,7 +330,7 @@ func (s *Store) Save(name, body, source string) (Skill, error) {
 	}
 	e, has := doc.Skills[final]
 	if !has {
-		e = regEntry{Enabled: true, Source: source}
+		e = regEntry{Enabled: true, Source: source, AddedAt: s.now().Unix()}
 	}
 	if e.Source == "" {
 		e.Source = "orole"

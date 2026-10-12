@@ -70,7 +70,8 @@ type Daemon struct {
 	Skills     *skills.Store
 	Gateway    *gateway.Hub
 	gatewayExe string
-	syncMu     sync.Mutex // serializes native skill/MCP-config syncs
+	hub        *skills.Hub // skills.sh catalogue and installer (svc_skills.go)
+	syncMu     sync.Mutex  // serializes native skill/MCP-config syncs
 	// Agents runs coding-agent sessions; agentsStart runs once this daemon owns the IPC
 	// endpoint (crash recovery must not run in a refused second daemon), agentsShutdown on exit.
 	Agents                      *agents.Manager

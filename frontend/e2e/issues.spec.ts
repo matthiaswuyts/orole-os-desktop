@@ -32,7 +32,7 @@ async function installIssuesBridge(page: Page) {
     const g = globalThis as unknown as { __calls: Recorded[]; mygo: unknown };
     g.__calls = calls;
     const handlers: Record<string, (...args: never[]) => unknown> = {
-      "Daemon.Health": () => ({ version: "0.1.0", memAllocMB: 24, startedAt: new Date(now).toISOString() }), "Settings.All": () => ({}), "Workspaces.List": () => [], "Workspaces.Save": (w: object) => ({ ...w, id: "local" }),
+      "Daemon.Health": () => ({ version: "0.1.0", memAllocMB: 24, startedAt: new Date(now).toISOString() }), "Settings.All": () => ({}),
       "Projects.List": () => projects, "Worktrees.List": () => [], "Notifications.List": () => ({ items: [], sources: [], unread: 0 }),
       "Notifications.Prefs": () => ({ default: { enabled: true, native: false, sound: false }, sources: {} }), "Policy.Pending": () => [], "Plugins.List": () => [], "Desktop.Ready": () => ({ view: "", sequence: 0 }),
       "Updates.Check": () => ({ enabled: false, available: false, error: "" }), "Terminals.List": () => [], "Machines.List": () => [{ id: "local", name: "This computer", kind: "local", status: "online" }], "MCP.List": () => [],

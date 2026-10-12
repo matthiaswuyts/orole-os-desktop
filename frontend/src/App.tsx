@@ -5,7 +5,7 @@ import { registerCoreCommands } from "@/lib/coreCommands";
 import { startDaemonPolling } from "@/stores/daemon";
 import { useSettings } from "@/stores/settings";
 import { useUI } from "@/stores/ui";
-import { useWorkspaces } from "@/stores/workspaces";
+import { useDashboard } from "@/stores/dashboard";
 import { useAgents } from "@/stores/agents";
 import { NotImplemented } from "@/features/shared/States";
 import { views } from "@/features/registry";
@@ -34,7 +34,7 @@ function MainApp() {
   useApplyTheme();
   useEffect(() => {
     void useSettings.getState().load();
-    void useWorkspaces.getState().load();
+    void useDashboard.getState().load();
     const off1 = startDaemonPolling();
     const off2 = registerCoreCommands();
     const offAgents = useAgents.getState().init();

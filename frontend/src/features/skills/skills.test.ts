@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import type { Discovered, Skill, SyncState } from "@/mygo";
-import { draftProblem, filterSkills, gatewayBadge, groupDiscovered, isSlug, mergeSyncStates, needsSync, parseFrontmatter, retemplate, skillTemplate, slugify, sourceLabel } from "./skills";
+import { addedFromHub, agentStatus, draftProblem, filterSkills, formatInstalls, groupDiscovered, isSlug, mergeSyncStates, needsSync, parseFrontmatter, retemplate, skillTemplate, slugify, sourceInfo, timeAgo } from "./skills";
 
-const skill = (name: string, description = ""): Skill => ({ name, description, body: "", files: [], enabled: true, source: "orole", updatedAt: 0 });
+const skill = (name: string, description = ""): Skill => ({ name, description, body: "", files: [], enabled: true, source: "orole", addedAt: 0, updatedAt: 0 });
 const state = (over: Partial<SyncState>): SyncState => ({ harness: "claude", name: "Claude Code", available: true, dir: "", synced: [], outdated: [], missing: [], gateway: "installed", error: "", ...over });
 
 describe("slugify / isSlug", () => {
@@ -65,8 +65,23 @@ describe("filterSkills", () => {
   });
 });
 
-describe("sourceLabel", () => {
-  it.each([["orole", "Orole"], ["", "Orole"], ["imported:codex", "Imported from codex"], ["builtin", "Built in (bots)"]])("%j -> %j", (s, want) => expect(sourceLabel(s)).toBe(want));
+describe("sourceInfo", () => {
+  it.each([
+    ["orole", "orole", "Created in Orole", "You"],
+    ["", "orole", "Created in Orole", "You"],
+    ["imported:codex", "harness", "Imported from Codex", "Codex"],
+    ["imported:claude", "harness", "Imported from Claude Code", "Claude Code"],
+    ["builtin", "builtin", "Built in", "Orole"],
+    ["skills.sh:acme/skills/seo", "hub", "From skills.sh", "acme"],
+  ])("%j", (source, kind, label, creator) => expect(sourceInfo(source)).toMatchObject({ kind, label, creator }));
+  it("keeps the repository of a skills.sh skill", () => expect(sourceInfo("skills.sh:acme/skills/seo").detail).toBe("acme/skills"));
+});
+
+describe("timeAgo", () => {
+  const now = 1_700_000_000_000;
+  const ago = (seconds: number) => timeAgo(now / 1000 - seconds, now);
+  it.each([[5, "just now"], [60, "1 minute ago"], [150, "2 minutes ago"], [3600, "1 hour ago"], [86400 * 2, "2 days ago"], [86400 * 65, "2 months ago"], [86400 * 800, "2 years ago"]])("%i s -> %s", (s, want) => expect(ago(s)).toBe(want));
+  it("is empty when the time is unknown", () => expect(timeAgo(0, now)).toBe(""));
 });
 
 describe("groupDiscovered", () => {
@@ -80,12 +95,12 @@ describe("groupDiscovered", () => {
 });
 
 describe("sync state helpers", () => {
-  it("maps gateway states", () => {
-    expect(gatewayBadge("installed").tone).toBe("success");
-    expect(gatewayBadge("outdated").tone).toBe("warning");
-    expect(gatewayBadge("missing").tone).toBe("error");
-    expect(gatewayBadge("unsupported").tone).toBe("outline");
-    expect(gatewayBadge("").label).toBe("Gateway unknown");
+  it("agentStatus says what to do in plain words", () => {
+    expect(agentStatus(state({}))).toEqual({ label: "Up to date", tone: "success" });
+    expect(agentStatus(state({ missing: ["a"] }))).toEqual({ label: "Needs update", tone: "warning" });
+    expect(agentStatus(state({ gateway: "outdated" }))).toEqual({ label: "Needs update", tone: "warning" });
+    expect(agentStatus(state({ error: "boom", missing: ["a"] })).tone).toBe("error");
+    expect(agentStatus(state({ available: false, missing: ["a"] }))).toEqual({ label: "Not installed", tone: "outline" });
   });
   it("needsSync only for installed harnesses with drift", () => {
     expect(needsSync(state({}))).toBe(false);
@@ -100,5 +115,13 @@ describe("sync state helpers", () => {
     const merged = mergeSyncStates(cur, next);
     expect(merged.map((s) => s.harness)).toEqual(["claude", "codex", "omp"]);
     expect(merged[1]!.synced).toEqual(["a"]);
+  });
+});
+
+describe("skills.sh helpers", () => {
+  it.each([[0, "0"], [999, "999"], [1000, "1K"], [1550, "1.6K"], [733_900, "733.9K"], [2_000_000, "2M"], [3_807_588, "3.8M"], [-4, "0"]])("formatInstalls(%i) = %s", (n, want) => expect(formatInstalls(n)).toBe(want));
+  it("addedFromHub keys only skills that came from skills.sh", () => {
+    const list = [{ ...skill("a"), source: "skills.sh:acme/skills/seo" }, skill("b"), { ...skill("c"), source: "imported:claude" }];
+    expect([...addedFromHub(list)]).toEqual(["acme/skills/seo"]);
   });
 });

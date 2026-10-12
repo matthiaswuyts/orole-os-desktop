@@ -85,7 +85,7 @@ export const defaults = {
   sound: soundSettings(undefined),
 };
 
-async function readAll(): Promise<Record<string, unknown>> {
+export async function readAll(): Promise<Record<string, unknown>> {
   if (inDesktop) return Settings.all();
   try {
     return JSON.parse(localStorage.getItem(previewKey) ?? "{}") as Record<string, unknown>;
@@ -94,7 +94,7 @@ async function readAll(): Promise<Record<string, unknown>> {
   }
 }
 
-async function write(key: string, value: unknown): Promise<void> {
+export async function write(key: string, value: unknown): Promise<void> {
   if (inDesktop) return Settings.set(key, value);
   const all = await readAll();
   all[key] = value;

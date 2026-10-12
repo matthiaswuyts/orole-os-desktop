@@ -25,7 +25,7 @@ State of this tree; the code is the source of truth (`docs/architecture/daemon.m
 | CLI `orole` (daemon start/stop/status/logs/diagnostics/install, terminal list, settings) | Implemented | `cmd/orole-cli` |
 | Start at logon via Task Scheduler (no admin) | Implemented | `internal/platform`, Settings > Diagnostics |
 | Terminals (ConPTY: PowerShell, pwsh, cmd, Git Bash) | Implemented | `internal/terminals`; scrollback restored on re-attach |
-| Settings, workspaces/layouts, themes, ASCII band, command palette | Implemented | |
+| Settings, home dashboard, themes, ASCII band, command palette | Implemented | |
 | Projects, git status/diff/log, worktrees | Implemented (daemon methods + views) | `internal/projects`, `internal/git` |
 | GitHub | Daemon methods and UI integrated | Existing GitHub CLI authentication; repositories, issues, PRs, checks and issue-to-agent flow |
 | Local/Git files, editor, notifications, search | Daemon methods and UI integrated | Approved roots, bounded reads, optimistic-save conflicts, recycle-aware deletion |

@@ -112,7 +112,7 @@ export function NotesWidget({ onRemove, config, onConfig }: WidgetProps) {
   return (
     <Widget title="Notes" icon={<NotebookPen />} onRemove={onRemove}>
       <textarea aria-label="Notes" value={text} onChange={(e) => onConfig({ text: e.target.value })} onMouseDown={(e) => e.stopPropagation()}
-        placeholder="Quick notes, saved with this workspace…" className="selectable h-full w-full resize-none bg-transparent text- outline-none placeholder:text-muted-foreground/60" />
+        placeholder="Quick notes, saved on the dashboard…" className="selectable h-full w-full resize-none bg-transparent text- outline-none placeholder:text-muted-foreground/60" />
     </Widget>
   );
 }

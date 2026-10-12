@@ -32,7 +32,6 @@ Core methods (`registerCore`):
 | `daemon.health` | version, pid, start time, uptime, DB schema version, platform, Go version, goroutines, heap MB, terminal count, protocol version |
 | `daemon.shutdown` | replies, then stops ~100 ms later |
 | `settings.list` / `settings.set` | opaque JSON values by string key (key <= 128 chars, value <= 256 KiB, valid JSON); `set` publishes `settings.changed` |
-| `workspaces.list` / `save` / `delete` | named layouts (JSON, <= 1 MiB); save upserts, delete returns `not_found` for unknown ids |
 | `terminals.*` | see `windows-terminals.md`; create is audited and publishes `terminal.changed` |
 
 `registerServices` also wires automations, MCP/policy, declarative plugins, host metrics,

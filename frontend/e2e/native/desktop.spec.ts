@@ -1,45 +1,35 @@
-import { randomUUID } from "node:crypto";
 import { test, expect, nativeCall } from "./fixture";
-import { addNotes, createWorkspace, deleteWorkspace, moveAndResizeNotes, removeNotes, runPaletteCommand, type SavedWorkspace } from "../helpers/workspace";
+import { addNotes, moveAndResizeNotes, removeNotes, runPaletteCommand, type SavedWidget } from "../helpers/dashboard";
 import type { NotificationList, Prefs } from "../../src/mygo";
 
-test("installed workspace grid and palette persist through the real daemon", async ({ nativePage: page }) => {
-  const name = `CDP acceptance ${randomUUID().slice(0, 8)}`;
+test("installed dashboard grid and palette persist through the real daemon", async ({ nativePage: page }) => {
   const settings = await nativeCall<Record<string, unknown>>(page, "Settings.All");
-  const originalActive = await page.evaluate(() => localStorage.getItem("orole.activeWorkspace"));
-  let workspaceId: string | undefined;
+  const widgets = async () => ((await nativeCall<{ dashboard?: { widgets: SavedWidget[] } }>(page, "Settings.All")).dashboard?.widgets ?? []);
   try {
-    await createWorkspace(page, name);
-    workspaceId = (await nativeCall<SavedWorkspace[]>(page, "Workspaces.List")).find((workspace) => workspace.name === name)?.id;
-    expect(workspaceId).toBeTruthy();
+    await nativeCall(page, "Settings.Set", "dashboard", { widgets: [] });
+    await page.reload();
     await addNotes(page);
     await page.getByRole("textbox", { name: "Notes", exact: true }).fill("Saved by the installed WebView2 application.");
-    await expect.poll(async () => (await nativeCall<SavedWorkspace[]>(page, "Workspaces.List")).find((w) => w.id === workspaceId)?.layout.widgets[0]?.config?.text).toBe("Saved by the installed WebView2 application.");
-    const before = (await nativeCall<SavedWorkspace[]>(page, "Workspaces.List")).find((w) => w.id === workspaceId)!.layout.widgets[0]!;
+    await expect.poll(async () => (await widgets())[0]?.config?.text).toBe("Saved by the installed WebView2 application.");
+    const before = (await widgets())[0]!;
     await moveAndResizeNotes(page);
-    await expect.poll(async () => (await nativeCall<SavedWorkspace[]>(page, "Workspaces.List")).find((w) => w.id === workspaceId)?.layout.widgets[0]?.x).toBeGreaterThan(before.x);
-    await expect.poll(async () => (await nativeCall<SavedWorkspace[]>(page, "Workspaces.List")).find((w) => w.id === workspaceId)?.layout.widgets[0]?.h).toBeGreaterThan(before.h);
-    await expect.poll(async () => (await nativeCall<SavedWorkspace[]>(page, "Workspaces.List")).find((w) => w.id === workspaceId)?.layout.widgets[0]?.w).toBeGreaterThan(before.w);
-    const saved = (await nativeCall<SavedWorkspace[]>(page, "Workspaces.List")).find((w) => w.id === workspaceId)!.layout;
+    await expect.poll(async () => (await widgets())[0]?.x).toBeGreaterThan(before.x);
+    await expect.poll(async () => (await widgets())[0]?.h).toBeGreaterThan(before.h);
+    await expect.poll(async () => (await widgets())[0]?.w).toBeGreaterThan(before.w);
+    const saved = await widgets();
     await runPaletteCommand(page, "Theme: Orole Light");
     await expect.poll(async () => (await nativeCall<{ appearance?: { theme: string } }>(page, "Settings.All")).appearance?.theme).toBe("light");
     await page.reload();
     await expect(page.getByRole("textbox", { name: "Notes", exact: true })).toHaveValue("Saved by the installed WebView2 application.");
     await expect(page.locator("html")).not.toHaveClass(/dark/);
-    expect((await nativeCall<SavedWorkspace[]>(page, "Workspaces.List")).find((w) => w.id === workspaceId)!.layout).toEqual(saved);
+    expect(await widgets()).toEqual(saved);
     await removeNotes(page);
-    await expect.poll(async () => (await nativeCall<SavedWorkspace[]>(page, "Workspaces.List")).find((w) => w.id === workspaceId)?.layout.widgets.length).toBe(0);
+    await expect.poll(async () => (await widgets()).length).toBe(0);
     await page.reload();
     await expect(page.getByRole("region", { name: "Notes", exact: true })).toHaveCount(0);
-    await deleteWorkspace(page, name);
-    await page.reload();
-    expect((await nativeCall<SavedWorkspace[]>(page, "Workspaces.List")).some((w) => w.id === workspaceId)).toBe(false);
   } finally {
-    // Even a failure after create but before capturing its ID cleans up only this run's workspace.
-    const owned = (await nativeCall<SavedWorkspace[]>(page, "Workspaces.List")).filter((w) => w.name === name);
-    for (const workspace of owned) await nativeCall(page, "Workspaces.Delete", workspace.id);
     await nativeCall(page, "Settings.Set", "appearance", settings.appearance ?? { theme: "midnight", density: "compact", customTokens: {} });
-    await page.evaluate((active) => { if (active) localStorage.setItem("orole.activeWorkspace", active); else localStorage.removeItem("orole.activeWorkspace"); }, originalActive);
+    await nativeCall(page, "Settings.Set", "dashboard", settings.dashboard ?? { widgets: [] });
     await page.reload();
   }
 });

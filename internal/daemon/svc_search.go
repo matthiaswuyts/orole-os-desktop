@@ -18,7 +18,6 @@ var settingsIndex = []struct{ view, section, tab, title, keywords string }{
 	{"settings", "customization", "motion", "Motion and accessibility", "accessibility reduce motion animations a11y fps pause static"},
 	{"settings", "customization", "sound", "Sounds", "sound audio volume effects mute"},
 	{"settings", "customization", "terminal", "Terminal font", "terminal font size shell"},
-	{"settings", "workspaces", "", "Workspaces", "layouts widgets dashboard"},
 	{"settings", "integrations", "github", "GitHub", "token repositories issues pull requests"},
 	{"settings", "skills", "", "Skills", "skills harness instructions import sync"},
 	{"settings", "mcp", "", "MCP servers", "model context protocol tools"},

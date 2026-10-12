@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import { useSettings } from "@/stores/settings";
-import { useWorkspaces } from "@/stores/workspaces";
+import { useDashboard } from "@/stores/dashboard";
 import { useDaemon } from "@/stores/daemon";
 
 /**
@@ -10,12 +10,12 @@ import { useDaemon } from "@/stores/daemon";
  */
 export function StartupScreen({ children }: { children: ReactNode }) {
   const settingsLoaded = useSettings((state) => state.loaded);
-  const workspacesLoaded = useWorkspaces((state) => state.loaded);
+  const dashboardLoaded = useDashboard((state) => state.loaded);
   const daemonLink = useDaemon((state) => state.link);
   const [opened, setOpened] = useState(false);
   const checks = [
     { done: settingsLoaded, label: "Loading preferences" },
-    { done: workspacesLoaded, label: "Loading workspaces" },
+    { done: dashboardLoaded, label: "Loading dashboard" },
     { done: daemonLink !== "unknown", label: "Checking daemon connection" },
   ];
   // These stores settle their initial checks on both success and failure. Completion

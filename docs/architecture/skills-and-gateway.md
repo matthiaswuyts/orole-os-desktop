@@ -31,7 +31,27 @@ then Markdown) and optional resource files. `.registry.json` beside them holds e
 
 IPC (all audited, all publish `skills.changed {action,name}`): `skills.list` (no bodies), `skills.get`,
 `skills.save`, `skills.delete`, `skills.setEnabled`, `skills.discover`, `skills.import`, `skills.syncState`,
-`skills.sync`.
+`skills.sync`, and the skills.sh hub methods `skills.hub.browse`, `.search`, `.describe`, `.preview`, `.install`.
+
+
+### skills.sh discovery (`internal/skills/hub.go`, Settings > Skills > Discover)
+
+Discover lists the public [skills.sh](https://www.skills.sh) catalogue (Most installed, Trending, search) and adds a skill to
+the registry. skills.sh lists skills as GitHub `owner/repo` + skill id; the skill itself lives in that repository.
+
+- **Listing.** skills.sh's documented API (`/api/v1`) needs a Vercel OIDC token, which a desktop app cannot have, so
+  browsing calls the unauthenticated JSON endpoints the site itself uses (`/api/skills/<all-time|trending>/<page>`,
+  `/api/search?q=`). They are not a published contract. Every field is validated and a format change shows as an
+  error in Discover, never as wrong data. Descriptions come from each skill page's `<meta name="description">`, are cached
+  for an hour and are optional: a card without one still works.
+- **Install.** The repository's public archive (`github.com/<owner>/<repo>/archive/HEAD.zip`, at most 128 MiB, to a temp
+  file) is read, the skill directory is found (directory named like the skill id, else the `SKILL.md` whose frontmatter
+  `name` is the id) and copied with the same caps and path rules as an import: no links, no hidden files, no `..`, 200 files,
+  1 MiB per file, 8 MiB per skill. It never overwrites a registry skill. Source is recorded as
+  `skills.sh:<owner>/<repo>/<skill>`; private repositories are not supported.
+- **Review first.** A skill is instructions an agent follows. The UI adds only from a preview that shows the full
+  `SKILL.md`, the resource files and a warning for script files (`.sh`, `.ps1`, `.py`, `.js` …). Nothing from skills.sh or
+  GitHub is executed by Orole. Adding does not touch harness folders; that is the separate "Update agents" step.
 
 ### Built-in skills (bots only)
 
@@ -77,6 +97,13 @@ uninstalled harness.
 `skills.discover` lists skills in the harness directories that the registry does not hold (Orole's own marked
 copies excluded); `skills.import` copies one (with resource files, same caps) into the registry. The harness
 directory is only read.
+
+### How the Skills screen explains this
+
+The screen shows one line, "Used by", with a dot per installed agent (up to date / needs update) and a single
+"Update agents" button when any agent has drifted. The popover behind the help button explains the three facts: skills live
+in Orole, every agent started from Orole reads enabled skills through the gateway, and Claude Code / Codex / Oh My Pi
+additionally read a folder that "Update" fills. Counts, folders and gateway state are in that popover only.
 
 ## Gateway (`internal/gateway`, `orole-daemon mcp-gateway`)
 

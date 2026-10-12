@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { Bell, Bot, Cpu, Palette, PanelsTopLeft, PlugZap, Settings2, Sparkles, Upload } from "lucide-react";
+import { Bell, Bot, Cpu, Palette, PlugZap, Settings2, Sparkles, Upload } from "lucide-react";
 import { useSettings } from "@/stores/settings";
 import { BUILTIN_THEMES } from "@/themes/builtin";
 import { useDaemon } from "@/stores/daemon";
@@ -19,7 +19,6 @@ import { SoundSettings } from "@/features/settings/SoundSettings";
 import { AgentSafetySettings } from "@/features/settings/AgentSafetySettings";
 import { UpdateSettings } from "@/features/settings/UpdateSettings";
 import { useUI } from "@/stores/ui";
-import { WorkspaceSettings } from "@/features/settings/WorkspaceSettings";
 import { SkillsView } from "@/features/skills/SkillsView";
 import { AIProviders } from "@/features/settings/AIProviders";
 
@@ -27,7 +26,6 @@ type Section = { id: string; label: string; icon: typeof Palette };
 // Search and deep links address a section by id and, optionally, a tab or an anchor inside it (see openSettings).
 const SECTIONS: Section[] = [
   { id: "customization", label: "Customization", icon: Palette },
-  { id: "workspaces", label: "Workspaces", icon: PanelsTopLeft },
   { id: "integrations", label: "Integrations", icon: PlugZap },
   { id: "skills", label: "Skills", icon: Sparkles },
   { id: "ai", label: "AI providers", icon: Bot },
@@ -229,7 +227,6 @@ export function SettingsView() {
       <div className={cn("min-h-0 min-w-0 flex-1", id === "skills" ? "overflow-hidden" : "overflow-auto pr-1")}>
         {id !== "skills" && <h1 className="mb-3 text-base font-medium">{sec.label}</h1>}
         {id === "customization" && <Customization />}
-        {id === "workspaces" && <WorkspaceSettings />}
         {id === "skills" && <SkillsView />}
         {id === "ai" && <AIProviders />}
         {id === "integrations" && <Integrations />}
