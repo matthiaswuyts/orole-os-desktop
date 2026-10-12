@@ -151,6 +151,8 @@ func (m *Manager) gateYolo(ctx context.Context, target, perm string, confirmed b
 		return deny(errors.New("YOLO mode is turned off in Orole's settings"))
 	case len(events.ChainFrom(ctx)) > 0:
 		return deny(errors.New("automations cannot start or switch to YOLO mode"))
+	case ActorFrom(ctx) != "":
+		return deny(errors.New("bots cannot start or switch to YOLO mode"))
 	case !confirmed:
 		return deny(errors.New("YOLO mode needs explicit confirmation: no approval prompts will be shown (confirmYolo)"))
 	}

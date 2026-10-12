@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"slices"
 	"testing"
 
 	"github.com/rayorole/orole-os-desktop/internal/agents"
@@ -32,7 +33,7 @@ func TestTaskEventsFollowStatusTransitions(t *testing.T) {
 	bus := events.NewBus()
 	sub := bus.Subscribe("*", 64)
 	defer sub.Close()
-	te := newTaskEvents(bus)
+	te := newTaskEvents(bus, nil)
 	s := agents.Session{ID: "t1", Title: "Fix login", Status: agents.StatusWorking, Task: "fix it", Chain: []string{"auto-1"}}
 
 	te.created(s)
@@ -73,7 +74,7 @@ func TestTaskEventsUnseenSessionReportsWaitingAndFailureOnly(t *testing.T) {
 	bus := events.NewBus()
 	sub := bus.Subscribe("*", 64)
 	defer sub.Close()
-	te := newTaskEvents(bus)
+	te := newTaskEvents(bus, nil)
 	// A session from before this daemon started: no baseline, so no status-change event,
 	// but a session that is failing or waiting still reports it.
 	te.observe("agents.updated", agents.Session{ID: "old", Status: agents.StatusFailed, Error: "boom", PRURL: "https://x"})
@@ -83,6 +84,27 @@ func TestTaskEventsUnseenSessionReportsWaitingAndFailureOnly(t *testing.T) {
 	got := drain(sub)
 	if len(got) != 2 || got[0].Topic != events.TopicAgentFailed || got[0].Data["error"] != "boom" || got[1].Topic != events.TopicAgentFailed {
 		t.Fatalf("got %v", topics(got))
+	}
+}
+
+func TestTaskEventsReportOwnedTasksToTheirBot(t *testing.T) {
+	var got []string
+	te := newTaskEvents(nil, func(topic string, s agents.Session) { got = append(got, topic+" "+s.ID) })
+	mine := agents.Session{ID: "mine", Owner: "bot:b1", Status: agents.StatusWorking}
+	user := agents.Session{ID: "user", Status: agents.StatusWorking}
+	for _, s := range []agents.Session{mine, user} {
+		te.created(s)
+		s.Status = agents.StatusNeedsYou
+		te.observe("agents.updated", s)
+		s.Status = agents.StatusDone
+		te.finished(s)
+		te.observe("agents.updated", s)
+		s.Status = agents.StatusFailed
+		te.observe("agents.updated", s)
+	}
+	want := []string{"agent.waiting mine", "agent.finished mine", "agent.failed mine"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("reports = %v, want %v", got, want)
 	}
 }
 

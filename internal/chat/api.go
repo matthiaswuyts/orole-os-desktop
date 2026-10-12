@@ -82,12 +82,15 @@ type BotLimits struct {
 
 // BotConfig is stored as JSON in bots.config. It never contains secrets.
 type BotConfig struct {
-	Tools      []BotTool     `json:"tools"`
-	MCPServers []string      `json:"mcpServers"`          // ids of the MCP servers (integrations) the bot may use: every tool of each, default none
-	Skills     []string      `json:"skills"`              // enabled registry skill names
-	Executive  bool          `json:"executive,omitempty"` // an executive assistant may ask every other bot (ask_bot)
-	Memory     []ScopeAccess `json:"memory"`              // grants beyond the private scope
-	Limits     BotLimits     `json:"limits"`
+	Tools      []BotTool `json:"tools"`
+	MCPServers []string  `json:"mcpServers"`          // ids of the MCP servers (integrations) the bot may use: every tool of each, default none
+	Skills     []string  `json:"skills"`              // enabled registry skill names
+	Executive  bool      `json:"executive,omitempty"` // an executive assistant may ask every other bot (ask_bot)
+	// CodeTasks lets the bot start, watch and steer code tasks: coding agents that run commands and edit files on
+	// this PC. Every start and message still goes through the shared permission policy as "bot:<id>".
+	CodeTasks bool          `json:"codeTasks,omitempty"`
+	Memory    []ScopeAccess `json:"memory"` // grants beyond the private scope
+	Limits    BotLimits     `json:"limits"`
 	// Setup marks a freshly created bot that still has to learn its purpose: it is offered the setup
 	// tools (ask_user, save_profile) until it saves its own instructions.
 	Setup bool `json:"setup,omitempty"`

@@ -1,4 +1,4 @@
-import { BookOpenIcon, CpuIcon, GaugeIcon, PencilIcon, PlugIcon, ScrollTextIcon, UsersIcon, WrenchIcon, XIcon } from "lucide-react";
+import { BookOpenIcon, CpuIcon, GaugeIcon, PencilIcon, PlugIcon, ScrollTextIcon, SquareTerminalIcon, UsersIcon, WrenchIcon, XIcon } from "lucide-react";
 import { useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { BotAvatar } from "@/components/shell/BotAvatar";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -125,6 +125,7 @@ function PanelBody({ bot }: { bot: Bot }) {
         <Group title="Does">
           <NavRow icon={WrenchIcon} label="Tools" value={`${form.tools.length} on`} onOpen={() => setPage("tools")} />
           <NavRow icon={PlugIcon} label="Integrations" invalid={!!problems.mcpServers} value={problems.mcpServers ? "Too many" : `${form.mcpServers.length} on`} onOpen={() => setPage("integrations")} />
+          <SwitchRow icon={SquareTerminalIcon} label="Runs code tasks" hint="Starts coding agents in your projects, follows their progress and tells you when they finish or need you. You approve every start." checked={form.codeTasks} onChange={(codeTasks) => patch({ codeTasks })} />
         </Group>
         <Group title="Works with">
           <SwitchRow icon={UsersIcon} label="Leads the team" hint="Hands work to your other bots and talks with them to get it done." checked={form.executive} onChange={(executive) => patch({ executive })} />

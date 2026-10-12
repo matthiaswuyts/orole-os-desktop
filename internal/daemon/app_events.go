@@ -17,10 +17,13 @@ const appEventText = 2000
 // taskEvents turns the agent runtime's client updates into application events on the
 // bus: status transitions, waiting for the user, failure and a newly opened pull
 // request. It remembers only the last status and PR URL per session it has seen.
+// agent.finished, agent.waiting and agent.failed also go to owned, for sessions a bot
+// started; that path does not depend on the bus, which may drop events.
 type taskEvents struct {
-	bus  *events.Bus
-	mu   sync.Mutex
-	seen map[string]taskMark
+	bus   *events.Bus
+	owned func(topic string, s agents.Session)
+	mu    sync.Mutex
+	seen  map[string]taskMark
 }
 
 type taskMark struct {
@@ -28,14 +31,14 @@ type taskMark struct {
 	prURL  string
 }
 
-func newTaskEvents(bus *events.Bus) *taskEvents {
-	return &taskEvents{bus: bus, seen: map[string]taskMark{}}
+func newTaskEvents(bus *events.Bus, owned func(topic string, s agents.Session)) *taskEvents {
+	return &taskEvents{bus: bus, owned: owned, seen: map[string]taskMark{}}
 }
 
 // observe inspects one agent runtime client event. It never blocks: the bus drops
 // events for a full subscriber rather than wait.
 func (t *taskEvents) observe(event string, data any) {
-	if t == nil || t.bus == nil {
+	if t == nil {
 		return
 	}
 	switch event {
@@ -83,7 +86,7 @@ func (t *taskEvents) observe(event string, data any) {
 
 // created publishes task.created and starts tracking the session's status.
 func (t *taskEvents) created(s agents.Session) {
-	if t == nil || t.bus == nil {
+	if t == nil {
 		return
 	}
 	t.mu.Lock()
@@ -96,7 +99,7 @@ func (t *taskEvents) created(s agents.Session) {
 
 // finished publishes agent.finished for a completed turn.
 func (t *taskEvents) finished(s agents.Session) {
-	if t == nil || t.bus == nil {
+	if t == nil {
 		return
 	}
 	d := taskData(s)
@@ -105,7 +108,12 @@ func (t *taskEvents) finished(s agents.Session) {
 }
 
 func (t *taskEvents) publish(topic string, s agents.Session, data map[string]any) {
-	t.bus.Publish(events.Event{Topic: topic, Data: data, Chain: s.Chain})
+	if t.bus != nil {
+		t.bus.Publish(events.Event{Topic: topic, Data: data, Chain: s.Chain})
+	}
+	if t.owned != nil && s.Owner != "" && (topic == events.TopicAgentFinished || topic == events.TopicAgentWaiting || topic == events.TopicAgentFailed) {
+		t.owned(topic, s)
+	}
 }
 
 // taskData is the payload every task.* and agent.* topic shares (events.Catalog).

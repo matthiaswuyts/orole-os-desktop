@@ -154,8 +154,8 @@ func messageText(parts []MsgPart) string {
 
 func (m *Manager) executeTurn(ctx context.Context, bot, convo Bot, rc RunContext, user Message, t turn, s *sink) (string, string) {
 	text := messageText(user.Parts)
-	if strings.HasPrefix(user.Author, ReportPrefix) {
-		text = fenceReport(text)
+	if fenced, ok := fenceAuthored(user.Role, user.Author, text); ok {
+		text = fenced
 	}
 	if t.mode == ModeResearch {
 		return m.runResearch(ctx, bot, rc, text, s)

@@ -174,7 +174,7 @@ func (d *Daemon) registerAgents() {
 	if d.Projects != nil {
 		wt = agentWorktrees{d: d}
 	}
-	tasks := newTaskEvents(d.Events)
+	tasks := newTaskEvents(d.Events, d.reportToOwner)
 	d.Agents = agents.NewManager(agents.Config{
 		Store:            agents.NewStore(d.DB),
 		Host:             &agents.Host{Terminals: d.Terminals, DataDir: d.DataDir, HookExe: exe, GatewayExe: d.gatewayExe},
@@ -216,6 +216,9 @@ func (d *Daemon) registerAgents() {
 			actor := "user"
 			if chain := events.ChainFrom(ctx); len(chain) > 0 {
 				actor = "automation:" + chain[len(chain)-1]
+			}
+			if a := agents.ActorFrom(ctx); a != "" {
+				actor = a
 			}
 			return d.Policy.Require(ctx, policy.Request{
 				Actor: actor, Action: action, Resource: resource, Detail: detail,

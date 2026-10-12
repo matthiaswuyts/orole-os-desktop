@@ -15,6 +15,9 @@ notes. See `docs/development/updates.md`.
   blocks: Ask a bot (the message lands in the bot's conversation; optionally wait for its reply), Start / Message / Wait for a
   code task, and Wait. Existing automations are upgraded automatically; a jump that has no lane equivalent is flagged and the
   automation will not run until it is rebuilt.
+- Bots can run code tasks. Turn on "Runs code tasks" in a bot's panel and it can start a coding agent in one of your projects,
+  check on any task, and message or stop the ones it started. You approve every start, bots never use YOLO, and the bot tells
+  you in its chat when its task finishes, fails or needs you ("Code task update", with a link to the task).
 
 ## 0.2.0 - 2026-10-12
 

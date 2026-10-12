@@ -272,6 +272,33 @@ func TestCreatedReportsEachNewSessionOnce(t *testing.T) {
 	}
 }
 
+func TestBotActorOwnsItsTaskAndNeverGetsYolo(t *testing.T) {
+	var actors []string
+	e := newEnv(t, withYoloSetting(func() bool { return true }), func(c *envCfg) {
+		c.authorize = func(ctx context.Context, action, _, _ string) error {
+			actors = append(actors, action+" "+agents.ActorFrom(ctx))
+			return nil
+		}
+	})
+	ctx := agents.WithActor(ctx10(t), "bot:b1")
+	s, err := e.m.Start(ctx, agents.StartSpec{Kind: "claude", Dir: t.TempDir(), Prompt: "hello"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.Owner != "bot:b1" || len(actors) != 1 || actors[0] != "agent.start bot:b1" {
+		t.Fatalf("owner %q, authorized as %v", s.Owner, actors)
+	}
+	if stored, err := e.st.GetSession(s.ID); err != nil || stored.Owner != "bot:b1" {
+		t.Fatalf("owner not persisted: %+v %v", stored.Owner, err)
+	}
+	if _, err := e.m.Start(ctx, agents.StartSpec{Kind: "claude", Dir: t.TempDir(), PermissionMode: "yolo", ConfirmYolo: true}); err == nil || !strings.Contains(err.Error(), "bots cannot") {
+		t.Fatalf("yolo for a bot: %v", err)
+	}
+	if user := e.start(t, agents.StartSpec{Prompt: "hi"}); user.Owner != "" {
+		t.Fatalf("user task owned by %q", user.Owner)
+	}
+}
+
 func TestPermissionDenyIsRelayedAndAudited(t *testing.T) {
 	e := newEnv(t)
 	s := e.start(t, agents.StartSpec{Prompt: "NEEDPERM"})

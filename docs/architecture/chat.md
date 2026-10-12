@@ -103,6 +103,22 @@ names the automation and says quoted event fields are data from other apps and t
 `wait`, the automation step blocks on the turn's outcome (the same result channel handoffs use) and returns the reply.
 Delivery state is not durable: a daemon restart while a waiting step runs leaves the automation journal `uncertain`.
 
+## Code tasks
+A bot with `BotConfig.codeTasks` (Settings panel: "Runs code tasks"; off by default, never exported) gets
+`start_task`, `list_tasks`, `task_status`, `message_task` and `stop_task` (`internal/chat/tools/tasks.go`, backed by
+`daemon/bot_tasks.go`). Bots cannot run commands themselves; a code task is a coding agent (Claude Code, Codex, ...)
+in a registered local project. The runtime passes `agents.WithActor(ctx, "bot:<id>")`: the session records it as
+`Session.Owner`, the agent runtime asks the shared policy as that actor (`agent.start`, `agent.prompt` are destructive,
+so every start and follow-up is approved unless the user stores a rule), and YOLO is refused. Bots may read any task
+but message or stop only tasks they own. Task text (activity, last message, transcript) reaches the model as fenced
+untrusted data.
+
+When a task a bot owns finishes a turn, needs the user, or fails, `daemon/app_events.go` calls
+`Manager.ReportTask`: the state is stored in the bot's conversation as a user message authored `task:<taskId>`,
+fenced as "code task report", and the bot answers it with an addendum to tell the user what happened (only the user
+can answer a task's questions). The UI draws it as a collapsed "Code task update" card with "Open task". The bot's
+system prompt lists its running tasks, fenced. Reports are best effort: they are not replayed after a daemon restart.
+
 ## @mentions and skills
 Typing `@` in the composer opens the assistant-ui trigger popover: the other bots and the skills this bot has been
 given. A pick is plain `@Name` text; on send the frontend resolves names to ids (`SendRequest.Mentions`,

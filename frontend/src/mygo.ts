@@ -240,6 +240,11 @@ export interface BotConfig {
   skills: string[];
   /** an executive assistant may ask every other bot (ask_bot) */
   executive?: boolean;
+  /**
+   * CodeTasks lets the bot start, watch and steer code tasks: coding agents that run commands and edit files on
+   * this PC. Every start and message still goes through the shared permission policy as "bot:<id>".
+   */
+  codeTasks?: boolean;
   /** grants beyond the private scope */
   memory: ScopeAccess[];
   limits: BotLimits;
@@ -2425,6 +2430,11 @@ export interface Session {
   group: string;
   /** Chain records automation provenance for lifecycle events, never tool authority. */
   chain?: string[];
+  /**
+   * Owner is the principal that started the session through WithActor ("bot:<id>"); "" for the user.
+   * It decides who may steer the task and who hears about its progress, never tool authority.
+   */
+  owner?: string;
   /** see Review* constants */
   review: string;
   reviewNote: string;
