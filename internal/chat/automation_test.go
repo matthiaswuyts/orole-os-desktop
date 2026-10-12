@@ -2,8 +2,10 @@ package chat
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/rayorole/orole-os-desktop/internal/llm"
@@ -81,6 +83,47 @@ func TestDeliveredRepliesCarryTheAutomationChain(t *testing.T) {
 	}
 	if got := final[len(final)-1].Automations; len(got) != 0 {
 		t.Fatalf("user reply chain = %v", got)
+	}
+}
+
+// Tools decide from RunContext.Author whether the user typed the message the run answers (the
+// automation tools refuse to draft otherwise), and see the automation chain behind the run.
+func TestRunContextSaysWhoWroteTheMessage(t *testing.T) {
+	var mu sync.Mutex
+	var seen []RunContext
+	probe := &fakeTool{id: "probe", call: func(_ context.Context, rc RunContext, _ string, _ json.RawMessage) (ToolResult, error) {
+		mu.Lock()
+		seen = append(seen, rc)
+		mu.Unlock()
+		return ToolResult{Text: "ok"}, nil
+	}}
+	e := newEnv(t, func(_ int, req llm.Request) []llm.Delta {
+		if last := req.Messages[len(req.Messages)-1]; last.Role == llm.RoleTool {
+			return []llm.Delta{llmtest.Text("done")}
+		}
+		return llmtest.Call("c", "probe", `{}`)
+	})
+	e.m.AddTools(probe)
+	b := e.bot("Probe")
+	e.send(b.ID, "hello")
+	e.idle(b.ID)
+	if _, err := e.m.Deliver(context.Background(), b.ID, "auto-1", "Flow", "event", []string{"auto-1"}, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.m.ReportTask(context.Background(), b.ID, "task-1", "finished"); err != nil {
+		t.Fatal(err)
+	}
+	e.until("three probed runs", func() bool { mu.Lock(); defer mu.Unlock(); return len(seen) == 3 })
+	mu.Lock()
+	defer mu.Unlock()
+	if seen[0].Author != "user" || len(seen[0].Automations) != 0 {
+		t.Fatalf("user run: %q %v", seen[0].Author, seen[0].Automations)
+	}
+	if seen[1].Author != AutomationPrefix+"auto-1" || len(seen[1].Automations) != 1 || seen[1].Automations[0] != "auto-1" {
+		t.Fatalf("automation run: %q %v", seen[1].Author, seen[1].Automations)
+	}
+	if seen[2].Author != TaskPrefix+"task-1" {
+		t.Fatalf("task report run: %q", seen[2].Author)
 	}
 }
 

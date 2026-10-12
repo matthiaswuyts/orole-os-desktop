@@ -9,6 +9,12 @@ notes. See `docs/development/updates.md`.
 ## Unreleased
 
 ### Added
+- Bots can set up automations from chat. Turn on "Sets up automations" in a bot's panel and ask it, for example, to "watch CI
+  on main and tell me when it fails". The bot drafts the flow, Orole validates it, and it appears as a card in the chat with
+  the trigger, the steps and anything it runs or sends. Nothing is saved until you choose Turn on, Add turned off or
+  Dismiss; drafts that run programs or send web requests can only be added turned off, for review in Automations. Bots can
+  also read your automations and their recent runs, and draft changes, which you apply from the card. Automations a bot
+  set up show "By <bot>" in the list.
 - Skills settings are redesigned with Yours and Discover tabs. Discover browses and searches the skills.sh catalogue
   (Most installed, Trending, and skills.sh's topics such as Marketing and Design); a skill is added from a preview that shows
   its full SKILL.md and flags script files, then is available to every agent through Orole. Adding does not change your agents'

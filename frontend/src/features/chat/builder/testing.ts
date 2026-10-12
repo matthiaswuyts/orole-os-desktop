@@ -35,6 +35,7 @@ export const bridge = {
   mcp: { list: vi.fn() },
   skills: { list: vi.fn() },
   llm: { providers: vi.fn(), defaults: vi.fn(), models: vi.fn() },
+  automations: { proposal: vi.fn(), resolveProposal: vi.fn(), stepTypes: vi.fn() },
 };
 
 export const mygoMock = {
@@ -42,6 +43,7 @@ export const mygoMock = {
   MCP: bridge.mcp,
   Skills: bridge.skills,
   LLM: bridge.llm,
+  Automations: bridge.automations,
   Daemon: { health: vi.fn() },
   Desktop: bridge.desktop,
   events: {
@@ -82,4 +84,5 @@ export function resetBridge() {
   bridge.llm.providers.mockResolvedValue([provider()]);
   bridge.llm.defaults.mockResolvedValue({ chatModel: "openrouter/gpt-x", memoryModel: "" });
   bridge.llm.models.mockResolvedValue([model("gpt-x", { name: "GPT X" }), model("reason-1", { name: "Reasoner", reasoning: ["low", "high"] })]);
+  bridge.automations.stepTypes.mockResolvedValue([]);
 }

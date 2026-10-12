@@ -83,3 +83,17 @@ func (s Automations) Events(ctx context.Context) ([]events.Topic, error) {
 	err := s.L.call(ctx, "automations.events", nil, &out)
 	return out, err
 }
+
+// Proposal returns a bot's automation draft in any state, for its card in the chat.
+func (s Automations) Proposal(ctx context.Context, id string) (automations.Proposal, error) {
+	var out automations.Proposal
+	err := s.L.call(ctx, "automations.proposals.get", map[string]string{"id": id}, &out)
+	return out, err
+}
+
+// ResolveProposal approves (saving the draft, optionally turned on) or dismisses a bot's draft.
+func (s Automations) ResolveProposal(ctx context.Context, decision automations.ProposalDecision) (automations.Proposal, error) {
+	var out automations.Proposal
+	err := s.L.call(ctx, "automations.proposals.resolve", decision, &out)
+	return out, err
+}

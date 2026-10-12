@@ -12,38 +12,56 @@ import (
 
 var ErrNotFound = errors.New("automation or run not found")
 
+// Save stores a definition from the builder: the user is its creator.
 func (e *Engine) Save(ctx context.Context, d Definition) (SaveResult, error) {
+	return e.save(ctx, d, "user")
+}
+
+// save validates and upserts d. createdBy ("user" | "bot:<id>") is recorded when the row
+// is inserted; an update keeps the original creator.
+func (e *Engine) save(ctx context.Context, d Definition, createdBy string) (SaveResult, error) {
 	d = Normalize(Upgrade(d))
-	issues := Validate(d)
-	if len(issues) > 0 {
-		return SaveResult{Definition: d, Issues: issues}, nil
-	}
+	id := d.ID
 	if d.ID == "" {
 		d.ID = uuid.NewString()
 	}
-	b, err := json.Marshal(d)
-	if err != nil {
-		return SaveResult{}, err
-	}
-	if len(b) > 256<<10 {
-		return SaveResult{}, fmt.Errorf("definition exceeds 256 KiB")
-	}
-	var document any
-	if err := json.Unmarshal(b, &document); err != nil {
-		return SaveResult{}, err
-	}
-	canonical, _ := json.Marshal(document)
-	redacted, _ := json.Marshal(e.redact.value(document))
-	if !bytes.Equal(canonical, redacted) {
-		return SaveResult{Issues: []Issue{{Path: "steps", Message: "Definitions cannot contain credentials or recognized secrets; use the integration's OS credential store"}}}, nil
+	b, issues, err := e.storable(d)
+	if err != nil || len(issues) > 0 {
+		d.ID = id // nothing was stored: a new flow stays unsaved
+		return SaveResult{Definition: d, Issues: issues}, err
 	}
 	now := e.clock.Now().UnixMilli()
-	_, err = e.db.ExecContext(ctx, `INSERT INTO automations(id,name,enabled,schema_version,trigger_type,definition,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,enabled=excluded.enabled,schema_version=excluded.schema_version,trigger_type=excluded.trigger_type,definition=excluded.definition,updated_at=excluded.updated_at,last_fire_at=CASE WHEN definition=excluded.definition THEN last_fire_at ELSE 0 END`, d.ID, d.Name, d.Enabled, d.SchemaVersion, d.Trigger.Type, string(b), now, now)
+	_, err = e.db.ExecContext(ctx, `INSERT INTO automations(id,name,enabled,schema_version,trigger_type,definition,created_at,updated_at,created_by) VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,enabled=excluded.enabled,schema_version=excluded.schema_version,trigger_type=excluded.trigger_type,definition=excluded.definition,updated_at=excluded.updated_at,last_fire_at=CASE WHEN definition=excluded.definition THEN last_fire_at ELSE 0 END`, d.ID, d.Name, d.Enabled, d.SchemaVersion, d.Trigger.Type, string(b), now, now, createdBy)
 	if err == nil {
 		e.invalidateDefinitions()
 		e.wake()
 	}
-	return SaveResult{Definition: d, Issues: issues, Saved: err == nil}, err
+	return SaveResult{Definition: d, Issues: []Issue{}, Saved: err == nil}, err
+}
+
+// storable returns the stored JSON of a normalized definition, or the issues that keep it
+// from being stored: validation problems, the size cap, and recognized secrets.
+func (e *Engine) storable(d Definition) ([]byte, []Issue, error) {
+	if issues := Validate(d); len(issues) > 0 {
+		return nil, issues, nil
+	}
+	b, err := json.Marshal(d)
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(b) > 256<<10 {
+		return nil, nil, fmt.Errorf("definition exceeds 256 KiB")
+	}
+	var document any
+	if err := json.Unmarshal(b, &document); err != nil {
+		return nil, nil, err
+	}
+	canonical, _ := json.Marshal(document)
+	redacted, _ := json.Marshal(e.redact.value(document))
+	if !bytes.Equal(canonical, redacted) {
+		return nil, []Issue{{Path: "steps", Message: "Definitions cannot contain credentials or recognized secrets; use the integration's OS credential store"}}, nil
+	}
+	return b, nil, nil
 }
 func (e *Engine) List(ctx context.Context) ([]Summary, error) {
 	// Read the small watch table first so this call never holds two connections.
@@ -51,7 +69,7 @@ func (e *Engine) List(ctx context.Context) ([]Summary, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := e.db.QueryContext(ctx, `SELECT a.definition,coalesce((SELECT status FROM automation_runs r WHERE r.automation_id=a.id ORDER BY created_at DESC LIMIT 1),''),coalesce((SELECT created_at FROM automation_runs r WHERE r.automation_id=a.id ORDER BY created_at DESC LIMIT 1),0) FROM automations a ORDER BY a.name`)
+	rows, err := e.db.QueryContext(ctx, `SELECT a.definition,a.created_by,a.updated_at,coalesce((SELECT status FROM automation_runs r WHERE r.automation_id=a.id ORDER BY created_at DESC LIMIT 1),''),coalesce((SELECT created_at FROM automation_runs r WHERE r.automation_id=a.id ORDER BY created_at DESC LIMIT 1),0) FROM automations a ORDER BY a.name`)
 	if err != nil {
 		return nil, err
 	}
@@ -60,7 +78,7 @@ func (e *Engine) List(ctx context.Context) ([]Summary, error) {
 	for rows.Next() {
 		var s Summary
 		var b string
-		if err := rows.Scan(&b, &s.LastStatus, &s.LastRunAt); err != nil {
+		if err := rows.Scan(&b, &s.CreatedBy, &s.UpdatedAt, &s.LastStatus, &s.LastRunAt); err != nil {
 			return nil, err
 		}
 		if err := json.Unmarshal([]byte(b), &s.Definition); err != nil {

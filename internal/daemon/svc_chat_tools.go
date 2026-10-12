@@ -41,6 +41,9 @@ func (d *Daemon) registerChatTools() {
 		list = append(list, tools.Tasks{Runtime: rt})
 		m.AddPromptSection(func(b chat.Bot) string { return tools.TasksPrompt(rt, b) })
 	}
+	if d.Automations != nil {
+		list = append(list, tools.Automations{Runtime: d.Automations})
+	}
 	list = append(list, tools.Show{})
 	m.AddPromptSection(func(chat.Bot) string { return tools.ShowPrompt })
 	list = append(list, &tools.Setup{Bots: m})

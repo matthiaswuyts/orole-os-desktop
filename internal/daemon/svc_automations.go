@@ -2,10 +2,12 @@ package daemon
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"github.com/rayorole/orole-os-desktop/internal/automations"
 	"github.com/rayorole/orole-os-desktop/internal/credentials"
 	"github.com/rayorole/orole-os-desktop/internal/events"
+	"github.com/rayorole/orole-os-desktop/internal/ipc"
 	"github.com/rayorole/orole-os-desktop/internal/notifications"
 	"github.com/rayorole/orole-os-desktop/internal/policy"
 )
@@ -78,4 +80,31 @@ func (d *Daemon) registerAutomations() {
 	handle(d, "automations.events", func(ctx context.Context, _ none) ([]events.Topic, error) {
 		return events.Catalog(), nil
 	})
+	handle(d, "automations.proposals.get", func(ctx context.Context, p struct {
+		ID string `json:"id"`
+	}) (automations.Proposal, error) {
+		out, err := e.Proposal(ctx, p.ID)
+		return out, proposalError(err)
+	})
+	// The user's decision on a bot's draft card. Approval saves the stored draft with the bot as
+	// its creator; the engine audits every decision.
+	handle(d, "automations.proposals.resolve", func(ctx context.Context, p automations.ProposalDecision) (automations.Proposal, error) {
+		out, err := e.ResolveProposal(ctx, p)
+		return out, proposalError(err)
+	})
+}
+
+// proposalError maps proposal errors to IPC errors; their messages are written for the user.
+func proposalError(err error) error {
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(err, automations.ErrInvalid):
+		return &ipc.Error{Code: ipc.CodeBadRequest, Message: err.Error()}
+	case errors.Is(err, automations.ErrNotFound):
+		return &ipc.Error{Code: ipc.CodeNotFound, Message: err.Error()}
+	case errors.Is(err, automations.ErrChanged):
+		return &ipc.Error{Code: "conflict", Message: err.Error()}
+	}
+	return err
 }
