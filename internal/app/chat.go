@@ -200,6 +200,18 @@ func (c Chat) ResolveSkill(ctx context.Context, req chat.SkillResolve) error {
 	return c.L.call(ctx, "chat.skills.pending.resolve", req, nil)
 }
 
+// AutomationSignals lists the requests a bot noticed the user repeating (automation ideas).
+func (c Chat) AutomationSignals(ctx context.Context, botID string) ([]chat.AutomationSignal, error) {
+	var out []chat.AutomationSignal
+	err := c.L.call(ctx, "chat.signals.list", chat.BotRef{ID: botID}, &out)
+	return out, err
+}
+
+// DeleteAutomationSignal forgets one automation idea of a bot.
+func (c Chat) DeleteAutomationSignal(ctx context.Context, ref chat.SignalRef) error {
+	return c.L.call(ctx, "chat.signals.delete", ref, nil)
+}
+
 // CLIRuntimes is a stateless bridge to the Claude, ChatGPT (Codex) and Grok CLI runtimes: install state, version,
 // updates and sign-in. Credentials stay with the CLIs.
 type CLIRuntimes struct{ L *Link }

@@ -170,6 +170,26 @@ export interface AuthStart {
 /** AuthType says how the API key is presented to the provider. */
 export type AuthType = "bearer" | "header" | "none";
 
+/**
+ * AutomationSignal is a request the user keeps making of a bot: the same tool call, with the same
+ * arguments, in turns the user started. A bot that sets up automations may suggest automating it.
+ */
+export interface AutomationSignal {
+  botId: string;
+  key: string;
+  /** the tool and its arguments, one line */
+  label: string;
+  count: number;
+  /** distinct local days it was asked on */
+  days: number;
+  /** Ready reports whether it is repeated enough to be suggested and not silenced. */
+  ready: boolean;
+  /** Answered reports that the user declined or accepted it; it is silenced for a while. */
+  answered: boolean;
+  firstAt: number;
+  lastAt: number;
+}
+
 export interface AutomationsIssue {
   path: string;
   message: string;
@@ -2663,6 +2683,12 @@ export interface Shortcut {
   updatedAt: number;
 }
 
+/** SignalRef identifies one signal of a bot. */
+export interface SignalRef {
+  botId: string;
+  key: string;
+}
+
 /** Skill is one registry entry. */
 export interface Skill {
   /** slug, also the directory name */
@@ -4002,6 +4028,10 @@ export const Chat = {
   attachmentChunk(req: AttachmentChunk): Promise<void> {
     return call("Chat.AttachmentChunk", req);
   },
+  /** AutomationSignals lists the requests a bot noticed the user repeating (automation ideas). */
+  automationSignals(botID: string): Promise<AutomationSignal[]> {
+    return call("Chat.AutomationSignals", botID);
+  },
   beginAttachment(req: AttachmentBegin): Promise<AttachmentUpload> {
     return call("Chat.BeginAttachment", req);
   },
@@ -4025,6 +4055,10 @@ export const Chat = {
   },
   createMemoryScope(name: string): Promise<MemoryScope> {
     return call("Chat.CreateMemoryScope", name);
+  },
+  /** DeleteAutomationSignal forgets one automation idea of a bot. */
+  deleteAutomationSignal(ref: SignalRef): Promise<void> {
+    return call("Chat.DeleteAutomationSignal", ref);
   },
   deleteMemoryEntry(id: string): Promise<void> {
     return call("Chat.DeleteMemoryEntry", id);

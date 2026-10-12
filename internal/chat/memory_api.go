@@ -1,6 +1,6 @@
 package chat
 
-// Memory, knowledge and skill-proposal IPC (handlers live in internal/daemon/svc_chat_memory.go).
+// Memory, knowledge, skill-proposal and automation-idea IPC (handlers live in internal/daemon/svc_chat_memory.go).
 //
 //	chat.memory.scopes.list     BotRef (BotID may be empty)   -> []MemoryScope   (private + shared scopes; Access filled when a bot is given)
 //	chat.memory.scopes.create   MemoryScopeCreate             -> MemoryScope     ("shared:<slug>")
@@ -14,6 +14,8 @@ package chat
 //	chat.knowledge.remove       KnowledgeRef                  -> struct{}
 //	chat.skills.pending.get     SkillRef                      -> SkillProposal   (any state: the chat card asks what became of its proposal)
 //	chat.skills.pending.resolve SkillResolve                  -> struct{}        (approve saves into internal/skills registry and gives the skill to the proposing bot)
+//	chat.signals.list           BotRef                        -> []AutomationSignal (requests the bot may suggest automating)
+//	chat.signals.delete         SignalRef                     -> struct{}
 //
 // Event chat.memory (MemoryChange) is published on every committed change.
 
@@ -154,4 +156,26 @@ type SkillRef struct {
 type SkillResolve struct {
 	ID      string `json:"id"`
 	Approve bool   `json:"approve"`
+}
+
+// AutomationSignal is a request the user keeps making of a bot: the same tool call, with the same
+// arguments, in turns the user started. A bot that sets up automations may suggest automating it.
+type AutomationSignal struct {
+	BotID string `json:"botId"`
+	Key   string `json:"key"`
+	Label string `json:"label"` // the tool and its arguments, one line
+	Count int    `json:"count"`
+	Days  int    `json:"days"` // distinct local days it was asked on
+	// Ready reports whether it is repeated enough to be suggested and not silenced.
+	Ready bool `json:"ready"`
+	// Answered reports that the user declined or accepted it; it is silenced for a while.
+	Answered bool  `json:"answered"`
+	FirstAt  int64 `json:"firstAt"`
+	LastAt   int64 `json:"lastAt"`
+}
+
+// SignalRef identifies one signal of a bot.
+type SignalRef struct {
+	BotID string `json:"botId"`
+	Key   string `json:"key"`
 }

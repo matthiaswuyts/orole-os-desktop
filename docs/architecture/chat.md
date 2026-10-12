@@ -176,6 +176,18 @@ report (`RunContext.Author` other than `user`) is refused, so outside content ca
 draft for the same name (or the same edited automation) replaces the bot's earlier pending one; at most 10 are pending
 per bot.
 
+### Automation ideas
+For bots with `automations`, `memory.Store` is the Manager's `ToolObserver`: each successful client call of an
+integration tool (`mcp__*`), `fetch_url` or `list_tasks` **in a run the user started** (`RunContext.Author == "user"`) is
+counted in `automation_signals` (migration 0106) under the tool name plus a hash of its canonical arguments, with the
+number of distinct local days. Runs answering automation messages, task or bot reports and hand-offs never count, and
+tool results are not read, so outside content cannot fabricate a pattern. A signal is ready at 3 calls on 2 days.
+`SuggestionsPrompt` is a user section (`Manager.AddUserSection`, added only to runs answering the user): it lists at most
+two ready signals and marks them offered, at most once a day per bot, each signal at most twice and a week apart. The bot
+offers in one sentence, drafts with `propose_automation` only after the user agrees, and records the answer with
+`automation_suggestion {key, decision}` (declined: silenced 90 days; accepted: for good). The bot's Memories page lists the
+ideas (`chat.signals.list`) and forgets one (`chat.signals.delete`).
+
 ## Structured output (`show_*` tools)
 Bots whose model can call tools get nine tools that render chat components instead of Markdown: `show_table`,
 `show_chart`, `show_diagram`, `show_flow_graph`, `show_math`, `show_spec_sheet`, `show_comparison`, `show_timeline`,

@@ -31,6 +31,7 @@ export const bridge = {
     beginAttachment: vi.fn(), attachmentChunk: vi.fn(), commitAttachment: vi.fn(), discardAttachment: vi.fn(),
     memoryScopes: vi.fn(), createMemoryScope: vi.fn(), deleteMemoryScope: vi.fn(), memoryEntries: vi.fn(), saveMemoryEntry: vi.fn(), deleteMemoryEntry: vi.fn(), resolveMemory: vi.fn(),
     knowledgeFiles: vi.fn(), addKnowledge: vi.fn(), removeKnowledge: vi.fn(), skillProposal: vi.fn(), resolveSkill: vi.fn(), tools: vi.fn(),
+    automationSignals: vi.fn(), deleteAutomationSignal: vi.fn(),
   },
   mcp: { list: vi.fn() },
   skills: { list: vi.fn() },

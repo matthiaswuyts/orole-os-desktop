@@ -637,6 +637,56 @@ func TestPromptSectionsAreAppendedInOrderAfterTheStandingRules(t *testing.T) {
 	}
 }
 
+type observed struct {
+	mu    sync.Mutex
+	calls []string
+}
+
+func (o *observed) ObserveTool(_ context.Context, rc RunContext, name string, _ json.RawMessage) {
+	o.mu.Lock()
+	o.calls = append(o.calls, rc.Author+" "+name)
+	o.mu.Unlock()
+}
+
+// User sections (automation ideas) reach only runs that answer the user's own message, and the
+// tool observer hears of successful calls with the run's author.
+func TestUserSectionsAndToolObserverFollowTheMessageAuthor(t *testing.T) {
+	ok := &fakeTool{id: "ok"}
+	bad := &fakeTool{id: "bad", call: func(context.Context, RunContext, string, json.RawMessage) (ToolResult, error) {
+		return ToolResult{Text: "no", IsError: true}, nil
+	}}
+	e := newEnv(t, func(_ int, req llm.Request) []llm.Delta {
+		if req.Messages[len(req.Messages)-1].Role == llm.RoleTool {
+			return []llm.Delta{llmtest.Text("done")}
+		}
+		return append(llmtest.Call("c1", "ok", `{}`)[:1], llmtest.Call("c2", "bad", `{}`)...)
+	})
+	obs := &observed{}
+	e.m.AddTools(ok, bad)
+	e.m.SetToolObserver(obs)
+	e.m.AddUserSection(func(Bot) string { return "USER-ONLY-SECTION" })
+	b := e.bot("Sectioned")
+	e.send(b.ID, "hi")
+	e.idle(b.ID)
+	if _, err := e.m.Deliver(context.Background(), b.ID, "auto-1", "Flow", "event", []string{"auto-1"}, true); err != nil {
+		t.Fatal(err)
+	}
+	calls := e.fake.Calls()
+	if !strings.Contains(calls[0].System, "USER-ONLY-SECTION") {
+		t.Fatal("the user's own turn lacks the user section")
+	}
+	for _, c := range calls[2:] {
+		if strings.Contains(c.System, "USER-ONLY-SECTION") {
+			t.Fatal("an automation-delivered turn got the user section")
+		}
+	}
+	obs.mu.Lock()
+	defer obs.mu.Unlock()
+	if want := []string{"user ok", AutomationPrefix + "auto-1 ok"}; !slices.Equal(obs.calls, want) {
+		t.Fatalf("observed %v, want %v", obs.calls, want)
+	}
+}
+
 func TestIdleConsolidationRunsOncePerQuietPeriod(t *testing.T) {
 	mem := &fakeMemory{done: make(chan string, 8)}
 	e := newEnv(t, func(int, llm.Request) []llm.Delta { return []llm.Delta{llmtest.Text("ok")} },

@@ -16,6 +16,7 @@ import { ModelPicker } from "./builder/ModelPicker";
 import { useModelOptions, type Option } from "./builder/modelOptions";
 import { IntegrationsPage, SkillsPage, ToolsPage } from "./builder/ToolsTab";
 import { MemoriesPage, ownScope, useBotMemory } from "./panel/MemoriesPage";
+import { AutomationIdeas } from "./panel/AutomationIdeas";
 import { ControlRow, Group, NavRow, PageHeader, SwitchRow } from "./panel/rows";
 
 type Page = "main" | "memories" | "skills" | "tools" | "integrations";
@@ -135,6 +136,7 @@ function PanelBody({ bot }: { bot: Bot }) {
       {page === "memories" && <>
         <PageHeader title="Memories" onBack={back} />
         <MemoriesPage botId={bot.id} />
+        {form.automations && <AutomationIdeas botId={bot.id} />}
       </>}
       {page === "skills" && <>
         <PageHeader title="Skills" onBack={back} />

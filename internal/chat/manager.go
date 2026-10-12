@@ -81,12 +81,16 @@ type Manager struct {
 	memory   Memory
 	tools    []Tool
 	sections []func(Bot) string
-	builtin  func() []string       // enabled built-in skill names every bot may use; nil when there is no registry
-	runs     map[string]*runState  // active runs by bot id or "draft:<id>"
-	handoffs map[string][]*handoff // bot id -> tasks it handed to other bots that have not reported back
-	idle     map[string]*idleJob
-	nonces   nonceCache
-	closed   bool
+	// userSections are added only to runs that answer the user's own message (not drafts,
+	// automation messages, reports or hand-offs).
+	userSections []func(Bot) string
+	observer     ToolObserver
+	builtin      func() []string       // enabled built-in skill names every bot may use; nil when there is no registry
+	runs         map[string]*runState  // active runs by bot id or "draft:<id>"
+	handoffs     map[string][]*handoff // bot id -> tasks it handed to other bots that have not reported back
+	idle         map[string]*idleJob
+	nonces       nonceCache
+	closed       bool
 
 	botMu sync.Map // bot id -> *sync.Mutex, see lockBot
 
@@ -176,6 +180,30 @@ func (m *Manager) AddPromptSection(fn func(bot Bot) string) {
 	m.mu.Unlock()
 }
 
+// AddUserSection registers a prompt section like AddPromptSection that is only added to runs answering
+// a message the user typed. Rendering it may have side effects (for example a rate-limited offer).
+func (m *Manager) AddUserSection(fn func(bot Bot) string) {
+	if fn == nil {
+		return
+	}
+	m.mu.Lock()
+	m.userSections = append(m.userSections, fn)
+	m.mu.Unlock()
+}
+
+// SetToolObserver registers the observer of successful client tool calls (one; nil removes it).
+func (m *Manager) SetToolObserver(o ToolObserver) {
+	m.mu.Lock()
+	m.observer = o
+	m.mu.Unlock()
+}
+
+func (m *Manager) toolObserver() ToolObserver {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.observer
+}
+
 // SetBuiltinSkills registers the source of the built-in skill names: skills shipped with Orole that
 // every bot may use without being granted them (see tools.SkillsTool). It is used to accept them
 // when the user picks one with `/` in the composer.
@@ -195,9 +223,14 @@ func (m *Manager) builtinSkills() []string {
 	return fn()
 }
 
-func (m *Manager) promptSections(bot Bot) []string {
+// promptSections renders the registered sections for a run; user sections only when the run answers
+// the user's own message in a stored conversation.
+func (m *Manager) promptSections(bot Bot, fromUser bool) []string {
 	m.mu.Lock()
 	fns := slices.Clone(m.sections)
+	if fromUser {
+		fns = append(fns, m.userSections...)
+	}
 	m.mu.Unlock()
 	var out []string
 	for _, fn := range fns {

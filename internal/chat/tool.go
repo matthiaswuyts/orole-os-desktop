@@ -81,6 +81,13 @@ type Delegator interface {
 	Handoff(ctx context.Context, from RunContext, calleeID, task string) error
 }
 
+// ToolObserver learns of every client tool call that succeeded, after it returned. It must be
+// quick and must not call back into the Manager; it decides itself which calls matter (for
+// example only runs the user started, rc.Author == "user").
+type ToolObserver interface {
+	ObserveTool(ctx context.Context, rc RunContext, name string, args json.RawMessage)
+}
+
 // Fence wraps untrusted text so the model treats it as data. Engines and tools use this one function.
 func Fence(source, text string) string {
 	source = strings.Map(func(r rune) rune {
