@@ -2744,6 +2744,22 @@ export interface ToolsRequest {
   model: string;
 }
 
+/** Topic describes a published topic for the flow builder. */
+export interface Topic {
+  topic: string;
+  label: string;
+  group: string;
+  fields: TopicField[];
+}
+
+/** TopicField is one key of a topic's Data, available to filters as event.data.<name>. */
+export interface TopicField {
+  name: string;
+  /** string | number | boolean */
+  type: string;
+  label: string;
+}
+
 /**
  * TranscribeRequest is one recording. DataBase64 is the raw container (webm, ogg, mp4, ...) the
  * browser's MediaRecorder produced.
@@ -3569,6 +3585,10 @@ export const Automations = {
   },
   detail(id: string): Promise<Detail> {
     return call("Automations.Detail", id);
+  },
+  /** Events lists the application event topics flows can start on. */
+  events(): Promise<Topic[]> {
+    return call("Automations.Events");
   },
   generateSecret(): Promise<void> {
     return call("Automations.GenerateSecret");

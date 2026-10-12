@@ -8,6 +8,10 @@ notes. See `docs/development/updates.md`.
 
 ## Unreleased
 
+### Added
+- Automations can start on app events: a task is created, changes status, waits for you, finishes or fails, a pull request is
+  opened, a project is added, or a bot replies. Each event carries the task's title, project, branch, status and last message.
+
 ## 0.2.0 - 2026-10-12
 
 ### Added

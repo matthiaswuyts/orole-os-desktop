@@ -115,6 +115,7 @@ type envCfg struct {
 	permissionDecision func(context.Context, string, agents.PermissionRequest) error
 	authorize          func(context.Context, string, string, string) error
 	yolo               func() bool
+	created            func(agents.Session)
 }
 
 func withWT(w agents.Worktrees) opt { return func(c *envCfg) { c.wt = w } }
@@ -123,6 +124,8 @@ func sameDB(path, data string) opt  { return func(c *envCfg) { c.dbPath, c.data 
 
 // withYoloSetting stands in for the daemon setting that can turn YOLO off.
 func withYoloSetting(f func() bool) opt { return func(c *envCfg) { c.yolo = f } }
+
+func withCreated(f func(agents.Session)) opt { return func(c *envCfg) { c.created = f } }
 
 func newEnv(t *testing.T, opts ...opt) *env {
 	t.Helper()
@@ -148,6 +151,7 @@ func newEnv(t *testing.T, opts ...opt) *env {
 		PermissionDecision: c.permissionDecision,
 		Authorize:          c.authorize,
 		YoloEnabled:        c.yolo,
+		Created:            c.created,
 		Adapters:           []agents.Adapter{agents.Claude{Bin: fakeBin}, agents.Custom{}},
 	})
 	t.Cleanup(func() { e.m.Shutdown(); e.term.Shutdown() })
@@ -245,6 +249,26 @@ func TestLifecycleStartPermissionApproveDone(t *testing.T) {
 	}
 	if e.pubs.count("agents.updated") < 3 || e.pubs.count("agents.event") < 3 {
 		t.Fatalf("expected live updates/events, got %v", e.pubs.events)
+	}
+}
+
+func TestCreatedReportsEachNewSessionOnce(t *testing.T) {
+	var mu sync.Mutex
+	var created []agents.Session
+	e := newEnv(t, withCreated(func(s agents.Session) { mu.Lock(); created = append(created, s); mu.Unlock() }))
+	dir := t.TempDir()
+	s := e.start(t, agents.StartSpec{Prompt: "hello", Dir: dir, Key: "same"})
+	again := e.start(t, agents.StartSpec{Prompt: "hello", Dir: dir, Key: "same"})
+	if again.ID != s.ID {
+		t.Fatalf("retried key started %s, want %s", again.ID, s.ID)
+	}
+	if _, err := e.m.Start(ctx10(t), agents.StartSpec{Kind: "claude", Dir: filepath.Join(dir, "missing")}); err == nil {
+		t.Fatal("start in a missing directory succeeded")
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(created) != 1 || created[0].ID != s.ID || created[0].Task != "hello" || !created[0].Live {
+		t.Fatalf("created = %+v", created)
 	}
 }
 

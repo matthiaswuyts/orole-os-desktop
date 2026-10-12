@@ -272,6 +272,9 @@ type Message struct {
 	CreatedAt int64         `json:"createdAt"`
 }
 
+// Text is the message's plain text: its text parts joined, without tool or structured parts.
+func (m Message) Text() string { return messageText(m.Parts) }
+
 // MessagesRequest pages backwards through a conversation: newest first window.
 type MessagesRequest struct {
 	BotID     string `json:"botId"`

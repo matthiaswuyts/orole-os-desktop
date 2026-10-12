@@ -14,8 +14,22 @@ The CI template is a scheduled check every 15 minutes, not a nonexistent CI push
 
 - Manual: authenticated `automations.run` IPC.
 - Schedule: five-field cron (`minute hour day month weekday`), lists/ranges/steps, month/weekday names, common aliases, or `every 15m`/`every 2h`/`every 1d`. Minimum interval one minute. Fixed wall times follow local DST, skipping nonexistent times and the second occurrence of repeated times. Restricted day-of-month and weekday use cron's OR semantics. After downtime/sleep, `skip` consumes missed slots without running; `run-once` fires once, never a backlog burst. Ninety seconds of lateness is scheduling grace.
-- Application event: exact topic, `prefix.*`, or `*`, with optional filter. `internal/events` has bounded, nonblocking subscriber queues; a full queue drops the newest event and increments `Subscription.Dropped`. This bus is not a durable message broker.
+- Application event: exact topic, `prefix.*`, or `*`, with optional filter. `internal/events` has bounded, nonblocking subscriber queues; a full queue drops the newest event and increments `Subscription.Dropped`. This bus is not a durable message broker. `automations.events` returns the topic catalog (`events.Catalog`) with each topic's payload fields; the builder offers only those.
 - Webhook: opt-in loopback listener, described below.
+
+| Topic | When | Publisher |
+| --- | --- | --- |
+| `task.created` | A code task was launched (never for a retried idempotency key) | `agents.Config.Created` |
+| `task.status` | A task's status changed (`from` holds the previous one) | agent runtime `agents.updated` |
+| `agent.waiting` | A task needs a permission decision or an answer | agent runtime `agents.updated` |
+| `agent.finished` | A task finished a turn (`result` holds its summary) | `agents.Config.Finished` |
+| `agent.failed` | A task or its process failed | agent runtime `agents.updated` |
+| `pr.opened` | Publishing opened a pull request for the task | agent runtime `agents.updated` |
+| `project.created` | A project was added or created | `projects.add` / `projects.create` |
+| `bot.message` | A bot completed a reply (builder drafts excluded) | chat runtime `chat.message` |
+| `automation.run.finished`, `github.changed`, `mcp.tool.called` | As named | engine, GitHub service, MCP manager |
+
+Task topics share one payload (`id`, `title`, `kind`, `status`, `projectId`, `project`, `branch`, `activity`, `lastMessage`, `error`, `prUrl`); free text is clipped to 2000 characters and is untrusted data. Status transitions are relative to the last state this daemon run observed: a session from a previous run reports `agent.waiting`/`agent.failed` but no `task.status` until its next change.
 
 Modules publish facts through `d.Events.Publish(events.Event{Topic,Data,Chain})`. Capture `events.ChainFrom(ctx)` when automation-driven work starts and persist it with work that outlives the call. The chain contains causing automation IDs; an ID cannot reappear, and the maximum chain length is three. Automation completion publishes `automation.run.finished`. Event filters access `event.topic` and `event.data`; templates also access `trigger.data`, `run.id`, and `steps.<id>.output`. Agent and integration payloads are untrusted data, not instructions.
 
@@ -128,7 +142,7 @@ Supply `body` as the exact JSON byte sequence and `base_url` as the configured l
 
 ## API and verification
 
-IPC: `automations.list/save/delete/run/cancel/runs/run.detail/approvals.list/approve`, plus `automations.stepTypes`, `automations.config`, `automations.config.set`, `automations.webhook.generateSecret`, `automations.schedule.preview`, and `automations.templates`. Run/journal changes publish `automations.run` over IPC; the current frontend refreshes visible resources every five seconds.
+IPC: `automations.list/save/delete/run/cancel/runs/run.detail/approvals.list/approve`, plus `automations.stepTypes`, `automations.events`, `automations.config`, `automations.config.set`, `automations.webhook.generateSecret`, `automations.schedule.preview`, and `automations.templates`. Run/journal changes publish `automations.run` over IPC; the current frontend refreshes visible resources every five seconds.
 
 Run `go test -race ./internal/automations/... ./internal/events/...` and `go vet ./internal/automations/... ./internal/events/...`. Tests inject clock, tool, notification, resolver and dialer implementations. Authorization regressions use the real shared policy with a child-process filesystem effect and a real HTTP server; missing/denied policy produces no effect, while approval permits dispatch. Crash tests close the first runner's database mid-operation and reopen it, exercising unfinished journal recovery without repeating finished actions.
 

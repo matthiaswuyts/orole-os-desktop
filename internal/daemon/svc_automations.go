@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/rayorole/orole-os-desktop/internal/automations"
 	"github.com/rayorole/orole-os-desktop/internal/credentials"
+	"github.com/rayorole/orole-os-desktop/internal/events"
 	"github.com/rayorole/orole-os-desktop/internal/notifications"
 	"github.com/rayorole/orole-os-desktop/internal/policy"
 )
@@ -73,5 +74,8 @@ func (d *Daemon) registerAutomations() {
 	})
 	handle(d, "automations.templates", func(ctx context.Context, _ none) ([]automations.Definition, error) {
 		return automations.Templates(), nil
+	})
+	handle(d, "automations.events", func(ctx context.Context, _ none) ([]events.Topic, error) {
+		return events.Catalog(), nil
 	})
 }

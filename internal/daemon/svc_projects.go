@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 
+	"github.com/rayorole/orole-os-desktop/internal/events"
 	"github.com/rayorole/orole-os-desktop/internal/git"
 	"github.com/rayorole/orole-os-desktop/internal/ipc"
 	"github.com/rayorole/orole-os-desktop/internal/projects"
@@ -76,6 +77,7 @@ func (d *Daemon) registerProjects() {
 		}
 		d.audit("project.add", pr.ID, "allowed", pr.Path)
 		changed(pr)
+		projectCreated(d.Events, pr, events.ChainFrom(ctx))
 		return pr, nil
 	})
 	handle(d, "projects.create", func(ctx context.Context, p struct {
@@ -89,6 +91,7 @@ func (d *Daemon) registerProjects() {
 		}
 		d.audit("project.create", pr.ID, "allowed", pr.Path)
 		changed(pr)
+		projectCreated(d.Events, pr, events.ChainFrom(ctx))
 		return pr, nil
 	})
 	handle(d, "projects.remove", func(ctx context.Context, p struct {

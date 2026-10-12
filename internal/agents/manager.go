@@ -33,6 +33,7 @@ type Config struct {
 	// subscribed clients.
 	Publish  func(event string, data any)
 	Finished func(Session) // called once per completed turn, or process-only completion
+	Created  func(Session) // called once when Start launched a new session (never for a retried key)
 	// PermissionDecision checks policy before honoring a user's Allow. Errors fail closed
 	// and send Deny to the CLI; the existing agent approval UI supplies the Ask decision.
 	PermissionDecision func(context.Context, string, PermissionRequest) error
@@ -708,6 +709,11 @@ func (m *Manager) Start(ctx context.Context, spec StartSpec) (Session, error) {
 		return m.failStart(s, err)
 	}
 	m.cfg.Audit("agent.start", s.ID, "allowed", fmt.Sprintf("%s mode=%s permission=%s dir=%s", s.Kind, s.Mode, s.PermissionMode, s.Dir))
+	if m.cfg.Created != nil {
+		if created, err := m.Get(s.ID); err == nil {
+			m.cfg.Created(created)
+		}
+	}
 	if s.PermissionMode == PermYolo {
 		m.cfg.Audit("agent.yolo", s.ID, "allowed", "started in YOLO: "+s.Kind+" in "+s.Dir)
 	}

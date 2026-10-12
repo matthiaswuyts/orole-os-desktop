@@ -191,7 +191,7 @@ func (e *Engine) changed(id string) {
 }
 func (e *Engine) finished(r Run) {
 	if terminal(r.Status) {
-		e.bus.Publish(events.Event{Topic: "automation.run.finished", Chain: r.Chain, Data: map[string]any{"automationId": r.AutomationID, "runId": r.ID, "status": r.Status, "name": r.Name}})
+		e.bus.Publish(events.Event{Topic: events.TopicAutomationRun, Chain: r.Chain, Data: map[string]any{"automationId": r.AutomationID, "runId": r.ID, "status": r.Status, "name": r.Name}})
 	}
 }
 func (e *Engine) Run(ctx context.Context, id string) (Run, error) {
