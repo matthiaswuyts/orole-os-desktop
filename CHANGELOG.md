@@ -18,6 +18,9 @@ notes. See `docs/development/updates.md`.
 - Bots can run code tasks. Turn on "Runs code tasks" in a bot's panel and it can start a coding agent in one of your projects,
   check on any task, and message or stop the ones it started. You approve every start, bots never use YOLO, and the bot tells
   you in its chat when its task finishes, fails or needs you ("Code task update", with a link to the task).
+- Automations can watch GitHub (new commits on a branch, pull requests opened or merged, failed workflow runs, new issues)
+  and deployments of connected integrations such as Vercel or Railway. Orole checks every minute or two (it never opens a
+  network port), starts from what already exists, and runs the flow once for each new item.
 
 ## 0.2.0 - 2026-10-12
 

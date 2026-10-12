@@ -49,6 +49,7 @@ type Engine struct {
 	github      GitHubQuery
 	bots        BotMessenger
 	watchers    map[string]WatchSource
+	watchWake   chan struct{} // definitions changed: the watch loop rereads them
 	commands    CommandRunner
 	notifier    Notifier
 	authorize   func(context.Context, policy.Request) error
@@ -85,7 +86,7 @@ func New(o Options) *Engine {
 	if o.Commands == nil {
 		o.Commands = ExecRunner{}
 	}
-	e := &Engine{db: o.DB, bus: o.Bus, credentials: o.Credentials, clock: o.Clock, log: o.Log, auditFn: o.Audit, changedFn: o.Changed, commands: o.Commands, notifier: o.Notifier, authorize: o.Authorize, config: DefaultConfig(), active: map[string]context.CancelFunc{}, live: map[string]Run{}, counts: map[string]int{}, wakeC: make(chan struct{}, 1)}
+	e := &Engine{db: o.DB, bus: o.Bus, credentials: o.Credentials, clock: o.Clock, log: o.Log, auditFn: o.Audit, changedFn: o.Changed, commands: o.Commands, notifier: o.Notifier, authorize: o.Authorize, config: DefaultConfig(), active: map[string]context.CancelFunc{}, live: map[string]Run{}, counts: map[string]int{}, wakeC: make(chan struct{}, 1), watchWake: make(chan struct{}, 1)}
 	var raw string
 	if err := e.db.QueryRow(`SELECT value FROM settings WHERE key='automations.config'`).Scan(&raw); err == nil {
 		_ = json.Unmarshal([]byte(raw), &e.config)

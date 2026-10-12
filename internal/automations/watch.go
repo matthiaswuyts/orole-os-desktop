@@ -122,10 +122,17 @@ func (e *Engine) watchLoop() {
 				}
 			}
 		}
+		// Without watch triggers there is nothing to poll: sleep until definitions change
+		// instead of arming a timer every few seconds.
+		var tick <-chan time.Time
+		if err != nil || len(snap.watches) > 0 {
+			tick = e.clock.After(watchTick)
+		}
 		select {
 		case <-e.ctx.Done():
 			return
-		case <-e.clock.After(watchTick):
+		case <-e.watchWake:
+		case <-tick:
 		}
 	}
 }

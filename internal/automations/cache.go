@@ -48,6 +48,10 @@ func (e *Engine) invalidateDefinitions() {
 	e.defMu.Lock()
 	e.defSnap = nil
 	e.defMu.Unlock()
+	select {
+	case e.watchWake <- struct{}{}:
+	default:
+	}
 }
 
 func (e *Engine) snapshot(ctx context.Context) (*defSnapshot, error) {
