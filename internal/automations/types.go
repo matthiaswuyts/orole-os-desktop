@@ -8,7 +8,9 @@ import (
 	"time"
 )
 
-const SchemaVersion = 1
+// SchemaVersion 2 nests conditional lanes (Step.Then/Else) instead of v1's forward
+// "branch" jumps. Stored v1 documents are upgraded when read (Upgrade).
+const SchemaVersion = 2
 const MaxDepth = 3
 
 // Definition is a versioned automation document.
@@ -46,6 +48,9 @@ type Step struct {
 	// Strategy is at-most-once, key (executor must deduplicate), or repeatable
 	// (the user explicitly asserts that repeating the action is safe).
 	Strategy string `json:"strategy"`
+	// Then and Else are the lanes of a "condition" step; empty for every other type.
+	Then []Step `json:"then,omitempty"`
+	Else []Step `json:"else,omitempty"`
 }
 type Issue struct {
 	Path    string `json:"path"`
@@ -60,6 +65,9 @@ type Summary struct {
 	Definition Definition `json:"definition"`
 	LastStatus string     `json:"lastStatus"`
 	LastRunAt  int64      `json:"lastRunAt"`
+	NextRunAt  int64      `json:"nextRunAt"` // next scheduled fire time; 0 when not scheduled
+	// Issues are the definition's validation problems; a flow with issues cannot run.
+	Issues []Issue `json:"issues"`
 }
 type Run struct {
 	ID           string          `json:"id"`
@@ -129,6 +137,8 @@ type Field struct {
 type StepType struct {
 	Type         string  `json:"type"`
 	Label        string  `json:"label"`
+	Group        string  `json:"group"` // Bots | Tasks | Notify | Integrations | Logic | Run
+	Description  string  `json:"description"`
 	Available    bool    `json:"available"`
 	Reason       string  `json:"reason"`
 	SideEffect   bool    `json:"sideEffect"`
@@ -176,18 +186,36 @@ type CommandRunner interface {
 	RunCommand(context.Context, CommandRequest) (CommandResult, error)
 }
 type AgentRequest struct {
-	AgentID   string   `json:"agentId"`
-	ProjectID string   `json:"projectId"`
-	Adapter   string   `json:"adapter"`
-	Prompt    string   `json:"prompt"`
-	Key       string   `json:"key"`
-	Actor     string   `json:"actor"`
-	Chain     []string `json:"chain"`
+	AgentID        string   `json:"agentId"`
+	ProjectID      string   `json:"projectId"`
+	Adapter        string   `json:"adapter"`
+	Prompt         string   `json:"prompt"`
+	Title          string   `json:"title"`
+	Model          string   `json:"model"`
+	PermissionMode string   `json:"permissionMode"` // manual | auto; never yolo
+	NewWorktree    bool     `json:"newWorktree"`
+	Until          string   `json:"until"` // task.wait: finished | attention
+	Key            string   `json:"key"`
+	Actor          string   `json:"actor"`
+	Chain          []string `json:"chain"`
 }
 type AgentControl interface {
 	StartAgent(context.Context, AgentRequest) (any, error)
 	SendPrompt(context.Context, AgentRequest) (any, error)
-	WaitForAgent(context.Context, string) (any, error)
+	WaitForAgent(context.Context, AgentRequest) (any, error)
+}
+
+// BotRequest delivers a message from a flow into a bot's conversation.
+type BotRequest struct {
+	BotID          string   `json:"botId"`
+	Message        string   `json:"message"`
+	Wait           bool     `json:"wait"` // wait for the bot's reply and return it as the output
+	AutomationID   string   `json:"automationId"`
+	AutomationName string   `json:"automationName"`
+	Chain          []string `json:"chain"`
+}
+type BotMessenger interface {
+	TellBot(context.Context, BotRequest) (any, error)
 }
 type QueryRequest struct {
 	Kind  string `json:"kind"`

@@ -6,9 +6,31 @@ Automations are daemon-owned. The desktop `Automations` service forwards typed I
 
 The Automations view lists enabled definitions and their last result. Run now works even for a disabled definition; disabling stops automatic triggers, not existing runs. History shows step status, attempts, duration and redacted output. Pending human approvals can be approved or rejected; cancellation is explicit. The dashboard's Recent automation results widget uses the same daemon data. Browser preview has no backend and reports this honestly.
 
-The structured editor supports adding, moving and removing typed steps. Unavailable integration adapters appear disabled with a reason. Parameter and schema errors are returned as field paths. A conditional branch targets a later step ID or `end`; backwards jumps are rejected. Conditional `when` guards can skip individual steps. The three example templates open unsaved drafts: “Notify me when CI fails”, “Morning GitHub issues”, and “Run tests after agent finishes”. Supply real repository/project/directory values and save to create a definition. The schedule editor previews the next five times using the daemon's local timezone.
+Parameter and schema errors are returned as field paths (`steps.1.then.0.params.prompt`). Unavailable integration adapters appear disabled with a reason. Conditional `when` guards can skip individual steps. Templates open unsaved drafts: “Tell me when an agent needs me”, “Have a bot review finished tasks”, “Nightly code task”, “Notify me when CI fails” and “Morning GitHub issues”. Empty pickers (repository, project, bot, task prompt) must be filled in before the flow validates. The schedule editor previews the next five times using the daemon's local timezone. `automations.list` summaries carry the definition's validation issues and, for enabled schedules, the next fire time.
 
-The CI template is a scheduled check every 15 minutes, not a nonexistent CI push watcher. Select a real repository and ref; failed checks branch to notification. Persistent failures notify each time. GitHub query results include `checks`, `failed`, `repo`, and `ref` for the checks kind.
+### Flow schema v2
+
+A definition is a tree. A `condition` step evaluates its expression and runs its `then` or `else` lane, then the flow continues after the condition. Lanes nest at most three deep; a flow has at most 50 blocks, lanes included; step IDs are unique across the whole tree. A condition cannot have a `when` guard and always stops the run when its expression fails. The runner executes `flatten(steps)`: each condition compiles to a forward `branch` that keeps the condition's step ID (its output is `{condition, next}`), and when both lanes have blocks a hidden `<id>:join` jump follows the `then` lane. Journals therefore show `branch` rows for conditions; the builder hides `:join` rows.
+
+Stored schema v1 documents (flat steps with forward `branch` jumps) are upgraded when read (`Upgrade`): `agent.start/prompt/wait` become `task.start/prompt/wait` (`adapter`→`harness`, `agentId`→`taskId`, `until: finished`), and a jump whose `then` (or `else`) is the very next step becomes a condition whose lane runs up to the other target. Any other jump has no lane equivalent: it is kept, reported as an issue, and the flow cannot run until it is rebuilt. Run snapshots are upgraded the same way; a compiled condition keeps the step IDs an in-flight v1 journal recorded. Saving always stores v2.
+
+### Blocks
+
+| Type | Group | What it does |
+| --- | --- | --- |
+| `bot.tell` | Bots | Stores the message in the bot's conversation, authored `automation:<id>`, and queues a turn behind anything the bot is doing. The bot is told the message came from the named automation and that quoted event fields are data. With `wait`, the step returns `{messageId, status, reply}` once the bot answered and fails if the turn did not complete. |
+| `task.start` | Tasks | Starts a code task in a registered project (`harness`, `prompt`, optional `title`, `model`, `newWorktree`) in `manual` or `auto` permission mode. The agent runtime still requires the shared policy's `agent.start` approval for `automation:<id>`; YOLO is refused. Output: the task fields of the event payload plus `result`, `files`, `additions`, `deletions`. Supports `strategy: key` through the agent journal. |
+| `task.prompt` | Tasks | Sends a follow-up to a task through the orchestrator journal. |
+| `task.wait` | Tasks | Waits until the task is done or ended (`until: finished`), or also until it needs you (`until: attention`). Ending failed, stopped or lost fails the step with the task state in the output. The run keeps its execution slot while waiting; raise the step and flow timeouts for long tasks. |
+| `delay` | Logic | Waits 1–1440 minutes; its step timeout is raised to cover the wait. It keeps the execution slot. |
+| `condition`, `approval` | Logic | Lanes (above) and the durable human approval. |
+| `notify`, `http.request` (“Call webhook”) | Notify | Unchanged. |
+| `github.query`, `mcp.tool` | Integrations | Unchanged; `mcp.tool` reaches connected integrations such as Vercel or Railway through `InvokeChecked`. |
+| `command.run`, `test.run` | Run | Unchanged. |
+
+Event payloads arrive under `event.data` (for example `{{ event.data.title }}`); `trigger.data` is the whole event (`topic`, `data`, `time`).
+
+The CI template is a scheduled check every 15 minutes, not a CI push watcher. GitHub query results include `checks`, `failed`, `repo`, and `ref` for the checks kind.
 
 ## Triggers and provenance
 

@@ -7,6 +7,7 @@ import (
 	"github.com/rayorole/orole-os-desktop/internal/automations/expr"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 func str(m map[string]any, k string) string { s, _ := m[k].(string); return s }
@@ -21,7 +22,7 @@ func stringsMap(v any) map[string]string {
 }
 func (e *Engine) invoke(ctx context.Context, r Run, s Step, p map[string]any, key string, env map[string]any, beforeDispatch func() error) (any, error) {
 	e.deps.RLock()
-	tools, agents, gh, notify, commands := e.tools, e.agents, e.github, e.notifier, e.commands
+	tools, agents, gh, notify, commands, bots := e.tools, e.agents, e.github, e.notifier, e.commands, e.bots
 	e.deps.RUnlock()
 	actor := "automation:" + r.AutomationID
 	switch s.Type {
@@ -58,18 +59,35 @@ func (e *Engine) invoke(ctx context.Context, r Run, s Step, p map[string]any, ke
 		}
 		args, _ := p["args"].(map[string]any)
 		return tools.InvokeTool(ctx, ToolRequest{Server: str(p, "server"), Tool: str(p, "tool"), Args: args, Key: key, Actor: actor, Chain: r.Chain})
-	case "agent.start", "agent.prompt", "agent.wait":
+	case "task.start", "task.prompt", "task.wait":
 		if agents == nil {
-			return nil, fmt.Errorf("Agent control is unavailable")
+			return nil, fmt.Errorf("Code tasks are unavailable")
 		}
-		req := AgentRequest{AgentID: str(p, "agentId"), ProjectID: str(p, "projectId"), Adapter: str(p, "adapter"), Prompt: str(p, "prompt"), Key: key, Actor: actor, Chain: r.Chain}
+		worktree, _ := p["newWorktree"].(bool)
+		req := AgentRequest{AgentID: str(p, "taskId"), ProjectID: str(p, "projectId"), Adapter: str(p, "harness"), Prompt: str(p, "prompt"),
+			Title: str(p, "title"), Model: str(p, "model"), PermissionMode: str(p, "permissionMode"), NewWorktree: worktree, Until: str(p, "until"),
+			Key: key, Actor: actor, Chain: r.Chain}
 		switch s.Type {
-		case "agent.start":
+		case "task.start":
 			return agents.StartAgent(ctx, req)
-		case "agent.prompt":
+		case "task.prompt":
 			return agents.SendPrompt(ctx, req)
 		default:
-			return agents.WaitForAgent(ctx, req.AgentID)
+			return agents.WaitForAgent(ctx, req)
+		}
+	case "bot.tell":
+		if bots == nil {
+			return nil, fmt.Errorf("Bots are unavailable")
+		}
+		wait, _ := p["wait"].(bool)
+		return bots.TellBot(ctx, BotRequest{BotID: str(p, "botId"), Message: str(p, "message"), Wait: wait, AutomationID: r.AutomationID, AutomationName: r.Definition.Name, Chain: r.Chain})
+	case "delay":
+		minutes, _ := p["minutes"].(float64)
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-e.clock.After(time.Duration(minutes * float64(time.Minute))):
+			return map[string]any{"minutes": minutes}, nil
 		}
 	case "github.query":
 		if gh == nil {
@@ -120,14 +138,28 @@ func (e *Engine) invoke(ctx context.Context, r Run, s Step, p map[string]any, ke
 	}
 	return nil, fmt.Errorf("unsupported step %q", s.Type)
 }
+
+// Templates open as unsaved drafts. Empty picker fields (repository, project, bot) must
+// be filled in before the flow validates; nothing is guessed.
 func Templates() []Definition {
 	return []Definition{
-		Normalize(Definition{Name: "Notify me when CI fails", Description: "Checks a selected repository ref every 15 minutes. Fill in owner/repo and ref. A persistent failure notifies on each check.", Trigger: Trigger{Type: "schedule", Schedule: "every 15m", CatchUp: "skip"}, Steps: []Step{
+		Normalize(Definition{Name: "Tell me when an agent needs me", Description: "Notifies you as soon as any code task waits for a permission decision or an answer.", Enabled: true, Trigger: Trigger{Type: "event", Event: "agent.waiting"}, Steps: []Step{
+			{ID: "notify", Type: "notify", Params: json.RawMessage(`{"title":"{{ event.data.title }} needs you","body":"{{ event.data.activity }}","level":"warning"}`)},
+		}}),
+		Normalize(Definition{Name: "Have a bot review finished tasks", Description: "When a task finishes, a bot of your choice reads what it did and tells you what matters.", Trigger: Trigger{Type: "event", Event: "agent.finished", Filter: "event.data.status == 'done'"}, Steps: []Step{
+			{ID: "review", Type: "bot.tell", Params: json.RawMessage(`{"botId":"","message":"The code task \"{{ event.data.title }}\" on branch {{ event.data.branch }} finished. Its last message:\n\n{{ event.data.lastMessage }}\n\nSummarise what changed and anything I should check.","wait":false}`)},
+		}}),
+		Normalize(Definition{Name: "Nightly code task", Description: "Starts a code task every night, waits up to six hours for it to finish or need you, then notifies you.", TimeoutSec: 25200, Trigger: Trigger{Type: "schedule", Schedule: "0 2 * * *", CatchUp: "skip"}, Steps: []Step{
+			{ID: "task", Type: "task.start", Params: json.RawMessage(`{"projectId":"","harness":"claude","prompt":"","permissionMode":"manual","newWorktree":true}`)},
+			{ID: "done", Type: "task.wait", TimeoutSec: 21600, Params: json.RawMessage(`{"taskId":"{{ steps.task.output.id }}","until":"attention"}`)},
+			{ID: "notify", Type: "notify", Params: json.RawMessage(`{"title":"Nightly task: {{ steps.done.output.status }}","body":"{{ steps.done.output.lastMessage }}","level":"info"}`)},
+		}}),
+		Normalize(Definition{Name: "Notify me when CI fails", Description: "Checks a repository ref every 15 minutes and notifies on failed checks.", Trigger: Trigger{Type: "schedule", Schedule: "every 15m", CatchUp: "skip"}, Steps: []Step{
 			{ID: "checks", Type: "github.query", Params: json.RawMessage(`{"kind":"checks","repo":"","query":"main","limit":30}`)},
-			{ID: "failed", Type: "branch", Params: json.RawMessage(`{"condition":"steps.checks.output.failed > 0","then":"notify","else":"end"}`)},
-			{ID: "notify", Type: "notify", Params: json.RawMessage(`{"title":"CI failed","body":"{{ steps.checks.output.repo }}: {{ steps.checks.output.failed }} failed checks","level":"error"}`)},
+			{ID: "failed", Type: "condition", Params: json.RawMessage(`{"condition":"steps.checks.output.failed > 0"}`), Then: []Step{
+				{ID: "notify", Type: "notify", Params: json.RawMessage(`{"title":"CI failed","body":"{{ steps.checks.output.repo }}: {{ steps.checks.output.failed }} failed checks","level":"error"}`)},
+			}},
 		}}),
 		Normalize(Definition{Name: "Morning GitHub issues", Trigger: Trigger{Type: "schedule", Schedule: "0 9 * * 1-5", CatchUp: "skip"}, Steps: []Step{{ID: "issues", Type: "github.query", Params: json.RawMessage(`{"kind":"issues","repo":"","limit":30}`)}, {ID: "notify", Type: "notify", Params: json.RawMessage(`{"title":"Morning GitHub issues","body":"{{ steps.issues.output }}","level":"info"}`)}}}),
-		Normalize(Definition{Name: "Run tests after agent finishes", AllowedExecutables: []string{"go"}, Trigger: Trigger{Type: "event", Event: "agent.finished"}, Steps: []Step{{ID: "tests", Type: "test.run", Params: json.RawMessage(`{"executable":"go","args":["test","./..."],"dir":""}`)}}}),
 	}
 }

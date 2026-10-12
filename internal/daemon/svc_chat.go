@@ -42,6 +42,9 @@ func (d *Daemon) registerChat() {
 		return
 	}
 	d.Chat = m
+	if d.Automations != nil {
+		d.Automations.SetBotMessenger(botAutomation{d: d})
+	}
 
 	handle(d, "chat.bots.list", func(ctx context.Context, _ none) ([]chat.Bot, error) {
 		out, err := m.Bots(ctx)

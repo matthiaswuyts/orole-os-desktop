@@ -2640,11 +2640,17 @@ export interface Step {
    * (the user explicitly asserts that repeating the action is safe).
    */
   strategy: string;
+  /** Then and Else are the lanes of a "condition" step; empty for every other type. */
+  then?: Step[];
+  else?: Step[];
 }
 
 export interface StepType {
   type: string;
   label: string;
+  /** Bots | Tasks | Notify | Integrations | Logic | Run */
+  group: string;
+  description: string;
   available: boolean;
   reason: string;
   sideEffect: boolean;
@@ -2656,6 +2662,10 @@ export interface Summary {
   definition: Definition;
   lastStatus: string;
   lastRunAt: number;
+  /** next scheduled fire time; 0 when not scheduled */
+  nextRunAt: number;
+  /** Issues are the definition's validation problems; a flow with issues cannot run. */
+  issues: AutomationsIssue[];
 }
 
 /** SyncState is one harness's view of the registry. */

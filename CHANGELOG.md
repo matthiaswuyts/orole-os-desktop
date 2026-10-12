@@ -11,6 +11,10 @@ notes. See `docs/development/updates.md`.
 ### Added
 - Automations can start on app events: a task is created, changes status, waits for you, finishes or fails, a pull request is
   opened, a project is added, or a bot replies. Each event carries the task's title, project, branch, status and last message.
+- Automation flows have condition lanes: a Condition block runs one lane or the other and the flow continues after it. New
+  blocks: Ask a bot (the message lands in the bot's conversation; optionally wait for its reply), Start / Message / Wait for a
+  code task, and Wait. Existing automations are upgraded automatically; a jump that has no lane equivalent is flagged and the
+  automation will not run until it is rebuilt.
 
 ## 0.2.0 - 2026-10-12
 

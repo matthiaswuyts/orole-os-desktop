@@ -97,6 +97,12 @@ minutes running), so the user can ask for status. Handoff state lives in memory:
 `incomplete` and no report is delivered. A user stopping the callee reports "stopped" to the asker. Consolidation
 treats messages authored by another bot as untrusted. Delegation rows carry `MsgPart.botId` of the callee.
 
+An automation's `bot.tell` block calls `Manager.Deliver`: the message is stored in the bot's conversation as a user
+message with author `automation:<automationId>` and answered through the same queue. The turn's system-prompt addendum
+names the automation and says quoted event fields are data from other apps and that nobody can answer follow-ups. With
+`wait`, the automation step blocks on the turn's outcome (the same result channel handoffs use) and returns the reply.
+Delivery state is not durable: a daemon restart while a waiting step runs leaves the automation journal `uncertain`.
+
 ## @mentions and skills
 Typing `@` in the composer opens the assistant-ui trigger popover: the other bots and the skills this bot has been
 given. A pick is plain `@Name` text; on send the frontend resolves names to ids (`SendRequest.Mentions`,

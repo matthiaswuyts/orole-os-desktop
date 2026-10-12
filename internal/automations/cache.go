@@ -70,6 +70,15 @@ func (e *Engine) snapshot(ctx context.Context) (*defSnapshot, error) {
 		if json.Unmarshal([]byte(raw), &it.def) != nil {
 			continue
 		}
+		if it.def.SchemaVersion != SchemaVersion {
+			// The run snapshot must be the document that runs, so store the upgraded form.
+			it.def = Upgrade(it.def)
+			b, err := json.Marshal(it.def)
+			if err != nil {
+				continue
+			}
+			raw = string(b)
+		}
 		it.raw = raw
 		it.issues = Validate(it.def)
 		s.byID[it.def.ID] = it

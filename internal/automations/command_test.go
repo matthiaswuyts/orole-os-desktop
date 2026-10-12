@@ -61,13 +61,7 @@ func TestSaveRejectsRecognizedSecret(t *testing.T) {
 		t.Fatal("secret-bearing definition saved")
 	}
 }
-func TestBranchAndRunTimeout(t *testing.T) {
-	t.Run("branch", func(t *testing.T) {
-		e := openEngine(t, filepath.Join(t.TempDir(), "db"), Options{})
-		e.SetToolInvoker(toolFunc(func(context.Context, ToolRequest) (any, error) { t.Error("skipped branch executed"); return true, nil }))
-		r := runDef(t, e, Definition{Name: "branch", Steps: []Step{{ID: "branch", Type: "branch", Params: json.RawMessage(`{"condition":"false","then":"write","else":"end"}`)}, toolStep("write")}})
-		awaitStatus(t, e, r.ID, "succeeded")
-	})
+func TestRunTimeout(t *testing.T) {
 	t.Run("deadline", func(t *testing.T) {
 		e := openEngine(t, filepath.Join(t.TempDir(), "db"), Options{})
 		e.SetToolInvoker(toolFunc(func(ctx context.Context, _ ToolRequest) (any, error) { <-ctx.Done(); return nil, ctx.Err() }))

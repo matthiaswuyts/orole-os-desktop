@@ -13,7 +13,7 @@ import (
 var ErrNotFound = errors.New("automation or run not found")
 
 func (e *Engine) Save(ctx context.Context, d Definition) (SaveResult, error) {
-	d = Normalize(d)
+	d = Normalize(Upgrade(d))
 	issues := Validate(d)
 	if len(issues) > 0 {
 		return SaveResult{Definition: d, Issues: issues}, nil
@@ -61,6 +61,15 @@ func (e *Engine) List(ctx context.Context) ([]Summary, error) {
 		if err := json.Unmarshal([]byte(b), &s.Definition); err != nil {
 			return nil, err
 		}
+		s.Definition = Upgrade(s.Definition)
+		s.Issues = Validate(s.Definition)
+		if s.Definition.Enabled && s.Definition.Trigger.Type == "schedule" {
+			if sc, err := ParseSchedule(s.Definition.Trigger.Schedule, nil); err == nil {
+				if next, ok := sc.Next(e.clock.Now()); ok {
+					s.NextRunAt = next.UnixMilli()
+				}
+			}
+		}
 		out = append(out, s)
 	}
 	return out, rows.Err()
@@ -101,7 +110,9 @@ func scanRun(s scanner) (Run, error) {
 	if err = json.Unmarshal([]byte(chain), &r.Chain); err != nil {
 		return r, err
 	}
-	err = json.Unmarshal([]byte(definition), &r.Definition)
+	if err = json.Unmarshal([]byte(definition), &r.Definition); err == nil {
+		r.Definition = Upgrade(r.Definition)
+	}
 	r.Name = r.Definition.Name
 	return r, err
 }
