@@ -170,6 +170,8 @@ func Validate(d Definition) []Issue {
 		if !events.ValidPattern(d.Trigger.Event) {
 			add("trigger.event", "Use a topic or prefix.*")
 		}
+	case "watch":
+		validateWatch(d.Trigger.Watch, add)
 	default:
 		add("trigger.type", "Unknown trigger")
 	}

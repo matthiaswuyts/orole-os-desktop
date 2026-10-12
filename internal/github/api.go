@@ -249,6 +249,33 @@ func (c *Client) ListPulls(ctx context.Context, repo, state string, limit int) (
 	return list[PullRequest](ctx, c, rp+"/pulls", url.Values{"state": {state}, "sort": {"updated"}, "direction": {"desc"}}, limit)
 }
 
+// Commit is a commit in a repository's history.
+type Commit struct {
+	SHA     string `json:"sha"`
+	HTMLURL string `json:"html_url"`
+	Commit  struct {
+		Message Untrusted `json:"message"`
+		Author  struct {
+			Name string    `json:"name"`
+			Date time.Time `json:"date"`
+		} `json:"author"`
+	} `json:"commit"`
+	Author *User `json:"author"`
+}
+
+// Commits lists the newest commits of branch ("" = the default branch).
+func (c *Client) Commits(ctx context.Context, repo, branch string, limit int) ([]Commit, error) {
+	rp, err := repoPath(repo)
+	if err != nil {
+		return nil, err
+	}
+	q := url.Values{}
+	if branch != "" {
+		q.Set("sha", branch)
+	}
+	return list[Commit](ctx, c, rp+"/commits", q, limit)
+}
+
 // GetPull returns one pull request.
 func (c *Client) GetPull(ctx context.Context, repo string, number int) (PullRequest, error) {
 	var p PullRequest

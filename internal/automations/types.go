@@ -34,6 +34,47 @@ type Trigger struct {
 	CatchUp  string `json:"catchUp"`
 	Event    string `json:"event"`
 	Filter   string `json:"filter"`
+	// Watch configures a "watch" trigger.
+	Watch *Watch `json:"watch,omitempty"`
+}
+
+// Watch is a "watch" trigger: the daemon polls an integration (there is no network
+// listener) and runs the flow once for every item it has not seen before. The first
+// poll after the watch is created or changed only records a baseline.
+type Watch struct {
+	Source string `json:"source"` // github | mcp
+	// Kind is, for github: push | pr_opened | pr_merged | workflow_failed | issue_opened;
+	// for mcp: deployment.
+	Kind   string `json:"kind"`
+	Repo   string `json:"repo,omitempty"`   // github: owner/name
+	Branch string `json:"branch,omitempty"` // github push and workflow_failed: branch ("" = default branch / any)
+	// Server and Tool name a connected MCP integration tool that lists deployments (Vercel
+	// list_deployments, Railway list-deployments...); Args are its arguments.
+	Server string         `json:"server,omitempty"`
+	Tool   string         `json:"tool,omitempty"`
+	Args   map[string]any `json:"args,omitempty"`
+	// States limits mcp deployment items to these states (case-insensitive); empty = any change.
+	States      []string `json:"states,omitempty"`
+	IntervalSec int      `json:"intervalSec,omitempty"` // 0 = default (60 s GitHub, 120 s MCP); minimum 30
+}
+
+// WatchItem is one polled item: Key identifies it across polls, Data becomes event.data.
+type WatchItem struct {
+	Key  string
+	Data map[string]any
+}
+
+// WatchSource polls one integration. actor is "automation:<id>"; sources that call
+// policy-checked tools must use it. Items are returned newest first.
+type WatchSource interface {
+	Poll(ctx context.Context, actor string, w Watch) ([]WatchItem, error)
+}
+
+// WatchStatus is a watch trigger's last poll, for the builder.
+type WatchStatus struct {
+	PolledAt int64  `json:"polledAt"`
+	Error    string `json:"error"`
+	Seen     int    `json:"seen"`
 }
 type Step struct {
 	ID         string          `json:"id"`
@@ -68,6 +109,8 @@ type Summary struct {
 	NextRunAt  int64      `json:"nextRunAt"` // next scheduled fire time; 0 when not scheduled
 	// Issues are the definition's validation problems; a flow with issues cannot run.
 	Issues []Issue `json:"issues"`
+	// Watch is the last poll of a watch trigger; nil before its first poll.
+	Watch *WatchStatus `json:"watch,omitempty"`
 }
 type Run struct {
 	ID           string          `json:"id"`

@@ -79,6 +79,7 @@ func (d *Daemon) registerGitHub() {
 	g.registerIssueAgents()
 	if d.Automations != nil {
 		d.Automations.SetGitHubQuery(g)
+		d.Automations.SetWatchSource("github", ghWatch{g: g})
 	}
 }
 

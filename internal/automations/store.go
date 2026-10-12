@@ -46,6 +46,11 @@ func (e *Engine) Save(ctx context.Context, d Definition) (SaveResult, error) {
 	return SaveResult{Definition: d, Issues: issues, Saved: err == nil}, err
 }
 func (e *Engine) List(ctx context.Context) ([]Summary, error) {
+	// Read the small watch table first so this call never holds two connections.
+	watches, err := e.watchStatus(ctx)
+	if err != nil {
+		return nil, err
+	}
 	rows, err := e.db.QueryContext(ctx, `SELECT a.definition,coalesce((SELECT status FROM automation_runs r WHERE r.automation_id=a.id ORDER BY created_at DESC LIMIT 1),''),coalesce((SELECT created_at FROM automation_runs r WHERE r.automation_id=a.id ORDER BY created_at DESC LIMIT 1),0) FROM automations a ORDER BY a.name`)
 	if err != nil {
 		return nil, err
@@ -69,6 +74,9 @@ func (e *Engine) List(ctx context.Context) ([]Summary, error) {
 					s.NextRunAt = next.UnixMilli()
 				}
 			}
+		}
+		if w, ok := watches[s.Definition.ID]; ok && s.Definition.Trigger.Type == "watch" {
+			s.Watch = &w
 		}
 		out = append(out, s)
 	}

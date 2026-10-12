@@ -25,6 +25,7 @@ func (d *Daemon) registerMCP() {
 	d.MCP = mcp.New(mcp.Options{DB: d.DB.DB, Creds: credentials.New(), Pub: d.IPC, Policy: d.Policy, Events: d.Events, Log: d.Log, Version: Version})
 	if d.Automations != nil {
 		d.Automations.SetToolInvoker(automationMCP{d})
+		d.Automations.SetWatchSource("mcp", mcpWatch{d: d})
 	}
 	handle(d, "mcp.servers.list", func(ctx context.Context, _ none) ([]mcp.ServerState, error) { return d.MCP.List(ctx) })
 	handle(d, "mcp.servers.add", func(ctx context.Context, p mcp.AddParams) (mcp.ServerState, error) { return d.MCP.Add(ctx, p) })

@@ -48,6 +48,7 @@ type Engine struct {
 	agents      AgentControl
 	github      GitHubQuery
 	bots        BotMessenger
+	watchers    map[string]WatchSource
 	commands    CommandRunner
 	notifier    Notifier
 	authorize   func(context.Context, policy.Request) error
@@ -152,9 +153,10 @@ func (e *Engine) Start(ctx context.Context) error {
 		return err
 	}
 	e.pumpLocked()
-	e.wg.Add(1)
+	e.wg.Add(2)
 	e.mu.Unlock()
 	go e.loop()
+	go e.watchLoop()
 	if e.config.WebhookEnabled {
 		if err := e.startWebhook(e.config.WebhookPort); err != nil {
 			return err

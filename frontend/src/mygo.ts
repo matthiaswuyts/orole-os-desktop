@@ -2676,6 +2676,8 @@ export interface Summary {
   nextRunAt: number;
   /** Issues are the definition's validation problems; a flow with issues cannot run. */
   issues: AutomationsIssue[];
+  /** Watch is the last poll of a watch trigger; nil before its first poll. */
+  watch?: WatchStatus;
 }
 
 /** SyncState is one harness's view of the registry. */
@@ -2802,6 +2804,8 @@ export interface Trigger {
   catchUp: string;
   event: string;
   filter: string;
+  /** Watch configures a "watch" trigger. */
+  watch?: Watch;
 }
 
 /** TryParams configures TryN. */
@@ -2870,6 +2874,43 @@ export interface User {
   html_url: string;
   type: string;
   name?: string;
+}
+
+/**
+ * Watch is a "watch" trigger: the daemon polls an integration (there is no network
+ * listener) and runs the flow once for every item it has not seen before. The first
+ * poll after the watch is created or changed only records a baseline.
+ */
+export interface Watch {
+  /** github | mcp */
+  source: string;
+  /**
+   * Kind is, for github: push | pr_opened | pr_merged | workflow_failed | issue_opened;
+   * for mcp: deployment.
+   */
+  kind: string;
+  /** github: owner/name */
+  repo?: string;
+  /** github push and workflow_failed: branch ("" = default branch / any) */
+  branch?: string;
+  /**
+   * Server and Tool name a connected MCP integration tool that lists deployments (Vercel
+   * list_deployments, Railway list-deployments...); Args are its arguments.
+   */
+  server?: string;
+  tool?: string;
+  args?: Record<string, unknown>;
+  /** States limits mcp deployment items to these states (case-insensitive); empty = any change. */
+  states?: string[];
+  /** 0 = default (60 s GitHub, 120 s MCP); minimum 30 */
+  intervalSec?: number;
+}
+
+/** WatchStatus is a watch trigger's last poll, for the builder. */
+export interface WatchStatus {
+  polledAt: number;
+  error: string;
+  seen: number;
 }
 
 /** WorkflowRun is a GitHub Actions run. */
