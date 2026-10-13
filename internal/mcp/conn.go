@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/rayorole/orole-os-desktop/internal/untrusted"
 )
@@ -279,21 +280,34 @@ func (c *conn) dial(ctx context.Context) (*sdk.ClientSession, *http.Client, erro
 		ResourceListChangedHandler: func(context.Context, *sdk.ResourceListChangedRequest) { c.refreshAsync() },
 		PromptListChangedHandler:   func(context.Context, *sdk.PromptListChangedRequest) { c.refreshAsync() },
 	})
-	tr := &sdk.StreamableClientTransport{
-		Endpoint:     cfg.URL,
-		HTTPClient:   hc,
-		OAuthHandler: sdkHandler{a: c.m.authSession(cfg.ID)},
-		MaxRetries:   2,
+	connect := func(version string) (*sdk.ClientSession, error) {
+		tr := &sdk.StreamableClientTransport{
+			Endpoint:     cfg.URL,
+			HTTPClient:   hc,
+			OAuthHandler: sdkHandler{a: c.m.authSession(cfg.ID)},
+			MaxRetries:   2,
+		}
+		return client.Connect(dctx, tr, &sdk.ClientSessionOptions{ProtocolVersion: version})
 	}
-	// Pin the legacy initialize handshake: the SDK default first sends the draft 2026-07-28
-	// server/discover probe; Mobbin's notifications/initialized hung after that fallback.
-	sess, err := client.Connect(dctx, tr, &sdk.ClientSessionOptions{ProtocolVersion: "2025-06-18"})
+	// Start with the legacy initialize handshake: the SDK default first sends the 2026-07-28
+	// server/discover probe, and Mobbin's notifications/initialized hung after that fallback.
+	// Servers that only speak the stateless 2026-07-28 protocol (Orole Drive and Mail) reject
+	// initialize with UnsupportedProtocolVersion; only then connect with server/discover.
+	sess, err := connect(legacyProtocolVersion)
+	if werr := (*jsonrpc.Error)(nil); errors.As(err, &werr) && werr.Code == sdk.CodeUnsupportedProtocolVersion {
+		sess, err = connect(modernProtocolVersion)
+	}
 	if err != nil {
 		hc.CloseIdleConnections()
 		return nil, nil, classifyConnectErr(err)
 	}
 	return sess, hc, nil
 }
+
+const (
+	legacyProtocolVersion = "2025-06-18"
+	modernProtocolVersion = "2026-07-28"
+)
 
 func classifyConnectErr(err error) error {
 	var are *AuthRequiredError

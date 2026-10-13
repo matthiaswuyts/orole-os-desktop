@@ -571,6 +571,23 @@ func TestCatalogCacheSurvivesOffline(t *testing.T) {
 	}
 }
 
+func TestModernOnlyServerConnectsAfterCIMDSignIn(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	srv := mcptest.New(t, mcptest.Options{CIMD: true, ModernOnly: true})
+	st := h.add(t, srv, AddParams{})
+	h.authorize(t, srv, st.ID)
+	h.wait(t, st.ID, StatusConnected)
+	tools, err := h.m.Tools(ctx, st.ID)
+	if err != nil || len(tools) != 3 {
+		t.Fatalf("tools: %v %v", tools, err)
+	}
+	d, err := h.m.Diagnostics(ctx, st.ID)
+	if err != nil || d.ProtocolVersion != "2026-07-28" {
+		t.Fatalf("protocol %q: %v", d.ProtocolVersion, err)
+	}
+}
+
 func TestCallTimeoutCancelAndUnknownTool(t *testing.T) {
 	h := newHarness(t)
 	srv := mcptest.New(t, mcptest.Options{OpenMCP: true, Setup: func(s *sdk.Server) {

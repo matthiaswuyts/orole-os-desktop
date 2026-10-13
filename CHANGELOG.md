@@ -9,6 +9,7 @@ notes. See `docs/development/updates.md`.
 ## Unreleased
 
 ### Fixed
+- Orole Drive, Orole Mail and other MCP servers that only speak the 2026-07-28 protocol now connect after sign-in instead of retrying with "Unsupported protocol version: 2025-06-18". Orole OS still starts with the older handshake, which some servers need, and switches to 2026-07-28 when a server rejects it.
 - Windows Codex downloads now include the code-mode host and sandbox resources from the hash-verified official npm platform package. Incomplete managed installations can be repaired by downloading again. The Codex agent picker uses the same managed runtime as Settings and chat.
 - Connecting an MCP server that accepts OAuth client ID metadata documents but not dynamic registration (such as Orole Drive and Orole Mail) no longer fails with "the authorization server offers no way to register this client". Orole OS now signs in with its own published client document, `https://orole.be/oauth/orole-os.json`, so you don't have to enter a client ID. A client ID you set on the server still takes priority.
 

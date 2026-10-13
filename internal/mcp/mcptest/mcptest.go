@@ -9,12 +9,14 @@
 package mcptest
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -45,6 +47,9 @@ type Options struct {
 	Setup func(*sdk.Server)
 	// OpenMCP disables authentication on the MCP endpoint.
 	OpenMCP bool
+	// ModernOnly serves only the stateless 2026-07-28 protocol, like Orole Drive and Mail,
+	// which reject the legacy initialize handshake with UnsupportedProtocolVersion.
+	ModernOnly bool
 }
 
 // AuthzRequest records one authorization request.
@@ -99,7 +104,11 @@ func New(t interface {
 	if o.ClientID != "" {
 		s.clients[o.ClientID] = true
 	}
-	s.MCP = sdk.NewServer(&sdk.Implementation{Name: "fake-orole", Version: "1.2.3"}, nil)
+	var serverOpts *sdk.ServerOptions
+	if o.ModernOnly {
+		serverOpts = &sdk.ServerOptions{SupportedProtocolVersions: []string{modernProtocolVersion}}
+	}
+	s.MCP = sdk.NewServer(&sdk.Implementation{Name: "fake-orole", Version: "1.2.3"}, serverOpts)
 	if o.Setup != nil {
 		o.Setup(s.MCP)
 	} else {
@@ -114,7 +123,14 @@ func New(t interface {
 	s.MCPURL = s.Server.URL + "/api/mcp"
 	s.Issuer = s.Server.URL + "/api/auth"
 
-	mcpHandler := sdk.NewStreamableHTTPHandler(func(*http.Request) *sdk.Server { return s.MCP }, nil)
+	var handlerOpts *sdk.StreamableHTTPOptions
+	if o.ModernOnly {
+		handlerOpts = &sdk.StreamableHTTPOptions{Stateless: true}
+	}
+	var mcpHandler http.Handler = sdk.NewStreamableHTTPHandler(func(*http.Request) *sdk.Server { return s.MCP }, handlerOpts)
+	if o.ModernOnly {
+		mcpHandler = rejectLegacyInitialize(mcpHandler)
+	}
 	mux.Handle("/api/mcp", s.bearer(mcpHandler))
 	mux.HandleFunc("/.well-known/oauth-protected-resource/api/mcp", s.prm)
 	// Exercise an HTML app-shell fallback; metadata lives under the issuer.
@@ -397,4 +413,37 @@ func (s *Server) AddStaticToken(tok string) {
 	s.mu.Lock()
 	s.access[tok] = tokenInfo{resource: s.MCPURL, expires: time.Now().Add(100 * 365 * 24 * time.Hour)}
 	s.mu.Unlock()
+}
+
+const modernProtocolVersion = "2026-07-28"
+
+// rejectLegacyInitialize answers a legacy initialize the way the TypeScript SDK's
+// createMcpHandler({legacy: "reject"}) does: HTTP 400 with UnsupportedProtocolVersion
+// (-32022) naming the supported versions. Everything else reaches next.
+func rejectLegacyInitialize(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		var msg struct {
+			ID     json.RawMessage `json:"id"`
+			Method string          `json:"method"`
+			Params struct {
+				ProtocolVersion string `json:"protocolVersion"`
+			} `json:"params"`
+		}
+		if json.Unmarshal(body, &msg) == nil && msg.Method == "initialize" {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": msg.ID, "error": map[string]any{
+				"code": sdk.CodeUnsupportedProtocolVersion, "message": "Unsupported protocol version: " + msg.Params.ProtocolVersion,
+				"data": map[string]any{"supported": []string{modernProtocolVersion}, "requested": msg.Params.ProtocolVersion},
+			}})
+			return
+		}
+		r.Body = io.NopCloser(bytes.NewReader(body))
+		next.ServeHTTP(w, r)
+	})
 }
