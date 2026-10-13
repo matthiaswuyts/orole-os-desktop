@@ -36,6 +36,14 @@ async function daemonDefaultMode(): Promise<PermissionMode | null> {
   } catch { return null; }
 }
 
+/** Stores the choice as the daemon's `agents.defaultPermissionMode`, which new tasks (the user's and bots') start in. Read fresh and written back whole, so keys other controls own survive. Running tasks keep their mode. */
+async function saveDefaultMode(mode: PermissionMode): Promise<void> {
+  if (!inDesktop) return;
+  const current = ((await Settings.all()).agents as Record<string, unknown> | undefined) ?? {};
+  if (current.defaultPermissionMode === mode) return;
+  await Settings.set("agents", { ...current, defaultPermissionMode: mode });
+}
+
 export function useHomeTaskLaunch({ launcher = "home", initialProjectId, initialPrompt = "", onStarted }: TaskLaunchOptions = {}) {
   // A failed launch sent back by "Edit prompt" for this kind of launcher: every choice starts as it was.
   const [draft] = useState(() => { const held = useAgents.getState().launchDraft; return held?.launcher === launcher ? held : null; });
@@ -116,6 +124,7 @@ export function useHomeTaskLaunch({ launcher = "home", initialProjectId, initial
     touched.current = true;
     setChosenMode(mode);
     setYoloConfirmed(mode === "yolo" && confirmYolo);
+    saveDefaultMode(mode).then(() => { daemonDefault.current = mode; }, (error: unknown) => toastError("Could not save the permission mode", error));
     if (mode === "yolo") return;
     try { localStorage.setItem(PERMISSION_KEY, mode); } catch (error) { toastError("Could not save the permission mode", error); }
   }

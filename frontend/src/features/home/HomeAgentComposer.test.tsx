@@ -1,9 +1,9 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { HarnessOption, LaunchOptions, Machine, Project, Worktree } from "@/mygo";
-const api = vi.hoisted(() => ({ options: vi.fn(), start: vi.fn(), upload: vi.fn(), discard: vi.fn(), toast: vi.fn(), settings: vi.fn() }));
+const api = vi.hoisted(() => ({ options: vi.fn(), start: vi.fn(), upload: vi.fn(), discard: vi.fn(), toast: vi.fn(), settings: vi.fn(), setSetting: vi.fn() }));
 vi.mock("@/lib/backend", () => ({ inDesktop: true }));
-vi.mock("@/mygo", () => ({ Agents: { options: api.options, start: api.start, uploadAttachment: api.upload, discardAttachment: api.discard }, Settings: { all: api.settings }, events: {} }));
+vi.mock("@/mygo", () => ({ Agents: { options: api.options, start: api.start, uploadAttachment: api.upload, discardAttachment: api.discard }, Settings: { all: api.settings, set: api.setSetting }, events: {} }));
 import { useDaemon } from "@/stores/daemon";
 import { useHarnessOptionsCache } from "@/stores/harnessOptions";
 vi.mock("@/features/projects/dialogs", async (original) => ({ ...(await original<object>()), toastError: api.toast }));
@@ -18,7 +18,7 @@ const harness: HarnessOption = { id: "codex", name: "Codex", available: true, ex
 const options: LaunchOptions = { machine: "local", harnesses: [harness], projects: [], directories: [], worktree: true, unavailableReason: "" };
 beforeEach(() => {
  useDaemon.setState({ link: "connected", connectEpoch: 0 }); useHarnessOptionsCache.setState({ machines: {} });
- vi.clearAllMocks(); localStorage.clear(); api.options.mockResolvedValue(options); api.settings.mockResolvedValue({}); api.start.mockReset(); api.start.mockResolvedValue({ id: "task", updatedAt: "2026-10-08T00:00:00Z" });
+ vi.clearAllMocks(); localStorage.clear(); api.options.mockResolvedValue(options); api.settings.mockResolvedValue({}); api.setSetting.mockResolvedValue(undefined); api.start.mockReset(); api.start.mockResolvedValue({ id: "task", updatedAt: "2026-10-08T00:00:00Z" });
  useAgents.setState({ sessions: {}, launches: {}, launchDraft: null, openId: null }); useUI.setState({ view: "home" });
  api.upload.mockResolvedValue({ id: "upload-one", name: "notes.txt", size: 8, mime: "text/plain" }); api.discard.mockResolvedValue(undefined);
  useBoxes.setState({ machines: [{ id: "local", name: "devl" }, { id: "remote", name: "gpu" }] as Machine[], observations: {} });
@@ -187,6 +187,19 @@ it("launches in Manual by default and remembers Auto but never Yolo", async () =
  fireEvent.click(screen.getByRole("button", { name: "Start task" }));
  await waitFor(() => expect(api.start).toHaveBeenLastCalledWith(expect.objectContaining({ permissionMode: "yolo", confirmYolo: true })));
  expect(localStorage.getItem("orole.task.permissionMode")).toBe("auto");
+});
+it("saves the chosen mode as the daemon's default without dropping other agent settings", async () => {
+ const modes = [{ mode: "manual", available: true, approximated: false, detail: "" }, { mode: "auto", available: true, approximated: false, detail: "" }, { mode: "yolo", available: true, approximated: false, detail: "" }];
+ api.options.mockResolvedValue({ ...options, harnesses: [{ ...harness, permissionModes: modes }] });
+ api.settings.mockResolvedValue({ agents: { botYolo: true } });
+ render(<HomeAgentComposer />); await fill();
+ fireEvent.click(screen.getByRole("combobox", { name: "Permission mode: Manual" }));
+ await pick(/Auto/);
+ await waitFor(() => expect(api.setSetting).toHaveBeenLastCalledWith("agents", { botYolo: true, defaultPermissionMode: "auto" }));
+ api.settings.mockResolvedValue({ agents: { botYolo: true, defaultPermissionMode: "auto" } });
+ fireEvent.click(screen.getByRole("combobox", { name: "Permission mode: Auto" }));
+ await pick(/Manual/);
+ await waitFor(() => expect(api.setSetting).toHaveBeenLastCalledWith("agents", { botYolo: true, defaultPermissionMode: "manual" }));
 });
 it("starts in the daemon's default mode, confirmed for Yolo, over the local memory", async () => {
  const modes = [{ mode: "manual", available: true, approximated: false, detail: "" }, { mode: "auto", available: true, approximated: false, detail: "" }, { mode: "yolo", available: true, approximated: false, detail: "" }];

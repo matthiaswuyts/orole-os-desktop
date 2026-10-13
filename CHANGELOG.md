@@ -12,6 +12,7 @@ notes. See `docs/development/updates.md`.
 - In a bot's settings, "Runs code tasks" moved to the Tools page, and the "All changes saved" footer is gone (changes still save on their own and errors still show).
 
 ### Added
+- The permission mode you pick when starting a task (Manual, Auto or Yolo) is now remembered as your default. New tasks start in it, and bots that start tasks follow it too; Yolo only applies to bots when "Bots may use Yolo" is on, otherwise they use Manual. Running tasks keep their mode.
 - Bots can set up automations from chat. Every bot can do this, with no setting to turn on. Ask it, for example, to "watch CI
   on main and tell me when it fails". The bot drafts the flow, Orole validates it, and it appears as a card in the chat with
   the trigger, the steps and anything it runs or sends. Nothing is saved until you choose Turn on, Add turned off or
