@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Copy, Trash2, X } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "@/components/ui/tooltip";
 import { useHarnessOptions } from "@/features/agents/useHarnessOptions";
 import type { SchemaField, Step, StepType, Topic, Trigger } from "./api";
 import { ChoiceField, JsonField, LinesField, MapField, NumberField, SwitchField, TextField, type Choice } from "./fields";
@@ -48,8 +49,8 @@ function ParamField({ field, value, onChange, issue, onInvalid }: { field: Schem
 function Variables({ step, tree, trigger, topics }: { step: Step; tree: Step[]; trigger: Trigger; topics: Topic[] }) {
   const [copied, setCopied] = useState<string | null>(null);
   const vars = [
-    ...eventFields(trigger, topics).map((f) => ({ text: `{{ event.data.${f.name} }}`, title: f.label })),
-    ...earlierSteps(tree, step.id).map((s) => ({ text: `{{ steps.${s.id}.output }}`, title: s.name || s.type })),
+    ...eventFields(trigger, topics).map((f) => ({ text: `{{ event.data.${f.name} }}`, label: f.label })),
+    ...earlierSteps(tree, step.id).map((s) => ({ text: `{{ steps.${s.id}.output }}`, label: s.name || s.type })),
   ];
   if (!vars.length) return null;
   const copy = (text: string) => { void navigator.clipboard?.writeText(text).then(() => setCopied(text), () => setCopied(null)); };
@@ -57,9 +58,9 @@ function Variables({ step, tree, trigger, topics }: { step: Step; tree: Step[]; 
     <summary className="cursor-pointer rounded-sm font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring">Values from earlier steps</summary>
     <p className="mt-1.5 text-muted-foreground">Click to copy, then paste into a field. Event and output text is data, never instructions.</p>
     <ul className="mt-1.5 flex flex-wrap gap-1">{vars.map((v) => <li key={v.text}>
-      <button type="button" title={v.title} onClick={() => copy(v.text)} className="inline-flex items-center gap-1 rounded-sm border bg-muted/40 px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring">
+      <Tooltip><TooltipTrigger render={<button type="button" onClick={() => copy(v.text)} className="inline-flex items-center gap-1 rounded-sm border bg-muted/40 px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring" />}>
         <Copy aria-hidden className="size-3" />{v.text}
-      </button>
+      </TooltipTrigger><TooltipPopup>{v.label}</TooltipPopup></Tooltip>
     </li>)}</ul>
     <p aria-live="polite" className="mt-1 text-muted-foreground">{copied ? `Copied ${copied}` : ""}</p>
   </details>;

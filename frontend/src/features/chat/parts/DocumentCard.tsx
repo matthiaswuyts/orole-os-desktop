@@ -27,7 +27,7 @@ export function DocumentCard({ spec, open, onOpen }: { spec: DocumentSpec; /** w
   return <div data-slot="document-card" data-open={open || undefined} className={cn(paper, "flex w-full max-w-md min-w-0 items-center gap-2 px-2.5 py-1.5", open && "border-ring/60")}>
     <FileTextIcon aria-hidden className="size-4 shrink-0 text-muted-foreground" />
     <div className="flex min-w-0 flex-1 flex-col">
-      <span className="truncate text-sm leading-5 font-medium" title={spec.title}>{spec.title}</span>
+      <span className="truncate text-sm leading-5 font-medium">{spec.title}</span>
       <span className="text-xs leading-4 text-muted-foreground">v{spec.version ?? 1} · {words} {words === 1 ? "word" : "words"}</span>
     </div>
     <Button type="button" variant="outline" size="xs" aria-pressed={open} disabled={!onOpen} onClick={onOpen}><PanelRightOpenIcon aria-hidden />Open</Button>

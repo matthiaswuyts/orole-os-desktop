@@ -51,7 +51,7 @@ export function TriggerCard({ trigger, onChange, topics, issue, offline, invalid
     {(trigger.type === "event" || trigger.type === "watch" || trigger.type === "webhook") && <div className="flex flex-col gap-1.5">
       <TextField label="Only when (optional)" mono value={trigger.filter} onChange={(filter) => patch({ filter })} issue={issue("trigger.filter")} placeholder="event.data.status == 'done'" hint="An expression; the flow starts only when it is true. Event data is untrusted text." />
       {fields.length > 0 && <div className="flex flex-wrap gap-1" aria-label="Event fields">
-        {fields.map((f) => <button key={f.name} type="button" title={`Add event.data.${f.name} to the filter`} onClick={() => patch({ filter: `${trigger.filter ? `${trigger.filter.trimEnd()} ` : ""}event.data.${f.name}` })}
+        {fields.map((f) => <button key={f.name} type="button" onClick={() => patch({ filter: `${trigger.filter ? `${trigger.filter.trimEnd()} ` : ""}event.data.${f.name}` })}
           className="rounded-sm border bg-muted/40 px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring">{f.name}</button>)}
       </div>}
     </div>}

@@ -22,7 +22,7 @@ export function WebSearch({ query, results, visibleResults, searching, cycle, cl
     <div data-slot="web-search" className={cn("flex min-w-0 flex-col gap-2", className)} {...props}>
       {query && <span className={cn(surfaces.field, "inline-flex max-w-full items-center gap-1.5 self-start px-2.5 py-1 text-xs")}>
         <SearchIcon aria-hidden className="size-3 shrink-0 text-muted-foreground" />
-        <span className="truncate" title={query}>{query}</span>
+        <span className="truncate">{query}</span>
       </span>}
       <div role="status" className="text-muted-foreground text-xs">
         {searching ? <span className="cv-shimmer font-medium">Searching</span> : `Read ${results.length} ${results.length === 1 ? "source" : "sources"}`}
@@ -31,7 +31,7 @@ export function WebSearch({ query, results, visibleResults, searching, cycle, cl
         {shown.map((result, index) => (
           <li key={`${cycle}:${index}:${result.domain}`} className="flex min-w-0 items-center gap-2 text-xs animate-in fade-in-0 motion-reduce:animate-none">
             <span aria-hidden className="grid size-5 shrink-0 place-items-center rounded-full bg-muted font-medium text-[10px] uppercase">{result.domain.replace(/^www\./, "").charAt(0)}</span>
-            <span className="min-w-0 flex-1 truncate" title={result.title}>{result.title}</span>
+            <span className="min-w-0 flex-1 truncate">{result.title}</span>
             <span className={cn(surfaces.mono, "shrink-0")}>{result.domain}</span>
           </li>
         ))}

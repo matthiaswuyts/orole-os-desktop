@@ -58,7 +58,7 @@ export function SubagentList({ agents, summary, selectedIndex, onOpen, className
     const body = <>
       <div className="flex min-w-0 items-center gap-2">
         <StatusGlyph status={agent.status} />
-        <span className="min-w-0 flex-1 truncate text-sm leading-5" title={agent.name}>{agent.name}</span>
+        <span className="min-w-0 flex-1 truncate text-sm leading-5">{agent.name}</span>
         {typeof agent.model === "string" ? <span className={cn(mono, "shrink-0")}>{agent.model}</span> : agent.model}
       </div>
       {agent.activity && <p className={cn("truncate pl-5.5 text-xs leading-4 text-muted-foreground", agent.status === "running" && "cv-shimmer")}>{agent.activity}</p>}

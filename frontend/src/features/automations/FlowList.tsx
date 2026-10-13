@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
 import { Menu, MenuGroup, MenuGroupLabel, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "@/components/ui/menu";
 import { Switch } from "@/components/ui/switch";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "@/components/ui/tooltip";
 import { useChat } from "@/stores/chat";
 import { api, errorText, newDefinition, type Approval, type Definition, type Summary, type Topic } from "./api";
 import { Failure } from "./fields";
@@ -89,14 +90,14 @@ export function FlowList({ items, approvals, loading, error, offline, topics, te
                 </span>
                 <span className="truncate text-xs text-muted-foreground">{triggerSummary(d.trigger, topics)} · {blocks === 1 ? "1 block" : `${blocks} blocks`}</span>
                 <span className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-muted-foreground tabular-nums">
-                  {lastRunAt > 0 ? <span className="flex items-center gap-1.5"><RunStatus status={lastStatus} /><time dateTime={new Date(lastRunAt).toISOString()} title={new Date(lastRunAt).toLocaleString()}>{relativeTime(lastRunAt)}</time></span> : <span>Never run</span>}
-                  {d.enabled && nextRunAt > 0 && <span>Next <time dateTime={new Date(nextRunAt).toISOString()} title={new Date(nextRunAt).toLocaleString()}>{relativeTime(nextRunAt)}</time></span>}
+                  {lastRunAt > 0 ? <span className="flex items-center gap-1.5"><RunStatus status={lastStatus} /><Tooltip><TooltipTrigger render={<time dateTime={new Date(lastRunAt).toISOString()} />}>{relativeTime(lastRunAt)}</TooltipTrigger><TooltipPopup>{new Date(lastRunAt).toLocaleString()}</TooltipPopup></Tooltip></span> : <span>Never run</span>}
+                  {d.enabled && nextRunAt > 0 && <span>Next <Tooltip><TooltipTrigger render={<time dateTime={new Date(nextRunAt).toISOString()} />}>{relativeTime(nextRunAt)}</TooltipTrigger><TooltipPopup>{new Date(nextRunAt).toLocaleString()}</TooltipPopup></Tooltip></span>}
                   {d.enabled && watch?.polledAt ? <span>Checked {relativeTime(watch.polledAt)}</span> : null}
                 </span>
-                {watch?.error && <span className="truncate text-xs text-destructive-foreground" title={watch.error}>Watch failed: {watch.error}</span>}
+                {watch?.error && <Tooltip><TooltipTrigger render={<span className="truncate text-xs text-destructive-foreground" />}>Watch failed: {watch.error}</TooltipTrigger><TooltipPopup className="max-w-sm break-words">{watch.error}</TooltipPopup></Tooltip>}
               </button>
               <Switch aria-label={`Enable ${d.name}`} checked={d.enabled} disabled={offline || busy === d.id} onCheckedChange={(enabled) => void toggle(summary, enabled)} />
-              <Button size="xs" variant="outline" disabled={offline || busy === d.id || issues?.length > 0} title={issues?.length ? "Fix the problems before running" : undefined} onClick={() => void run(summary)}><Play data-icon="inline-start" />Run now</Button>
+              <Button size="xs" variant="outline" disabled={offline || busy === d.id || issues?.length > 0} onClick={() => void run(summary)}><Play data-icon="inline-start" />Run now</Button>
               <Button size="icon-xs" variant="ghost" aria-label={`Delete ${d.name}`} disabled={offline || busy === d.id} onClick={() => setDeleting(summary)}><Trash2 /></Button>
             </div>
           </li>;

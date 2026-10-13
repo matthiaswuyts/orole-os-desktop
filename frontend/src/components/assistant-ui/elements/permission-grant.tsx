@@ -46,7 +46,7 @@ export function PermissionGrant({ capability, requester, reach, scope, onGrant, 
     <div role="group" aria-label={`Permission request: ${capability}`} data-slot="permission-grant" data-scope={scope} className={cn(surfaces.paper, "flex min-w-0 flex-col gap-2 p-3 text-xs", className)} {...props}>
       <div className="flex min-w-0 items-center gap-2">
         <ShieldCheckIcon aria-hidden className="size-4 shrink-0 text-muted-foreground" />
-        <span className="min-w-0 truncate text-sm font-medium" title={capability}>{capability}</span>
+        <span className="min-w-0 truncate text-sm font-medium">{capability}</span>
         <span className="min-w-0 shrink truncate text-muted-foreground">requested by {requester}</span>
       </div>
       {reach.length > 0 && <div data-slot="permission-reach" className="flex min-w-0 flex-col gap-1">

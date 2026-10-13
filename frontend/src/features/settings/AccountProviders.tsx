@@ -2,6 +2,7 @@ import { DownloadIcon, LogInIcon, LogOutIcon, RefreshCwIcon } from "lucide-react
 import { ProviderLogo } from "@/components/ProviderLogo";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "@/components/ui/tooltip";
 import { Failure, Loading } from "@/features/mcp/shared";
 import type { CliruntimeStatus as Status } from "@/mygo";
 import { useCLIRuntimes, useCLIRuntimesSync } from "@/stores/cliRuntimes";
@@ -25,7 +26,7 @@ function subtitle(s: Status): string {
 
 function StatusBadge({ s }: { s: Status }) {
   if (!s.installed) return null;
-  if (s.updateAvailable) return <Badge variant="warning" title={`v${s.version} is installed; v${s.latest} is available`}>Update available</Badge>;
+  if (s.updateAvailable) return <Tooltip><TooltipTrigger render={<Badge variant="warning" />}>Update available</TooltipTrigger><TooltipPopup>v{s.version} is installed; v{s.latest} is available</TooltipPopup></Tooltip>;
   if (s.auth === "signed_in") return <Badge variant="success">Connected</Badge>;
   if (s.auth === "signed_out") return <Badge variant="outline">Not signed in</Badge>;
   return null;

@@ -37,6 +37,9 @@ Dev isolation: set `OROLE_HOME=.orole-dev` to avoid touching real user data. Nev
 - Changing a bound service or event in `internal/app` => run `go tool mygo generate` and commit `frontend/src/mygo.ts`.
 - Frontend: strict TS, one token layer (`index.css` + `themes/themes.css`), shadcn/Base UI components in
   `components/ui`, Tailwind v4, Zustand for client state, no per-widget ASCII rendering, compact density default.
+- No native HTML `title` attributes (on DOM elements, or props forwarded to one such as `Button`/`Badge`). Hover text
+  uses the `Tooltip` component (`components/ui/tooltip`), and only where the UI is unclear without it: icon-only
+  controls, why a control is disabled, a truncated value with no other way to read it. Never echo visible text.
 - New widgets register in `components/widgets/registry.tsx`; commands in `lib/commands.ts`.
 - Commits: conventional, lowercase (`feat(daemon): ...`). Branch per issue: `feat/<issue>-<slug>`. PR references `Closes #N`.
   Do not merge PRs without explicit owner authorisation.

@@ -4,6 +4,7 @@ import remarkGfm from "remark-gfm";
 import { isWebURL, openExternal } from "@/lib/openExternal";
 import { cn } from "@/lib/utils";
 import { SyntaxHighlighter } from "@/components/SyntaxHighlighter";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "@/components/ui/tooltip";
 
 const remarkPlugins = [remarkGfm];
 
@@ -13,7 +14,7 @@ const remarkPlugins = [remarkGfm];
 const components: Components = {
   a({ href, children }) {
     if (!href || !isWebURL(href)) return <span className="underline decoration-dotted">{children}</span>;
-    return <a href={href} target="_blank" rel="noopener noreferrer" title={href} className="text-info-foreground underline underline-offset-2 hover:opacity-80" onClick={(e) => { e.preventDefault(); void openExternal(href); }}>{children}</a>;
+    return <Tooltip><TooltipTrigger render={<a href={href} target="_blank" rel="noopener noreferrer" className="text-info-foreground underline underline-offset-2 hover:opacity-80" onClick={(e) => { e.preventDefault(); void openExternal(href); }} />}>{children}</TooltipTrigger><TooltipPopup className="max-w-sm break-all">{href}</TooltipPopup></Tooltip>;
   },
   img({ alt }) { return <span className="text-muted-foreground">[image{alt ? `: ${alt}` : ""}]</span>; },
   pre({ children }) {

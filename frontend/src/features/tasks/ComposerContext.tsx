@@ -37,8 +37,8 @@ export function ComposerContext({ usage }: { usage?: ContextUsage | null }) {
         <div className="flex flex-col gap-2">
           {fraction !== null && <Progress aria-label="Context window used" value={Math.min(100, percentage ?? 0)} />}
           <dl className="flex justify-between gap-4 text-xs">
-            <div className="flex flex-col gap-1"><dt className="text-muted-foreground">Used tokens</dt><dd className="tabular-nums" title={used?.toLocaleString()}>{number(used)}</dd></div>
-            <div className="flex flex-col gap-1 text-right"><dt className="text-muted-foreground">Window size</dt><dd className="tabular-nums" title={limit?.toLocaleString()}>{number(limit)}</dd></div>
+            <div className="flex flex-col gap-1"><dt className="text-muted-foreground">Used tokens</dt><dd className="tabular-nums">{number(used)}</dd></div>
+            <div className="flex flex-col gap-1 text-right"><dt className="text-muted-foreground">Window size</dt><dd className="tabular-nums">{number(limit)}</dd></div>
           </dl>
         </div>
         {usage && <>

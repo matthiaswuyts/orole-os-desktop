@@ -10,6 +10,7 @@ import { Kbd } from "@/components/ui/kbd";
 import { Select, SelectGroup, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "@/components/ui/tooltip";
 import { NeedsDesktop } from "@/features/shared/States";
 import { SetupScreen } from "@/features/github/SetupScreen";
 import { EmptyLine, IssueStateIcon, LabelChip, RefreshButton, agoIso, useAsync } from "@/features/github/shared";
@@ -106,7 +107,7 @@ function IssueBrowser({ me }: { me: string }) {
         </InputGroup>
         <ToggleGroup aria-label="Whose issues" variant="outline" size="sm" value={[ownership]} onValueChange={(next) => { const value = next[0] as Ownership | undefined; if (value) { setOwnership(value); setPicked(null); setLimit(PAGE); } }}>
           <ToggleGroupItem value="all">All</ToggleGroupItem>
-          <ToggleGroupItem value="mine" disabled={!me} title={me ? `Assigned to @${me}` : "Connect GitHub to see your issues"}>Mine</ToggleGroupItem>
+          <ToggleGroupItem value="mine" disabled={!me}>Mine</ToggleGroupItem>
           <ToggleGroupItem value="unassigned">Unassigned</ToggleGroupItem>
         </ToggleGroup>
         <Select value={state} onValueChange={(value) => { if (value) { setState(value as IssueState); setPicked(null); setLimit(PAGE); } }}>
@@ -149,12 +150,15 @@ function IssueBrowser({ me }: { me: string }) {
               const assignee = issue.assignees[0];
               return <li key={key}>
                 <div className={cn("group flex gap-2 rounded-lg px-2 py-2 transition-colors hover:bg-muted/60", active && "bg-muted")}>
-                  <span className="relative mt-0.5 size-4 shrink-0">
-                    <span aria-hidden className={cn("absolute inset-0 flex items-center justify-center transition-opacity group-hover:opacity-0 group-has-[[data-slot=checkbox]:focus-visible]:opacity-0", (on || chosen.length > 0) && "opacity-0")}><IssueStateIcon issue={issue} /></span>
-                    <Checkbox aria-label={`Select ${key}`} checked={on} disabled={!on && checked.length >= MAX_SELECTED} title={!on && checked.length >= MAX_SELECTED ? `Select up to ${MAX_SELECTED} issues` : undefined}
-                      onCheckedChange={() => setChecked((current) => toggled(current, key))}
-                      className={cn("absolute inset-0 size-4 opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 data-checked:opacity-100", chosen.length > 0 && "opacity-100")} />
-                  </span>
+                  <Tooltip disabled={on || checked.length < MAX_SELECTED}>
+                    <TooltipTrigger render={<span className="relative mt-0.5 size-4 shrink-0" />}>
+                      <span aria-hidden className={cn("absolute inset-0 flex items-center justify-center transition-opacity group-hover:opacity-0 group-has-[[data-slot=checkbox]:focus-visible]:opacity-0", (on || chosen.length > 0) && "opacity-0")}><IssueStateIcon issue={issue} /></span>
+                      <Checkbox aria-label={`Select ${key}`} checked={on} disabled={!on && checked.length >= MAX_SELECTED}
+                        onCheckedChange={() => setChecked((current) => toggled(current, key))}
+                        className={cn("absolute inset-0 size-4 opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 data-checked:opacity-100", chosen.length > 0 && "opacity-100")} />
+                    </TooltipTrigger>
+                    <TooltipPopup>Select up to {MAX_SELECTED} issues</TooltipPopup>
+                  </Tooltip>
                   <button type="button" aria-current={active ? "true" : undefined} onClick={() => setPicked(key)} className="flex min-w-0 flex-1 gap-2 rounded-md text-left outline-none focus-visible:ring-2 focus-visible:ring-ring">
                     <span className="min-w-0 flex-1">
                       <span className="line-clamp-2 font-medium text-[13px] leading-snug">{issue.title}</span>
@@ -162,7 +166,7 @@ function IssueBrowser({ me }: { me: string }) {
                       {issue.labels.length > 0 && <span className="mt-1 flex flex-wrap gap-1">{issue.labels.map((label) => <LabelChip key={label.id} label={label} />)}</span>}
                     </span>
                     <span className="flex shrink-0 flex-col items-end gap-1 text-[11px] text-muted-foreground">
-                      {assignee && <PersonAvatar login={assignee.login} className="size-5 text-[10px]" />}
+                      {assignee && <Tooltip><TooltipTrigger render={<span className="inline-flex" />}><PersonAvatar login={assignee.login} className="size-5 text-[10px]" /></TooltipTrigger><TooltipPopup>Assigned to {assignee.login}</TooltipPopup></Tooltip>}
                       {issue.comments > 0 && <span className="inline-flex items-center gap-0.5"><MessageSquare aria-hidden className="size-3" />{issue.comments}</span>}
                     </span>
                   </button>

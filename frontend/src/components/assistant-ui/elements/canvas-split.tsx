@@ -39,7 +39,7 @@ export function CanvasSplitHeader({ title, version, saved, onCopy, onClose, clas
 }) {
   return <div data-slot="canvas-split-header" className={cn("flex h-10 shrink-0 items-center gap-2 border-b px-3", className)} {...props}>
     {children}
-    <span className="min-w-0 flex-1 truncate text-sm font-medium" title={title}>{title}</span>
+    <span className="min-w-0 flex-1 truncate text-sm font-medium">{title}</span>
     <span className={cn(mono, "shrink-0")}>v{version}</span>
     <span data-saved={saved} className={cn("flex shrink-0 items-center gap-1 text-xs", saved ? "text-muted-foreground" : "text-info")}>
       {saved ? <CheckIcon aria-hidden className="size-3" /> : <PenLineIcon aria-hidden className="size-3 animate-pulse motion-reduce:animate-none" />}

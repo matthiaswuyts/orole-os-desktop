@@ -29,7 +29,7 @@ export function ResearchReport({ title, sections, sourcesRead, className, ...pro
                 : section.state === "writing" ? <Loader2Icon className="size-3.5 animate-spin motion-reduce:animate-none" />
                   : <span className="size-1.5 rounded-full bg-muted-foreground/50" />}
             </span>
-            <span className={cn("min-w-0 flex-1 truncate", section.state === "pending" && "text-muted-foreground")} title={section.heading}>{section.heading}</span>
+            <span className={cn("min-w-0 flex-1 truncate", section.state === "pending" && "text-muted-foreground")}>{section.heading}</span>
             {section.sources > 0 && <span className={cn(surfaces.mono, "shrink-0")}>{section.sources} src</span>}
           </div>
           {section.preview && <p className="ps-6 text-muted-foreground">{section.preview}</p>}

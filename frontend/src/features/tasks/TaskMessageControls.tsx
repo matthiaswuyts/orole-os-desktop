@@ -9,6 +9,7 @@ import { ServerLogo } from "@/features/integrations/ServerLogo";
 import { Popover, PopoverPopup, PopoverTitle, PopoverTrigger } from "@/components/ui/popover";
 import { RangeSlider } from "@/components/ui/range-slider";
 import { Separator } from "@/components/ui/separator";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "@/components/ui/tooltip";
 import { ComposerAttachmentChip, ComposerAttachments } from "@/components/assistant-ui/elements/composer-attachments";
 import { ProviderLogo } from "@/features/agents/ProviderLogo";
 import { ModelSelectorSearch } from "@/features/home/ModelSelectorSearch";
@@ -52,13 +53,17 @@ export function TaskAddMenu({ message, disabled = false, onInsert }: TaskAddMenu
     <Menu open={open} onOpenChange={setOpen}>
       <MenuTrigger disabled={unavailable} aria-label="Add to message" render={<Button type="button" variant="ghost" size="icon-sm" className="shrink-0 rounded-md text-muted-foreground hover:text-foreground" />}><PlusIcon aria-hidden /></MenuTrigger>
       <MenuPopup align="start" side="top" sideOffset={8} className="min-w-60">
-        <MenuItem disabled={!canAdd} title={message.attachmentReason || undefined} onClick={() => picker.current?.click()}><PaperclipIcon />Add files or photos</MenuItem>
+        {!canAdd && message.attachmentReason
+          ? <Tooltip><TooltipTrigger render={<div />}><MenuItem disabled><PaperclipIcon />Add files or photos</MenuItem></TooltipTrigger><TooltipPopup className="max-w-xs">{message.attachmentReason}</TooltipPopup></Tooltip>
+          : <MenuItem disabled={!canAdd} onClick={() => picker.current?.click()}><PaperclipIcon />Add files or photos</MenuItem>}
         <MenuSeparator />
         <MenuSub>
           <MenuSubTrigger><ScrollTextIcon />Skills</MenuSubTrigger>
           <MenuSubPopup className="min-w-56">
             {skills === null && inDesktop ? <p role="status" className="px-2 py-1.5 text-muted-foreground text-sm">Loading…</p>
-              : skills?.length ? skills.map((skill) => <MenuItem key={skill.name} title={skill.description || undefined} onClick={() => onInsert(`Use the ${skill.name} skill to `)}><ScrollTextIcon />{skill.name}</MenuItem>)
+              : skills?.length ? skills.map((skill) => skill.description
+                ? <Tooltip key={skill.name}><TooltipTrigger render={<MenuItem onClick={() => onInsert(`Use the ${skill.name} skill to `)} />}><ScrollTextIcon />{skill.name}</TooltipTrigger><TooltipPopup side="right" className="max-w-xs">{skill.description}</TooltipPopup></Tooltip>
+                : <MenuItem key={skill.name} onClick={() => onInsert(`Use the ${skill.name} skill to `)}><ScrollTextIcon />{skill.name}</MenuItem>)
               : <p role="status" className="px-2 py-1.5 text-muted-foreground text-sm">No skills enabled</p>}
             <MenuSeparator />
             <MenuItem onClick={() => useUI.getState().openSettings("skills")}><SettingsIcon />Manage skills</MenuItem>

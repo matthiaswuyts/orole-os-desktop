@@ -49,12 +49,14 @@ function RangeMenu({ range, onRange }: { range: UsageRange; onRange: (range: Usa
   );
 }
 
-function Chip({ tone = "muted", title, children }: { tone?: "muted" | "warning"; title?: string; children: ReactNode }) {
+function Chip({ tone = "muted", hint, children }: { tone?: "muted" | "warning"; hint?: string; children: ReactNode }) {
+  const className = cn("inline-flex h-6 max-w-full min-w-0 items-center rounded-md px-2 text-xs tabular-nums", tone === "warning" ? "bg-amber-500/15 text-amber-300" : "bg-foreground/[0.07] text-foreground/80");
+  if (!hint) return <span className={className}><span className="truncate">{children}</span></span>;
   return (
-    <span title={title} className={cn("inline-flex h-6 max-w-full min-w-0 items-center rounded-md px-2 text-xs tabular-nums",
-      tone === "warning" ? "bg-amber-500/15 text-amber-300" : "bg-foreground/[0.07] text-foreground/80")}>
-      <span className="truncate">{children}</span>
-    </span>
+    <Tooltip>
+      <TooltipTrigger render={<span className={className} />}><span className="truncate">{children}</span></TooltipTrigger>
+      <TooltipPopup className="max-w-xs">{hint}</TooltipPopup>
+    </Tooltip>
   );
 }
 
@@ -100,7 +102,7 @@ function UsageCard({ title, icon, usage, onRemove, actions, children }: { title:
 
 function LogoTile({ kind }: { kind: string }) {
   return (
-    <span title={kindLabel(kind)} className="inline-flex size-8 shrink-0 items-center justify-center rounded-lg border bg-card [&_svg]:size-4">
+    <span className="inline-flex size-8 shrink-0 items-center justify-center rounded-lg border bg-card [&_svg]:size-4">
       <ProviderLogo kind={kind} />
     </span>
   );
@@ -164,7 +166,7 @@ export function SpendWidget({ config, onConfig, onRemove }: WidgetProps) {
         return (
           <Stat value={costLabel(tokens)} label={`${tokens.unpriced.length ? "At least " : ""}${usd(tokens.costUsd)} spent, ${RANGES[range].title}. ${note}`}
             chips={tokens.unpriced.length > 0
-              ? <Chip tone="warning" title={`No price for ${unpriced}, so the spend excludes their tokens.`}>Excludes {unpriced}</Chip>
+              ? <Chip tone="warning" hint={`No price for ${unpriced}, so the spend excludes their tokens.`}>Excludes {unpriced}</Chip>
               : activeDays > 0 && <Chip>{usd(tokens.costUsd / activeDays)} per active day</Chip>}
             graphic={<Sparkline values={sparkSeries(stats.daily, range === "all", (d: DailyUsage) => d.costUsd)} />} caption={RANGES[range].spark} />
         );
@@ -189,7 +191,7 @@ export function ByAgentWidget({ config, onConfig, onRemove }: WidgetProps) {
               const accent = ACCENT[agent.kind] ?? "var(--muted-foreground)";
               const share = max > 0 ? agent.tokens.total / max : 0;
               return (
-                <li key={agent.kind} className="flex items-center gap-3 px-3 py-3.5" title={`${kindLabel(agent.kind)}: ${plural(agent.sessions, "session")}, ${COUNT.format(agent.tokens.total)} tokens`}>
+                <li key={agent.kind} className="flex items-center gap-3 px-3 py-3.5">
                   <LogoTile kind={agent.kind} />
                   <span className="w-28 min-w-0 truncate text-[13px]">{kindLabel(agent.kind)}</span>
                   <span aria-hidden className="relative h-4 min-w-12 flex-1 overflow-hidden rounded-sm bg-foreground/[0.06]">
@@ -197,7 +199,10 @@ export function ByAgentWidget({ config, onConfig, onRemove }: WidgetProps) {
                       style={{ width: `max(2px, ${(share * 100).toFixed(2)}%)`, borderColor: accent, backgroundImage: `radial-gradient(${accent} 0.9px, transparent 1.1px)`, backgroundSize: "3px 3px" }} />
                   </span>
                   <span className="w-16 shrink-0 text-right text-[13px] tabular-nums">{compactNumber(agent.tokens.total)}</span>
-                  <span className="w-20 shrink-0 text-right text-[13px] text-muted-foreground tabular-nums" title={agent.tokens.unpriced.length ? `Excludes ${agent.tokens.unpriced.join(", ")}` : undefined}>{costLabel(agent.tokens)}</span>
+                  <Tooltip disabled={!agent.tokens.unpriced.length}>
+                    <TooltipTrigger render={<span className="w-20 shrink-0 text-right text-[13px] text-muted-foreground tabular-nums" />}>{costLabel(agent.tokens)}</TooltipTrigger>
+                    <TooltipPopup className="max-w-xs">Excludes {agent.tokens.unpriced.join(", ")}</TooltipPopup>
+                  </Tooltip>
                 </li>
               );
             })}
@@ -212,7 +217,7 @@ function SessionRow({ session: s, now }: { session: SessionUsage; now: number })
   const project = s.project ? baseName(s.project) : "";
   return (
     <li>
-      <button type="button" onClick={() => openTask(s.id)} title={[kindLabel(s.kind), s.model].filter(Boolean).join(" · ")}
+      <button type="button" onClick={() => openTask(s.id)}
         className="flex w-full items-center gap-3 px-3 py-3 text-left outline-none hover:bg-accent/60 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset">
         <LogoTile kind={s.kind} />
         <span className="flex min-w-0 flex-1 flex-col gap-0.5">
@@ -237,7 +242,10 @@ export function LatestSessionsWidget({ onRemove }: WidgetProps) {
   const now = useNow(usage.stats !== null && usage.stats.latest.length > 0);
   return (
     <UsageCard title="Latest sessions" icon={<Rows3 />} usage={usage} onRemove={onRemove}
-      actions={<button type="button" aria-label="Open Tasks" title="Open Tasks" className={headerButton} onClick={() => useUI.getState().setView("agents")}><ArrowUpRight className="size-3.5" /></button>}>
+      actions={<Tooltip>
+        <TooltipTrigger render={<button type="button" aria-label="Open Tasks" className={headerButton} onClick={() => useUI.getState().setView("agents")} />}><ArrowUpRight className="size-3.5" /></TooltipTrigger>
+        <TooltipPopup>Open Tasks</TooltipPopup>
+      </Tooltip>}>
       {({ latest }) => latest.length === 0
         ? <p className="flex h-full min-h-28 items-center justify-center text-center text-muted-foreground text-xs">No sessions yet. Start a task above.</p>
         : <ul className="-mx-3 -my-1.5 flex flex-col divide-y divide-border/60">{latest.map((s) => <SessionRow key={s.id} session={s} now={now} />)}</ul>}
@@ -260,7 +268,10 @@ export function UsageTotalsWidget({ onRemove }: WidgetProps) {
           ] as const).map(([label, value]) => (
             <div key={label} className="flex min-w-0 flex-col gap-0.5">
               <dt className="text-muted-foreground text-xs">{label}</dt>
-              <dd className="truncate font-semibold text-lg tabular-nums tracking-tight" title={label === "Spend" && all.tokens.unpriced.length ? `Excludes ${all.tokens.unpriced.join(", ")}` : undefined}>{value}</dd>
+              <Tooltip disabled={!(label === "Spend" && all.tokens.unpriced.length)}>
+                <TooltipTrigger render={<dd className="truncate font-semibold text-lg tabular-nums tracking-tight" />}>{value}</TooltipTrigger>
+                <TooltipPopup className="max-w-xs">Excludes {all.tokens.unpriced.join(", ")}</TooltipPopup>
+              </Tooltip>
             </div>
           ))}
         </dl>

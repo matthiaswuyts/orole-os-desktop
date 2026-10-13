@@ -6,6 +6,7 @@ import { GripVertical, Plus, Trash2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverPopup, PopoverTrigger } from "@/components/ui/popover";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import type { Step } from "./api";
 import { BlockPicker } from "./BlockLibrary";
@@ -17,9 +18,10 @@ function AddBlock({ lane, index, label, className, children }: { lane: string; i
   const { tree, types, insert } = useFlow();
   const [open, setOpen] = useState(false);
   const problem = insertProblem(tree, lane);
+  const trigger = <PopoverTrigger disabled={!!problem} aria-label={label}
+    render={<button type="button" className={cn("outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50", className)} />}>{children}</PopoverTrigger>;
   return <Popover open={open} onOpenChange={setOpen}>
-    <PopoverTrigger disabled={!!problem} title={problem ?? undefined} aria-label={label}
-      render={<button type="button" className={cn("outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50", className)} />}>{children}</PopoverTrigger>
+    {problem ? <Tooltip><TooltipTrigger render={<span className="inline-flex" />}>{trigger}</TooltipTrigger><TooltipPopup className="max-w-xs">{problem}</TooltipPopup></Tooltip> : trigger}
     <PopoverPopup className="w-80" side="right" align="start">
       <div className="max-h-[min(28rem,70vh)] overflow-auto">
         <BlockPicker types={types} autoFocus onPick={(type) => { insert(lane, index, type); setOpen(false); }} />
@@ -92,7 +94,7 @@ function BlockCard({ step, lane, depth }: { step: Step; lane: string; depth: num
         <span className="block truncate text-xs text-muted-foreground">{summary || "Not set up yet"}</span>
       </button>
       {count > 0 && <Badge size="sm" variant="error">{count === 1 ? "1 issue" : `${count} issues`}</Badge>}
-      {spec && !spec.available && <Badge size="sm" variant="warning" title={spec.reason}>Unavailable</Badge>}
+      {spec && !spec.available && (spec.reason ? <Tooltip><TooltipTrigger render={<Badge size="sm" variant="warning" />}>Unavailable</TooltipTrigger><TooltipPopup className="max-w-xs">{spec.reason}</TooltipPopup></Tooltip> : <Badge size="sm" variant="warning">Unavailable</Badge>)}
       {!spec && <Badge size="sm" variant="warning">Unknown block</Badge>}
       <Button size="icon-xs" variant="ghost" aria-label={`Remove ${step.name || label} (${step.id})`} onClick={() => remove(step.id)}><Trash2 /></Button>
     </div>

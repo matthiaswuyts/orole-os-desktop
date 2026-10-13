@@ -101,8 +101,8 @@ function SessionComposer({ session }: { session: Session }) {
         <div className="flex min-w-0 items-center gap-1 px-1">
           <TaskAddMenu message={message} disabled={inactive} onInsert={insertText} />
           {(session.dir || session.branch) && <span className="ml-1 flex min-w-0 items-center gap-3 text-xs text-muted-foreground">
-            {session.dir && <span className="flex min-w-0 items-center gap-1" title={session.dir}><FolderIcon aria-hidden className="size-3.5 shrink-0" /><span className="max-w-32 truncate">{where}</span></span>}
-            {session.branch && <span className="flex min-w-0 items-center gap-1" title={session.branch}><GitBranchIcon aria-hidden className="size-3.5 shrink-0" /><span className="max-w-32 truncate">{session.branch}</span></span>}
+            {session.dir && <Tooltip><TooltipTrigger render={<span className="flex min-w-0 items-center gap-1" />}><FolderIcon aria-hidden className="size-3.5 shrink-0" /><span className="max-w-32 truncate">{where}</span></TooltipTrigger><TooltipPopup className="max-w-sm break-all">{session.dir}</TooltipPopup></Tooltip>}
+            {session.branch && <Tooltip><TooltipTrigger render={<span className="flex min-w-0 items-center gap-1" />}><GitBranchIcon aria-hidden className="size-3.5 shrink-0" /><span className="max-w-32 truncate">{session.branch}</span></TooltipTrigger><TooltipPopup className="max-w-sm break-all">{session.branch}</TooltipPopup></Tooltip>}
           </span>}
           <div className="ml-auto flex min-w-0 shrink-0 items-center gap-0.5">
             <TaskModelPicker message={message} disabled={inactive} />

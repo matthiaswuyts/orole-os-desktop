@@ -10,6 +10,7 @@ import { AlertDialog, AlertDialogClose, AlertDialogDescription, AlertDialogFoote
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { api, errorText, type Definition, type Issue, type Step, type StepType, type Topic } from "./api";
 import { BlockLibrary } from "./BlockLibrary";
@@ -189,19 +190,22 @@ export function FlowBuilder({ initial, initialIssues, initialRun = null, types, 
   ];
   const leave = () => { if (dirty) setLeaving(true); else onBack(); };
   const blocked = Object.keys(invalid).length > 0;
+  const runBlocker = !definition.id ? "Save the flow first" : dirty ? "Save your changes first; Run now runs the saved flow" : null;
+  const runButton = <Button size="sm" variant="outline" disabled={!definition.id || dirty || offline || !!busy} onClick={() => void run()}><Play data-icon="inline-start" />{busy === "run" ? "Starting…" : "Run now"}</Button>;
 
   return <div className="flex h-full min-h-0 flex-col">
     <header className="flex shrink-0 flex-wrap items-center gap-2 border-b px-3 py-2">
       <Button size="icon-sm" variant="ghost" aria-label="Back to automations" onClick={leave}><ArrowLeft /></Button>
       <Input size="sm" aria-label="Flow name" aria-invalid={!!flowIssue("name")} value={definition.name} onChange={(e) => patch({ name: e.target.value })} className="w-56 min-w-0 font-medium" />
       <div role="tablist" aria-label="Builder view" className="flex rounded-md border p-0.5">
-        {(["flow", "runs"] as const).map((t) => <button key={t} type="button" role="tab" aria-selected={tab === t} disabled={t === "runs" && !definition.id} title={t === "runs" && !definition.id ? "Save the flow to see its runs" : undefined}
-          onClick={() => setTab(t)} className={cn("h-6 rounded-sm px-2 text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50", tab === t ? "bg-accent font-medium text-foreground" : "text-muted-foreground hover:text-foreground")}>{t === "flow" ? "Flow" : "Runs"}</button>)}
+        {(["flow", "runs"] as const).map((t) => { const tabButton = <button key={t} type="button" role="tab" aria-selected={tab === t} disabled={t === "runs" && !definition.id}
+          onClick={() => setTab(t)} className={cn("h-6 rounded-sm px-2 text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50", tab === t ? "bg-accent font-medium text-foreground" : "text-muted-foreground hover:text-foreground")}>{t === "flow" ? "Flow" : "Runs"}</button>;
+          return t === "runs" && !definition.id ? <Tooltip key={t}><TooltipTrigger render={<span className="inline-flex" />}>{tabButton}</TooltipTrigger><TooltipPopup>Save the flow to see its runs</TooltipPopup></Tooltip> : tabButton; })}
       </div>
       <div className="ml-auto flex items-center gap-2">
         <label className="flex items-center gap-2 text-xs text-muted-foreground"><Switch checked={definition.enabled} onCheckedChange={(enabled) => patch({ enabled })} />Enabled</label>
-        <Button size="sm" variant="outline" disabled={!definition.id || dirty || offline || !!busy} title={!definition.id ? "Save the flow first" : dirty ? "Save your changes first; Run now runs the saved flow" : undefined} onClick={() => void run()}><Play data-icon="inline-start" />{busy === "run" ? "Starting…" : "Run now"}</Button>
-        <Button size="sm" disabled={offline || !!busy || blocked} title={blocked ? "Fix the fields marked invalid first" : undefined} onClick={() => void save()}><Save data-icon="inline-start" />{busy === "save" ? "Saving…" : dirty ? "Save" : "Saved"}</Button>
+        {runBlocker ? <Tooltip><TooltipTrigger render={<span className="inline-flex" />}>{runButton}</TooltipTrigger><TooltipPopup className="max-w-xs">{runBlocker}</TooltipPopup></Tooltip> : runButton}
+        <Button size="sm" disabled={offline || !!busy || blocked} onClick={() => void save()}><Save data-icon="inline-start" />{busy === "save" ? "Saving…" : dirty ? "Save" : "Saved"}</Button>
       </div>
     </header>
     {(offline || error || notice || summary.length > 0 || blocked) && <div className="flex shrink-0 flex-col gap-2 border-b px-3 py-2">

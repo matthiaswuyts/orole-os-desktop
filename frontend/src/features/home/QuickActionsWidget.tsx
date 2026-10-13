@@ -28,7 +28,7 @@ export function QuickActionsWidget({ onRemove }: WidgetProps) {
       <ul className="-m-1.5 grid grid-cols-1 gap-0.5">
         {actions.map((command) => (
           <li key={command.id}>
-            <button type="button" onClick={() => void run(command)} title={command.title}
+            <button type="button" onClick={() => void run(command)}
               className="flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left text-[13px] outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring">
               <span className="inline-flex size-6 shrink-0 items-center justify-center rounded-md border bg-card text-muted-foreground [&_svg]:size-3.5" aria-hidden>{command.icon ?? FALLBACK_ICON[command.id] ?? <CommandIcon />}</span>
               <span className="truncate">{shortTitle(command.title)}</span>

@@ -18,7 +18,7 @@ export function TaskPane({ taskId, ready, onClose }: { taskId: string; ready: bo
   return <section aria-labelledby="side-pane-title" data-slot="task-pane" className="flex h-full min-w-0 flex-col">
     <header className="flex h-10 shrink-0 items-center gap-2 border-b px-3">
       {session && <TaskStatusGlyph status={session.status} />}
-      <h2 id="side-pane-title" tabIndex={-1} title={title} className="min-w-0 flex-1 truncate text-sm font-medium outline-none">{title}</h2>
+      <h2 id="side-pane-title" tabIndex={-1} className="min-w-0 flex-1 truncate text-sm font-medium outline-none">{title}</h2>
       {session && <span className="sr-only">{TASK_STATUS_LABEL[session.status]}</span>}
       {session?.kind && <HarnessBadge kind={session.kind} />}
       <Button type="button" variant="ghost" size="xs" onClick={() => openTask(taskId)}><SquareArrowOutUpRightIcon aria-hidden />Open in Tasks</Button>

@@ -26,7 +26,7 @@ export function MemoryChips({ chips, onForget, className, ...props }: Omit<Compo
             surfaces.field, "inline-flex max-w-full items-center gap-1 px-2.5 py-0.5 text-xs animate-in fade-in-0 zoom-in-95 duration-300 motion-reduce:animate-none",
             chip.change !== "existing" && "border-info/40 bg-info/10 text-info-foreground",
           )}>
-            <span className="min-w-0 truncate" title={chip.text}>{chip.text}</span>
+            <span className="min-w-0 truncate">{chip.text}</span>
             {onForget && <button type="button" aria-label={`Forget "${chip.text}"`} onClick={() => onForget(chip.id)} className={cn(surfaces.ghostButton, "size-4")}><XIcon aria-hidden className="size-3" /></button>}
           </span>
         ))}

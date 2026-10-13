@@ -33,7 +33,7 @@ export function TaskCanvas({ session, children }: { session: Session; children: 
       <div className="flex min-h-0 min-w-0 flex-1 flex-col @4xl/canvas:flex-row">
         <div className={cn("flex min-h-0 min-w-0 flex-1 flex-col", current && "basis-1/2 @4xl/canvas:max-w-[48%]")}>{children}</div>
         {current && <section aria-label="Task canvas" className="flex min-h-0 min-w-0 flex-1 basis-1/2 flex-col border-t bg-background @4xl/canvas:border-t-0 @4xl/canvas:border-l">
-          <header className="flex shrink-0 items-center gap-2 border-b px-3 py-2"><h2 ref={heading} tabIndex={-1} className="min-w-0 flex-1 truncate text-sm font-medium outline-none" title={title}>{title}</h2><Button size="icon-xs" variant="ghost" aria-label="Close canvas" onClick={close}><X aria-hidden /></Button></header>
+          <header className="flex shrink-0 items-center gap-2 border-b px-3 py-2"><h2 ref={heading} tabIndex={-1} className="min-w-0 flex-1 truncate text-sm font-medium outline-none">{title}</h2><Button size="icon-xs" variant="ghost" aria-label="Close canvas" onClick={close}><X aria-hidden /></Button></header>
           <div className="min-h-0 flex-1 overflow-auto">
             {current.kind === "file" && <TaskFilePreviewContent key={`${session.id}:${current.path}`} sessionId={session.id} path={current.path} />}
             {current.kind === "image" && <TaskImage key={`${session.id}:${current.image.path}`} sessionId={session.id} image={current.image} preview />}

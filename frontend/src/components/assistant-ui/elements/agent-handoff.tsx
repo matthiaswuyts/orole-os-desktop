@@ -28,7 +28,7 @@ export function AgentHandoff({ from, to, fromAvatar, toAvatar, reason, carried, 
       <p className="text-muted-foreground">{reason}</p>
       {carried.length > 0 && <div className="flex flex-col gap-0.5">
         <span className={surfaces.mono}>carried over</span>
-        {carried.map((item) => <span key={item} className="truncate text-muted-foreground" title={item}>{item}</span>)}
+        {carried.map((item) => <span key={item} className="truncate text-muted-foreground">{item}</span>)}
       </div>}
     </div>
   );

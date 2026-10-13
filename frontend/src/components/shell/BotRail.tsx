@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "@/components/ui/menu";
 import { Skeleton } from "@/components/ui/skeleton";
 import { toastManager } from "@/components/ui/toast";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "@/components/ui/tooltip";
 import { BotAvatar } from "./BotAvatar";
 
 const note = "px-2 py-1 text-muted-foreground text-xs";
@@ -95,9 +96,9 @@ export function BotRail() {
     <section aria-label="Bots" className="flex shrink-0 flex-col gap-1">
       <div className="flex h-6 shrink-0 items-center gap-1 pr-0.5 pl-2">
         <h2 className="flex-1 font-medium text-muted-foreground text-xs">Bots</h2>
-        {available && !(ready && bots.length === 0 && !noProvider) && <Button size="icon-xs" variant="ghost" onClick={newBot} disabled={noProvider} aria-label="New bot" title={noProvider ? "Connect a provider before creating a bot" : "New bot"}>
-          <Plus />
-        </Button>}
+        {available && !(ready && bots.length === 0 && !noProvider) && (noProvider
+          ? <Tooltip><TooltipTrigger render={<span className="inline-flex" />}><Button size="icon-xs" variant="ghost" disabled aria-label="New bot"><Plus /></Button></TooltipTrigger><TooltipPopup>Connect a provider before creating a bot</TooltipPopup></Tooltip>
+          : <Tooltip><TooltipTrigger render={<Button size="icon-xs" variant="ghost" onClick={newBot} aria-label="New bot" />}><Plus /></TooltipTrigger><TooltipPopup>New bot</TooltipPopup></Tooltip>)}
       </div>
       {available && noProvider && (
         <div role="note" className="mx-1 flex flex-col items-start gap-2 rounded-md border bg-background/40 p-2">

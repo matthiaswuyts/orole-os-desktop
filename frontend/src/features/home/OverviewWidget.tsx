@@ -42,7 +42,7 @@ const Calendar = memo(function Calendar({ grid, onHover }: { grid: ActivityGrid;
       {grid.weeks.map((week, w) => (
         <div role="row" key={w} className="contents">
           {week.map((day, i) => day
-            ? <div role="gridcell" key={day.date} aria-label={day.label} title={day.label} onMouseEnter={() => onHover(day)}
+            ? <div role="gridcell" key={day.date} aria-label={day.label} onMouseEnter={() => onHover(day)}
                 className={cn("aspect-square rounded-[3px] outline-offset-1 hover:outline hover:outline-foreground/40", LEVEL[day.level])} style={{ gridColumn: w + 2, gridRow: i + 2 }} />
             : <div role="gridcell" aria-hidden key={i} style={{ gridColumn: w + 2, gridRow: i + 2 }} />)}
         </div>

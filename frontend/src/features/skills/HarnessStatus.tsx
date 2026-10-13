@@ -4,6 +4,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverDescription, PopoverPopup, PopoverTitle, PopoverTrigger } from "@/components/ui/popover";
 import { Spinner } from "@/components/ui/spinner";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { agentStatus, harnessLabel, needsSync } from "./skills";
 
@@ -33,7 +34,7 @@ export function HarnessStatus({ states, error, syncing, onSync, onRetry }: {
     <ul className="flex flex-wrap items-center gap-1.5">
       {installed.map((s) => {
         const status = agentStatus(s);
-        return <li key={s.harness} className="flex items-center gap-1.5 rounded-full border bg-card py-0.5 pr-2.5 pl-2 text-xs" title={status.label}>
+        return <li key={s.harness} className="flex items-center gap-1.5 rounded-full border bg-card py-0.5 pr-2.5 pl-2 text-xs">
           <span aria-hidden className={cn("size-1.5 rounded-full", DOT[status.tone])} />
           <span>{s.name || harnessLabel(s.harness)}</span>
           <span className="sr-only">{status.label}</span>
@@ -66,7 +67,7 @@ export function HarnessStatus({ states, error, syncing, onSync, onRetry }: {
                 {s.available
                   ? <p className="text-muted-foreground text-xs">{s.synced?.length ?? 0} skills copied{pending > 0 ? `, ${pending} to update` : ""}{s.gateway === "installed" ? "" : s.gateway === "unsupported" ? "" : ", Orole connection needs setup"}</p>
                   : <p className="text-muted-foreground text-xs">Install {s.name || harnessLabel(s.harness)} to use your skills in it.</p>}
-                {s.available && s.dir && <p className="selectable truncate font-mono text-muted-foreground text-xs" title={s.dir}>{s.dir}</p>}
+                {s.available && s.dir && <Tooltip><TooltipTrigger render={<p className="selectable truncate font-mono text-muted-foreground text-xs" />}>{s.dir}</TooltipTrigger><TooltipPopup className="max-w-sm break-all">{s.dir}</TooltipPopup></Tooltip>}
                 {s.error && <p role="alert" className="break-words text-destructive-foreground text-xs">{s.error}</p>}
               </li>;
             })}

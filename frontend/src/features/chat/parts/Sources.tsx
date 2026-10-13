@@ -34,7 +34,7 @@ export function SourcesButton({ sources, className }: { sources: readonly Source
       <ol className="flex w-full min-w-0 flex-col py-0 text-xs">
         {sources.map((source, index) => <li key={source.url} className="min-w-0">
           {isWebURL(source.url)
-            ? <a href={source.url} title={source.url} target="_blank" rel="noopener noreferrer" className="flex min-w-0 gap-2 rounded-md px-2 py-1.5 outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring"
+            ? <a href={source.url} target="_blank" rel="noopener noreferrer" className="flex min-w-0 gap-2 rounded-md px-2 py-1.5 outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring"
               onClick={(event) => { event.preventDefault(); void openExternal(source.url); }}>
               <SourceBody index={index} source={source} link />
             </a>
@@ -75,7 +75,7 @@ export function AttachmentPill({ name, mime, size }: { name?: string; mime?: str
   const label = name?.trim() || "Attachment";
   return <span data-slot="chat-attachment" className="inline-flex max-w-56 items-center gap-1.5 rounded-lg border bg-background/60 px-2 py-1 text-xs">
     <Icon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
-    <span className="truncate" title={label}>{label}</span>
+    <span className="truncate">{label}</span>
     {size ? <span className="shrink-0 text-muted-foreground tabular-nums">{formatSize(size)}</span> : null}
   </span>;
 }

@@ -35,7 +35,7 @@ describe("overview widget", () => {
     render(<OverviewWidget widgetType="overview" onConfig={() => {}} onRemove={() => {}} />);
     const cells = screen.getAllByRole("gridcell").filter((cell) => cell.hasAttribute("aria-label"));
     expect(cells).toHaveLength(365);
-    expect(screen.getByRole("gridcell", { name: "2 tasks on October 8, 2026" })).toHaveAttribute("title", "2 tasks on October 8, 2026");
+    expect(screen.getByRole("gridcell", { name: "2 tasks on October 8, 2026" })).not.toHaveAttribute("title");
     expect(builds).toEqual({ grid: 1, totals: 1 });
     expect(dateCalls.mock.calls.length + stringCalls.mock.calls.length).toBe(0);
 

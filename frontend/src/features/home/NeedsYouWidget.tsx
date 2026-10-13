@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from "react";
 import { ArrowUpRight, Check, Hand, ShieldAlert, Workflow } from "lucide-react";
 import { useShallow } from "zustand/react/shallow";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "@/components/ui/tooltip";
 import { Widget } from "@/components/widgets/Widget";
 import type { WidgetProps } from "@/components/widgets/registry";
 import { onDashboard } from "@/features/agents/columns";
@@ -61,8 +62,8 @@ export function NeedsYouWidget({ onRemove }: WidgetProps) {
   return (
     <Widget title="Needs you" icon={<Hand />} status={status} message={message} onRemove={onRemove}
       count={count > 0 ? <span className="rounded-full bg-amber-500/15 px-1.5 text-[11px] text-amber-300 tabular-nums">{count}</span> : undefined}
-      actions={<button type="button" aria-label="Open Tasks" title="Open Tasks" onClick={() => useUI.getState().setView("agents")}
-        className="inline-flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"><ArrowUpRight className="size-3.5" /></button>}>
+      actions={<Tooltip><TooltipTrigger render={<button type="button" aria-label="Open Tasks" onClick={() => useUI.getState().setView("agents")}
+        className="inline-flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring" />}><ArrowUpRight className="size-3.5" /></TooltipTrigger><TooltipPopup>Open Tasks</TooltipPopup></Tooltip>}>
       {count === 0
         ? <div className="flex h-full min-h-40 flex-col items-center justify-center gap-1 px-4 py-6 text-center">
             <span className="mb-2 inline-flex size-9 items-center justify-center rounded-full border border-emerald-500/30 bg-emerald-500/10 text-emerald-400" aria-hidden><Check className="size-4" strokeWidth={2.5} /></span>

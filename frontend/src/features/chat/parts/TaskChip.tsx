@@ -57,13 +57,13 @@ function TaskMeter({ session }: { session: Session }) {
   const tokens = taskTokens(session);
   const item = "inline-flex min-w-0 items-center gap-1";
   return <div data-slot="task-meter" className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-0.5 pl-5.5 text-[11px] leading-4 text-muted-foreground tabular-nums">
-    <span data-slot="task-model" className={cn(item, "font-mono")} title={session.model ? `Model: ${session.model}` : "Model not reported"}>
+    <span data-slot="task-model" className={cn(item, "font-mono")}>
       <CpuIcon aria-hidden className="size-3 shrink-0" /><span className="sr-only">Model: </span><span className="truncate">{session.model || NO_VALUE}</span>
     </span>
-    <span data-slot="task-elapsed" className={item} title="Time elapsed">
+    <span data-slot="task-elapsed" className={item}>
       <TimerIcon aria-hidden className="size-3 shrink-0" /><span className="sr-only">Elapsed: </span>{seconds === undefined ? NO_VALUE : formatElapsed(seconds)}
     </span>
-    <span data-slot="task-tokens" className={item} title={tokens === undefined ? "Tokens not reported" : `${tokens.toLocaleString()} tokens`}>
+    <span data-slot="task-tokens" className={item}>
       <CoinsIcon aria-hidden className="size-3 shrink-0" /><span className="sr-only">Tokens: </span>{tokens === undefined ? NO_VALUE : formatTokens(tokens)}
     </span>
   </div>;
@@ -102,7 +102,7 @@ export function TaskChips({ parts }: { parts: readonly MsgPart[] }) {
             className="flex min-w-56 w-full flex-col gap-1 rounded-[inherit] px-3 py-1.5 text-start outline-none transition-colors hover:bg-foreground/5 focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none">
             <span className="flex min-w-0 items-center gap-2">
               <TaskStatusGlyph status={session?.status ?? (gone ? "failed" : undefined)} />
-              <span className="min-w-0 flex-1 truncate text-sm leading-5" title={title}>{title}</span>
+              <span className="min-w-0 flex-1 truncate text-sm leading-5">{title}</span>
               {kind && <HarnessBadge kind={kind} />}
             </span>
             {activity && <span className={cn("block truncate pl-5.5 text-xs leading-4 text-muted-foreground", status === "running" && "cv-shimmer")}>{activity}</span>}

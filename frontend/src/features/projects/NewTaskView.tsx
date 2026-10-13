@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import { Check, Folder, ListTodo } from "lucide-react";
 import { AsciiMark } from "@/components/ascii/AsciiMark";
 import { Button } from "@/components/ui/button";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "@/components/ui/tooltip";
 import { COLUMN_SPECS, columnOf } from "@/features/agents/columns";
 import { ago, kindLabel } from "@/features/agents/format";
 import { ProviderLogo } from "@/features/agents/ProviderLogo";
@@ -57,7 +58,9 @@ function NewTaskPage({ initialProjectId, initialPrompt }: { initialProjectId: st
         {project && <p className="flex flex-wrap items-center gap-1.5">
           {repo && <span className={chip}><GithubMark /><span className="truncate">{repo}</span></span>}
           <span className={chip}>{family && <OsMark family={family} />}<span className="truncate">{machine}</span></span>
-          <span className={chip} title={project.path || undefined}><Folder aria-hidden className="size-3 shrink-0" /><span className="truncate">{project.path || "Managed workspace"}</span></span>
+          {project.path
+            ? <Tooltip><TooltipTrigger render={<span className={chip} />}><Folder aria-hidden className="size-3 shrink-0" /><span className="truncate">{project.path}</span></TooltipTrigger><TooltipPopup className="max-w-sm break-all">{project.path}</TooltipPopup></Tooltip>
+            : <span className={chip}><Folder aria-hidden className="size-3 shrink-0" /><span className="truncate">Managed workspace</span></span>}
         </p>}
       </header>
 

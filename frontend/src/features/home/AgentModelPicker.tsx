@@ -90,7 +90,7 @@ export function AgentModelPicker({ task }: { task: HomeTaskLaunch }) {
                   <span className="flex size-5 shrink-0 items-center justify-center"><ProviderLogo kind={option.id} /></span>
                   <span className="flex min-w-0 flex-1 flex-col">
                     <span className="truncate font-medium">{providerLabel(option)}</span>
-                    <span className="truncate text-xs text-muted-foreground" title={option.available ? option.version : option.unavailableReason || undefined}>{option.available ? versionLabel(option.version) : option.unavailableReason || "Not installed"}</span>
+                    <span className="truncate text-xs text-muted-foreground">{option.available ? versionLabel(option.version) : option.unavailableReason || "Not installed"}</span>
                   </span>
                   {selected && <CheckIcon aria-hidden className="size-4 shrink-0" />}
                 </button>;

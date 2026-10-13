@@ -7,6 +7,7 @@
 
 import { useEffect, useState, type ComponentProps } from "react";
 import { cn } from "@/lib/utils";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "@/components/ui/tooltip";
 import { safeHref } from "../utils/href";
 import { clamp } from "../utils/range";
 import { field, mono, paper } from "./surfaces";
@@ -321,15 +322,27 @@ function Value({
                 },
           ).format(date),
     );
+    if (style !== "relative") return <>{content}</>;
     return (
-      <span
-        title={date.toISOString()}
-        {...(style === "relative" && suppressRelativeHydrationWarning
-          ? { suppressHydrationWarning: true }
-          : {})}
-      >
-        {content}
-      </span>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <span
+              {...(suppressRelativeHydrationWarning
+                ? { suppressHydrationWarning: true }
+                : {})}
+            />
+          }
+        >
+          {content}
+        </TooltipTrigger>
+        <TooltipPopup>
+          {new Intl.DateTimeFormat(locale, {
+            dateStyle: "medium",
+            timeStyle: "short",
+          }).format(date)}
+        </TooltipPopup>
+      </Tooltip>
     );
   }
 

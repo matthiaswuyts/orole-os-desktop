@@ -92,7 +92,7 @@ function RunDetail({ id, types, offline, onChanged }: { id: string; types: StepT
   return <section aria-label="Run detail" className="flex min-w-0 flex-col gap-2 p-3">
     <header className="flex flex-wrap items-center gap-2">
       <RunStatus status={run.status} />
-      <span className="text-xs text-muted-foreground tabular-nums">{run.triggerType} · <time dateTime={new Date(run.createdAt).toISOString()} title={new Date(run.createdAt).toLocaleString()}>{relativeTime(run.createdAt)}</time> · {duration(run.startedAt, run.finishedAt)}</span>
+      <span className="text-xs text-muted-foreground tabular-nums">{run.triggerType} · <time dateTime={new Date(run.createdAt).toISOString()}>{relativeTime(run.createdAt)}</time> · {duration(run.startedAt, run.finishedAt)}</span>
       {active && <Button size="xs" variant="destructive-outline" className="ml-auto" disabled={busy || offline} onClick={cancel}>{busy ? "Cancelling…" : "Cancel run"}</Button>}
     </header>
     {(error || detail.error) && <Failure message={error || detail.error || ""} />}

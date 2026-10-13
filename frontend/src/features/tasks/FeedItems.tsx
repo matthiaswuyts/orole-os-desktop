@@ -46,7 +46,7 @@ export function ToolDetails({ call }: { call: ToolCall }) {
   const input = toolInputJSON(call);
   return <div className="flex min-w-0 flex-col gap-2 text-xs" data-testid="tool-details" data-status={call.status}>
     <p className="text-muted-foreground">
-      <span className="font-medium">Details</span> · <span className="font-mono" title={call.name}>{call.name}</span>{call.server ? ` · MCP server ${call.server}` : ""} · {statusLabel[call.status]}
+      <span className="font-medium">Details</span> · <span className="font-mono">{call.name}</span>{call.server ? ` · MCP server ${call.server}` : ""} · {statusLabel[call.status]}
     </p>
     {input && <section aria-label="Tool input"><p className="mb-1 font-medium text-muted-foreground">Input</p><SyntaxHighlighter code={input} language="json" /></section>}
     {call.output ? <section aria-label="Tool output"><p className="mb-1 font-medium text-muted-foreground">Output</p><SyntaxHighlighter code={call.output} /></section>
@@ -100,7 +100,7 @@ export function FileCard({ file, sessionId }: { file: FileData; sessionId: strin
   const [open, setOpen] = useState(false);
   const name = file.name || file.path.split(/[\\/]/).at(-1) || "Reported file";
   return <div className="min-w-0 rounded-md border p-3" data-slot="file">
-    <div className="flex min-w-0 items-center gap-2"><FileText aria-hidden className="size-4 shrink-0 text-muted-foreground" /><div className="min-w-0 flex-1"><p className="truncate text-sm font-medium" title={name}>{name}</p><p className="break-all text-xs text-muted-foreground">{file.path}</p></div><Button size="xs" variant="outline" disabled={!file.path} onClick={() => canvas ? canvas.openFile(file.path) : setOpen(true)}>Preview</Button></div>
+    <div className="flex min-w-0 items-center gap-2"><FileText aria-hidden className="size-4 shrink-0 text-muted-foreground" /><div className="min-w-0 flex-1"><p className="truncate text-sm font-medium">{name}</p><p className="break-all text-xs text-muted-foreground">{file.path}</p></div><Button size="xs" variant="outline" disabled={!file.path} onClick={() => canvas ? canvas.openFile(file.path) : setOpen(true)}>Preview</Button></div>
     {file.status && <p className="mt-1 text-xs text-muted-foreground">{file.status}</p>}
     {file.summary && <p className="selectable mt-2 whitespace-pre-wrap break-words text-xs">{file.summary}</p>}
     <Dialog open={open} onOpenChange={setOpen}><DialogPopup className="max-w-4xl"><DialogHeader><DialogTitle>{name}</DialogTitle><DialogDescription>Task file preview</DialogDescription></DialogHeader><DialogPanel>{open && <TaskFilePreviewContent key={`${sessionId}:${file.path}`} sessionId={sessionId} path={file.path} />}</DialogPanel></DialogPopup></Dialog>

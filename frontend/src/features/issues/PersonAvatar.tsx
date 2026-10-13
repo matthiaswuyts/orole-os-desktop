@@ -9,7 +9,7 @@ function hue(login: string): number {
 }
 
 export function PersonAvatar({ login, className }: { login: string; className?: string }) {
-  return <Avatar className={cn("size-6 text-[11px]", className)} title={login}>
+  return <Avatar className={cn("size-6 text-[11px]", className)}>
     <AvatarFallback style={{ background: `hsl(${hue(login)} 45% 38%)`, color: "white" }}>{login.slice(0, 1).toUpperCase()}</AvatarFallback>
   </Avatar>;
 }

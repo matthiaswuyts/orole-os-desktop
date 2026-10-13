@@ -4,6 +4,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogDescription, DialogHeader, DialogPanel, DialogPopup, DialogTitle } from "@/components/ui/dialog";
 import { Spinner } from "@/components/ui/spinner";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "@/components/ui/tooltip";
 import { ProviderLogo } from "@/features/agents/ProviderLogo";
 import { errText, toastError } from "@/features/projects/dialogs";
 import { groupDiscovered, harnessLabel } from "./skills";
@@ -46,7 +47,7 @@ export function ImportDialog({ open, onOpenChange, onImported }: { open: boolean
               <Button size="xs" variant="outline" className="ml-auto" disabled={busy !== null} onClick={() => void run(g.skills, g.harness)}>{busy === g.harness ? "Importing…" : "Import all"}</Button></div>
             <ul className="flex flex-col divide-y rounded-lg border">
               {g.skills.map((d) => <li key={key(d)} className="flex items-center gap-2 p-2">
-                <div className="min-w-0 flex-1"><p className="truncate font-medium">{d.name}</p><p className="line-clamp-2 text-muted-foreground text-xs">{d.description || "No description"}</p><p className="selectable truncate font-mono text-muted-foreground text-xs" title={d.path}>{d.path}</p></div>
+                <div className="min-w-0 flex-1"><p className="truncate font-medium">{d.name}</p><p className="line-clamp-2 text-muted-foreground text-xs">{d.description || "No description"}</p><Tooltip><TooltipTrigger render={<p className="selectable truncate font-mono text-muted-foreground text-xs" />}>{d.path}</TooltipTrigger><TooltipPopup className="max-w-sm break-all">{d.path}</TooltipPopup></Tooltip></div>
                 <Button size="xs" variant="outline" disabled={busy !== null} aria-label={`Import ${d.name} from ${harnessLabel(d.harness)}`} onClick={() => void run([d], key(d))}>{busy === key(d) ? "Importing…" : "Import"}</Button>
               </li>)}
             </ul>

@@ -8,6 +8,7 @@ import { Bubble, BubbleContent } from "@/components/ui/bubble";
 import { Button } from "@/components/ui/button";
 import { Kbd } from "@/components/ui/kbd";
 import { Message, MessageAvatar, MessageContent, MessageGroup, MessageHeader } from "@/components/ui/message";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "@/components/ui/tooltip";
 import { IssueAgentLauncher, IssueAgentRuns, useIssueAgent } from "@/features/github/IssueAgentWorkflow";
 import { Markdown } from "@/features/github/Markdown";
 import { ErrorBox, LabelChip, Loading, RefreshButton, agoIso, useAsync } from "@/features/github/shared";
@@ -46,6 +47,7 @@ function IssueBody({ repo, issue, comments, related, refreshing, error, reload, 
 
   const people = useMemo(() => [...new Set([issue.user.login, ...issue.assignees.map((user) => user.login), ...comments.map((comment) => comment.user.login), ...(me ? [me] : [])])], [issue, comments, me]);
   const role = (login: string, association: string) => login === issue.user.login ? "Author" : ROLES[association];
+  const startButton = <Button size="sm" disabled={!agent.canStart} onClick={agent.start}><Bot data-icon="inline-start" />{agent.saved.data ? "Review saved launch" : "Start an agent"}<Kbd>S</Kbd></Button>;
 
   return <article aria-label={`${repo}#${issue.number}`} className="mx-auto flex w-full max-w-3xl min-w-0 flex-col gap-4 p-5">
     <header className="flex flex-col gap-2">
@@ -57,9 +59,7 @@ function IssueBody({ repo, issue, comments, related, refreshing, error, reload, 
       <h2 className="break-words font-semibold text-lg leading-snug">{issue.title}</h2>
       {issue.labels.length > 0 && <div className="flex flex-wrap gap-1">{issue.labels.map((label) => <LabelChip key={label.id} label={label} />)}</div>}
       <div className="flex flex-wrap items-center gap-2">
-        <Button size="sm" disabled={!agent.canStart} onClick={agent.start} title={issue.pull_request ? "Pull requests cannot be assigned to an agent" : undefined}>
-          <Bot data-icon="inline-start" />{agent.saved.data ? "Review saved launch" : "Start an agent"}<Kbd>S</Kbd>
-        </Button>
+        {issue.pull_request ? <Tooltip><TooltipTrigger render={<span className="inline-flex" />}>{startButton}</TooltipTrigger><TooltipPopup>Pull requests cannot be assigned to an agent</TooltipPopup></Tooltip> : startButton}
         <Button size="sm" variant="outline" onClick={() => void openExternal(issue.html_url)}><ExternalLink data-icon="inline-start" />Open on GitHub</Button>
         {!issue.pull_request && <StateButton repo={repo} issue={issue} onChanged={() => { reload(); onChanged(); }} />}
         <RefreshButton a={{ data: null, error, loading: refreshing, reload }} />
