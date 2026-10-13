@@ -8,6 +8,9 @@ notes. See `docs/development/updates.md`.
 
 ## Unreleased
 
+### Fixed
+- Windows Codex downloads now include the code-mode host and sandbox resources from the hash-verified official npm platform package. Incomplete managed installations can be repaired by downloading again. The Codex agent picker uses the same managed runtime as Settings and chat.
+
 ## 0.3.1-dev - 2026-10-13
 
 ### Fixed

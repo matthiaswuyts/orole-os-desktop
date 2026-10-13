@@ -230,6 +230,9 @@ func (m *Manager) resolve(s spec) (path, source string) {
 
 func (m *Manager) exeName(s spec) string {
 	if m.cfg.GOOS == "windows" {
+		if s.id == Codex {
+			return filepath.Join("bin", "codex.exe")
+		}
 		return s.binary + ".exe"
 	}
 	return s.binary
@@ -250,11 +253,25 @@ func (m *Manager) managed(s spec) string {
 			continue
 		}
 		p := filepath.Join(m.cfg.StoreDir, s.id, e.Name(), m.exeName(s))
-		if fileExists(p) && (best == "" || compareVersions(e.Name(), best) > 0) {
+		if m.completeInstall(s, filepath.Join(m.cfg.StoreDir, s.id, e.Name())) && (best == "" || compareVersions(e.Name(), best) > 0) {
 			best, bestPath = e.Name(), p
 		}
 	}
 	return bestPath
+}
+
+func (m *Manager) completeInstall(s spec, dir string) bool {
+	if !fileExists(filepath.Join(dir, m.exeName(s))) {
+		return false
+	}
+	if s.id == Codex && m.cfg.GOOS == "windows" {
+		for _, rel := range []string{"bin/codex-code-mode-host.exe", "codex-resources/codex-command-runner.exe", "codex-resources/codex-windows-sandbox-setup.exe"} {
+			if !fileExists(filepath.Join(dir, filepath.FromSlash(rel))) {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func fileExists(p string) bool {

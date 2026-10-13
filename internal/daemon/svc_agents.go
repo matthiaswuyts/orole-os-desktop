@@ -218,6 +218,12 @@ func (d *Daemon) registerAgents() {
 	refresher := &pricing.Refresher{Catalog: prices, Dir: filepath.Join(d.DataDir, "pricing"), Delay: time.Minute, Log: d.Log}
 	refresher.LoadCache()
 	d.Agents = agents.NewManager(agents.Config{
+		Adapters: []agents.Adapter{agents.Claude{}, agents.CodexApp{ResolveBin: func() string {
+			if d.CLI != nil {
+				return d.CLI.Path(cliruntime.Codex)
+			}
+			return ""
+		}}, agents.Omp{}, agents.OpenCode(), agents.Gemini(), agents.Custom{}},
 		Store:            agents.NewStore(d.DB),
 		Host:             &agents.Host{Terminals: d.Terminals, DataDir: d.DataDir, HookExe: exe, GatewayExe: d.gatewayExe},
 		Log:              d.Log,
