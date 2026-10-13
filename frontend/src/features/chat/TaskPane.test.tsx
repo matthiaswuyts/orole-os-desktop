@@ -70,12 +70,42 @@ describe("task rows in a bot reply", () => {
     expect(all[0]).toHaveTextContent("Fix the login bug");
     expect(all[0]).toHaveTextContent("Claude Code");
     expect(all[1]).toHaveTextContent("Codex");
-    expect(within(all[0]!).getByRole("progressbar", { name: "Fix the login bug progress" })).toHaveAttribute("aria-busy", "true");
     act(() => useAgents.setState((s) => ({ sessions: { ...s.sessions, t1: { ...s.sessions.t1!, subagents: 2 } } })));
     expect(chips()[0]).toHaveTextContent("2 background agents running");
     act(() => useAgents.setState((s) => ({ sessions: { ...s.sessions, t1: { ...s.sessions.t1!, status: "done", subagents: 0 } } })));
     expect(chips()[0]).toHaveAttribute("data-status", "done");
-    expect(within(chips()[0]!).getByRole("progressbar")).toHaveAttribute("aria-valuenow", "100");
+  });
+
+  it("draws each task as a chat bubble", () => {
+    render(<ChatView />);
+    const bubble = chips()[0]!.closest("[data-slot=chat-bubble]");
+    expect(bubble).not.toBeNull();
+    expect(bubble!.className).toContain("bg-secondary");
+  });
+
+  it("meters model, elapsed time and tokens live while the task works, and freezes them when it stops", () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date("2026-10-12T10:00:10Z"));
+      useAgents.setState((s) => ({ sessions: { ...s.sessions, t1: { ...s.sessions.t1!, model: "claude-opus-5-5", startedAt: "2026-10-12T10:00:00Z", usage: { source: "sdk", inputTokens: 900, outputTokens: 350, at: "2026-10-12T10:00:09Z" } } } }));
+      render(<ChatView />);
+      const meter = () => within(chips()[0]!).getByText((_, el) => el?.getAttribute("data-slot") === "task-meter");
+      expect(meter()).toHaveTextContent("claude-opus-5-5");
+      expect(meter()).toHaveTextContent("10s");
+      expect(meter()).toHaveTextContent("1.3K");
+      act(() => { vi.advanceTimersByTime(5000); });
+      expect(meter()).toHaveTextContent("15s");
+      act(() => useAgents.setState((s) => ({ sessions: { ...s.sessions, t1: { ...s.sessions.t1!, status: "done", endedAt: "2026-10-12T10:00:20Z", usage: { source: "sdk", inputTokens: 2000, outputTokens: 500, at: "2026-10-12T10:00:20Z" } } } })));
+      act(() => { vi.advanceTimersByTime(60_000); });
+      expect(meter()).toHaveTextContent("20s");
+      expect(meter()).toHaveTextContent("2.5K");
+    } finally { vi.useRealTimers(); }
+  });
+
+  it("shows a dash for a model, start time or token count the daemon has not reported", () => {
+    render(<ChatView />);
+    const meter = within(chips()[1]!).getByText((_, el) => el?.getAttribute("data-slot") === "task-meter");
+    expect(meter.textContent?.match(/—/g)).toHaveLength(3);
   });
 
   it("opens the task beside the conversation with a composer that talks to that task, and closes back to the chat", async () => {

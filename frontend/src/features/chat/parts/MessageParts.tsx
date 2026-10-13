@@ -16,8 +16,8 @@ import { MentionText } from "../MentionText";
 import type { MentionTarget } from "../mentions";
 import { splitQuote } from "../quote";
 import { splitBubbles } from "./bubbles";
-import { cn } from "@/lib/utils";
 import { WorkingStatus } from "@/components/assistant-ui/elements/working-status";
+import { Bubble } from "./Bubble";
 import { TaskChips } from "./TaskChip";
 
 /** Whether a user message has anything to draw (the setup kickoff is text the user never sees). */
@@ -35,10 +35,7 @@ export function UserParts({ parts, targets }: { parts: readonly MsgPart[]; /** b
   </>;
 }
 
-/** One chat bubble of a bot: a short message from a colleague, as wide as its content up to most of the thread. */
-export function Bubble({ children, className }: { children: ReactNode; className?: string }) {
-  return <div data-slot="chat-bubble" className={cn("w-fit max-w-[92%] min-w-0 rounded-2xl rounded-bl-md bg-secondary px-3 py-1.5 text-sm leading-relaxed text-secondary-foreground", className)}>{children}</div>;
-}
+export { Bubble };
 
 /**
  * Renders what an assistant message holds: the work it did behind one collapsed timeline (steps, web search, research

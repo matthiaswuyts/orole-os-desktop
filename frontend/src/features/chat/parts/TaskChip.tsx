@@ -1,11 +1,14 @@
-import { CheckIcon, CircleIcon, CircleXIcon, LoaderCircleIcon, TriangleAlertIcon } from "lucide-react";
-import { SubagentList, type SubagentItem, type SubagentStatus } from "@/components/assistant-ui/elements/subagent-list";
+import { CheckIcon, CircleIcon, CircleXIcon, CoinsIcon, CpuIcon, LoaderCircleIcon, TimerIcon, TriangleAlertIcon } from "lucide-react";
+import { useEffect, useState } from "react";
+import { formatElapsed } from "@/components/assistant-ui/elements/working-status";
 import type { AgentsStatus, MsgPart, Session } from "@/mygo";
 import { ProviderLogo } from "@/features/agents/ProviderLogo";
 import { kindLabel, sessionTitle } from "@/features/agents/format";
 import { cn } from "@/lib/utils";
 import { useChat } from "@/stores/chat";
 import { TASK_STATUS_LABEL, useTaskSessions } from "../taskSession";
+import { formatTokens, isTaskLive, NO_VALUE, taskElapsedSeconds, taskTokens } from "../taskMeter";
+import { Bubble } from "./Bubble";
 
 /** Spinner while the agent works, a check when its turn is done, a warning when it needs you, a cross when it failed. */
 export function TaskStatusGlyph({ status, className }: { /** absent while the task is still loading */ status?: AgentsStatus; className?: string }) {
@@ -32,7 +35,39 @@ export function HarnessBadge({ kind }: { kind: string }) {
   </span>;
 }
 
-const ROW_STATUS: Record<AgentsStatus, SubagentStatus> = { idle: "running", working: "running", "needs-you": "needs-you", done: "done", failed: "failed", stopped: "failed", lost: "failed" };
+type RowStatus = "running" | "needs-you" | "done" | "failed";
+const ROW_STATUS: Record<AgentsStatus, RowStatus> = { idle: "running", working: "running", "needs-you": "needs-you", done: "done", failed: "failed", stopped: "failed", lost: "failed" };
+
+/** Re-renders once a second while `live`, so an elapsed time counts like a meter; returns the current time (Unix ms). */
+function useNow(live: boolean): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!live) return;
+    setNow(Date.now());
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [live]);
+  return now;
+}
+
+/** Model, elapsed time and tokens of a task as a compact live meter; a reading the daemon has not reported shows a dash. Elapsed and tokens freeze once the task stops. */
+function TaskMeter({ session }: { session: Session }) {
+  const now = useNow(isTaskLive(session));
+  const seconds = taskElapsedSeconds(session, now);
+  const tokens = taskTokens(session);
+  const item = "inline-flex min-w-0 items-center gap-1";
+  return <div data-slot="task-meter" className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-0.5 pl-5.5 text-[11px] leading-4 text-muted-foreground tabular-nums">
+    <span data-slot="task-model" className={cn(item, "font-mono")} title={session.model ? `Model: ${session.model}` : "Model not reported"}>
+      <CpuIcon aria-hidden className="size-3 shrink-0" /><span className="sr-only">Model: </span><span className="truncate">{session.model || NO_VALUE}</span>
+    </span>
+    <span data-slot="task-elapsed" className={item} title="Time elapsed">
+      <TimerIcon aria-hidden className="size-3 shrink-0" /><span className="sr-only">Elapsed: </span>{seconds === undefined ? NO_VALUE : formatElapsed(seconds)}
+    </span>
+    <span data-slot="task-tokens" className={item} title={tokens === undefined ? "Tokens not reported" : `${tokens.toLocaleString()} tokens`}>
+      <CoinsIcon aria-hidden className="size-3 shrink-0" /><span className="sr-only">Tokens: </span>{tokens === undefined ? NO_VALUE : formatTokens(tokens)}
+    </span>
+  </div>;
+}
 
 /** What a task's row says under its title: the agent's current activity, or how many background agents a settled turn still waits for. */
 export function taskActivity(session: Session | undefined, missing: boolean): string | undefined {
@@ -44,23 +79,37 @@ export function taskActivity(session: Session | undefined, missing: boolean): st
   return session.status === "done" ? undefined : TASK_STATUS_LABEL[session.status];
 }
 
-/** The tasks one reply started, one row each (live status, title, activity, harness); clicking a row opens that task beside the conversation. */
+/**
+ * The tasks one reply started, one chat bubble each (live status, title, activity, harness, model, elapsed time, tokens);
+ * clicking a bubble opens that task beside the conversation.
+ */
 export function TaskChips({ parts }: { parts: readonly MsgPart[] }) {
   const ids = parts.map((part) => part.id ?? "");
   const { sessions, missing } = useTaskSessions(ids);
   const openId = useChat((s) => s.pane?.kind === "task" ? s.pane.id : null);
-  const rows = parts.map((part, i): SubagentItem => {
-    const session = sessions[i];
-    const gone = !session && missing[ids[i]!] === true;
-    const kind = session?.kind || part.name || "";
-    return {
-      name: session ? sessionTitle(session) : part.title || "Code task",
-      model: kind ? <HarnessBadge kind={kind} /> : "",
-      status: gone ? "failed" : session ? ROW_STATUS[session.status] : "running",
-      activity: taskActivity(session, gone),
-    };
-  });
-  const selected = ids.indexOf(openId ?? "");
-  return <SubagentList aria-label="Code tasks" agents={rows} selectedIndex={selected === -1 ? undefined : selected}
-    onOpen={(index) => { const id = ids[index]; if (id) useChat.getState().openTaskPane(id); }} />;
+  return <ul aria-label="Code tasks" data-slot="task-list" className="flex w-full min-w-0 flex-col items-start gap-1.5">
+    {parts.map((part, i) => {
+      const session = sessions[i];
+      const gone = !session && missing[ids[i]!] === true;
+      const kind = session?.kind || part.name || "";
+      const status = gone ? "failed" : session ? ROW_STATUS[session.status] : "running";
+      const activity = taskActivity(session, gone);
+      const title = session ? sessionTitle(session) : part.title || "Code task";
+      const selected = ids[i] !== "" && ids[i] === openId;
+      return <li key={i} className="flex max-w-full min-w-0">
+        <Bubble className={cn("p-0", selected && "ring-1 ring-ring/60")}>
+          <button type="button" data-slot="subagent-row" data-status={status} aria-pressed={selected} onClick={() => { if (ids[i]) useChat.getState().openTaskPane(ids[i]!); }}
+            className="flex min-w-56 w-full flex-col gap-1 rounded-[inherit] px-3 py-1.5 text-start outline-none transition-colors hover:bg-foreground/5 focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none">
+            <span className="flex min-w-0 items-center gap-2">
+              <TaskStatusGlyph status={session?.status ?? (gone ? "failed" : undefined)} />
+              <span className="min-w-0 flex-1 truncate text-sm leading-5" title={title}>{title}</span>
+              {kind && <HarnessBadge kind={kind} />}
+            </span>
+            {activity && <span className={cn("block truncate pl-5.5 text-xs leading-4 text-muted-foreground", status === "running" && "cv-shimmer")}>{activity}</span>}
+            {session && <TaskMeter session={session} />}
+          </button>
+        </Bubble>
+      </li>;
+    })}
+  </ul>;
 }
