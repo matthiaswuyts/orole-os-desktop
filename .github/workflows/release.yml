@@ -25,6 +25,11 @@ jobs:
         with:
           fetch-depth: 1
           persist-credentials: false
+      # Avrea's Windows image points GOPROXY at cache.avrea.com:8443, whose certificate Go does not trust
+      # there (x509: unknown authority), so every module download fails. Use the public proxy instead.
+      - name: Use the public Go module proxy
+        shell: pwsh
+        run: '"GOPROXY=https://proxy.golang.org,direct" >> $env:GITHUB_ENV'
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
@@ -81,6 +86,9 @@ jobs:
         with:
           fetch-depth: 1
           persist-credentials: false
+      - name: Use the public Go module proxy (see verify-go)
+        shell: pwsh
+        run: '"GOPROXY=https://proxy.golang.org,direct" >> $env:GITHUB_ENV'
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
