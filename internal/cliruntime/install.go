@@ -60,7 +60,7 @@ func (m *Manager) Install(ctx context.Context, id string) (Status, error) {
 	}
 	root := filepath.Join(m.cfg.StoreDir, id)
 	dest := filepath.Join(root, version)
-	if fileExists(filepath.Join(dest, m.exeName(s))) {
+	if m.completeInstall(s, dest) {
 		return m.status(ctx, s), nil
 	}
 	if err := os.MkdirAll(root, 0o700); err != nil {
@@ -72,12 +72,19 @@ func (m *Manager) Install(ctx context.Context, id string) (Status, error) {
 	}
 	defer os.RemoveAll(stage)
 	exe := filepath.Join(stage, m.exeName(s))
+	if err := os.MkdirAll(filepath.Dir(exe), 0o700); err != nil {
+		return Status{}, err
+	}
 
 	switch id {
 	case Claude:
 		err = m.fetchClaude(ctx, version, stage, exe)
 	case Codex:
-		err = m.fetchCodex(ctx, stage, exe)
+		if m.cfg.GOOS == "windows" {
+			err = m.fetchCodexWindows(ctx, version, stage)
+		} else {
+			err = m.fetchCodex(ctx, stage, exe)
+		}
 	case Grok:
 		err = m.fetchGrok(ctx, version, exe)
 	}
@@ -150,6 +157,85 @@ func (m *Manager) fetchClaude(ctx context.Context, version, stage, exe string) e
 		return err
 	}
 	return extractTarGz(archive, "package/"+filepath.Base(exe), exe)
+}
+
+// fetchCodexWindows preserves the complete vendor layout, including code-mode and sandbox helpers.
+func (m *Manager) fetchCodexWindows(ctx context.Context, version, stage string) error {
+	arch := map[string]string{"amd64": "x64", "arm64": "arm64"}[m.cfg.GOARCH]
+	var meta struct {
+		Dist struct {
+			Tarball   string `json:"tarball"`
+			Integrity string `json:"integrity"`
+		} `json:"dist"`
+	}
+	if err := m.getJSON(ctx, m.cfg.NPM+"/@openai/codex/"+version+"-win32-"+arch, &meta); err != nil {
+		return err
+	}
+	sum, ok := strings.CutPrefix(meta.Dist.Integrity, "sha512-")
+	if !ok || meta.Dist.Tarball == "" {
+		return errors.New("npm published no sha512 hash for this release")
+	}
+	want, err := base64.StdEncoding.DecodeString(sum)
+	if err != nil || len(want) != sha512.Size {
+		return errors.New("npm published an unreadable hash")
+	}
+	archive := filepath.Join(stage, "download.tgz")
+	if err := m.download(ctx, meta.Dist.Tarball, archive, sha512.New(), want); err != nil {
+		return err
+	}
+	return extractCodexWindows(archive, "package/vendor/"+codexTriple(m.cfg.GOOS, m.cfg.GOARCH)+"/", stage)
+}
+
+func extractCodexWindows(archive, prefix, dst string) error {
+	f, err := os.Open(archive)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	gz, err := gzip.NewReader(f)
+	if err != nil {
+		return err
+	}
+	defer gz.Close()
+	tr := tar.NewReader(gz)
+	for {
+		h, err := tr.Next()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return err
+		}
+		if h.Typeflag != tar.TypeReg || !strings.HasPrefix(h.Name, prefix) {
+			continue
+		}
+		rel := strings.TrimPrefix(h.Name, prefix)
+		if strings.ContainsAny(rel, `\:`) || !filepath.IsLocal(filepath.FromSlash(rel)) {
+			return errors.New("unsafe Codex archive path")
+		}
+		p := filepath.Join(dst, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+			return err
+		}
+		out, err := os.OpenFile(p, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o700)
+		if err != nil {
+			return err
+		}
+		_, err = io.Copy(out, tr)
+		closeErr := out.Close()
+		if err != nil {
+			return err
+		}
+		if closeErr != nil {
+			return closeErr
+		}
+	}
+	for _, rel := range []string{"bin/codex.exe", "bin/codex-code-mode-host.exe", "codex-resources/codex-command-runner.exe", "codex-resources/codex-windows-sandbox-setup.exe"} {
+		if !fileExists(filepath.Join(dst, filepath.FromSlash(rel))) {
+			return fmt.Errorf("Codex archive is missing %s", rel)
+		}
+	}
+	return nil
 }
 
 // fetchCodex downloads Codex's release asset for this computer and checks the sha256 GitHub publishes for it.

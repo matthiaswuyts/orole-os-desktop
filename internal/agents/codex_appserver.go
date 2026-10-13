@@ -29,9 +29,16 @@ import (
 type CodexApp struct {
 	// Bin overrides the executable (tests); "" = `codex` from PATH.
 	Bin string
+	// ResolveBin shares the managed runtime used by the chat provider.
+	ResolveBin func() string
 }
 
 func (c CodexApp) bin() string {
+	if c.ResolveBin != nil {
+		if p := c.ResolveBin(); p != "" {
+			return p
+		}
+	}
 	if c.Bin != "" {
 		return c.Bin
 	}
