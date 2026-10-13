@@ -7,7 +7,7 @@ import { formatElapsed } from "@/components/assistant-ui/elements/working-status
 import { duration } from "@/features/agents/format";
 import { describePermission } from "@/lib/permissionLabels";
 import { clip, reasoningTitle, type FeedItem, type LiveActivity, type RunState } from "@/lib/taskEvents";
-import { toolLabel, type ToolFileStat } from "@/lib/toolLabels";
+import { toolLabel, type ToolFileStat, type ToolKind } from "@/lib/toolLabels";
 import { PermissionItem, SourcesList, ToolDetails } from "./FeedItems";
 import { approvalText, QuestionCard, SubagentCard } from "./TaskInteractions";
 
@@ -32,6 +32,9 @@ const statText = (stats: readonly ToolFileStat[]) => {
   return [added ? `+${added}` : "", removed ? `-${removed}` : ""].filter(Boolean).join(" ");
 };
 
+/** Tool kinds whose chip is a command, path or pattern rather than prose. */
+const CODE_CHIP: Partial<Record<ToolKind, true>> = { shell: true, read: true, edit: true, files: true, image: true, "web-fetch": true };
+
 /** What a run's step row shows. `matches` gives the search excerpts of an interim message, shown under its row even while it is closed. */
 export function runEntry(item: FeedItem, session: Session, matches: (key: string) => ReactNode): RunEntry | null {
   switch (item.type) {
@@ -46,7 +49,7 @@ export function runEntry(item: FeedItem, session: Session, matches: (key: string
       const label = toolLabel(item.call);
       const stats = statText(label.stats);
       return {
-        id: item.key, kind: "tool", label: label.verb, chip: [label.chip, stats].filter(Boolean).join(" "), icon: label.icon,
+        id: item.key, kind: "tool", label: label.verb, chip: [label.chip, stats].filter(Boolean).join(" "), icon: label.icon, code: CODE_CHIP[label.kind],
         failed: item.call.status === "error", running: item.call.status === "running", content: <ToolDetails call={item.call} />,
       };
     }

@@ -14,6 +14,8 @@ export interface RunEntry {
   label: string;
   /** Tool steps: the one thing worth showing next to the verb (a command, a file name). */
   chip?: string;
+  /** The chip is a command, path or pattern, set in monospace. */
+  code?: boolean;
   icon?: LucideIcon;
   /** A failed tool shows an explicit error state. */
   failed?: boolean;
@@ -26,25 +28,33 @@ export interface RunEntry {
 }
 
 const statusIcon: Partial<Record<RunStatus, LucideIcon>> = { running: LoaderCircleIcon, error: CircleXIcon, cancelled: CircleAlertIcon, "requires-action": CircleAlertIcon };
+
+/** The timeline rows of run entries; also the work nested under a plan step. */
+export const timelineSteps = (entries: readonly RunEntry[]): TimelineStep[] => entries.map((entry) => ({
+  id: entry.id, verb: entry.label, chip: entry.chip ?? "", code: entry.code, icon: entry.icon ?? MessageSquareTextIcon,
+  failed: entry.failed, running: entry.running, content: entry.content, aside: entry.aside,
+}));
 const statusTone: Partial<Record<RunStatus, string>> = { error: "text-destructive-foreground", "requires-action": "text-warning-foreground" };
 
 /**
  * assistant-ui's run activity (https://www.assistant-ui.com/elements/run-activity): one assistant run's public commentary and
  * tool history folded into a single disclosure, with a live status row ("Working", "Worked for 2m 13s"), the explicitly
- * identified final answer in `children`, and anything the user must act on in `attention`. Both stay visible when the
- * disclosure is collapsed. Props-driven: it executes nothing, classifies nothing and owns no runtime. The caller owns
- * `open` (initially false, keyed by run) and the application-supplied labels.
+ * identified final answer in `children`, the agent's own plan in `plan`, and anything the user must act on in `attention`.
+ * Plan, attention and answer stay visible when the disclosure is collapsed. Props-driven: it executes nothing, classifies
+ * nothing and owns no runtime. The caller owns `open` (initially false, keyed by run) and the application-supplied labels.
  *
  * Only `statusLabel` is announced while running, so clock ticks and streaming never interrupt a screen reader; once the run
  * settles the announcement carries the recorded `durationLabel` too. Missing timing stays absent.
  */
-export function RunActivity({ status, statusLabel, durationLabel, open, onOpenChange, entries, attention, children, className, ...props }: Omit<ComponentProps<"div">, "children"> & {
+export function RunActivity({ status, statusLabel, durationLabel, open, onOpenChange, entries, plan, attention, children, className, ...props }: Omit<ComponentProps<"div">, "children"> & {
   status: RunStatus;
   statusLabel: string;
   durationLabel?: ReactNode;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   entries: readonly RunEntry[];
+  /** The agent's todo list, with the work done under each step. */
+  plan?: ReactNode;
   /** Approval requests, questions and errors: visible whether or not the run is expanded. */
   attention?: ReactNode;
   /** The final answer. */
@@ -52,10 +62,6 @@ export function RunActivity({ status, statusLabel, durationLabel, open, onOpenCh
 }) {
   const running = status === "running";
   const Icon = statusIcon[status];
-  const steps: TimelineStep[] = entries.map((entry) => ({
-    id: entry.id, verb: entry.label, chip: entry.chip ?? "", icon: entry.icon ?? MessageSquareTextIcon,
-    failed: entry.failed, running: entry.running, content: entry.content, aside: entry.aside,
-  }));
   const summary = <>
     {Icon && <Icon aria-hidden className={cn("size-3.5 shrink-0", running && "animate-spin motion-reduce:animate-none")} />}
     <span className={cn("min-w-0 truncate font-medium", running && "cv-shimmer")}>{statusLabel}</span>
@@ -70,12 +76,13 @@ export function RunActivity({ status, statusLabel, durationLabel, open, onOpenCh
           {summary}
         </CollapsibleTrigger>
         <CollapsiblePanel>
-          <div className="mt-1.5 flex min-w-0 flex-col gap-3 border-l ps-3">
-            <TimelineSteps steps={steps} label="Activity" />
+          <div className="ms-[0.4375rem] mt-1 min-w-0 border-l border-border/60 ps-2">
+            <TimelineSteps steps={timelineSteps(entries)} label="Activity" />
           </div>
         </CollapsiblePanel>
       </Collapsible> : <div className={tone}>{summary}</div>}
       <span role="status" className="sr-only">{statusLabel}{!running && durationLabel != null && <> {durationLabel}</>}</span>
+      {plan}
       {attention}
       {children}
     </div>

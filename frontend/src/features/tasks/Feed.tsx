@@ -3,7 +3,10 @@ import { LoaderCircle } from "lucide-react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import type { Event as AgentEvent, Session } from "@/mygo";
 import { Button } from "@/components/ui/button";
-import { RunActivity } from "@/components/assistant-ui/elements/run-activity";
+import { RunActivity, timelineSteps } from "@/components/assistant-ui/elements/run-activity";
+import { AgentTodos } from "@/components/assistant-ui/elements/agent-todos";
+import { TimelineStepRow, TimelineSteps } from "@/components/assistant-ui/elements/tool-timeline";
+import { planRun } from "@/lib/agentTodos";
 import { ConversationMap } from "@/components/assistant-ui/elements/conversation-map";
 import { mapTurns } from "@/lib/conversationMap";
 import { ErrorNote } from "@/features/agents/shared";
@@ -71,7 +74,18 @@ interface RowProps {
 }
 
 function RunView({ run, session, search, open, activity, onOpenChange }: Omit<RowProps, "entry" | "separator"> & { run: TurnRun }) {
-  const stepEntries = run.steps.flatMap((item) => runEntry(item, session, (key) => search.matches.has(key) ? anchored(key, null, search) : null) ?? []);
+  const entriesOf = (items: readonly FeedItem[]) => items.flatMap((item) => runEntry(item, session, (key) => search.matches.has(key) ? anchored(key, null, search) : null) ?? []);
+  const { plan, loose, work, timing } = planRun(run.steps);
+  const running = run.status === "running";
+  const todos = plan?.todos.map((todo) => {
+    const steps = timelineSteps(entriesOf(work.get(todo.id) ?? []));
+    const at = timing.get(todo.id);
+    return {
+      ...todo, startedAt: at?.start, endedAt: at?.end,
+      details: steps.length ? <TimelineSteps steps={steps} streaming={running && todo.status === "in_progress"} label={`Work for ${todo.content}`} /> : undefined,
+      latest: steps.length ? <TimelineStepRow step={steps[steps.length - 1]!} shimmer={running} className="list-none" /> : undefined,
+    };
+  });
   const { label, duration } = runStatusText(run.status, run.durationMs, activity);
   const itemView = (item: FeedItem) => anchored(item.key, <FeedEntry item={item} session={session} />, search);
   return <div data-scroll-anchor={run.key} className="min-w-0"><RunActivity
@@ -81,7 +95,8 @@ function RunView({ run, session, search, open, activity, onOpenChange }: Omit<Ro
     durationLabel={duration}
     open={open}
     onOpenChange={(next) => onOpenChange(run.key, next)}
-    entries={stepEntries}
+    entries={entriesOf(loose)}
+    plan={todos && <AgentTodos todos={todos} explanation={plan!.explanation} running={running} className="my-1" />}
     attention={run.attention.length ? <div className="flex flex-col gap-3">{run.attention.map(itemView)}</div> : undefined}
   >
     {run.answer.length > 0 && <div className="flex flex-col gap-3">{run.answer.map(itemView)}</div>}

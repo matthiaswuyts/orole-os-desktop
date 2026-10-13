@@ -224,6 +224,7 @@ type codexProc struct {
 	// (billedSeen = one arrived), so repeats with an unchanged total are not billed twice.
 	billedTotal int64
 	billedSeen  bool
+	planSeq     int // turn/plan/updated notifications seen, so each plan revision is its own tool event
 }
 
 func startCodexProc(dir, bin string) (*codexProc, error) {

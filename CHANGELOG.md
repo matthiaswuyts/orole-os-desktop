@@ -10,8 +10,11 @@ notes. See `docs/development/updates.md`.
 
 ### Changed
 - In a bot's settings, "Runs code tasks" moved to the Tools page, and the "All changes saved" footer is gone (changes still save on their own and errors still show).
+- A task's activity list is easier to read. Each step is one plain line with its icon, what it did and the command or file in monospace, without the boxed chips. A chevron appears when you hover a step that has details.
+- Hover text across the app now uses Orole's tooltips instead of the browser's native ones, and only where something isn't clear without it: icon-only buttons, why a control is disabled, or a cut-off path, link or time you can't read anywhere else. Tooltips that only repeated visible text are gone.
 
 ### Added
+- When an agent keeps a to-do list while it works (Claude Code, Codex, Gemini CLI or omp), the task shows it as a Tasks list: how many steps are done, a progress bar, the step in progress with what it is doing right now, and how long each step took. Open a step to see the commands and tool calls behind it. Codex plan updates, which weren't shown before, now appear there too.
 - The permission mode you pick when starting a task (Manual, Auto or Yolo) is now remembered as your default. New tasks start in it, and bots that start tasks follow it too; Yolo only applies to bots when "Bots may use Yolo" is on, otherwise they use Manual. Running tasks keep their mode.
 - Bots can set up automations from chat. Every bot can do this, with no setting to turn on. Ask it, for example, to "watch CI
   on main and tell me when it fails". The bot drafts the flow, Orole validates it, and it appears as a card in the chat with

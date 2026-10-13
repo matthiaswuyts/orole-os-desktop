@@ -217,6 +217,10 @@ func (p *codexProc) notification(method string, raw json.RawMessage) {
 			p.emit(Event{Kind: EvGuardrail, Data: jraw(GuardrailData{ID: n.ThreadID, Kind: "warning",
 				Message: n.Message, Source: "codex:guardianWarning"})})
 		}
+	case "turn/plan/updated":
+		if mine {
+			p.planUpdated(raw)
+		}
 	case "thread/name/updated":
 		if mine && n.ThreadName != nil && strings.TrimSpace(*n.ThreadName) != "" {
 			p.emit(Event{Kind: EvTitle, Text: *n.ThreadName})
@@ -224,6 +228,47 @@ func (p *codexProc) notification(method string, raw json.RawMessage) {
 	case "serverRequest/resolved":
 		p.requestResolved(n.RequestID)
 	}
+}
+
+// planUpdated reports Codex's checklist (its update_plan tool, delivered as turn/plan/updated
+// rather than as a thread item) as a settled `update_plan` tool call, so the task feed can show
+// the plan the way it shows other harnesses' todo tools. Every revision gets its own call id:
+// the feed orders the revisions in time and attributes the work in between to the active step.
+func (p *codexProc) planUpdated(raw json.RawMessage) {
+	var n struct {
+		TurnID      string  `json:"turnId"`
+		Explanation *string `json:"explanation"`
+		Plan        []struct {
+			Step   string `json:"step"`
+			Status string `json:"status"`
+		} `json:"plan"`
+	}
+	if json.Unmarshal(raw, &n) != nil || len(n.Plan) == 0 {
+		return
+	}
+	type step struct {
+		Step   string `json:"step"`
+		Status string `json:"status"`
+	}
+	plan := make([]step, 0, len(n.Plan))
+	for _, s := range n.Plan {
+		if text := strings.TrimSpace(s.Step); text != "" {
+			plan = append(plan, step{Step: text, Status: s.Status})
+		}
+	}
+	if len(plan) == 0 {
+		return
+	}
+	input := map[string]any{"plan": plan}
+	if n.Explanation != nil && strings.TrimSpace(*n.Explanation) != "" {
+		input["explanation"] = strings.TrimSpace(*n.Explanation)
+	}
+	p.mu.Lock()
+	p.planSeq++
+	id := fmt.Sprintf("plan-%s-%d", n.TurnID, p.planSeq)
+	p.mu.Unlock()
+	p.emit(Event{Kind: EvTool, Text: fmt.Sprintf("update_plan: %d steps", len(plan)),
+		Data: jraw(ToolData{ID: id, Name: "update_plan", Status: "ok", Input: jraw(input)})})
 }
 
 func errorMessage(e *codexTurnError) string {

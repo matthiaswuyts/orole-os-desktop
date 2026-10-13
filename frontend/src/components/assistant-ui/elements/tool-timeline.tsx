@@ -9,6 +9,8 @@ export interface TimelineStep {
   verb: string;
   chip: string;
   icon: LucideIcon;
+  /** The chip is a command, path or pattern: it is set in monospace. */
+  code?: boolean;
   /** The step's call failed: an explicit error state next to the chip, never only a colour. */
   failed?: boolean;
   /** The step is still in flight: its verb shimmers. */
@@ -20,23 +22,25 @@ export interface TimelineStep {
 }
 export interface TimelineStat { file: string; added?: number; removed?: number }
 
-/** One verb + icon + chip step of a timeline; with `content` the whole row opens into its detail. */
+const rowClass = "flex w-full min-w-0 items-center gap-2 rounded-md px-1.5 py-1 text-left";
+
+/** One icon + verb + detail step of a timeline; with `content` the whole row opens into its detail. */
 export function TimelineStepRow({ step, shimmer = false, className, ...props }: Omit<ComponentProps<"li">, "children"> & { step: TimelineStep; shimmer?: boolean }) {
   const Icon = step.failed ? CircleXIcon : step.icon;
   const verbLine = <>
-    <Icon aria-hidden className={cn("size-3.5 shrink-0", step.failed && "text-destructive-foreground")} />
-    <span className={cn("font-medium", step.chip ? "shrink-0" : "min-w-0 truncate", (shimmer || step.running) && "cv-shimmer", step.failed && "text-destructive-foreground")}>{step.verb}</span>
-    {step.chip && <span className={cn(surfaces.field, "min-w-0 truncate px-2 py-0.5", step.failed && "border-destructive/40")} title={step.chip}>{step.chip}</span>}
+    <Icon aria-hidden className={cn("size-3.5 shrink-0 text-muted-foreground/70", step.failed && "text-destructive-foreground")} />
+    <span className={cn("text-foreground/85", step.chip ? "shrink-0" : "min-w-0 truncate", (shimmer || step.running) && "cv-shimmer", step.failed && "text-destructive-foreground")}>{step.verb}</span>
+    {step.chip && <span className={cn("min-w-0 truncate text-muted-foreground", step.code && "font-mono text-[11px]")}>{step.chip}</span>}
     {step.failed && <span className="shrink-0 text-destructive-foreground">Failed</span>}
   </>;
-  return <li data-slot="timeline-step" data-failed={step.failed || undefined} className={cn("min-w-0 text-muted-foreground", className)} {...props}>
+  return <li data-slot="timeline-step" data-failed={step.failed || undefined} className={cn("min-w-0 text-xs text-muted-foreground", className)} {...props}>
     {step.content ? <Collapsible>
-      <CollapsibleTrigger className="group/step flex w-full min-w-0 items-center gap-2 rounded-md text-left outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring" aria-label={`${step.verb}${step.chip ? ` ${step.chip}` : ""}${step.failed ? " (failed)" : ""}: show details`}>
-        <ChevronRightIcon aria-hidden className="size-3 shrink-0 transition-transform group-data-[panel-open]/step:rotate-90 motion-reduce:transition-none" />
+      <CollapsibleTrigger className={cn(rowClass, "group/step outline-none transition-colors hover:bg-muted/60 focus-visible:ring-2 focus-visible:ring-ring data-[panel-open]:bg-muted/40")} aria-label={`${step.verb}${step.chip ? ` ${step.chip}` : ""}${step.failed ? " (failed)" : ""}: show details`}>
         {verbLine}
+        <ChevronRightIcon aria-hidden className="ms-auto size-3.5 shrink-0 opacity-0 transition-[transform,opacity] duration-150 group-hover/step:opacity-100 group-focus-visible/step:opacity-100 group-data-[panel-open]/step:rotate-90 group-data-[panel-open]/step:opacity-100 motion-reduce:transition-none" />
       </CollapsibleTrigger>
-      <CollapsiblePanel><div className="mt-1.5 ms-5 min-w-0">{step.content}</div></CollapsiblePanel>
-    </Collapsible> : <div className="flex min-w-0 items-center gap-2">{verbLine}</div>}
+      <CollapsiblePanel><div className="mb-1.5 ms-[1.375rem] mt-1 min-w-0">{step.content}</div></CollapsiblePanel>
+    </Collapsible> : <div className={rowClass}>{verbLine}</div>}
     {step.aside}
   </li>;
 }
@@ -44,7 +48,7 @@ export function TimelineStepRow({ step, shimmer = false, className, ...props }: 
 /** The vertical list of steps; with `streaming` the last verb shimmers. */
 export function TimelineSteps({ steps, streaming = false, label = "Steps", className }: { steps: readonly TimelineStep[]; streaming?: boolean; label?: string; className?: string }) {
   if (steps.length === 0) return null;
-  return <ul aria-label={label} className={cn("m-0 flex list-none flex-col gap-1.5 p-0", className)}>
+  return <ul aria-label={label} className={cn("m-0 flex list-none flex-col p-0", className)}>
     {steps.map((step, index) => <TimelineStepRow key={step.id ?? index} step={step} shimmer={streaming && index === steps.length - 1} />)}
   </ul>;
 }

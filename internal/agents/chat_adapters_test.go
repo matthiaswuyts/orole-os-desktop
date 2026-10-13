@@ -200,6 +200,40 @@ func TestChatCodexOnlyStructuredArtifactsAndPolicy(t *testing.T) {
 	}
 }
 
+func TestChatCodexPlanUpdatesBecomeDistinctPlanCalls(t *testing.T) {
+	p, _ := chatCodexFixture()
+	type plan struct {
+		Explanation string `json:"explanation"`
+		Plan        []struct {
+			Step   string `json:"step"`
+			Status string `json:"status"`
+		} `json:"plan"`
+	}
+	revision := func(raw string) (ToolData, plan) {
+		t.Helper()
+		p.notification("turn/plan/updated", json.RawMessage(raw))
+		td := chatEventData[ToolData](t, chatDrain(p), EvTool)
+		var in plan
+		if err := json.Unmarshal(td.Input, &in); err != nil {
+			t.Fatalf("plan input %s: %v", td.Input, err)
+		}
+		return td, in
+	}
+	first, in := revision(`{"threadId":"thread","turnId":"turn","explanation":" Fix then test ","plan":[{"step":"Find the bug","status":"inProgress"},{"step":"  ","status":"pending"},{"step":"Run the tests","status":"pending"}]}`)
+	if first.Name != "update_plan" || first.Status != "ok" || in.Explanation != "Fix then test" || len(in.Plan) != 2 || in.Plan[0].Status != "inProgress" || in.Plan[1].Step != "Run the tests" {
+		t.Fatalf("first revision: %+v %+v", first, in)
+	}
+	second, _ := revision(`{"threadId":"thread","turnId":"turn","plan":[{"step":"Find the bug","status":"completed"}]}`)
+	if second.ID == first.ID {
+		t.Fatalf("revisions share call id %q: the feed would merge them", first.ID)
+	}
+	p.notification("turn/plan/updated", json.RawMessage(`{"threadId":"other","turnId":"turn","plan":[{"step":"x","status":"pending"}]}`))
+	p.notification("turn/plan/updated", json.RawMessage(`{"threadId":"thread","turnId":"turn","plan":[]}`))
+	if chatHasEvent(chatDrain(p), EvTool) {
+		t.Fatal("another thread's or an empty plan was reported")
+	}
+}
+
 func TestChatOMPDialogsNativeValuesAndExpiration(t *testing.T) {
 	for _, method := range []string{"input", "editor", "select"} {
 		t.Run(method, func(t *testing.T) {
