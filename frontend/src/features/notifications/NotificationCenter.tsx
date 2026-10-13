@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { Bell, Check, CheckCheck, CircleAlert, CircleCheck, Ellipsis, RefreshCw, X } from "lucide-react";
 import { useNotifications } from "@/stores/notifications";
 import { useDaemon } from "@/stores/daemon";
@@ -8,11 +8,12 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "@/components/ui/empty";
-import { Select, SelectGroup, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Popover, PopoverClose, PopoverDescription, PopoverPopup, PopoverTitle, PopoverTrigger } from "@/components/ui/popover";
 import { Menu, MenuCheckboxItem, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "@/components/ui/menu";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "@/components/ui/tooltip";
+
+const SourceFilter = lazy(() => import("./SourceFilter"));
 
 export function NotificationCenter() {
   const [open, setOpen] = useState(false);
@@ -37,10 +38,7 @@ export function NotificationCenter() {
         <div className="flex max-h-[min(440px,var(--available-height))] flex-col">
           <div className="flex shrink-0 flex-wrap items-center gap-1.5 border-b px-4 py-3">
             <PopoverTitle className="text-sm">Notifications</PopoverTitle>
-            {inDesktop && <Select value={n.source} items={sourceItems} onValueChange={(value) => n.filter(value ?? "", n.unreadOnly)}>
-              <SelectTrigger size="sm" aria-label="Notification source" className="w-auto min-w-0 max-w-24 border-transparent bg-transparent text-muted-foreground shadow-none"><SelectValue /></SelectTrigger>
-              <SelectPopup><SelectGroup>{sourceItems.map((source) => <SelectItem key={source.value} value={source.value}>{source.label}</SelectItem>)}</SelectGroup></SelectPopup>
-            </Select>}
+            {inDesktop && <Suspense fallback={null}><SourceFilter value={n.source} items={sourceItems} onChange={(value) => n.filter(value, n.unreadOnly)} /></Suspense>}
             <div className="ml-auto flex items-center gap-1">
               {inDesktop && <><Button size="xs" variant="ghost" className="text-muted-foreground" disabled={unavailable || n.busy || n.loading || matchingUnread === 0} onClick={() => void n.markRead([], true)}><CheckCheck />{n.source ? "Mark source read" : "Mark all read"}</Button>
                 <Menu><MenuTrigger render={<Button size="icon-xs" variant="ghost" aria-label="Notification options" />}><Ellipsis /></MenuTrigger>

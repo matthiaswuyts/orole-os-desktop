@@ -1,4 +1,4 @@
 {
-  "description": "Max raw bytes of the frontend entry chunk (the JS file dist/index.html loads first). Measured 594372 bytes on 2026-10-12 (580 KiB, after the code split in PR #161; it was 1277527 bytes before); set 2% plus rounding above. Ratchet down with `bun scripts/check-bundle-size.mjs --ratchet` whenever the chunk shrinks. Raise only with a reason in the PR.",
-  "entryMaxBytes": 607232
+  "description": "Max raw bytes of the frontend entry chunk (the JS file dist/index.html loads first). Measured 594372 bytes on 2026-10-12 (580 KiB, after the code split in PR #161; it was 1277527 bytes before). Raised on 2026-10-13 to 622611 bytes measured + 2%: Rolldown now inlines the toast and alert-dialog modules the shell imports at startup into the entry instead of emitting them as separate eagerly imported chunks. The JS loaded at startup (entry plus its static imports) fell from 994306 to 938304 bytes in the same change (Select moved behind the notification popover, dnd-kit out of the dashboard store). Ratchet down with `bun scripts/check-bundle-size.mjs --ratchet` whenever the chunk shrinks. Raise only with a reason in the PR.",
+  "entryMaxBytes": 635904
 }

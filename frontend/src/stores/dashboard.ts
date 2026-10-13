@@ -1,5 +1,4 @@
 import { create } from "zustand";
-import { arrayMove } from "@dnd-kit/sortable";
 import { readAll, write } from "@/stores/settings";
 import { WIDGET_SIZES, type WidgetSize } from "@/components/widgets/frame";
 
@@ -130,7 +129,10 @@ export const useDashboard = create<State>((set, get) => {
       const widgets = get().widgets;
       const from = widgets.findIndex((w) => w.id === id), to = widgets.findIndex((w) => w.id === overId);
       if (from < 0 || to < 0 || from === to) return;
-      update(arrayMove(widgets, from, to));
+      // Moved by hand: importing @dnd-kit/sortable's arrayMove here pulled all of dnd-kit into the startup bundle.
+      const next = widgets.slice();
+      next.splice(to, 0, ...next.splice(from, 1));
+      update(next);
     },
     resizeWidget: (id, size) => patch(id, (w) => ({ ...w, size })),
     setTall: (id, tall) => patch(id, ({ tall: _tall, ...w }) => (tall ? { ...w, tall } : w)),
