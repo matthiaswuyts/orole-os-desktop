@@ -88,12 +88,9 @@ type BotConfig struct {
 	Executive  bool      `json:"executive,omitempty"` // an executive assistant may ask every other bot (ask_bot)
 	// CodeTasks lets the bot start, watch and steer code tasks: coding agents that run commands and edit files on
 	// this PC. Every start and message still goes through the shared permission policy as "bot:<id>".
-	CodeTasks bool `json:"codeTasks,omitempty"`
-	// Automations lets the bot read the user's automations and draft new ones or edits. A draft is
-	// only a card in the chat until the user approves it; the bot can never save, enable or run one.
-	Automations bool          `json:"automations,omitempty"`
-	Memory      []ScopeAccess `json:"memory"` // grants beyond the private scope
-	Limits      BotLimits     `json:"limits"`
+	CodeTasks bool          `json:"codeTasks,omitempty"`
+	Memory    []ScopeAccess `json:"memory"` // grants beyond the private scope
+	Limits    BotLimits     `json:"limits"`
 	// Setup marks a freshly created bot that still has to learn its purpose: it is offered the setup
 	// tools (ask_user, save_profile) until it saves its own instructions.
 	Setup bool `json:"setup,omitempty"`

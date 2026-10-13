@@ -1,5 +1,5 @@
 import { useId, type Dispatch, type ReactNode } from "react";
-import { Globe, ScrollText } from "lucide-react";
+import { Globe, ScrollText, SquareTerminalIcon } from "lucide-react";
 import { Chat, MCP, Skills, type ChatToolInfo, type ServerState, type Skill } from "@/mygo";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { ServerLogo } from "@/features/integrations/ServerLogo";
 import { useUI } from "@/stores/ui";
+import { SwitchRow } from "../panel/rows";
 import { splitModel, type Action, type FormState, type Problems } from "./botForm";
 import { Section } from "./controls";
 import { useLoad, type Loaded } from "./useLoad";
@@ -170,6 +171,9 @@ export function ToolsPage({ form, dispatch }: { form: FormState; dispatch: Dispa
   const unknown = tools.data ? form.tools.filter((id) => !offered.has(id)) : [];
   return (
     <div className="flex flex-col gap-3">
+      <div className="overflow-hidden rounded-xl border bg-card/60">
+        <SwitchRow icon={SquareTerminalIcon} label="Runs code tasks" hint="Starts coding agents in your projects, follows their progress and tells you when they finish or need you. You approve each start in chat unless you allowed this bot always." checked={form.codeTasks} onChange={(codeTasks) => dispatch({ type: "patch", patch: { codeTasks } })} />
+      </div>
       {tools.error && (
         <Alert variant="error"><AlertDescription className="flex items-center justify-between gap-2"><span className="selectable break-words">{tools.error}</span><Button size="xs" variant="outline" onClick={tools.reload}>Retry</Button></AlertDescription></Alert>
       )}

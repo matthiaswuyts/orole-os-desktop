@@ -38,7 +38,7 @@ func (Automations) ID() string { return "automations" }
 const definitionHelp = `Automation definition (schemaVersion 2). Shape: {"name","description","trigger":{"type":"manual|schedule|event|watch|webhook","schedule":"cron or 'every 15m'","event":"topic or prefix.*","filter":"expression over event.data","watch":{"source":"github|mcp","kind":"...","repo":"owner/name","branch":"..."}},"steps":[{"id":"letters-digits","type":"<step type>","params":{...},"then":[...],"else":[...]}]}. Call automation_reference first for every step type's params, the triggers, event topics and templates. Templates: {{ event.data.<field> }}, {{ steps.<id>.output... }}. Do not set id or enabled.`
 
 func (a Automations) Specs(bot chat.Bot, caps llm.Caps) []llm.ToolSpec {
-	if !caps.Tools || !bot.Config.Automations || a.Runtime == nil {
+	if !caps.Tools || a.Runtime == nil {
 		return nil
 	}
 	return []llm.ToolSpec{
@@ -55,8 +55,8 @@ func (a Automations) Specs(bot chat.Bot, caps llm.Caps) []llm.ToolSpec {
 }
 
 func (a Automations) Call(ctx context.Context, rc chat.RunContext, name string, args json.RawMessage) (chat.ToolResult, error) {
-	if a.Runtime == nil || !rc.Bot.Config.Automations || rc.BotID == "" {
-		return errResult("automations are not enabled for this bot")
+	if a.Runtime == nil || rc.BotID == "" {
+		return errResult("automations need a bot")
 	}
 	switch name {
 	case toolAutomationReference:

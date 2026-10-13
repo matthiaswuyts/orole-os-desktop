@@ -64,10 +64,10 @@ func signalLabel(name, canonical string) string {
 	return label
 }
 
-// ObserveTool records a successful tool call of a bot that sets up automations, in a run the user
+// ObserveTool records a successful tool call of a bot, in a run the user
 // started. It implements chat.ToolObserver; failures are logged, never surfaced to the turn.
 func (s *Store) ObserveTool(ctx context.Context, rc chat.RunContext, name string, args json.RawMessage) {
-	if rc.BotID == "" || rc.Author != "user" || !rc.Bot.Config.Automations || !signalTool(name) {
+	if rc.BotID == "" || rc.Author != "user" || !signalTool(name) {
 		return
 	}
 	key, canonical := signalKey(name, args)
@@ -128,10 +128,10 @@ func ready(count, days, offers int, offeredAt, dismissedUntil, now int64) bool {
 		dismissedUntil <= now && now-offeredAt >= signalReoffer.Milliseconds()
 }
 
-// SuggestionsPrompt is the user-turn prompt section of a bot that sets up automations: at most two
+// SuggestionsPrompt is the user-turn prompt section of a bot: at most two
 // ready signals, at most once a day per bot. Rendering marks them offered, which is the rate limit.
 func (s *Store) SuggestionsPrompt(bot chat.Bot) string {
-	if bot.ID == "" || !bot.Config.Automations {
+	if bot.ID == "" {
 		return ""
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
@@ -206,7 +206,7 @@ type suggestionTool struct{ s *Store }
 func (suggestionTool) ID() string { return "automation_suggestion" }
 
 func (suggestionTool) Specs(bot chat.Bot, caps llm.Caps) []llm.ToolSpec {
-	if !caps.Tools || !bot.Config.Automations {
+	if !caps.Tools {
 		return nil
 	}
 	return []llm.ToolSpec{{
@@ -224,8 +224,8 @@ func (t suggestionTool) Call(ctx context.Context, rc chat.RunContext, _ string, 
 	if err := json.Unmarshal(raw, &a); err != nil {
 		return toolFail("invalid arguments: " + err.Error()), nil
 	}
-	if rc.BotID == "" || !rc.Bot.Config.Automations {
-		return toolFail("automations are not enabled for this bot"), nil
+	if rc.BotID == "" {
+		return toolFail("automation suggestions need a bot"), nil
 	}
 	if err := t.s.decideSignal(ctx, rc.BotID, a.Key, a.Decision); err != nil {
 		return userToolResult(err)

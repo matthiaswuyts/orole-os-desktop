@@ -272,11 +272,6 @@ export interface BotConfig {
    * this PC. Every start and message still goes through the shared permission policy as "bot:<id>".
    */
   codeTasks?: boolean;
-  /**
-   * Automations lets the bot read the user's automations and draft new ones or edits. A draft is
-   * only a card in the chat until the user approves it; the bot can never save, enable or run one.
-   */
-  automations?: boolean;
   /** grants beyond the private scope */
   memory: ScopeAccess[];
   limits: BotLimits;

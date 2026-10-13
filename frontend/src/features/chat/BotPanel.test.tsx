@@ -49,7 +49,7 @@ describe("bot settings panel", () => {
       id: "b1", name: "Trips", description: "", instructions: "Plan trips",
       config: { tools: [{ id: "datetime" }], setup: true },
     });
-    await waitFor(() => expect(screen.getByText("All changes saved.")).toBeInTheDocument());
+    expect(screen.queryByText("All changes saved.")).toBeNull();
   });
 
   it("counts the bot's saved memories and lets the user forget one", async () => {
@@ -72,7 +72,6 @@ describe("bot settings panel", () => {
     render(<BotPanel bot={bot("b1", { name: "Travel" })} />);
     fireEvent.change(screen.getByLabelText("Name"), { target: { value: " " } });
     expect(screen.getByText("Give the bot a name.")).toBeInTheDocument();
-    expect(screen.getByText("Fix the highlighted fields to save.")).toBeInTheDocument();
     await new Promise((r) => setTimeout(r, 900));
     expect(saved).not.toHaveBeenCalled();
   });

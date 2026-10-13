@@ -175,7 +175,7 @@ calls `Manager.GrantSkill`, which appends it to that bot's `BotConfig.Skills`, s
 leaves the proposal pending and Add can be retried. Dismiss marks it rejected.
 
 ## Automation cards (`propose_automation`)
-A bot with `BotConfig.automations` (Settings panel: "Sets up automations"; off by default, never exported) gets
+Every bot (there is no per-bot switch; stored `automations` keys in old bot configs are ignored) gets
 `automation_reference` (triggers, the live step catalogue, event topics, templates and its own bot id),
 `list_automations`, `automation_detail` (definition plus the last five runs; untrusted data) and
 `propose_automation {definition, rationale, replaces?}` (`internal/chat/tools/automations.go`). There is no tool to save,
