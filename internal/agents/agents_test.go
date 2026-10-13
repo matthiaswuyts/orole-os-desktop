@@ -335,6 +335,62 @@ func TestDefaultPermissionModeAppliesToUnnamedStarts(t *testing.T) {
 	}
 }
 
+// Bots follow the stored preference when they name no mode: auto as-is, YOLO only while the user
+// allowed bots YOLO (otherwise manual), and an explicit bot YOLO never exceeds that same rule.
+func TestBotStartsFollowStoredPermissionPreference(t *testing.T) {
+	var def atomic.Value
+	var botYolo, yolo atomic.Bool
+	yolo.Store(true)
+	def.Store("auto")
+	e := newEnv(t, withYoloSetting(yolo.Load), withBotYolo(botYolo.Load), withDefaultMode(func() string { return def.Load().(string) }))
+	bot := agents.WithActor(ctx10(t), "bot:b1")
+	start := func(spec agents.StartSpec) (agents.Session, error) {
+		spec.Kind, spec.Dir, spec.Prompt = "claude", t.TempDir(), "hi"
+		return e.m.Start(bot, spec)
+	}
+	if s, err := start(agents.StartSpec{}); err != nil || s.PermissionMode != "auto" {
+		t.Fatalf("bot default auto: %+v %v", s, err)
+	}
+	def.Store("yolo")
+	if s, err := start(agents.StartSpec{}); err != nil || s.PermissionMode != "manual" {
+		t.Fatalf("bot default yolo without bot-yolo must be manual: %+v %v", s, err)
+	}
+	if _, err := start(agents.StartSpec{PermissionMode: "yolo", ConfirmYolo: true}); err == nil {
+		t.Fatal("explicit bot yolo without bot-yolo must be refused")
+	}
+	botYolo.Store(true)
+	if s, err := start(agents.StartSpec{}); err != nil || s.PermissionMode != "yolo" {
+		t.Fatalf("bot default yolo with bot-yolo: %+v %v", s, err)
+	}
+	yolo.Store(false)
+	if s, err := start(agents.StartSpec{}); err != nil || s.PermissionMode != "manual" {
+		t.Fatalf("bot default yolo with yolo turned off must be manual: %+v %v", s, err)
+	}
+	def.Store("")
+	if s, err := start(agents.StartSpec{}); err != nil || s.PermissionMode != "manual" {
+		t.Fatalf("no stored preference must keep manual: %+v %v", s, err)
+	}
+}
+
+// Changing the stored preference applies to new tasks only; a task already started keeps its mode.
+func TestChangingPermissionPreferenceLeavesRunningTasksAlone(t *testing.T) {
+	var def atomic.Value
+	def.Store("auto")
+	e := newEnv(t, withYoloSetting(func() bool { return true }), withDefaultMode(func() string { return def.Load().(string) }))
+	running := e.start(t, agents.StartSpec{Prompt: "NEEDPERM"})
+	running = e.wait(t, running.ID, "needs-you", status(agents.StatusNeedsYou))
+	def.Store("manual")
+	if got, err := e.m.Get(running.ID); err != nil || got.PermissionMode != "auto" {
+		t.Fatalf("running task changed mode: %+v %v", got, err)
+	}
+	if fresh := e.start(t, agents.StartSpec{Prompt: "hi"}); fresh.PermissionMode != "manual" {
+		t.Fatalf("new task ignores the new preference: %+v", fresh)
+	}
+	if stored, err := e.st.GetSession(running.ID); err != nil || stored.PermissionMode != "auto" {
+		t.Fatalf("stored running task changed mode: %+v %v", stored, err)
+	}
+}
+
 func TestPermissionDenyIsRelayedAndAudited(t *testing.T) {
 	e := newEnv(t)
 	s := e.start(t, agents.StartSpec{Prompt: "NEEDPERM"})

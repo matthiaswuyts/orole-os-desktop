@@ -9,6 +9,7 @@ notes. See `docs/development/updates.md`.
 ## Unreleased
 
 ### Added
+- The permission mode you pick when starting a task (Manual, Auto or Yolo) is now remembered as your default. New tasks start in it, and bots that start tasks follow it too; Yolo only applies to bots when "Bots may use Yolo" is on, otherwise they use Manual. Running tasks keep their mode.
 - Bots can set up automations from chat. Turn on "Sets up automations" in a bot's panel and ask it, for example, to "watch CI
   on main and tell me when it fails". The bot drafts the flow, Orole validates it, and it appears as a card in the chat with
   the trigger, the steps and anything it runs or sends. Nothing is saved until you choose Turn on, Add turned off or
