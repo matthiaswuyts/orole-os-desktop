@@ -108,23 +108,40 @@ A bot with `BotConfig.codeTasks` (Settings panel: "Runs code tasks"; off by defa
 `start_task`, `list_tasks`, `task_status`, `message_task` and `stop_task` (`internal/chat/tools/tasks.go`, backed by
 `daemon/bot_tasks.go`). Bots cannot run commands themselves; a code task is a coding agent (Claude Code, Codex, ...)
 in a registered local project. The runtime passes `agents.WithActor(ctx, "bot:<id>")`: the session records it as
-`Session.Owner`, the agent runtime asks the shared policy as that actor (`agent.start`, `agent.prompt` are destructive,
-so every start and follow-up is approved unless the user stores a rule), and YOLO is refused. Bots may read any task
-but message or stop only tasks they own. Task text (activity, last message, transcript) reaches the model as fenced
-untrusted data.
+`Session.Owner` and the agent runtime asks the shared policy as that actor. `agent.start` and `agent.prompt` are
+`write` effects (the task's own permission mode guards what it does), so the approval can be remembered: the
+conversation shows the held request inline (`parts/JobApprovalCard.tsx`, Allow once / Always allow this bot / Deny;
+"always" stores `bot:<id>` + `agent.start|agent.prompt` + `*` allow rules, listed under Settings › Task permissions)
+and the global approval dialog skips `bot:` actors. The `agents` setting `botAutoApprove` answers an `Ask` for those
+two actions without asking (stored deny rules still apply). A start that names no mode runs in the setting's
+`defaultPermissionMode`; a bot may use YOLO only with `botYolo` on (a YOLO default falls back to manual for a bot
+without it). Bots may read any task but message or stop only tasks they own. Task text (activity, last message,
+result, transcript) reaches the model as fenced untrusted data.
 
-When a task a bot owns finishes a turn, needs the user, or fails, `daemon/app_events.go` calls
-`Manager.ReportTask`: the state is stored in the bot's conversation as a user message authored `task:<taskId>`,
-fenced as "code task report", and the bot answers it with an addendum to tell the user what happened (only the user
-can answer a task's questions). The UI draws it as a collapsed "Code task update" card with "Open task". The bot's
-system prompt lists its running tasks, fenced. Reports are best effort: they are not replayed after a daemon restart.
+A task is finished when a turn ended **and no background agent of it is still running**. Harness subagent
+lifecycle events (`EvSubagent`: omp `subagent_lifecycle`, Claude `task_started`/`task_notification`, Codex collab
+agents) keep `Session.Subagents`; a turn that ends with some running keeps the session `working` ("Turn ended;
+waiting for N background agents") and `Config.Finished` fires when the last one reports (a follow-up turn started
+by the harness clears the hold and finishes on its own end). `daemon/app_events.go` additionally settles a completed
+turn for `taskSettleDelay` (4 s) and drops it when the session is working again by then, so a harness that continues
+immediately never reports early. A failed turn reports `agent.failed` once (never `agent.finished`).
+
+When a task a bot owns finishes, needs the user, or fails, `daemon/app_events.go` calls `Manager.ReportTask`: the
+state is stored in the bot's conversation as a user message authored `task:<taskId>`, fenced as "code task report",
+and the bot answers it with an addendum. A finished report carries the task's **complete result** (`Session.Result`,
+up to 32 KiB; `task_status` returns the same, lists stay clipped to 2,000 runes) and the addendum tells the bot to
+relay it as a full overview; waiting and failed reports carry what the task asks, the error and its last message.
+Only the user can answer a task's questions. The UI draws the report as a collapsed "Code task update" card with
+"Open task". The bot's system prompt lists its running tasks, fenced. Reports are best effort: they are not replayed
+after a daemon restart.
 
 A successful `start_task` also stores a `task` part on the reply (`id` task id, `title` title at start, `name` harness).
-The conversation draws the tasks a reply started as chips (`features/chat/parts/TaskChip.tsx`) whose status glyph and
-title come live from the agents store (`useTaskSession` fetches a task the list does not hold with `Agents.get`).
-A chip, or a report's "Open task", opens `TaskPane` beside the conversation (`useChat.taskPaneId`; it replaces the
-settings panel and closes when another bot is selected): the Tasks view's own `TaskView`, so the feed and composer
-talk to that task directly. Below a `@3xl` chat container the pane overlays the conversation instead of splitting it.
+The conversation draws the tasks a reply started as a subagent list (`features/chat/parts/TaskChip.tsx`, assistant-ui
+subagent-list element) whose status glyph, activity and title come live from the agents store (`useTaskSession`
+fetches a task the list does not hold with `Agents.get`). A row, or a report's "Open task", opens `TaskPane` beside
+the conversation (`useChat.pane`, also used for `show_document` artifacts; it replaces the settings panel and closes
+when another bot is selected): the Tasks view's own `TaskView`, so the feed and composer talk to that task directly.
+Below a `@3xl` chat container the pane overlays the conversation instead of splitting it.
 
 ## @mentions and skills
 Typing `@` in the composer opens the assistant-ui trigger popover: the other bots and the skills this bot has been

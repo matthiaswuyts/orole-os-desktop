@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { ArrowUpRight, Check, Hand, ShieldAlert, Workflow } from "lucide-react";
 import { useShallow } from "zustand/react/shallow";
 import { Widget } from "@/components/widgets/Widget";
@@ -7,36 +7,13 @@ import { onDashboard } from "@/features/agents/columns";
 import { ago, folderOf, sessionTitle, useNow } from "@/features/agents/format";
 import { ProviderLogo } from "@/features/agents/ProviderLogo";
 import { useApprovalsStore, useAutomationApprovals } from "@/features/automations/useApprovals";
+import { botRequestTitle, isBotActor, usePolicyPending } from "@/features/mcp/usePolicyPending";
 import { openTask } from "@/features/projects/tasks";
-import { inDesktop } from "@/lib/backend";
-import { events, Policy, type Pending, type Session } from "@/mygo";
+import type { Session } from "@/mygo";
 import { useAgents } from "@/stores/agents";
+import { useChat } from "@/stores/chat";
 import { useUI } from "@/stores/ui";
 import { useTasksStatus } from "./useTasksStatus";
-
-const NO_PENDING: Pending[] = [];
-
-/** The daemon's MCP approval queue, pushed on change; subscribes before fetching so a snapshot cannot hide a new request. */
-function usePolicyPending(): { items: Pending[]; checkedAt: number } {
-  const [state, setState] = useState({ items: NO_PENDING, checkedAt: 0 });
-  useEffect(() => {
-    if (!inDesktop) return;
-    let live = true;
-    let sequence = 0;
-    const refresh = () => {
-      const version = ++sequence;
-      Policy.pending().then(
-        (items) => { if (live && version === sequence) setState({ items: items ?? NO_PENDING, checkedAt: Date.now() }); },
-        (error: unknown) => console.warn("Could not load pending approvals", error),
-      );
-    };
-    const offPending = events.policyPending.on(({ items }) => { sequence++; setState({ items: items ?? NO_PENDING, checkedAt: Date.now() }); });
-    const offDaemon = events.daemonState.on((link) => { if (link.connected) refresh(); else { sequence++; setState((s) => ({ ...s, items: NO_PENDING })); } });
-    refresh();
-    return () => { live = false; offPending(); offDaemon(); };
-  }, []);
-  return state;
-}
 
 /** What a waiting session is blocked on, in a few words. */
 function waitingFor(s: Session): string {
@@ -73,6 +50,8 @@ export function NeedsYouWidget({ onRemove }: WidgetProps) {
     .filter((session) => onDashboard(session) && (session.status === "needs-you" || session.pending?.length > 0 || (session.questions?.length ?? 0) > 0))
     .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))));
   const policy = usePolicyPending();
+  const bots = useChat((s) => s.bots);
+  const botName = (actor: string) => bots.find((b) => b.id === actor.slice(4))?.name ?? "a bot";
   const approvals = useAutomationApprovals();
   const approvalsCheckedAt = useApprovalsStore((s) => s.checkedAt);
   const [mountedAt] = useState(Date.now);
@@ -94,7 +73,9 @@ export function NeedsYouWidget({ onRemove }: WidgetProps) {
         : <ul className="-mx-3 -my-1.5 flex flex-col divide-y divide-border/60">
             {sessions.map((s) => <Row key={s.id} icon={<ProviderLogo kind={s.kind} />} title={sessionTitle(s)} detail={[folderOf(s), waitingFor(s)].filter(Boolean).join(" · ")}
               aside={s.pending?.length ? "Permission" : s.questions?.length ? "Question" : "Reply"} onClick={() => openTask(s.id)} />)}
-            {policy.items.map((p) => <Row key={p.id} icon={<ShieldAlert />} title={`${p.action} · ${p.resource}`} detail={`Requested by ${p.actor} · decide in the approval dialog`} aside="Held action" />)}
+            {policy.items.map((p) => isBotActor(p.actor)
+              ? <Row key={p.id} icon={<ShieldAlert />} title={botRequestTitle(p.action)} detail={`Asked by ${botName(p.actor)} · decide in that bot's chat`} aside="Held action" onClick={() => useChat.getState().open(p.actor.slice(4))} />
+              : <Row key={p.id} icon={<ShieldAlert />} title={`${p.action} · ${p.resource}`} detail={`Requested by ${p.actor} · decide in the approval dialog`} aside="Held action" />)}
             {approvals.map((a) => <Row key={`${a.runId}:${a.stepId}`} icon={<Workflow />} title={a.name} detail={a.message || "Automation waiting for approval"} aside="Approval"
               onClick={() => useUI.getState().setView("automations")} />)}
           </ul>}

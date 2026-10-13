@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect } from "react";
+import { lazy, Suspense, useEffect, useRef } from "react";
 import { PlugZap, Plus } from "lucide-react";
 import { AsciiMark, SPACE_PIECES } from "@/components/ascii/AsciiMark";
 import { Button } from "@/components/ui/button";
@@ -9,10 +9,22 @@ import { useHasProvider } from "@/stores/llm";
 import { useUI } from "@/stores/ui";
 import { Conversation } from "./Conversation";
 import { BotPanel } from "./BotPanel";
+import { SidePane } from "./SidePane";
 
 const NewBot = lazy(() => import("./builder/NewBot").then((m) => ({ default: m.NewBot })));
-// Split out like the builder: the task feed and composer load only when a task is opened beside the conversation.
-const TaskPane = lazy(() => import("./TaskPane").then((m) => ({ default: m.TaskPane })));
+
+/** Warms the task pane's chunk once the view is idle, so the first open animates instead of waiting on the network. */
+function usePreloadTaskPane() {
+  useEffect(() => {
+    const load = () => { void import("./TaskPane"); };
+    if (typeof window.requestIdleCallback === "function") {
+      const id = window.requestIdleCallback(load);
+      return () => window.cancelIdleCallback(id);
+    }
+    const id = setTimeout(load, 500);
+    return () => clearTimeout(id);
+  }, []);
+}
 
 function CenteredCard({ icon, title, children, action }: { icon?: React.ReactNode; title: string; children?: React.ReactNode; action?: React.ReactNode }) {
   return <div className="flex h-full items-center justify-center p-6">
@@ -47,9 +59,10 @@ export function ChatView() {
   const botCount = useChat((s) => s.bots.length);
   const bot = useSelectedBot();
   const settingsOpen = useChat((s) => s.settingsOpen);
-  const taskPaneId = useChat((s) => s.taskPaneId);
+  const container = useRef<HTMLDivElement>(null);
 
   useEffect(() => useChat.getState().startSync(), []);
+  usePreloadTaskPane();
 
   if (!inDesktop) return <NeedsDesktop what="Chat" />;
   if (builder.open) {
@@ -73,10 +86,10 @@ export function ChatView() {
       ? <NoBots />
       : <CenteredCard title="Pick a bot"><p>Choose a bot from the list to open its conversation.</p></CenteredCard>;
   }
-  // The container sizes the task pane: beside the conversation when there is room, over it when there is not.
-  return <div className="@container/chat relative flex h-full min-w-0 overflow-hidden">
+  // The container sizes the side pane: beside the conversation when there is room, over it when there is not.
+  return <div ref={container} className="@container/chat relative flex h-full min-w-0 overflow-hidden">
     <div className="min-w-0 flex-1"><Conversation key={bot.id} bot={bot} /></div>
     {settingsOpen && <BotPanel bot={bot} />}
-    {taskPaneId && <Suspense fallback={null}><TaskPane key={taskPaneId} taskId={taskPaneId} /></Suspense>}
+    <SidePane botId={bot.id} container={container} />
   </div>;
 }

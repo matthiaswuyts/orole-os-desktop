@@ -131,6 +131,10 @@ type Session struct {
 	// those whose result was an error.
 	ToolCalls   int `json:"toolCalls,omitempty"`
 	FailedTools int `json:"failedTools,omitempty"`
+	// Subagents counts the background agents (omp/Claude subagents, Codex child tasks) the harness
+	// reported as running. A turn that ends while they run is not finished: the session stays
+	// working until the last one reports and the harness's follow-up turn ends.
+	Subagents int `json:"subagents,omitempty"`
 	// Pending are the permission requests awaiting a decision (runtime state).
 	Pending   []PermissionRequest `json:"pending"`
 	Usage     *ContextUsage       `json:"usage,omitempty"`

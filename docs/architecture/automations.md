@@ -47,7 +47,7 @@ The CI template is a scheduled check every 15 minutes, not a CI push watcher. Gi
 | `task.created` | A code task was launched (never for a retried idempotency key) | `agents.Config.Created` |
 | `task.status` | A task's status changed (`from` holds the previous one) | agent runtime `agents.updated` |
 | `agent.waiting` | A task needs a permission decision or an answer | agent runtime `agents.updated` |
-| `agent.finished` | A task finished a turn (`result` holds its summary) | `agents.Config.Finished` |
+| `agent.finished` | A task finished: its turn ended, no background agents remain and it settled (`result` holds its summary) | `agents.Config.Finished` via `taskEvents.finished` |
 | `agent.failed` | A task or its process failed | agent runtime `agents.updated` |
 | `pr.opened` | Publishing opened a pull request for the task | agent runtime `agents.updated` |
 | `project.created` | A project was added or created | `projects.add` / `projects.create` |

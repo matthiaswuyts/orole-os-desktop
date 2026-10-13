@@ -26,12 +26,14 @@ const (
 	ShowComparison = "show_comparison"
 	ShowTimeline   = "show_timeline"
 	ShowJob        = "show_job_progress"
+	ShowTodo       = "show_todo_list"
+	ShowDocument   = "show_document"
 )
 
 // ShowPrompt is appended to every bot's system prompt that can call the show_* tools.
 const ShowPrompt = `## Structured output
 
-Besides Markdown text you can show typed components with the show_* tools: show_table (tabular data), show_chart (one numeric series), show_diagram (boxes and arrows on a canvas), show_flow_graph (steps in columns and rows with progress state), show_math (worked steps of a calculation), show_spec_sheet (facts about one thing), show_comparison (options against traits with a recommendation), show_timeline (events in order), show_job_progress (staged work and its progress).
+Besides Markdown text you can show typed components with the show_* tools: show_table (tabular data), show_chart (one numeric series), show_diagram (boxes and arrows on a canvas), show_flow_graph (steps in columns and rows with progress state), show_math (worked steps of a calculation), show_spec_sheet (facts about one thing), show_comparison (options against traits with a recommendation), show_timeline (events in order), show_job_progress (staged work and its progress), show_todo_list (your working plan: the steps you are going through, each pending, active, done, failed or cancelled; call it again with the same item ids to update it), show_document (a titled Markdown document the user opens beside the chat: reports, comparisons, drafts, anything longer than a few paragraphs; call it again with the same title and a higher version to revise).
 
 Use one when the content is genuinely structured data, and prefer it to a Markdown table or an ASCII drawing. Call it before the sentence that refers to it, keep the surrounding text short, and do not repeat what the component already shows. Write maths with plain Unicode (x², √, ½, ≤), never LaTeX. Never put instructions or untrusted text you have not read into a component.`
 
@@ -97,6 +99,10 @@ func kindOf(tool string) string {
 		return "comparison"
 	case ShowTimeline:
 		return "timeline"
+	case ShowTodo:
+		return "todo"
+	case ShowDocument:
+		return "document"
 	}
 	return "job"
 }
@@ -725,6 +731,101 @@ func checkJob(raw json.RawMessage) (any, error) {
 	return s, nil
 }
 
+// ---- todo list ----
+
+type todoItem struct {
+	ID          string `json:"id"`
+	Text        string `json:"text"`
+	Description string `json:"description,omitempty"`
+	Status      string `json:"status"`
+	Reason      string `json:"reason,omitempty"`
+}
+
+type todoSpec struct {
+	Title       string     `json:"title,omitempty"`
+	Description string     `json:"description,omitempty"`
+	MaxVisible  int        `json:"maxVisible,omitempty"`
+	Items       []todoItem `json:"items"`
+}
+
+func checkTodo(raw json.RawMessage) (any, error) {
+	var s todoSpec
+	if err := decode(raw, &s); err != nil {
+		return nil, err
+	}
+	if err := text("title", s.Title, 80, false); err != nil {
+		return nil, err
+	}
+	if err := text("description", s.Description, 200, false); err != nil {
+		return nil, err
+	}
+	if err := count("items", len(s.Items), 1, 40); err != nil {
+		return nil, err
+	}
+	if s.MaxVisible < 0 || s.MaxVisible > len(s.Items) {
+		return nil, fmt.Errorf("maxVisible is 0-%d", len(s.Items))
+	}
+	ids := map[string]bool{}
+	for i, it := range s.Items {
+		if err := text("item id", it.ID, 40, true); err != nil {
+			return nil, err
+		}
+		if ids[it.ID] {
+			return nil, fmt.Errorf("duplicate item id %q", it.ID)
+		}
+		ids[it.ID] = true
+		if err := text("item text", it.Text, 120, true); err != nil {
+			return nil, err
+		}
+		if err := text("item description", it.Description, 200, false); err != nil {
+			return nil, err
+		}
+		if err := text("item reason", it.Reason, 200, false); err != nil {
+			return nil, err
+		}
+		switch it.Status {
+		case "pending", "active", "done", "failed", "cancelled":
+		default:
+			return nil, fmt.Errorf("item %d: status must be pending, active, done, failed or cancelled", i+1)
+		}
+	}
+	return s, nil
+}
+
+// ---- document ----
+
+// maxDocumentRunes bounds one document's Markdown; longer deliverables are split by the bot.
+const maxDocumentRunes = 48 << 10
+
+type documentSpec struct {
+	Title   string `json:"title"`
+	Content string `json:"content"`
+	Version int    `json:"version,omitempty"`
+}
+
+func checkDocument(raw json.RawMessage) (any, error) {
+	var s documentSpec
+	if err := decode(raw, &s); err != nil {
+		return nil, err
+	}
+	if err := text("title", s.Title, 120, true); err != nil {
+		return nil, err
+	}
+	// Markdown keeps tabs (code blocks) and CRs; text() would reject them.
+	content := strings.NewReplacer("\t", " ", "\r", "").Replace(s.Content)
+	if err := text("content", content, maxDocumentRunes, true); err != nil {
+		return nil, err
+	}
+	s.Content = strings.ReplaceAll(s.Content, "\r\n", "\n")
+	if s.Version < 0 || s.Version > 9999 {
+		return nil, fmt.Errorf("version is 1-9999")
+	}
+	if s.Version == 0 {
+		s.Version = 1
+	}
+	return s, nil
+}
+
 const strSchema = `{"type":"string"}`
 
 var showTools = []showTool{
@@ -746,6 +847,10 @@ var showTools = []showTool{
 		`{"type":"object","properties":{"title":{"type":"string"},"events":{"type":"array","minItems":1,"maxItems":30,"items":{"type":"object","properties":{"id":{"type":"string","description":"optional"},"when":{"type":"string","enum":["past","now","future"]},"time":{"type":"string"},"title":{"type":"string"},"detail":{"type":"string"}},"required":["when","time","title"]}}},"required":["events"]}`, checkTimeline},
 	{ShowJob, "Show the progress of staged work. Stages have relative weights; stageIndex is the stage in progress (equal to the number of stages when all are done) and stageProgress its 0-1 completion. Set outcome when the work has ended.",
 		`{"type":"object","properties":{"title":{"type":"string"},"stages":{"type":"array","minItems":1,"maxItems":12,"items":{"type":"object","properties":{"name":{"type":"string"},"weight":{"type":"number"},"description":{"type":"string"}},"required":["name","weight"]}},"stageIndex":{"type":"integer","minimum":0},"stageProgress":{"type":"number","minimum":0,"maximum":1},"eta":{"type":"string"},"elapsedMs":{"type":"number"},"outcome":{"type":"object","properties":{"status":{"type":"string","enum":["success","partial","failed","cancelled"]},"summary":{"type":"string"}},"required":["status"]}},"required":["title","stages","stageIndex","stageProgress"]}`, checkJob},
+	{ShowTodo, "Show your working list: the steps of the plan you are going through, in order, each with a stable id, a short text and a status (pending, active, done, failed with a reason, or cancelled). Call it again with the same ids to update progress as you work; the latest call is the current plan.",
+		`{"type":"object","properties":{"title":{"type":"string","description":"Heading; default Todos"},"description":{"type":"string"},"maxVisible":{"type":"integer","minimum":0,"description":"Fold the list after this many rows (0 = show all)"},"items":{"type":"array","minItems":1,"maxItems":40,"items":{"type":"object","properties":{"id":{"type":"string"},"text":{"type":"string"},"description":{"type":"string"},"status":{"type":"string","enum":["pending","active","done","failed","cancelled"]},"reason":{"type":"string","description":"Why it failed"}},"required":["id","text","status"]}}},"required":["items"]}`, checkTodo},
+	{ShowDocument, "Show a document the user reads beside the chat: a titled Markdown artifact for anything long or reusable (a report, a comparison, a plan, a draft). Put the whole document in content, not in your message; refer to it in one sentence. To revise, call again with the same title and version + 1.",
+		`{"type":"object","properties":{"title":{"type":"string"},"content":{"type":"string","description":"The document as Markdown (headings, lists, tables, code)"},"version":{"type":"integer","minimum":1,"description":"1 for a new document; increase when revising"}},"required":["title","content"]}`, checkDocument},
 }
 
 var _ chat.Tool = Show{}

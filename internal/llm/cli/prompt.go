@@ -28,7 +28,7 @@ You may call the tools listed below. To call one or more, reply with exactly one
 [{"name": "tool_name", "arguments": {"arg": "value"}}]
 ` + "```" + `
 
-You will receive the results and can then answer or call more tools. When no tool is needed, just write the answer. Only call tools from this list, with arguments that match their schema.
+You will receive the results and can then answer or call more tools. When no tool is needed, just write the answer. Only call tools from this list, with arguments that match their schema. Use this JSON block and no other call format: no XML or tag markup, and never describe a call in prose instead of making it.
 
 `
 
@@ -97,30 +97,77 @@ func compact(raw json.RawMessage) string {
 	return string(out)
 }
 
-var toolFence = regexp.MustCompile("(?s)```tool_calls[ \t]*\r?\n(.*?)\r?\n```")
+// toolOpener starts a tool_calls block. The block's end is found by reading its JSON, not by looking for the closing
+// fence: a call's string arguments can hold fences and newlines, and a reply may stop before the closing fence.
+var toolOpener = regexp.MustCompile("```tool_calls[ \t]*\r?\n")
 
-// splitReply separates a reply into the text before a tool_calls block and the calls it holds. A block that is not
-// valid JSON, or that names no offered tool, is ordinary text: a model's slip must not become an action.
+// Claude models are trained on an XML call markup (an optional function_calls wrapper around invoke elements with
+// parameter children, optionally namespaced) and fall back to it when tools are offered as plain text. It is
+// accepted as a second call format so such a reply runs the tool instead of showing raw markup to the user.
+var (
+	xmlStart  = regexp.MustCompile(`<(?:[A-Za-z][\w-]*:)?(?:function_calls|invoke)\b`)
+	xmlInvoke = regexp.MustCompile(`(?s)<(?:[A-Za-z][\w-]*:)?invoke\s+name="([^"]+)"\s*>(.*?)</(?:[A-Za-z][\w-]*:)?invoke>`)
+	xmlParam  = regexp.MustCompile(`(?s)<(?:[A-Za-z][\w-]*:)?parameter\s+name="([^"]+)"\s*>(.*?)</(?:[A-Za-z][\w-]*:)?parameter>`)
+	callStart = regexp.MustCompile("```tool_calls|" + xmlStart.String())
+)
+
+// maxMarker bounds how much of a streamed reply's tail can be the unfinished start of a call.
+const maxMarker = 32
+
+// splitReply separates a reply into the text before its tool calls and the calls it holds, read from a tool_calls
+// block or, failing that, from XML call markup. A block that does not parse, or that names no offered tool, is
+// ordinary text: a model's slip must not become an action.
 func splitReply(reply string, tools []llm.ToolSpec) (text string, calls []llm.ToolCall) {
-	m := toolFence.FindStringSubmatchIndex(reply)
-	if m == nil {
-		return strings.TrimSpace(reply), nil
+	offered := map[string]llm.ToolSpec{}
+	for _, t := range tools {
+		if t.Hosted == "" && t.Name != "" {
+			offered[t.Name] = t
+		}
 	}
-	var raw []struct {
+	for _, m := range toolOpener.FindAllStringIndex(reply, -1) {
+		if calls = fenceCalls(reply[m[1]:], offered); len(calls) > 0 {
+			return beforeCalls(reply[:m[0]]), calls
+		}
+	}
+	if loc := xmlStart.FindStringIndex(reply); loc != nil {
+		if calls = xmlCalls(reply[loc[0]:], offered); len(calls) > 0 {
+			return beforeCalls(reply[:loc[0]]), calls
+		}
+	}
+	return strings.TrimSpace(reply), nil
+}
+
+// fenceCalls reads the JSON value at the start of block (an array of calls, or one call object); what follows it,
+// such as the closing fence, is ignored. Models writing long arguments often put raw newlines or tabs inside JSON
+// strings; when strict parsing fails those are escaped and the value is read again. Anything else that does not
+// parse is not a call.
+func fenceCalls(block string, offered map[string]llm.ToolSpec) []llm.ToolCall {
+	type call struct {
 		Name      string          `json:"name"`
 		Arguments json.RawMessage `json:"arguments"`
 	}
-	if json.Unmarshal([]byte(reply[m[2]:m[3]]), &raw) != nil {
-		return strings.TrimSpace(reply), nil
-	}
-	offered := map[string]bool{}
-	for _, t := range tools {
-		if t.Hosted == "" {
-			offered[t.Name] = true
+	var raw []call
+	read := func(s string) bool {
+		var v json.RawMessage
+		if json.NewDecoder(strings.NewReader(s)).Decode(&v) != nil {
+			return false
 		}
+		if v = json.RawMessage(strings.TrimSpace(string(v))); len(v) > 0 && v[0] == '{' {
+			var one call
+			if json.Unmarshal(v, &one) != nil {
+				return false
+			}
+			raw = []call{one}
+			return true
+		}
+		return json.Unmarshal(v, &raw) == nil
 	}
+	if !read(block) && !read(escapeStringControls(block)) {
+		return nil
+	}
+	var calls []llm.ToolCall
 	for i, c := range raw {
-		if !offered[c.Name] {
+		if _, ok := offered[c.Name]; !ok {
 			continue
 		}
 		args := c.Arguments
@@ -129,34 +176,127 @@ func splitReply(reply string, tools []llm.ToolSpec) (text string, calls []llm.To
 		}
 		calls = append(calls, llm.ToolCall{ID: fmt.Sprintf("call_%d", i+1), Name: c.Name, Args: args})
 	}
-	if len(calls) == 0 {
-		return strings.TrimSpace(reply), nil
-	}
-	return strings.TrimSpace(reply[:m[0]]), calls
+	return calls
 }
 
-const fenceMarker = "```tool_calls"
+// escapeStringControls escapes control characters that appear inside JSON string literals (raw newlines, tabs, ...),
+// leaving everything outside strings untouched.
+func escapeStringControls(s string) string {
+	var b strings.Builder
+	b.Grow(len(s) + 16)
+	inString, escaped := false, false
+	for i := range len(s) {
+		c := s[i]
+		switch {
+		case !inString:
+			inString = c == '"'
+		case escaped:
+			escaped = false
+		case c == '\\':
+			escaped = true
+		case c == '"':
+			inString = false
+		case c < 0x20:
+			switch c {
+			case '\n':
+				b.WriteString(`\n`)
+			case '\r':
+				b.WriteString(`\r`)
+			case '\t':
+				b.WriteString(`\t`)
+			default:
+				fmt.Fprintf(&b, `\u%04x`, c)
+			}
+			continue
+		}
+		b.WriteByte(c)
+	}
+	return b.String()
+}
 
-// replyStream releases a reply's text as it arrives but holds back anything that could be the start of a tool_calls
-// block, so the user never sees the block's raw fence flash by.
+// xmlCalls reads invoke elements. Parameter values are raw text: a parameter the tool's schema types as a string is
+// taken verbatim, any other value is used as JSON when it parses as JSON and as a string otherwise.
+func xmlCalls(markup string, offered map[string]llm.ToolSpec) []llm.ToolCall {
+	var calls []llm.ToolCall
+	for i, m := range xmlInvoke.FindAllStringSubmatch(markup, -1) {
+		spec, ok := offered[m[1]]
+		if !ok {
+			continue
+		}
+		strs := stringParams(spec.Schema)
+		args := map[string]json.RawMessage{}
+		for _, p := range xmlParam.FindAllStringSubmatch(m[2], -1) {
+			v := strings.TrimSpace(p[2])
+			if !strs[p[1]] && json.Valid([]byte(v)) {
+				args[p[1]] = json.RawMessage(v)
+			} else {
+				args[p[1]], _ = json.Marshal(v)
+			}
+		}
+		raw, err := json.Marshal(args)
+		if err != nil {
+			continue
+		}
+		calls = append(calls, llm.ToolCall{ID: fmt.Sprintf("call_%d", i+1), Name: m[1], Args: raw})
+	}
+	return calls
+}
+
+// stringParams names the top-level properties a JSON schema types as plain strings.
+func stringParams(schema json.RawMessage) map[string]bool {
+	var s struct {
+		Properties map[string]struct {
+			Type any `json:"type"`
+		} `json:"properties"`
+	}
+	_ = json.Unmarshal(schema, &s)
+	out := map[string]bool{}
+	for name, p := range s.Properties {
+		if p.Type == "string" {
+			out[name] = true
+		}
+	}
+	return out
+}
+
+// beforeCalls is the text shown before a reply's calls, without a code fence the model opened around them.
+func beforeCalls(text string) string {
+	return strings.TrimSpace(text[:openerStart(text)])
+}
+
+// openerStart returns where a trailing, still unclosed code fence opener (with the whitespace after it) begins in
+// text, or len(text) when text does not end in one.
+func openerStart(text string) int {
+	t := strings.TrimRight(text, " \t\r\n")
+	line := t[strings.LastIndexByte(t, '\n')+1:]
+	if strings.HasPrefix(strings.TrimLeft(line, " \t"), "```") && strings.Count(t, "```")%2 == 1 {
+		return len(t) - len(line)
+	}
+	return len(text)
+}
+
+// replyStream releases a reply's text as it arrives but holds back anything that could be the start of a tool call,
+// so the user never sees a call's raw fence or markup flash by. Held text that turns out not to be a call is released
+// by Finish.
 type replyStream struct {
 	full    strings.Builder
 	emitted int // bytes of full already released
-	fenced  bool
+	held    bool
 }
 
 // Push adds streamed text and returns what is safe to show now.
 func (r *replyStream) Push(s string) string {
 	r.full.WriteString(s)
-	if r.fenced {
+	if r.held {
 		return ""
 	}
 	text := r.full.String()
-	safe := len(text)
-	if i := strings.Index(text, fenceMarker); i >= 0 {
-		r.fenced, safe = true, i
+	var safe int
+	// Nothing released can hold a marker: the tail kept back is always long enough to contain one.
+	if loc := callStart.FindStringIndex(text[r.emitted:]); loc != nil {
+		r.held, safe = true, max(r.emitted, openerStart(text[:r.emitted+loc[0]]))
 	} else {
-		safe = max(r.emitted, len(text)-(len(fenceMarker)-1))
+		safe = max(r.emitted, len(text)-(maxMarker-1))
 		for safe > r.emitted && !utf8.RuneStart(text[safe]) { // never cut a character in half
 			safe--
 		}
@@ -167,7 +307,7 @@ func (r *replyStream) Push(s string) string {
 }
 
 // Finish returns the text not yet released and the tool calls the complete reply asks for. When the reply holds
-// calls, everything before the block was released already.
+// calls, everything before them was released already.
 func (r *replyStream) Finish(tools []llm.ToolSpec) (rest string, calls []llm.ToolCall) {
 	full := r.full.String()
 	if _, calls = splitReply(full, tools); len(calls) > 0 {

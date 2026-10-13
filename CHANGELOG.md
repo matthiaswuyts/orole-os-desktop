@@ -38,11 +38,26 @@ notes. See `docs/development/updates.md`.
   code task, and Wait. Existing automations are upgraded automatically; a jump that has no lane equivalent is flagged and the
   automation will not run until it is rebuilt.
 - Bots can run code tasks. Turn on "Runs code tasks" in a bot's panel and it can start a coding agent in one of your projects,
-  check on any task, and message or stop the ones it started. You approve every start, bots never use YOLO, and the bot tells
-  you in its chat when its task finishes, fails or needs you ("Code task update", with a link to the task).
-- A bot's reply shows each code task it started as a chip with live status (working, done, needs you, failed) and the coding
-  agent it runs on. Clicking a chip opens the task beside the conversation, with the agent's live activity and a composer to
-  message that agent directly; "Open in Tasks" moves it to the Tasks view.
+  check on any task, and message or stop the ones it started. A start is approved inline in the bot's chat (Allow once,
+  Always allow this bot, Deny) instead of a dialog; "Always allow" is listed under Settings › Task permissions, where
+  "Bots start tasks without asking" skips the question for every bot. The bot tells you in its chat when its task finishes,
+  fails or needs you ("Code task update", with a link to the task).
+- A task is reported to its bot only when it is really finished: a turn that ends while the agent's background subagents
+  (Oh My Pi, Claude Code, Codex) are still running keeps the task "working" ("Turn ended; waiting for N background agents")
+  and completes once the last one reports and the follow-up turn ends; a completed turn also settles for a few seconds so a
+  harness that immediately continues never counts as done. The finished report carries the task's complete result (up to
+  32 KiB, no longer clipped to 2,000 characters), and the bot is told to relay it as a full overview; `task_status` returns
+  the full result and the number of completed turns and running background agents.
+- Tasks have a default permission mode (Settings › Task permissions: Manual, Auto or Yolo) used by the New task composer and
+  by bots and automations that name none. "Bots may use Yolo" lets a bot start a task in Yolo when the user allows it;
+  otherwise a Yolo request or default falls back as before (bots: Manual).
+- Bots can show their working list (`show_todo_list`: pending, active, done, failed, cancelled steps with an n/m counter,
+  updated in place as they work) and documents (`show_document`: a titled Markdown artifact shown as a card in the reply and
+  opened beside the conversation with copy and close; revisions bump the version).
+- A bot's reply shows each code task it started as a row in a subagent list with live status (working, done, needs you,
+  failed), its current activity and the coding agent it runs on. Clicking a row opens the task beside the conversation,
+  with the agent's live activity and a composer to message that agent directly; "Open in Tasks" moves it to the Tasks view.
+  The side pane (task or document) animates its width and slides out when closed instead of snapping.
 - Automations can watch GitHub (new commits on a branch, pull requests opened or merged, failed workflow runs, new issues)
   and deployments of connected integrations such as Vercel or Railway. Orole checks every minute or two (it never opens a
   network port), starts from what already exists, and runs the flow once for each new item.
@@ -92,6 +107,13 @@ notes. See `docs/development/updates.md`.
   widget gallery and Reset layout. Saved layouts are carried over in their existing order and closest size.
 
 ### Fixed
+- Bots running through the Claude Code or Codex CLI no longer show a long tool call (such as starting a code task) as a raw
+  `tool_calls` block. Orole now reads the call's JSON from the block's start, so raw line breaks inside an argument, a
+  code fence inside a prompt, one call written as an object, or a reply that stops before the closing fence still run the
+  tool. A block that is cut off or not valid JSON stays text.
+- Bots running on Claude through the Claude Code CLI no longer show a tool call as raw `<invoke ...>` text. When the model
+  writes its own XML call format instead of the tool block Orole asks for, Orole now runs the tool (for example shows the
+  question card) and keeps the markup out of the chat.
 - A bot's reply to a message from an automation now carries that automation's chain on the "Bot replied" event. A flow that
   starts on a bot reply and messages the same bot can no longer loop; it stops at the chain limit like any other flow.
 - Home widget rows always reach the column's right edge: when the sizes in a row add up to less than the full width (a

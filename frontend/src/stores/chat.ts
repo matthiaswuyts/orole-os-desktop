@@ -38,11 +38,14 @@ export interface ChatState {
   /** The slim settings panel beside the conversation (name, description, instructions, model). */
   settingsOpen: boolean;
   setSettingsOpen: (open: boolean) => void;
-  /** The code task shown in the side pane beside the conversation; it and the settings panel are never open together. */
-  taskPaneId: string | null;
+  /** What the side pane beside the conversation shows: a code task or a document a reply wrote; it and the settings panel are never open together. */
+  pane: ChatPane | null;
   openTaskPane: (taskId: string) => void;
-  closeTaskPane: () => void;
+  openDocument: (messageId: string, partIndex: number) => void;
+  closePane: () => void;
 }
+
+export type ChatPane = { kind: "task"; id: string } | { kind: "document"; messageId: string; partIndex: number };
 
 const readSelected = (): string | null => {
   try { return localStorage.getItem(SELECTED_KEY) || null; } catch { return null; }
@@ -122,7 +125,7 @@ function dropPreviews() {
 
 /** The daemon owns bots and conversations. This is a disposable, event-synchronized snapshot for the rail. */
 export const useChat = create<ChatState>((set, get) => ({
-  bots: [], selectedBotId: readSelected(), running: {}, builder: { open: false, botId: null }, settingsOpen: false, taskPaneId: null,
+  bots: [], selectedBotId: readSelected(), running: {}, builder: { open: false, botId: null }, settingsOpen: false, pane: null,
   available: inDesktop, ready: false, loading: false, error: null,
   async load() {
     if (!get().available) return;
@@ -173,7 +176,7 @@ export const useChat = create<ChatState>((set, get) => ({
             return {
               bots: state.bots.filter((b) => b.id !== id), running,
               selectedBotId: state.selectedBotId === id ? null : state.selectedBotId,
-              taskPaneId: state.selectedBotId === id ? null : state.taskPaneId,
+              pane: state.selectedBotId === id ? null : state.pane,
               builder: state.builder.botId === id ? { open: false, botId: null } : state.builder,
             };
           });
@@ -209,7 +212,7 @@ export const useChat = create<ChatState>((set, get) => ({
   select(botId) {
     writeSelected(botId);
     // A task pane belongs to the conversation it was opened from.
-    set((state) => ({ selectedBotId: botId, taskPaneId: state.selectedBotId === botId ? state.taskPaneId : null }));
+    set((state) => ({ selectedBotId: botId, pane: state.selectedBotId === botId ? state.pane : null }));
   },
   open(botId) {
     get().select(botId);
@@ -217,9 +220,10 @@ export const useChat = create<ChatState>((set, get) => ({
   },
   openBuilder: (botId) => set({ builder: { open: true, botId: botId === "new" ? null : botId } }),
   closeBuilder: () => set({ builder: { open: false, botId: null } }),
-  setSettingsOpen: (settingsOpen) => set((state) => ({ settingsOpen, taskPaneId: settingsOpen ? null : state.taskPaneId })),
-  openTaskPane: (taskPaneId) => set({ taskPaneId, settingsOpen: false }),
-  closeTaskPane: () => set({ taskPaneId: null }),
+  setSettingsOpen: (settingsOpen) => set((state) => ({ settingsOpen, pane: settingsOpen ? null : state.pane })),
+  openTaskPane: (id) => set({ pane: { kind: "task", id }, settingsOpen: false }),
+  openDocument: (messageId, partIndex) => set({ pane: { kind: "document", messageId, partIndex }, settingsOpen: false }),
+  closePane: () => set({ pane: null }),
 }));
 
 /** Fields a conversation depends on; `running` and the rail preview are derived and change while a reply streams. */

@@ -43,15 +43,19 @@ empty scratch directory, with the prompt on stdin. The CLI is used as a plain mo
 tells it not to run commands or read files, and the read-only sandbox backs that up. Orole's own tool loop stays in
 charge. Bot tools are described in the prompt and a reply holding a `tool_calls` block becomes tool-call deltas (a
 malformed block, or one naming a tool that was not offered, is ordinary text), so memory, budgets, handoffs, queue and
-`show_*` components work as with any provider.
+`show_*` components work as with any provider. Claude models sometimes ignore the block and answer in the XML call
+markup they are trained on (`invoke` elements with `parameter` children, optionally inside `function_calls` and a code
+fence); that markup is parsed as a second call format under the same rules, so it runs the tool instead of reaching
+the user as raw text. Parameter values are raw text: a parameter the schema types as `string` is taken verbatim, any
+other is used as JSON when it parses.
 
 Limits: `codex exec` prints whole messages, so replies appear at once instead of streaming; every step of a tool loop is a
 new CLI start (a few seconds); images and PDFs are not forwarded (vision is off for these models).
 
 ## Claude as a model for bots
 The provider `claude` (`internal/llm/cli/claude.go`) works like the Codex one, with two differences. Claude Code streams,
-so text appears as it is written: `replyStream` holds back only a possible start of a `tool_calls` block, so a tool call
-never flashes its raw fence. Models are the aliases the CLI documents for `--model` (`opus`, `sonnet`, `haiku`, each the
+so text appears as it is written: `replyStream` holds back only a possible start of a call (a `tool_calls` fence or XML
+call markup), so a tool call never flashes its raw markup. Models are the aliases the CLI documents for `--model` (`opus`, `sonnet`, `haiku`, each the
 newest of its family), because the CLI has no model list. Each call is
 `claude -p --output-format stream-json --include-partial-messages --no-session-persistence --tools "" --strict-mcp-config --setting-sources "" --disable-slash-commands`:
 no built-in tool, user setting, MCP server or skill is loaded, and Claude Code's own system prompt is replaced. The bot's

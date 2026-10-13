@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { Mode, StartSpec } from "@/mygo";
+import { Settings, type Mode, type StartSpec } from "@/mygo";
 import { inDesktop } from "@/lib/backend";
 import { useAgents } from "@/stores/agents";
 import { useBoxes } from "@/stores/boxes";
@@ -22,9 +22,18 @@ export interface TaskLaunchOptions {
 
 const PERMISSION_KEY = "orole.task.permissionMode";
 
-/** The remembered default. YOLO is never remembered: it must be chosen, and confirmed, for each launch. */
+/** The locally remembered choice, used only while the daemon has no default. YOLO is never remembered here: it must be chosen, and confirmed, for each launch. */
 function savedPermissionMode(): PermissionMode {
   try { return localStorage.getItem(PERMISSION_KEY) === "auto" ? "auto" : "manual"; } catch { return "manual"; }
+}
+
+/** The daemon's `agents.defaultPermissionMode`, or null when unset (or unreachable). Yolo as the default counts as confirmed: it was chosen in Settings. */
+async function daemonDefaultMode(): Promise<PermissionMode | null> {
+  if (!inDesktop) return null;
+  try {
+    const mode = ((await Settings.all()).agents as { defaultPermissionMode?: unknown } | undefined)?.defaultPermissionMode;
+    return mode === "auto" || mode === "yolo" || mode === "manual" ? mode : null;
+  } catch { return null; }
 }
 
 export function useHomeTaskLaunch({ launcher = "home", initialProjectId, initialPrompt = "", onStarted }: TaskLaunchOptions = {}) {
@@ -67,6 +76,20 @@ export function useHomeTaskLaunch({ launcher = "home", initialProjectId, initial
   const reasoning = reasoningLevels.includes(selected.reasoning) ? selected.reasoning : "";
   const [chosenMode, setChosenMode] = useState<PermissionMode>(() => draft?.permissionMode ?? savedPermissionMode());
   const [yoloConfirmed, setYoloConfirmed] = useState(false);
+  // The daemon's default wins over the local memory once it arrives, unless a restored draft or the user already picked a mode.
+  const touched = useRef(draft !== null);
+  const daemonDefault = useRef<PermissionMode | null>(null);
+  useEffect(() => {
+    let live = true;
+    void daemonDefaultMode().then((mode) => {
+      if (!live || !mode) return;
+      daemonDefault.current = mode;
+      if (touched.current) return;
+      setChosenMode(mode);
+      setYoloConfirmed(mode === "yolo");
+    });
+    return () => { live = false; };
+  }, []);
   // A mode this agent cannot run (or that was turned off) falls back to Manual rather than launching in it.
   const permissionSupport = harness?.permissionModes ?? [];
   const permissionMode: PermissionMode = modeSupport(permissionSupport, chosenMode).available && (chosenMode !== "yolo" || yoloConfirmed) ? chosenMode : "manual";
@@ -90,6 +113,7 @@ export function useHomeTaskLaunch({ launcher = "home", initialProjectId, initial
     setWorktreeChoice(null);
   }
   function choosePermissionMode(mode: PermissionMode, confirmYolo: boolean) {
+    touched.current = true;
     setChosenMode(mode);
     setYoloConfirmed(mode === "yolo" && confirmYolo);
     if (mode === "yolo") return;
@@ -128,7 +152,8 @@ export function useHomeTaskLaunch({ launcher = "home", initialProjectId, initial
     const projectId = project.id;
     inFlight.current = true; setBusy(true);
     const files = attachments.release();
-    setPrompt(""); setChosenMode(savedPermissionMode()); setYoloConfirmed(false);
+    const fallback = daemonDefault.current ?? savedPermissionMode();
+    setPrompt(""); setChosenMode(fallback); setYoloConfirmed(fallback === "yolo");
     beginLaunch({
       request: { ...spec, key }, prompt: spec.prompt, attachments: files, projectId: project.registered ? project.id : "",
       draft: {

@@ -1,6 +1,7 @@
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Message } from "@/mygo";
+import { useChat } from "@/stores/chat";
 
 vi.mock("@/lib/openExternal", () => ({ isWebURL: (u: string) => /^https?:/.test(u), openExternal: vi.fn() }));
 
@@ -216,5 +217,36 @@ describe("quoted user messages", () => {
     expect(quote).toHaveTextContent("I wrote this in a neutral register.");
     expect(screen.getByText("Explain this selected text.")).toBeInTheDocument();
     expect(screen.queryByText(/^>/)).toBeNull();
+  });
+});
+
+describe("documents and todo lists a reply wrote", () => {
+  const doc = (title: string, content: string, version: number) => ({ type: "ui" as const, id: "write_document", name: "document", spec: JSON.stringify({ title, content, version }) });
+
+  it("shows a document once at its latest version, opens it beside the conversation and copies its markdown", async () => {
+    const writeText = vi.fn(async () => {});
+    Object.assign(navigator, { clipboard: { writeText } });
+    useChat.setState({ pane: null });
+    view(message([doc("Plan", "# Plan\n\nfirst", 1), { type: "text", text: "Revised." }, doc("Plan", "# Plan\n\nsecond draft here", 2)]));
+    const cards = document.querySelectorAll("[data-slot=document-card]");
+    expect(cards).toHaveLength(1);
+    expect(cards[0]).toHaveTextContent("Plan");
+    expect(cards[0]).toHaveTextContent("v2 · 4 words");
+    const open = screen.getByRole("button", { name: "Open" });
+    expect(open).toHaveAttribute("aria-pressed", "false");
+    fireEvent.click(open);
+    expect(useChat.getState().pane).toEqual({ kind: "document", messageId: "m", partIndex: 2 });
+    expect(screen.getByRole("button", { name: "Open" })).toHaveAttribute("aria-pressed", "true");
+    fireEvent.click(screen.getByRole("button", { name: "Copy document" }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith("# Plan\n\nsecond draft here"));
+    useChat.setState({ pane: null });
+  });
+
+  it("draws the agent's working list with its counter", () => {
+    view(message([{ type: "ui", id: "update_todos", name: "todo", spec: JSON.stringify({ title: "Plan", items: [
+      { id: "a", text: "Read", status: "done" }, { id: "b", text: "Fix", status: "active" }, { id: "c", text: "Skip", status: "cancelled" },
+    ] }) }]));
+    expect(screen.getByRole("list", { name: "Plan" })).toBeInTheDocument();
+    expect(screen.getByText("1/2")).toBeInTheDocument();
   });
 });

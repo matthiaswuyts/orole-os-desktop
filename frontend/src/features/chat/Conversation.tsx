@@ -9,6 +9,7 @@ import { useChat } from "@/stores/chat";
 import { selectConversation, useBotRunning, useChatMessages } from "@/stores/chatMessages";
 import { Composer } from "./Composer";
 import { ChatMessageView } from "./parts/MessageBubble";
+import { BotApprovals } from "./parts/JobApprovalCard";
 import { hasVisibleParts } from "./parts/MessageParts";
 import { messageText } from "./parts/format";
 import { CopyButton } from "./parts/Sources";
@@ -148,6 +149,7 @@ function Thread({ bot, running }: { bot: Bot; running: boolean }) {
       <Button type="button" variant="ghost" size="icon-xs" aria-label="Dismiss" onClick={() => useChatMessages.getState().dismissProblem(bot.id)}><XIcon aria-hidden /></Button>
     </div>}
     <LiveStatus running={running} />
+    <BotApprovals botId={bot.id} />
     <QueuePanel bot={bot} running={running} />
     <Composer bot={bot} running={running} />
   </>;

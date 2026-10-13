@@ -20,12 +20,15 @@ vi.mock("@/mygo", () => ({
   LLM: { models: vi.fn() },
   Skills: { list: () => Promise.resolve([{ name: "pdf", description: "Read PDFs", enabled: true }, { name: "skill-creator", description: "Make skills", enabled: true, source: "builtin" }]) },
   Daemon: { health: vi.fn() },
+  Policy: { pending: () => Promise.resolve([]), resolve: vi.fn(), addRule: vi.fn() },
   Shell: { openExternal: vi.fn() },
   events: {
     chatRun: { on: (f: (s: RunState) => void) => { bridge.run = f; return () => { bridge.run = null; }; } },
     chatMessage: { on: (f: (m: Message) => void) => { bridge.message = f; return () => { bridge.message = null; }; } },
     chatMessageDelta: { on: () => () => {} },
     chatBot: { on: (_f: (c: BotChange) => void) => () => {} },
+    policyPending: { on: () => () => {} },
+    daemonState: { on: () => () => {} },
   },
 }));
 

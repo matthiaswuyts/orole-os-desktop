@@ -184,7 +184,7 @@ function System() {
   return (
     <>
       <Group id="settings-updates" title="Updates"><UpdateSettings /></Group>
-      <SettingsSection id="settings-task-permissions" title="Task permissions" description="Manual, Auto and Yolo are chosen per task."><AgentSafetySettings /></SettingsSection>
+      <SettingsSection id="settings-task-permissions" title="Task permissions" description="Manual, Auto and Yolo are chosen per task; the default here applies when nobody picked one."><AgentSafetySettings /></SettingsSection>
       <div id="settings-diagnostics" className="scroll-mt-2"><Diagnostics /><AutostartPanel /></div>
     </>
   );

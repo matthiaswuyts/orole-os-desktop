@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useShallow } from "zustand/react/shallow";
 import { Agents, type AgentsStatus, type Session } from "@/mygo";
 import { useAgents } from "@/stores/agents";
 
@@ -30,6 +31,26 @@ export function useTaskSession(id: string): { session: Session | undefined; miss
     return () => { live = false; };
   }, [id, session, loaded, available]);
   return { session, missing: !session && missing === id };
+}
+
+/** `useTaskSession` for a list of ids at once, so a list whose length changes while a reply streams needs no hook per row. */
+export function useTaskSessions(ids: readonly string[]): { sessions: readonly (Session | undefined)[]; missing: Readonly<Record<string, true>> } {
+  const key = ids.join("\n");
+  const stable = useMemo(() => key.split("\n").filter(Boolean), [key]);
+  const sessions = useAgents(useShallow((s) => stable.map((id) => s.sessions[id])));
+  const loaded = useAgents((s) => s.loaded);
+  const available = useAgents((s) => s.available);
+  const [missing, setMissing] = useState<Readonly<Record<string, true>>>({});
+  useEffect(() => {
+    if (!loaded || !available) return;
+    let live = true;
+    stable.forEach((id, i) => {
+      if (sessions[i]) return;
+      fetchSession(id).catch(() => { if (live) setMissing((m) => m[id] ? m : { ...m, [id]: true }); });
+    });
+    return () => { live = false; };
+  }, [stable, sessions, loaded, available]);
+  return { sessions, missing };
 }
 
 /** What a status glyph says about a task, for screen readers and tooltips. */

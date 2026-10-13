@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"slices"
@@ -115,6 +116,33 @@ func TestSplitReplyIgnoresAMalformedOrUnofferedToolBlock(t *testing.T) {
 		if len(calls) != 0 || text != strings.TrimSpace(reply) {
 			t.Errorf("%q -> %q %v", reply, text, calls)
 		}
+	}
+}
+
+// Long calls (a code task's prompt) are where models slip: raw newlines inside JSON strings, a fence or a newline in an
+// argument, one call object instead of an array, or a reply that ends before the closing fence. Each must still call
+// the tool with the argument intact, and the block must not be shown.
+func TestSplitReplyReadsLongToolBlocksModelsActuallyWrite(t *testing.T) {
+	tools := []llm.ToolSpec{{Name: "start_task"}}
+	for name, c := range map[string]struct{ reply, prompt string }{
+		"raw newlines in a string": {"Starting it.\n```tool_calls\n[{\"name\": \"start_task\", \"arguments\": {\"projectId\": \"p\", \"prompt\": \"Audit.\nReport:\n\t- a\"}}]\n```", "Audit.\nReport:\n\t- a"},
+		"fence inside a string":    {"Starting it.\n```tool_calls\n[{\"name\": \"start_task\", \"arguments\": {\"projectId\": \"p\", \"prompt\": \"Use\n```go\ncode\n```\nblocks\"}}]\n```", "Use\n```go\ncode\n```\nblocks"},
+		"no closing fence":         {"Starting it.\n```tool_calls\n[{\"name\": \"start_task\", \"arguments\": {\"projectId\": \"p\", \"prompt\": \"x\"}}]", "x"},
+		"one object, not an array": {"Starting it.\n```tool_calls\n{\"name\": \"start_task\", \"arguments\": {\"projectId\": \"p\", \"prompt\": \"x\"}}\n```", "x"},
+	} {
+		text, calls := splitReply(c.reply, tools)
+		if text != "Starting it." || len(calls) != 1 || calls[0].Name != "start_task" {
+			t.Errorf("%s: text %q calls %+v", name, text, calls)
+			continue
+		}
+		var args struct{ Prompt string }
+		if err := json.Unmarshal(calls[0].Args, &args); err != nil || args.Prompt != c.prompt {
+			t.Errorf("%s: args %s (%v)", name, calls[0].Args, err)
+		}
+	}
+	// A truncated block is still not a call: nothing is invented.
+	if _, calls := splitReply("```tool_calls\n[{\"name\": \"start_task\", \"arguments\": {\"prompt\": \"x", tools); len(calls) != 0 {
+		t.Errorf("truncated block called %+v", calls)
 	}
 }
 

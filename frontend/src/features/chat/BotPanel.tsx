@@ -126,7 +126,7 @@ function PanelBody({ bot }: { bot: Bot }) {
         <Group title="Does">
           <NavRow icon={WrenchIcon} label="Tools" value={`${form.tools.length} on`} onOpen={() => setPage("tools")} />
           <NavRow icon={PlugIcon} label="Integrations" invalid={!!problems.mcpServers} value={problems.mcpServers ? "Too many" : `${form.mcpServers.length} on`} onOpen={() => setPage("integrations")} />
-          <SwitchRow icon={SquareTerminalIcon} label="Runs code tasks" hint="Starts coding agents in your projects, follows their progress and tells you when they finish or need you. You approve every start." checked={form.codeTasks} onChange={(codeTasks) => patch({ codeTasks })} />
+          <SwitchRow icon={SquareTerminalIcon} label="Runs code tasks" hint="Starts coding agents in your projects, follows their progress and tells you when they finish or need you. You approve each start in chat unless you allowed this bot always." checked={form.codeTasks} onChange={(codeTasks) => patch({ codeTasks })} />
           <SwitchRow icon={WorkflowIcon} label="Sets up automations" hint="Reads your automations and drafts new ones or changes from your chat. Each draft is a card; nothing is saved or turned on until you approve it." checked={form.automations} onChange={(automations) => patch({ automations })} />
         </Group>
         <Group title="Works with">

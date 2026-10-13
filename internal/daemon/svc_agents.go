@@ -14,6 +14,7 @@ import (
 
 	"github.com/rayorole/orole-os-desktop/internal/agents"
 	"github.com/rayorole/orole-os-desktop/internal/agents/orchestrate"
+	"github.com/rayorole/orole-os-desktop/internal/chat"
 	"github.com/rayorole/orole-os-desktop/internal/cliruntime"
 	"github.com/rayorole/orole-os-desktop/internal/events"
 	"github.com/rayorole/orole-os-desktop/internal/ipc"
@@ -35,6 +36,10 @@ import (
 // Events: agents.updated (Session: status and other durable changes), agents.delta
 // (SessionDelta: display fields changed on a hot path), agents.event (Event),
 // agents.removed ({id}), agents.run (Run).
+
+// taskSettleDelay is how long a completed turn waits before it counts as the task's end: long
+// enough for a harness to start the follow-up turn that delivers subagent or background results.
+const taskSettleDelay = 4 * time.Second
 
 // agentWorktrees creates/removes worktrees through the projects service and reads diffs with git.
 type agentWorktrees struct {
@@ -110,11 +115,17 @@ func (d *Daemon) projectTaskDirectory(ctx context.Context, projectID, machine, d
 // agentSettings is the "agents" daemon setting: {"yoloDisabled": true} turns YOLO sessions off
 // entirely and {"aiTitlesDisabled": true} stops Orole from spending one short request on the
 // task's own Claude or ChatGPT account to name a new task (names chosen by the harness itself
-// still apply). Absent means every option stays on. ok is false when the stored value cannot be
+// still apply). DefaultPermissionMode is the mode a task starts in when none is chosen ("" =
+// manual). BotYolo lets bots start tasks in YOLO (only while YOLO is on). BotAutoApprove lets
+// bots start and steer tasks without an approval; stored deny rules still apply. Absent means
+// every option stays on and the defaults ask. ok is false when the stored value cannot be
 // read or parsed; callers fail closed.
 type agentSettings struct {
-	YoloDisabled     bool `json:"yoloDisabled"`
-	AITitlesDisabled bool `json:"aiTitlesDisabled"`
+	YoloDisabled          bool   `json:"yoloDisabled"`
+	AITitlesDisabled      bool   `json:"aiTitlesDisabled"`
+	DefaultPermissionMode string `json:"defaultPermissionMode"`
+	BotYolo               bool   `json:"botYolo"`
+	BotAutoApprove        bool   `json:"botAutoApprove"`
 }
 
 func (d *Daemon) agentSettings() (v agentSettings, ok bool) {
@@ -133,6 +144,27 @@ func (d *Daemon) agentSettings() (v agentSettings, ok bool) {
 func (d *Daemon) yoloEnabled() bool {
 	v, ok := d.agentSettings()
 	return ok && !v.YoloDisabled
+}
+
+// botYoloEnabled reports whether bots may start tasks in YOLO; unreadable settings fail closed.
+func (d *Daemon) botYoloEnabled() bool {
+	v, ok := d.agentSettings()
+	return ok && !v.YoloDisabled && v.BotYolo
+}
+
+// defaultPermissionMode is the mode for a start that names none; unreadable settings mean manual.
+func (d *Daemon) defaultPermissionMode() string {
+	v, ok := d.agentSettings()
+	if !ok {
+		return ""
+	}
+	return v.DefaultPermissionMode
+}
+
+// botAutoApprove reports whether bots start and steer tasks without an approval prompt.
+func (d *Daemon) botAutoApprove() bool {
+	v, ok := d.agentSettings()
+	return ok && v.BotAutoApprove
 }
 
 // aiTitlesEnabled reports whether a task may be named through its harness's own account;
@@ -180,6 +212,8 @@ func (d *Daemon) registerAgents() {
 		wt = agentWorktrees{d: d}
 	}
 	tasks := newTaskEvents(d.Events, d.reportToOwner)
+	tasks.settle = taskSettleDelay
+	tasks.lookup = func(id string) (agents.Session, error) { return d.Agents.Get(id) }
 	prices := pricing.Embedded()
 	refresher := &pricing.Refresher{Catalog: prices, Dir: filepath.Join(d.DataDir, "pricing"), Delay: time.Minute, Log: d.Log}
 	refresher.LoadCache()
@@ -212,11 +246,13 @@ func (d *Daemon) registerAgents() {
 			d.IPC.Publish(event, data)
 			tasks.observe(event, data)
 		},
-		Created:       tasks.created,
-		Audit:         d.audit,
-		YoloEnabled:   d.yoloEnabled,
-		TitleAccount:  d.agentTitleAccount,
-		TitlesEnabled: d.aiTitlesEnabled,
+		Created:               tasks.created,
+		Audit:                 d.audit,
+		YoloEnabled:           d.yoloEnabled,
+		BotYoloEnabled:        d.botYoloEnabled,
+		DefaultPermissionMode: d.defaultPermissionMode,
+		TitleAccount:          d.agentTitleAccount,
+		TitlesEnabled:         d.aiTitlesEnabled,
 		Authorize: func(ctx context.Context, action, resource, detail string) error {
 			if d.Policy == nil {
 				return errors.New("permission policy is unavailable")
@@ -228,10 +264,23 @@ func (d *Daemon) registerAgents() {
 			if a := agents.ActorFrom(ctx); a != "" {
 				actor = a
 			}
-			return d.Policy.Require(ctx, policy.Request{
-				Actor: actor, Action: action, Resource: resource, Detail: detail,
-				Effect: policy.EffectDestructive,
-			})
+			req := policy.Request{Actor: actor, Action: action, Resource: resource, Detail: detail, Effect: policy.EffectDestructive}
+			if action == "agent.start" || action == "agent.prompt" {
+				// Starting or steering a task is a write: the task's own permission mode guards what it
+				// does, so the approval may be remembered ("always allow this bot").
+				req.Effect = policy.EffectWrite
+				if strings.HasPrefix(actor, chat.BotPrefix) && d.botAutoApprove() {
+					ev, err := d.Policy.Decide(ctx, req)
+					if err != nil {
+						return err
+					}
+					if ev.Decision == policy.Ask {
+						d.audit(action, resource, "allowed", "bots start tasks without asking (setting)")
+						return nil
+					}
+				}
+			}
+			return d.Policy.Require(ctx, req)
 		},
 		PermissionDecision: func(ctx context.Context, id string, req agents.PermissionRequest) error {
 			if d.Policy == nil {

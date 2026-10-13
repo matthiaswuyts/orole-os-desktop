@@ -23,25 +23,28 @@ const (
 // TaskInfo is what a bot sees of a code task. Activity, LastMessage, Result, Error and the
 // transcript are the agent's own words: untrusted data.
 type TaskInfo struct {
-	ID          string `json:"id"`
-	Title       string `json:"title"`
-	Harness     string `json:"harness"`
-	Project     string `json:"project"`
-	ProjectID   string `json:"projectId,omitempty"`
-	Status      string `json:"status"`
-	Live        bool   `json:"live"`
-	Activity    string `json:"activity,omitempty"`
-	LastMessage string `json:"lastMessage,omitempty"`
-	Result      string `json:"result,omitempty"`
-	Error       string `json:"error,omitempty"`
-	Branch      string `json:"branch,omitempty"`
-	PRURL       string `json:"prUrl,omitempty"`
-	Files       int    `json:"files"`
-	Additions   int    `json:"additions"`
-	Deletions   int    `json:"deletions"`
-	Waiting     string `json:"waitingFor,omitempty"` // what the task asks the user, when it needs them
-	Owner       string `json:"owner,omitempty"`
-	UpdatedAt   int64  `json:"updatedAt"`
+	ID             string `json:"id"`
+	Title          string `json:"title"`
+	Harness        string `json:"harness"`
+	Project        string `json:"project"`
+	ProjectID      string `json:"projectId,omitempty"`
+	Status         string `json:"status"`
+	Live           bool   `json:"live"`
+	Activity       string `json:"activity,omitempty"`
+	LastMessage    string `json:"lastMessage,omitempty"`
+	Result         string `json:"result,omitempty"`
+	Error          string `json:"error,omitempty"`
+	Branch         string `json:"branch,omitempty"`
+	PRURL          string `json:"prUrl,omitempty"`
+	Files          int    `json:"files"`
+	Additions      int    `json:"additions"`
+	Deletions      int    `json:"deletions"`
+	Turns          int    `json:"turns"`               // completed turns; a task can take several before it is finished
+	Subagents      int    `json:"subagents,omitempty"` // background agents still running: the task is not finished while > 0
+	PermissionMode string `json:"permissionMode,omitempty"`
+	Waiting        string `json:"waitingFor,omitempty"` // what the task asks the user, when it needs them
+	Owner          string `json:"owner,omitempty"`
+	UpdatedAt      int64  `json:"updatedAt"`
 }
 
 // TaskLine is one transcript entry of a task.
@@ -68,7 +71,8 @@ type TaskStart struct {
 }
 
 // TaskRuntime is the daemon's agent runtime as bots may use it. actor is "bot:<id>": the
-// runtime records it as the task's owner and as the policy actor, and refuses YOLO.
+// runtime records it as the task's owner and as the policy actor; YOLO is honoured only when
+// the user's settings let bots use it.
 type TaskRuntime interface {
 	Projects(ctx context.Context) ([]TaskProject, error)
 	Harnesses(ctx context.Context) ([]string, error)
@@ -105,8 +109,8 @@ func (t Tasks) Specs(bot chat.Bot, caps llm.Caps) []llm.ToolSpec {
 		harnessJSON = []byte(`["claude"]`)
 	}
 	return []llm.ToolSpec{
-		{Name: toolStartTask, Description: "Start a code task: a coding agent (Claude Code, Codex, ...) that reads and edits files and runs commands in a project on this PC. You cannot do that yourself. The user is asked to approve every start. Give a complete, self-contained task. You hear back when it finishes, fails or needs the user.",
-			Schema: json.RawMessage(`{"type":"object","properties":{"projectId":{"type":"string","description":` + quote(projectHelp) + `},"harness":{"type":"string","enum":` + string(harnessJSON) + `},"prompt":{"type":"string","description":"The task for the agent."},"title":{"type":"string","description":"Short title (optional)."},"permissionMode":{"type":"string","enum":["manual","auto"],"description":"manual asks the user before risky actions (default); auto lets the agent's own safety checks decide."},"newWorktree":{"type":"boolean","description":"Work on a new branch in a separate worktree (recommended for changes)."}},"required":["projectId","harness","prompt"],"additionalProperties":false}`)},
+		{Name: toolStartTask, Description: "Start a code task: a coding agent (Claude Code, Codex, ...) that reads and edits files and runs commands in a project on this PC. You cannot do that yourself. The user may be asked to approve the start (in chat) unless they allowed you always. Give a complete, self-contained task. You hear back with the task's full result once it is finished: its turn ended and no background agents of it are still running. Until then its status is working; a report never comes early.",
+			Schema: json.RawMessage(`{"type":"object","properties":{"projectId":{"type":"string","description":` + quote(projectHelp) + `},"harness":{"type":"string","enum":` + string(harnessJSON) + `},"prompt":{"type":"string","description":"The task for the agent."},"title":{"type":"string","description":"Short title (optional)."},"permissionMode":{"type":"string","enum":["manual","auto","yolo"],"description":"Omit to use the user's default mode. manual asks the user before risky actions; auto lets the agent's own safety checks decide; yolo asks nothing (only when the user allowed bots to use it)."},"newWorktree":{"type":"boolean","description":"Work on a new branch in a separate worktree (recommended for changes)."}},"required":["projectId","harness","prompt"],"additionalProperties":false}`)},
 		{Name: toolListTasks, Description: "List recent code tasks (yours and the user's) with status and what each is doing.",
 			Schema: json.RawMessage(`{"type":"object","properties":{"limit":{"type":"integer","minimum":1,"maximum":30}},"additionalProperties":false}`)},
 		{Name: toolTaskStatus, Description: "Look at one code task: status, current activity, last message, changes, what it waits for, and optionally the latest transcript lines.",
@@ -138,17 +142,15 @@ func (t Tasks) Call(ctx context.Context, rc chat.RunContext, name string, args j
 			return errResult("%s", err)
 		}
 		switch in.PermissionMode {
-		case "":
-			in.PermissionMode = "manual"
-		case "manual", "auto":
+		case "", "manual", "auto", "yolo": // "" = the user's default mode, applied by the runtime
 		default:
-			return errResult("permissionMode must be manual or auto")
+			return errResult("permissionMode must be manual, auto or yolo")
 		}
 		info, err := t.Runtime.Start(ctx, actor, in)
 		if err != nil {
 			return errResult("the task did not start: %s", err)
 		}
-		res, err := taskResult("Started. You will get a report when it finishes, fails or needs the user.", info, nil)
+		res, err := taskResult("Started. You will get a report with the full result when it is finished (turn ended, no background agents running), and sooner only if it fails or needs the user. Do not call it done before that report; task_status shows status, turns and subagents meanwhile.", info, nil)
 		res.Parts = []chat.MsgPart{{Type: chat.PartTask, ID: info.ID, Title: oneLine(info.Title, 120), Name: info.Harness}}
 		return res, err
 	case toolListTasks:
@@ -229,8 +231,10 @@ func TasksPrompt(rt TaskRuntime, bot chat.Bot) string {
 	}
 	var b strings.Builder
 	b.WriteString("## Code tasks\nYou can start code tasks (start_task): coding agents that edit files and run commands on the user's PC. " +
-		"Use them for real changes to a project, not for questions you can answer yourself. The user approves each start. " +
-		"You get a report when a task you started finishes, fails or needs the user; only the user can answer a task's questions.")
+		"Use them for real changes or deep code research in a project, not for questions you can answer yourself. The user may approve each start in chat. " +
+		"A task is finished only when its status is done with no background agents running; a working task that printed a progress note is not done. " +
+		"You get a report with the task's complete result when it finishes, and earlier only if it fails or needs the user; only the user can answer a task's questions. " +
+		"When a report arrives, relay its findings to the user in full (its structure, numbers, file paths, findings), not a one-line summary.")
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	list, err := rt.List(ctx, 50)

@@ -1,10 +1,11 @@
-import { CheckIcon, ChevronRightIcon, CircleIcon, CircleXIcon, LoaderCircleIcon, TriangleAlertIcon } from "lucide-react";
-import type { AgentsStatus, MsgPart } from "@/mygo";
+import { CheckIcon, CircleIcon, CircleXIcon, LoaderCircleIcon, TriangleAlertIcon } from "lucide-react";
+import { SubagentList, type SubagentItem, type SubagentStatus } from "@/components/assistant-ui/elements/subagent-list";
+import type { AgentsStatus, MsgPart, Session } from "@/mygo";
 import { ProviderLogo } from "@/features/agents/ProviderLogo";
 import { kindLabel, sessionTitle } from "@/features/agents/format";
 import { cn } from "@/lib/utils";
 import { useChat } from "@/stores/chat";
-import { TASK_STATUS_LABEL, useTaskSession } from "../taskSession";
+import { TASK_STATUS_LABEL, useTaskSessions } from "../taskSession";
 
 /** Spinner while the agent works, a check when its turn is done, a warning when it needs you, a cross when it failed. */
 export function TaskStatusGlyph({ status, className }: { /** absent while the task is still loading */ status?: AgentsStatus; className?: string }) {
@@ -31,30 +32,35 @@ export function HarnessBadge({ kind }: { kind: string }) {
   </span>;
 }
 
-/** One code task a bot started: its live status, title and harness. Opens the task beside the conversation. */
-export function TaskChip({ part }: { part: MsgPart }) {
-  const id = part.id ?? "";
-  const { session, missing } = useTaskSession(id);
-  const open = useChat((s) => s.taskPaneId === id);
-  const title = session ? sessionTitle(session) : part.title || "Code task";
-  const kind = session?.kind || part.name || "";
-  const status = session?.status;
-  const statusText = missing ? "Unavailable" : status ? TASK_STATUS_LABEL[status] : "Loading";
-  return <button type="button" data-slot="task-chip" data-status={missing ? "missing" : status} aria-pressed={open}
-    onClick={() => useChat.getState().openTaskPane(id)}
-    className={cn("group flex w-full max-w-md min-w-0 items-center gap-2 rounded-lg border bg-card/50 px-2.5 py-1.5 text-start text-sm outline-none transition-colors hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none",
-      open && "border-ring/60 bg-accent")}>
-    {missing ? <CircleIcon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" /> : <TaskStatusGlyph status={status} />}
-    <span className="sr-only">{statusText}:</span>
-    <span className="min-w-0 flex-1 truncate" title={title}>{title}</span>
-    {kind && <HarnessBadge kind={kind} />}
-    <ChevronRightIcon aria-hidden className="size-3.5 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5 motion-reduce:transition-none" />
-  </button>;
+const ROW_STATUS: Record<AgentsStatus, SubagentStatus> = { idle: "running", working: "running", "needs-you": "needs-you", done: "done", failed: "failed", stopped: "failed", lost: "failed" };
+
+/** What a task's row says under its title: the agent's current activity, or how many background agents a settled turn still waits for. */
+export function taskActivity(session: Session | undefined, missing: boolean): string | undefined {
+  if (missing) return "This task is no longer available";
+  if (!session) return "Loading…";
+  if (session.status === "working" && session.subagents) return `${session.subagents} background ${session.subagents === 1 ? "agent" : "agents"} running`;
+  if (session.status === "working") return session.activity || undefined;
+  if (session.status === "needs-you") return session.activity || TASK_STATUS_LABEL[session.status];
+  return session.status === "done" ? undefined : TASK_STATUS_LABEL[session.status];
 }
 
-/** The tasks one reply started, one chip each. */
+/** The tasks one reply started, one row each (live status, title, activity, harness); clicking a row opens that task beside the conversation. */
 export function TaskChips({ parts }: { parts: readonly MsgPart[] }) {
-  return <ul data-slot="task-chips" aria-label="Code tasks" className="flex w-full flex-col gap-1.5">
-    {parts.map((part, i) => <li key={part.id || i} className="min-w-0"><TaskChip part={part} /></li>)}
-  </ul>;
+  const ids = parts.map((part) => part.id ?? "");
+  const { sessions, missing } = useTaskSessions(ids);
+  const openId = useChat((s) => s.pane?.kind === "task" ? s.pane.id : null);
+  const rows = parts.map((part, i): SubagentItem => {
+    const session = sessions[i];
+    const gone = !session && missing[ids[i]!] === true;
+    const kind = session?.kind || part.name || "";
+    return {
+      name: session ? sessionTitle(session) : part.title || "Code task",
+      model: kind ? <HarnessBadge kind={kind} /> : "",
+      status: gone ? "failed" : session ? ROW_STATUS[session.status] : "running",
+      activity: taskActivity(session, gone),
+    };
+  });
+  const selected = ids.indexOf(openId ?? "");
+  return <SubagentList aria-label="Code tasks" agents={rows} selectedIndex={selected === -1 ? undefined : selected}
+    onOpen={(index) => { const id = ids[index]; if (id) useChat.getState().openTaskPane(id); }} />;
 }

@@ -8,13 +8,22 @@ import { JobProgress, type JobStage } from "@/components/assistant-ui/elements/j
 import { MathBlock, type MathStep } from "@/components/assistant-ui/elements/math-block";
 import { SpecSheet, type SpecRow } from "@/components/assistant-ui/elements/spec-sheet";
 import { Timeline, type TimelineEvent } from "@/components/assistant-ui/elements/timeline";
+import { TodoList, type TodoItem } from "@/components/assistant-ui/elements/todo-list";
 import type { MsgPart } from "@/mygo";
+import { useChat } from "@/stores/chat";
 import { AutomationProposalCard, type AutomationProposalSpec } from "./AutomationProposalCard";
+import { DocumentCard, type DocumentSpec } from "./DocumentCard";
 import { SkillProposalCard, type SkillProposalSpec } from "./SkillProposalCard";
 
-/** The component kinds the daemon's show_* tools emit (internal/chat/tools/show.go) plus the proposal cards: `skill` (propose_skill) and `automation` (propose_automation). */
-export const UI_KINDS = ["table", "chart", "diagram", "flow", "math", "spec", "comparison", "timeline", "job", "skill", "automation"] as const;
+/**
+ * The component kinds the daemon's show_* tools emit (internal/chat/tools/show.go) plus the proposal cards: `skill` (propose_skill) and
+ * `automation` (propose_automation), the agent's working list (`todo`, update_todos) and a written document (`document`, write_document).
+ */
+export const UI_KINDS = ["table", "chart", "diagram", "flow", "math", "spec", "comparison", "timeline", "job", "skill", "automation", "todo", "document"] as const;
 export type UIKind = (typeof UI_KINDS)[number];
+
+/** Where a part sits in its conversation, so a document card can open that part beside the thread. */
+export interface PartAt { messageId: string; partIndex: number }
 
 interface DiagramNode { id: string; label: string; x: number; y: number; width: number; height: number; shape?: "box" | "round" | "pill" }
 interface DiagramLink { from: string; to: string; label?: string }
@@ -78,7 +87,13 @@ function parse(spec: string | undefined): Record<string, unknown> | null {
   } catch { return null; }
 }
 
-function View({ kind, spec }: { kind: string; spec: Record<string, any> }) { // eslint-disable-line @typescript-eslint/no-explicit-any -- validated by the daemon; the element props below type the use
+/** The document card knows whether it is the one open beside the conversation; `at` absent = a preview with nowhere to open it. */
+function DocumentPart({ spec, at }: { spec: DocumentSpec; at?: PartAt }) {
+  const open = useChat((s) => s.pane?.kind === "document" && at !== undefined && s.pane.messageId === at.messageId && s.pane.partIndex === at.partIndex);
+  return <DocumentCard spec={spec} open={open} onOpen={at && (() => useChat.getState().openDocument(at.messageId, at.partIndex))} />;
+}
+
+function View({ kind, spec, at }: { kind: string; spec: Record<string, any>; at?: PartAt }) { // eslint-disable-line @typescript-eslint/no-explicit-any -- validated by the daemon; the element props below type the use
   switch (kind) {
     case "table": {
       const columns = spec.columns as DataTableColumn[];
@@ -117,14 +132,18 @@ function View({ kind, spec }: { kind: string; spec: Record<string, any> }) { // 
       return <SkillProposalCard spec={spec as SkillProposalSpec} />;
     case "automation":
       return <AutomationProposalCard spec={spec as AutomationProposalSpec} />;
+    case "todo":
+      return <TodoList title={spec.title} description={spec.description} maxVisible={spec.maxVisible} items={(spec.items ?? []) as TodoItem[]} className="max-w-md" />;
+    case "document":
+      return <DocumentPart spec={spec as DocumentSpec} at={at} />;
     default:
       return null;
   }
 }
 
 /** A structured component an assistant message holds (a `ui` part): the daemon's validated JSON drawn by its assistant-ui element. */
-export function StructuredPart({ part }: { part: Pick<MsgPart, "name" | "spec"> }) {
+export function StructuredPart({ part, at }: { part: Pick<MsgPart, "name" | "spec">; at?: PartAt }) {
   const spec = parse(part.spec);
   if (!spec || !part.name || !(UI_KINDS as readonly string[]).includes(part.name)) return null;
-  return <div data-slot="chat-structured" data-kind={part.name} className="flex min-w-0 max-w-full flex-col items-start overflow-x-auto"><Contain><View kind={part.name} spec={spec} /></Contain></div>;
+  return <div data-slot="chat-structured" data-kind={part.name} className="flex min-w-0 max-w-full flex-col items-start overflow-x-auto"><Contain><View kind={part.name} spec={spec} at={at} /></Contain></div>;
 }

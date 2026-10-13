@@ -1,34 +1,22 @@
 import { useEffect, useState } from "react";
-import { events, Policy, type Pending } from "@/mygo";
-import { inDesktop } from "@/lib/backend";
+import { Policy, type Pending } from "@/mygo";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Field, FieldLabel } from "@/components/ui/field";
 import { Dialog, DialogDescription, DialogFooter, DialogHeader, DialogPanel, DialogPopup, DialogTitle } from "@/components/ui/dialog";
 import { errorText, Failure } from "./shared";
+import { isBotActor, usePolicyPending } from "./usePolicyPending";
 
-/** Global daemon approval queue: subscribe before fetching so an initial snapshot cannot hide a new request. */
+/** Global daemon approval queue as a modal. Bot requests are left out: they are decided inline in that bot's conversation. */
 export function PolicyApprovals() {
-  const [pending, setPending] = useState<Pending[]>([]);
-  const [error, setError] = useState<string | null>(null);
-  const [revision, setRevision] = useState(0);
-  useEffect(() => {
-    if (!inDesktop) return;
-    let live = true;
-    let sequence = 0;
-    const refresh = () => {
-      const version = ++sequence;
-      Policy.pending().then((items) => { if (live && version === sequence) { setPending(items ?? []); setError(null); } }, (cause: unknown) => { if (live && version === sequence) setError(errorText(cause)); });
-    };
-    const offPending = events.policyPending.on(({ items }) => { sequence++; setPending(items ?? []); setError(null); });
-    const offDaemon = events.daemonState.on((state) => { if (state.connected) refresh(); else { sequence++; setPending([]); } });
-    refresh();
-    return () => { live = false; offPending(); offDaemon(); };
-  }, [revision]);
+  const { items, error, retry } = usePolicyPending();
+  // Decided here but not yet gone from the queue: hidden so the dialog cannot ask twice.
+  const [decided, setDecided] = useState<readonly string[]>([]);
+  const pending = items.filter((item) => !isBotActor(item.actor) && !decided.includes(item.id));
   const request = pending[0];
-  if (!request) return error ? <div className="fixed right-4 bottom-4 max-w-sm"><Failure error={`Approval queue unavailable: ${error}`} retry={() => setRevision((value) => value + 1)} /></div> : null;
-  return <Approval key={request.id} request={request} count={pending.length} resolved={() => { setPending((items) => items.filter((item) => item.id !== request.id)); setRevision((value) => value + 1); }} />;
+  if (!request) return error ? <div className="fixed right-4 bottom-4 max-w-sm"><Failure error={`Approval queue unavailable: ${error}`} retry={retry} /></div> : null;
+  return <Approval key={request.id} request={request} count={pending.length} resolved={() => { setDecided((ids) => [...ids, request.id]); retry(); }} />;
 }
 
 function Approval({ request, count, resolved }: { request: Pending; count: number; resolved: () => void }) {

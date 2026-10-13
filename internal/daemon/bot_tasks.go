@@ -51,12 +51,13 @@ func (b botTasks) Start(ctx context.Context, actor string, spec tools.TaskStart)
 	}
 	s, err := b.d.Agents.Start(agents.WithActor(ctx, actor), agents.StartSpec{
 		Kind: spec.Harness, ProjectID: p.ID, Machine: p.MachineID, Prompt: spec.Prompt, Title: spec.Title,
-		PermissionMode: spec.PermissionMode, NewWorktree: spec.NewWorktree,
+		// A bot's YOLO request is the user's choice: the runtime only honours it with "Bots may use Yolo" on.
+		PermissionMode: spec.PermissionMode, ConfirmYolo: spec.PermissionMode == agents.PermYolo, NewWorktree: spec.NewWorktree,
 	})
 	if err != nil {
 		return tools.TaskInfo{}, err
 	}
-	return taskInfo(s), nil
+	return taskInfo(s, false), nil
 }
 
 func (b botTasks) List(ctx context.Context, limit int) ([]tools.TaskInfo, error) {
@@ -66,7 +67,7 @@ func (b botTasks) List(ctx context.Context, limit int) ([]tools.TaskInfo, error)
 	}
 	out := make([]tools.TaskInfo, 0, len(list))
 	for _, s := range list {
-		out = append(out, taskInfo(s))
+		out = append(out, taskInfo(s, false))
 	}
 	return out, nil
 }
@@ -84,11 +85,11 @@ func (b botTasks) Get(ctx context.Context, id string, transcript int) (tools.Tas
 		}
 		for _, e := range events {
 			if strings.TrimSpace(e.Text) != "" {
-				lines = append(lines, tools.TaskLine{Kind: e.Kind, Text: clip(e.Text)})
+				lines = append(lines, tools.TaskLine{Kind: e.Kind, Text: clipTo(e.Text, botTextMax)})
 			}
 		}
 	}
-	return taskInfo(s), lines, nil
+	return taskInfo(s, true), lines, nil
 }
 
 func (b botTasks) Send(ctx context.Context, actor, id, text string) (tools.TaskInfo, error) {
@@ -96,7 +97,7 @@ func (b botTasks) Send(ctx context.Context, actor, id, text string) (tools.TaskI
 	if err != nil {
 		return tools.TaskInfo{}, err
 	}
-	return taskInfo(s), nil
+	return taskInfo(s, false), nil
 }
 
 func (b botTasks) Stop(ctx context.Context, actor, id string) (tools.TaskInfo, error) {
@@ -104,16 +105,28 @@ func (b botTasks) Stop(ctx context.Context, actor, id string) (tools.TaskInfo, e
 	if err != nil {
 		return tools.TaskInfo{}, err
 	}
-	return taskInfo(s), nil
+	return taskInfo(s, false), nil
 }
 
 var _ tools.TaskRuntime = botTasks{}
 
-func taskInfo(s agents.Session) tools.TaskInfo {
+// botTextMax bounds one text a bot reads from a task (its result, last message, a transcript
+// line): the runtime keeps 32 KiB of each, and a report is the task's deliverable, so a bot sees
+// all of it. Lists stay at the event clip.
+const botTextMax = 32 << 10
+
+// taskInfo maps a session for a bot. full keeps the result and last message whole (task_status
+// and reports); otherwise they are clipped for lists.
+func taskInfo(s agents.Session, full bool) tools.TaskInfo {
+	bound := clip
+	if full {
+		bound = func(text string) string { return clipTo(text, botTextMax) }
+	}
 	return tools.TaskInfo{
 		ID: s.ID, Title: s.Title, Harness: s.Kind, Project: s.Project, ProjectID: s.ProjectID, Status: string(s.Status), Live: s.Live,
-		Activity: clip(s.Activity), LastMessage: clip(s.LastMessage), Result: clip(s.Result), Error: clip(s.Error),
+		Activity: clip(s.Activity), LastMessage: bound(s.LastMessage), Result: bound(s.Result), Error: clip(s.Error),
 		Branch: s.Branch, PRURL: s.PRURL, Files: s.Files, Additions: s.Additions, Deletions: s.Deletions,
+		Turns: s.Turns, Subagents: s.Subagents, PermissionMode: s.PermissionMode,
 		Waiting: waitingFor(s), Owner: s.Owner, UpdatedAt: s.UpdatedAt.UnixMilli(),
 	}
 }
@@ -149,10 +162,16 @@ func (d *Daemon) reportToOwner(topic string, s agents.Session) {
 	}()
 }
 
+// taskReportText is what the owning bot reads when s changed state. A finished task's report
+// carries its whole result (the deliverable), not a clipped last message; waiting and failed
+// reports carry what the task asks or the error plus its last message.
 func taskReportText(topic string, s agents.Session) string {
 	var b strings.Builder
 	what := map[string]string{"agent.finished": "finished", "agent.waiting": "needs the user", "agent.failed": "failed"}[topic]
 	fmt.Fprintf(&b, "Task %q (%s, id %s) %s.\nStatus: %s", s.Title, s.Kind, s.ID, what, s.Status)
+	if topic == "agent.finished" {
+		fmt.Fprintf(&b, " · %d turn(s) completed, no background agents running", s.Turns)
+	}
 	if s.Branch != "" {
 		fmt.Fprintf(&b, " · branch %s", s.Branch)
 	}
@@ -168,8 +187,16 @@ func taskReportText(topic string, s agents.Session) string {
 	if s.Error != "" {
 		fmt.Fprintf(&b, "\nError: %s", clip(s.Error))
 	}
-	if s.LastMessage != "" {
-		fmt.Fprintf(&b, "\nLast message:\n%s", clip(s.LastMessage))
+	result := s.Result
+	if topic != "agent.finished" || result == "" {
+		result = s.LastMessage
+	}
+	if result != "" {
+		label := "Last message"
+		if topic == "agent.finished" {
+			label = "Result (complete)"
+		}
+		fmt.Fprintf(&b, "\n%s:\n%s", label, clipTo(result, botTextMax))
 	}
 	return b.String()
 }

@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"sync"
+	"time"
 	"unicode/utf8"
 
 	"github.com/rayorole/orole-os-desktop/internal/agents"
@@ -19,11 +20,19 @@ const appEventText = 2000
 // request. It remembers only the last status and PR URL per session it has seen.
 // agent.finished, agent.waiting and agent.failed also go to owned, for sessions a bot
 // started; that path does not depend on the bus, which may drop events.
+//
+// agent.finished is published only once a completed turn has settled: the runtime reports
+// each turn's end, but a harness that delivers subagent or background results starts the
+// next turn right after, so the event waits settle and is dropped when the session is
+// working again by then (the later turn's end publishes instead).
 type taskEvents struct {
-	bus   *events.Bus
-	owned func(topic string, s agents.Session)
-	mu    sync.Mutex
-	seen  map[string]taskMark
+	bus    *events.Bus
+	owned  func(topic string, s agents.Session)
+	settle time.Duration                           // 0 publishes agent.finished at once
+	lookup func(id string) (agents.Session, error) // current state at settle time; nil uses the reported one
+	mu     sync.Mutex
+	seen   map[string]taskMark
+	timers map[string]*time.Timer // pending settles per session
 }
 
 type taskMark struct {
@@ -32,7 +41,7 @@ type taskMark struct {
 }
 
 func newTaskEvents(bus *events.Bus, owned func(topic string, s agents.Session)) *taskEvents {
-	return &taskEvents{bus: bus, owned: owned, seen: map[string]taskMark{}}
+	return &taskEvents{bus: bus, owned: owned, seen: map[string]taskMark{}, timers: map[string]*time.Timer{}}
 }
 
 // observe inspects one agent runtime client event. It never blocks: the bus drops
@@ -46,6 +55,10 @@ func (t *taskEvents) observe(event string, data any) {
 		if m, ok := data.(map[string]string); ok {
 			t.mu.Lock()
 			delete(t.seen, m["id"])
+			if timer := t.timers[m["id"]]; timer != nil {
+				timer.Stop()
+				delete(t.timers, m["id"])
+			}
 			t.mu.Unlock()
 		}
 		return
@@ -97,11 +110,37 @@ func (t *taskEvents) created(s agents.Session) {
 	t.publish(events.TopicTaskCreated, s, d)
 }
 
-// finished publishes agent.finished for a completed turn.
+// finished publishes agent.finished for a completed turn once it has settled (see taskEvents).
+// A failed turn is not finished: observe already published agent.failed for it.
 func (t *taskEvents) finished(s agents.Session) {
-	if t == nil {
+	if t == nil || s.Status != agents.StatusDone {
 		return
 	}
+	if t.settle <= 0 {
+		t.publishFinished(s)
+		return
+	}
+	t.mu.Lock()
+	if old := t.timers[s.ID]; old != nil {
+		old.Stop()
+	}
+	t.timers[s.ID] = time.AfterFunc(t.settle, func() {
+		t.mu.Lock()
+		delete(t.timers, s.ID)
+		t.mu.Unlock()
+		if t.lookup != nil {
+			if cur, err := t.lookup(s.ID); err == nil {
+				s = cur
+			}
+		}
+		if s.Status == agents.StatusDone && s.Subagents == 0 {
+			t.publishFinished(s)
+		}
+	})
+	t.mu.Unlock()
+}
+
+func (t *taskEvents) publishFinished(s agents.Session) {
 	d := taskData(s)
 	d["result"] = clip(s.Result)
 	t.publish(events.TopicAgentFinished, s, d)
@@ -179,10 +218,13 @@ func (b *botReplies) observe(event string, payload any) {
 }
 
 // clip bounds s to appEventText runes.
-func clip(s string) string {
-	if utf8.RuneCountInString(s) <= appEventText {
+func clip(s string) string { return clipTo(s, appEventText) }
+
+// clipTo bounds s to max runes, marking the cut.
+func clipTo(s string, max int) string {
+	if utf8.RuneCountInString(s) <= max {
 		return s
 	}
 	r := []rune(s)
-	return string(r[:appEventText]) + "…"
+	return string(r[:max]) + "…"
 }

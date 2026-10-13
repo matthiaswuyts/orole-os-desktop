@@ -55,6 +55,13 @@ type Config struct {
 	// YoloEnabled reports whether the daemon setting allows YOLO sessions (nil = allowed). It is
 	// read on every start, switch and detection, so turning it off takes effect immediately.
 	YoloEnabled func() bool
+	// BotYoloEnabled reports whether a bot actor may start or switch a task to YOLO (nil = never).
+	// It is read on every start and switch; YoloEnabled still applies.
+	BotYoloEnabled func() bool
+	// DefaultPermissionMode returns the mode a start that names none runs in ("" = manual). It is the
+	// user's setting, so a YOLO default counts as confirmed; the mode falls back to manual where the
+	// launch cannot honour it.
+	DefaultPermissionMode func() string
 	// TitleAccount resolves the model account of kind's own vendor ("claude", "codex") for naming a
 	// task with one short request (nil = the heuristic and harness-chosen titles only). It must return
 	// an error unless that vendor's CLI is installed and signed in, and never another vendor's account.
@@ -120,6 +127,11 @@ type liveSess struct {
 	// toolIDs are the tool calls of the current turn already counted in Session.ToolCalls, so a
 	// result whose call was never reported is counted once. Guarded by controlMu.
 	toolIDs map[string]bool
+	// subagents are the background agents the harness reported as running (EvSubagent), and
+	// turnDone is set when a turn ended while some still ran: the session then stays working and
+	// finishes when the last one reports. Both guarded by controlMu.
+	subagents map[string]bool
+	turnDone  bool
 }
 
 // NewManager creates a manager. Call Recover once at startup.
@@ -618,6 +630,15 @@ func (m *Manager) Start(ctx context.Context, spec StartSpec) (Session, error) {
 	}
 	if err := validPermissionMode(spec.PermissionMode); err != nil {
 		return Session{}, err
+	}
+	if spec.PermissionMode == "" && m.cfg.DefaultPermissionMode != nil {
+		// The user's default: confirmed by the setting, downgraded to manual where it cannot apply or
+		// the caller (an automation, a bot without BotYoloEnabled) may not use it.
+		def := normalizePermissionMode(m.cfg.DefaultPermissionMode())
+		yoloOK := def != PermYolo || (m.yoloEnabled() && len(events.ChainFrom(ctx)) == 0 && (ActorFrom(ctx) == "" || m.botYoloEnabled()))
+		if validPermissionMode(def) == nil && def != PermPlan && yoloOK && permissionModesApply(spec.Kind, mode, !localMachine(spec.Machine), def) == nil {
+			spec.PermissionMode, spec.ConfirmYolo = def, spec.ConfirmYolo || def == PermYolo
+		}
 	}
 	spec.PermissionMode = normalizePermissionMode(spec.PermissionMode)
 	if err := permissionModesApply(spec.Kind, mode, !localMachine(spec.Machine), spec.PermissionMode); err != nil {
@@ -1392,6 +1413,7 @@ func (m *Manager) apply(id string, e Event) {
 	case EvActivity:
 		m.mutateHot(id, func(s *Session) { s.Activity = truncate(e.Text, 160) })
 	case EvWorking:
+		ls.turnDone = false
 		m.mutateHot(id, func(s *Session) {
 			if s.Status != StatusNeedsYou || (len(s.Pending) == 0 && len(s.Questions) == 0) {
 				s.Status = StatusWorking
@@ -1400,6 +1422,34 @@ func (m *Manager) apply(id string, e Event) {
 				s.Activity = truncate(e.Text, 160)
 			}
 		})
+	case EvSubagent:
+		var a SubagentData
+		if json.Unmarshal(e.Data, &a) != nil || a.ID == "" {
+			return
+		}
+		if subagentRunning(a.Status) {
+			if ls.subagents == nil {
+				ls.subagents = map[string]bool{}
+			}
+			ls.subagents[a.ID] = true
+		} else {
+			delete(ls.subagents, a.ID)
+		}
+		n := len(ls.subagents)
+		settled := n == 0 && ls.turnDone
+		ls.turnDone = ls.turnDone && !settled
+		s, err := m.mutate(id, func(s *Session) {
+			s.Subagents = n
+			switch {
+			case settled && s.Status == StatusWorking:
+				s.Status, s.Activity = StatusDone, ""
+			case n > 0 && s.Status == StatusWorking && ls.turnDone:
+				s.Activity = backgroundActivity(n)
+			}
+		})
+		if err == nil && settled && s.Status == StatusDone {
+			m.turnSettled(ls, s, true)
+		}
 	case EvTranscript:
 		m.mutateHot(id, func(s *Session) { s.TranscriptRef = e.Text })
 	case EvPermission:
@@ -1440,6 +1490,8 @@ func (m *Manager) apply(id string, e Event) {
 		if result == "" {
 			result = e.Text
 		}
+		running := len(ls.subagents)
+		ls.turnDone = ok && running > 0
 		s, err := m.mutate(id, func(s *Session) {
 			s.Turns++
 			s.Pending = []PermissionRequest{}
@@ -1451,32 +1503,60 @@ func (m *Manager) apply(id string, e Event) {
 			if s.Review == ReviewSentBack {
 				s.Review = ReviewNone
 			}
-			if ok {
+			switch {
+			case ok && running > 0:
+				// The harness delivers the agents' results as a follow-up turn; this one is not the end.
+				s.Status, s.Activity, s.Error = StatusWorking, backgroundActivity(running), ""
+			case ok:
 				s.Status, s.Activity, s.Error = StatusDone, "", ""
 				if s.Tail == "" {
 					s.Tail = lastLines(result, 3)
 				}
-			} else {
+			default:
 				s.Status, s.Activity, s.Error = StatusFailed, "", truncate(result, 2000)
 				pauseQueue(s, "The previous turn failed. Resume the queue explicitly.")
 			}
 		})
-		if err == nil {
-			if m.cfg.Finished != nil {
-				m.cfg.Finished(s)
-			}
-			m.background(func() { m.refreshDiffStat(s.ID) })
-			if ok {
-				m.background(func() {
-					ls.controlMu.Lock()
-					defer ls.controlMu.Unlock()
-					if err := m.dispatchQueueControlled(ls); err != nil {
-						m.cfg.Log.Warn("queued prompt dispatch failed", "session", id, "err", err)
-					}
-				})
-			}
+		if err == nil && !ls.turnDone {
+			m.turnSettled(ls, s, ok)
 		}
 	}
+}
+
+// turnSettled runs once a turn is over for good: the harness reported its end and no background
+// agent of that turn is still running. The caller holds controlMu.
+func (m *Manager) turnSettled(ls *liveSess, s Session, ok bool) {
+	if m.cfg.Finished != nil {
+		m.cfg.Finished(s)
+	}
+	m.background(func() { m.refreshDiffStat(s.ID) })
+	if ok {
+		m.background(func() {
+			ls.controlMu.Lock()
+			defer ls.controlMu.Unlock()
+			if err := m.dispatchQueueControlled(ls); err != nil {
+				m.cfg.Log.Warn("queued prompt dispatch failed", "session", s.ID, "err", err)
+			}
+		})
+	}
+}
+
+// subagentRunning reports whether a harness's subagent status means the agent is still at work.
+// Harness vocabularies: omp/Claude "started", Codex "pendingInit"/"running"; anything else ended it.
+func subagentRunning(status string) bool {
+	switch strings.ToLower(status) {
+	case "started", "running", "pending", "pendinginit", "queued", "in_progress", "working":
+		return true
+	}
+	return false
+}
+
+// backgroundActivity is the activity line of a session whose turn ended while agents still run.
+func backgroundActivity(n int) string {
+	if n == 1 {
+		return "Turn ended; waiting for 1 background agent"
+	}
+	return fmt.Sprintf("Turn ended; waiting for %d background agents", n)
 }
 
 // countTool reports whether a tool event adds a call to Session.ToolCalls: a call counts unless its

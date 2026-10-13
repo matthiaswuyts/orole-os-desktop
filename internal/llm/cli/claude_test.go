@@ -114,6 +114,65 @@ func TestReplyStreamKeepsMultiByteTextWholeAndFlushesAMarkerLookalike(t *testing
 	}
 }
 
+// xmlCall writes Claude's native call markup; the tags are split so they never read as markup in this file.
+func xmlCall(name string, params ...string) string {
+	s := "<" + "invoke name=\"" + name + "\">\n"
+	for i := 0; i+1 < len(params); i += 2 {
+		s += "<" + "parameter name=\"" + params[i] + "\">" + params[i+1] + "</" + "parameter>\n"
+	}
+	return s + "</" + "invoke>"
+}
+
+var askUser = llm.ToolSpec{Name: "ask_user", Schema: []byte(`{"type":"object","properties":{"question":{"type":"string"},"options":{"type":"array"}}}`)}
+
+// A Claude model that answers in its own XML call markup instead of the tool_calls block must still call the tool,
+// and the markup (with any code fence around it) must never reach the user.
+func TestClaudeXMLCallMarkupBecomesACallAndIsNeverShown(t *testing.T) {
+	for _, reply := range []string{
+		"Hi! Let me ask.\n" + xmlCall("ask_user", "question", "Which stack?", "options", `[{"label":"Go"},{"label":"Rust"}]`) + "\n```",
+		"Hi! Let me ask.\n```xml\n<" + "function_calls>\n" + xmlCall("ask_user", "question", "Which stack?", "options", `[{"label":"Go"},{"label":"Rust"}]`) + "\n</" + "function_calls>\n```",
+	} {
+		var out strings.Builder
+		for i := 0; i < len(reply); i += 5 {
+			out.WriteString(claudeLine(reply[i:min(i+5, len(reply))]))
+		}
+		r := &run{out: out.String() + claudeResult}
+		ch, err := NewClaude(fakeRuntime{path: "claude", ready: true}, r.start).Stream(context.Background(), llm.Request{Tools: []llm.ToolSpec{askUser}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var shown string
+		var calls []llm.ToolCall
+		for _, d := range collect(t, ch) {
+			switch d.Kind {
+			case llm.DeltaText:
+				shown += d.Text
+			case llm.DeltaToolCall:
+				calls = append(calls, *d.Call)
+			}
+		}
+		if strings.TrimSpace(shown) != "Hi! Let me ask." {
+			t.Errorf("shown text: %q", shown)
+		}
+		if len(calls) != 1 || calls[0].Name != "ask_user" || string(calls[0].Args) != `{"options":[{"label":"Go"},{"label":"Rust"}],"question":"Which stack?"}` {
+			t.Errorf("calls: %+v", calls)
+		}
+	}
+}
+
+func TestXMLCallMarkupFollowsTheSchemaAndOnlyOfferedTools(t *testing.T) {
+	// A string parameter stays a string even when it parses as JSON; an unoffered tool is never called.
+	text, calls := splitReply(xmlCall("ask_user", "question", "42", "options", "[]")+xmlCall("ghost", "x", "1"), []llm.ToolSpec{askUser})
+	if text != "" || len(calls) != 1 || string(calls[0].Args) != `{"options":[],"question":"42"}` {
+		t.Fatalf("%q %+v", text, calls)
+	}
+	// Markup naming no offered tool is ordinary text.
+	reply := "See " + xmlCall("ghost", "x", "1")
+	if text, calls := splitReply(reply, []llm.ToolSpec{askUser}); len(calls) != 0 || text != reply {
+		t.Fatalf("%q %+v", text, calls)
+	}
+}
+
 func TestClaudeReportsFailuresAndMissingInstall(t *testing.T) {
 	for _, tc := range []struct {
 		out  string

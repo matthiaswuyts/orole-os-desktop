@@ -13,6 +13,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -115,6 +116,8 @@ type envCfg struct {
 	permissionDecision func(context.Context, string, agents.PermissionRequest) error
 	authorize          func(context.Context, string, string, string) error
 	yolo               func() bool
+	botYolo            func() bool
+	defaultMode        func() string
 	created            func(agents.Session)
 }
 
@@ -124,6 +127,10 @@ func sameDB(path, data string) opt  { return func(c *envCfg) { c.dbPath, c.data 
 
 // withYoloSetting stands in for the daemon setting that can turn YOLO off.
 func withYoloSetting(f func() bool) opt { return func(c *envCfg) { c.yolo = f } }
+
+// withBotYolo stands in for the "Bots may use Yolo" setting; withDefaultMode for the default mode.
+func withBotYolo(f func() bool) opt       { return func(c *envCfg) { c.botYolo = f } }
+func withDefaultMode(f func() string) opt { return func(c *envCfg) { c.defaultMode = f } }
 
 func withCreated(f func(agents.Session)) opt { return func(c *envCfg) { c.created = f } }
 
@@ -148,11 +155,13 @@ func newEnv(t *testing.T, opts ...opt) *env {
 		Store: e.st, Host: &agents.Host{Terminals: e.term, DataDir: c.data, HookExe: c.hookExe},
 		Log: slog.New(slog.NewTextHandler(io.Discard, nil)), Worktrees: c.wt,
 		Publish: e.pubs.publish, Audit: e.rec.audit,
-		PermissionDecision: c.permissionDecision,
-		Authorize:          c.authorize,
-		YoloEnabled:        c.yolo,
-		Created:            c.created,
-		Adapters:           []agents.Adapter{agents.Claude{Bin: fakeBin}, agents.Custom{}},
+		PermissionDecision:    c.permissionDecision,
+		Authorize:             c.authorize,
+		YoloEnabled:           c.yolo,
+		BotYoloEnabled:        c.botYolo,
+		DefaultPermissionMode: c.defaultMode,
+		Created:               c.created,
+		Adapters:              []agents.Adapter{agents.Claude{Bin: fakeBin}, agents.Custom{}},
 	})
 	t.Cleanup(func() { e.m.Shutdown(); e.term.Shutdown() })
 	return e
@@ -272,9 +281,10 @@ func TestCreatedReportsEachNewSessionOnce(t *testing.T) {
 	}
 }
 
-func TestBotActorOwnsItsTaskAndNeverGetsYolo(t *testing.T) {
+func TestBotActorOwnsItsTaskAndGetsYoloOnlyWhenAllowed(t *testing.T) {
 	var actors []string
-	e := newEnv(t, withYoloSetting(func() bool { return true }), func(c *envCfg) {
+	var botYolo atomic.Bool
+	e := newEnv(t, withYoloSetting(func() bool { return true }), withBotYolo(botYolo.Load), func(c *envCfg) {
 		c.authorize = func(ctx context.Context, action, _, _ string) error {
 			actors = append(actors, action+" "+agents.ActorFrom(ctx))
 			return nil
@@ -291,11 +301,37 @@ func TestBotActorOwnsItsTaskAndNeverGetsYolo(t *testing.T) {
 	if stored, err := e.st.GetSession(s.ID); err != nil || stored.Owner != "bot:b1" {
 		t.Fatalf("owner not persisted: %+v %v", stored.Owner, err)
 	}
-	if _, err := e.m.Start(ctx, agents.StartSpec{Kind: "claude", Dir: t.TempDir(), PermissionMode: "yolo", ConfirmYolo: true}); err == nil || !strings.Contains(err.Error(), "bots cannot") {
-		t.Fatalf("yolo for a bot: %v", err)
+	if _, err := e.m.Start(ctx, agents.StartSpec{Kind: "claude", Dir: t.TempDir(), PermissionMode: "yolo", ConfirmYolo: true}); err == nil || !strings.Contains(err.Error(), "Bots may use Yolo") {
+		t.Fatalf("yolo for a bot without the setting: %v", err)
+	}
+	botYolo.Store(true)
+	if s, err := e.m.Start(ctx, agents.StartSpec{Kind: "claude", Dir: t.TempDir(), Prompt: "go", PermissionMode: "yolo", ConfirmYolo: true}); err != nil || s.PermissionMode != "yolo" {
+		t.Fatalf("yolo for a bot with the setting: %+v %v", s, err)
 	}
 	if user := e.start(t, agents.StartSpec{Prompt: "hi"}); user.Owner != "" {
 		t.Fatalf("user task owned by %q", user.Owner)
+	}
+}
+
+// A start that names no mode runs in the user's default; a YOLO default is confirmed by the
+// setting for the user and downgraded to manual for bots the user did not allow YOLO.
+func TestDefaultPermissionModeAppliesToUnnamedStarts(t *testing.T) {
+	var def atomic.Value
+	def.Store("auto")
+	e := newEnv(t, withYoloSetting(func() bool { return true }), withDefaultMode(func() string { return def.Load().(string) }))
+	if s := e.start(t, agents.StartSpec{Prompt: "hi"}); s.PermissionMode != "auto" {
+		t.Fatalf("default auto: %+v", s)
+	}
+	if s := e.start(t, agents.StartSpec{Prompt: "hi", PermissionMode: "manual"}); s.PermissionMode != "manual" {
+		t.Fatalf("named mode overridden: %+v", s)
+	}
+	def.Store("yolo")
+	if s := e.start(t, agents.StartSpec{Prompt: "hi"}); s.PermissionMode != "yolo" {
+		t.Fatalf("default yolo for the user: %+v", s)
+	}
+	bot := agents.WithActor(ctx10(t), "bot:b1")
+	if s, err := e.m.Start(bot, agents.StartSpec{Kind: "claude", Dir: t.TempDir(), Prompt: "hi"}); err != nil || s.PermissionMode != "manual" {
+		t.Fatalf("default yolo for a bot without the setting must fall back to manual: %+v %v", s, err)
 	}
 }
 

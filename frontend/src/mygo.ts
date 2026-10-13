@@ -2584,6 +2584,12 @@ export interface Session {
    */
   toolCalls?: number;
   failedTools?: number;
+  /**
+   * Subagents counts the background agents (omp/Claude subagents, Codex child tasks) the harness
+   * reported as running. A turn that ends while they run is not finished: the session stays
+   * working until the last one reports and the harness's follow-up turn ends.
+   */
+  subagents?: number;
   /** Pending are the permission requests awaiting a decision (runtime state). */
   pending: PermissionRequest[];
   usage?: ContextUsage;

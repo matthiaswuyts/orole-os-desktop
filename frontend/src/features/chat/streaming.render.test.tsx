@@ -21,12 +21,15 @@ vi.mock("@/mygo", () => ({
   LLM: { models: vi.fn() },
   Skills: { list: () => Promise.resolve([]) },
   Daemon: { health: vi.fn() },
+  Policy: { pending: () => Promise.resolve([]) },
   Shell: { openExternal: vi.fn() },
   events: {
     chatRun: { on: (f: (s: RunState) => void) => { bridge.run.add(f); return () => { bridge.run.delete(f); }; } },
     chatMessage: { on: (f: (m: Message) => void) => { bridge.message.add(f); return () => { bridge.message.delete(f); }; } },
     chatMessageDelta: { on: () => () => {} },
     chatBot: { on: (f: (c: BotChange) => void) => { bridge.bot.add(f); return () => { bridge.bot.delete(f); }; } },
+    policyPending: { on: () => () => {} },
+    daemonState: { on: () => () => {} },
   },
 }));
 // One ChatMessageView renders per message turn render; one MentionTrigger per Composer render. Counting them counts those renders.

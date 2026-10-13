@@ -69,7 +69,7 @@ func TestTaskToolsAreOfferedOnlyToBotsAllowedToRunCode(t *testing.T) {
 	}
 }
 
-func TestStartTaskRunsAsTheBotInASafePermissionMode(t *testing.T) {
+func TestStartTaskRunsAsTheBotInTheUsersDefaultMode(t *testing.T) {
 	f := &fakeTasks{tasks: map[string]TaskInfo{}}
 	tool := Tasks{Runtime: f}
 	rc := chat.RunContext{BotID: "b1", Bot: coder()}
@@ -77,16 +77,22 @@ func TestStartTaskRunsAsTheBotInASafePermissionMode(t *testing.T) {
 	if err != nil || res.IsError || !res.Untrusted {
 		t.Fatalf("start: %+v %v", res, err)
 	}
-	if len(f.starts) != 1 || f.actors[0] != "bot:b1" || f.starts[0].PermissionMode != "manual" || !f.starts[0].NewWorktree {
+	// No mode named: the runtime applies the user's default, so the request carries none.
+	if len(f.starts) != 1 || f.actors[0] != "bot:b1" || f.starts[0].PermissionMode != "" || !f.starts[0].NewWorktree {
 		t.Fatalf("start request: %+v as %v", f.starts, f.actors)
 	}
 	want := chat.MsgPart{Type: chat.PartTask, ID: "t-new", Title: "Fix login", Name: "claude"}
 	if len(res.Parts) != 1 || res.Parts[0].Type != want.Type || res.Parts[0].ID != want.ID || res.Parts[0].Title != want.Title || res.Parts[0].Name != want.Name {
 		t.Fatalf("parts = %+v, want the task chip %+v", res.Parts, want)
 	}
+	// YOLO is passed through: the runtime decides whether the user let bots use it.
 	res, _ = tool.Call(context.Background(), rc, toolStartTask, json.RawMessage(`{"projectId":"p1","harness":"claude","prompt":"x","permissionMode":"yolo"}`))
-	if !res.IsError || len(f.starts) != 1 {
-		t.Fatalf("yolo accepted: %+v", res)
+	if res.IsError || len(f.starts) != 2 || f.starts[1].PermissionMode != "yolo" {
+		t.Fatalf("yolo request: %+v %+v", res, f.starts)
+	}
+	res, _ = tool.Call(context.Background(), rc, toolStartTask, json.RawMessage(`{"projectId":"p1","harness":"claude","prompt":"x","permissionMode":"plan"}`))
+	if !res.IsError || len(f.starts) != 2 {
+		t.Fatalf("unknown mode accepted: %+v", res)
 	}
 }
 

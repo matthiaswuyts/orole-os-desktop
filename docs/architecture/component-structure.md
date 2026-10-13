@@ -376,8 +376,9 @@ muted "Starting…" (or "Failed") row. Several launches can be pending at once; 
   that no prompts will be shown and only then sends `confirmYolo`; the daemon enforces the confirmation, the
   `agents` setting that can turn YOLO off (Settings > System > Task permissions) and everything else. In a running task the
   choice calls `Agents.setPermissionMode`; the control is disabled with the daemon's reason (`followup.permissionModeReason`)
-  for terminal, remote and read-only review sessions. Home reuses the control: the default is Manual, Auto is remembered in
-  `localStorage` (`orole.task.permissionMode`), and YOLO never is.
+  for terminal, remote and read-only review sessions. Home reuses the control: the daemon's `agents.defaultPermissionMode`
+  (Settings > System > Task permissions) seeds the choice once it loads, YOLO as that default counting as confirmed;
+  without a daemon default, Auto is remembered in `localStorage` (`orole.task.permissionMode`), and YOLO never is.
   Optional dictation (`ComposerVoice`) records the microphone with `getUserMedia` + `MediaRecorder` (the packaged
   WebView2 has no speech service, so the Web Speech API is not used) and sends the recording to the daemon
   (`Dictation.transcribe`), which transcribes it with OpenAI using the user's own OpenAI API key. It requires an

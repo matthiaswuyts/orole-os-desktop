@@ -136,8 +136,14 @@ func (m *Manager) yoloEnabled() bool {
 	return m.cfg.YoloEnabled == nil || m.cfg.YoloEnabled()
 }
 
+// botYoloEnabled reports whether the daemon setting lets bots start or switch to YOLO.
+func (m *Manager) botYoloEnabled() bool {
+	return m.cfg.BotYoloEnabled != nil && m.cfg.BotYoloEnabled()
+}
+
 // gateYolo enforces, in Go, that YOLO is explicit: switched on in settings, confirmed in the
-// request, and never started by an automation. Every attempt is audited.
+// request, never started by an automation, and by a bot only when the user allowed bots YOLO.
+// Every attempt is audited.
 func (m *Manager) gateYolo(ctx context.Context, target, perm string, confirmed bool) error {
 	if perm != PermYolo {
 		return nil
@@ -151,8 +157,8 @@ func (m *Manager) gateYolo(ctx context.Context, target, perm string, confirmed b
 		return deny(errors.New("YOLO mode is turned off in Orole's settings"))
 	case len(events.ChainFrom(ctx)) > 0:
 		return deny(errors.New("automations cannot start or switch to YOLO mode"))
-	case ActorFrom(ctx) != "":
-		return deny(errors.New("bots cannot start or switch to YOLO mode"))
+	case ActorFrom(ctx) != "" && !m.botYoloEnabled():
+		return deny(errors.New("bots may not use YOLO mode: turn on \"Bots may use Yolo\" in Orole's task settings"))
 	case !confirmed:
 		return deny(errors.New("YOLO mode needs explicit confirmation: no approval prompts will be shown (confirmYolo)"))
 	}

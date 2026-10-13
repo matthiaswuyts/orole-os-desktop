@@ -144,12 +144,20 @@ The chat view also depends on the MIT-licensed [`@assistant-ui/react`](https://g
 package (`useExternalStoreRuntime`, thread, composer, message and action bar primitives) as an
 unmodified npm dependency; nothing from it is copied.
 
-`elements/run-activity.tsx`, `elements/permission-grant.tsx` and `elements/image-generation.tsx` are not copied: they are
+`elements/run-activity.tsx`, `elements/permission-grant.tsx`, `elements/image-generation.tsx`, `elements/todo-list.tsx`,
+`elements/subagent-list.tsx` and `elements/canvas-split.tsx` are not copied: they are
 written in Orole's own code from the published element documentation (props, anatomy, lifecycle table) at
-`https://www.assistant-ui.com/elements/{run-activity,permission-grant,image-generation}.md`, with `tool-timeline.tsx`
+`https://www.assistant-ui.com/elements/{run-activity,permission-grant,image-generation,todo-list,subagent-list,canvas-split}.md`,
+with `tool-timeline.tsx`
 extended by step rows that can open into details. Orole deviations: `PermissionGrant` is adapted to a single daemon request
 (`once`/`denied` only unless the request carries more, a `blocked` reason, a details disclosure), `ImageGeneration` omits the
-fixed "1024 × 1024" label, and `RunActivity` rows reuse the timeline step row.
+fixed "1024 × 1024" label, and `RunActivity` rows reuse the timeline step row. `TodoList` keeps the documented counting
+rules (failed counts toward the denominator only, cancelled toward neither) and the `maxVisible` fold, with the entrance
+animation done in CSS (`tw-animate-css`). `SubagentList` replaces the documented `completedCount`/`progress` pair by a
+per-row `status` (`running`/`needs-you`/`done`/`failed`) with an indeterminate shimmer bar while running, adds an `activity`
+line, a `ReactNode` model slot (Orole draws the harness badge there) and clickable rows (`onSelect`, `selectedIndex`),
+and renders as a `ul`. `CanvasSplitBody` takes any children (Orole renders the chat's markdown there) and the header's
+saved/writing state is a text label with an icon.
 
 ### beui reasoning range slider
 

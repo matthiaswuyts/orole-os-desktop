@@ -40,7 +40,7 @@ Single place that answers "may this actor do this?". Inputs: actor, action, reso
 - Defaults: read -> allow, write/destructive -> ask, unclassified -> deny. User-requested `agent.start`,
   `agent.prompt`, `agent.restart` and `agent.permissionMode` are allowed without a second confirmation: submitting the task
   or choosing its Manual/Auto/YOLO mode is the instruction. YOLO has its own gate in the agents manager (explicit
-  `confirmYolo`, the `agents.yoloDisabled` setting, never from an automation or a bot; audited as `agent.yolo`), and it
+  `confirmYolo`, the `agents.yoloDisabled` setting, never from an automation, from a bot only with `agents.botYolo`; audited as `agent.yolo`), and it
   does not bypass this engine for Orole's own MCP tools. Stored ask/deny rules still win.
   Automation/bot/agent-originated launches, actual tool actions, and external hints do not receive this default: a bot
   acting through `agents.WithActor` is the actor `bot:<id>`, an automation `automation:<id>`.
@@ -49,7 +49,11 @@ Single place that answers "may this actor do this?". Inputs: actor, action, reso
 - Every decision is written to `audit_events`. Pending-approval text is sanitised with `internal/untrusted`.
 
 **Wiring:** `internal/daemon/svc_mcp.go` exposes pending requests, resolution, and rule management over
-authenticated IPC. The global `PolicyApprovals` surface subscribes before loading its initial snapshot.
+authenticated IPC. The global `PolicyApprovals` dialog subscribes before loading its initial snapshot and skips `bot:` actors:
+a bot's held `agent.start`/`agent.prompt` is decided inline in that bot's conversation (`features/chat/parts/JobApprovalCard.tsx`;
+Allow once, Always allow this bot = `agent.start` + `agent.prompt` allow rules for `bot:<id>` on `*`, Deny). Remembered bot
+rules are listed and removable under Settings > System > Task permissions; `agents.botAutoApprove` skips the ask altogether
+and `agents.botYolo` lets bots start in YOLO while YOLO is allowed.
 MCP invocation uses `InvokeChecked`; Mail/Drive operations pass through the daemon adapters and policy.
 The agent manager requires an authorizer for launch, restart, prompts, checks, and destructive worktree
 discard, including calls from automations. Missing authorization fails closed. A retry of an already

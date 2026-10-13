@@ -57,4 +57,17 @@ describe("policy approval queue", () => {
     await act(async () => finish([]));
     expect(screen.getByRole("button", { name: "Allow" })).toBeInTheDocument();
   });
+
+  it("leaves bot requests to the conversation and shows only the rest", async () => {
+    const fromBot: Pending = { ...request, id: "bot-approval", actor: "bot:atlas", action: "agent.start", detail: "Fix the flaky test" };
+    bridge.pending.mockResolvedValue([fromBot]);
+    const view = render(<PolicyApprovals />);
+    await act(async () => { await Promise.resolve(); });
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(screen.queryByText("Fix the flaky test")).toBeNull();
+    act(() => bridge.listener?.({ items: [fromBot, request] }));
+    expect(await screen.findByText("Send a message")).toBeInTheDocument();
+    expect(screen.queryByText(/2 actions are waiting/)).toBeNull();
+    view.unmount();
+  });
 });

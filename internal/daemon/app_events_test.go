@@ -2,7 +2,10 @@ package daemon
 
 import (
 	"slices"
+	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/rayorole/orole-os-desktop/internal/agents"
 	"github.com/rayorole/orole-os-desktop/internal/chat"
@@ -105,6 +108,71 @@ func TestTaskEventsReportOwnedTasksToTheirBot(t *testing.T) {
 	want := []string{"agent.waiting mine", "agent.finished mine", "agent.failed mine"}
 	if !slices.Equal(got, want) {
 		t.Fatalf("reports = %v, want %v", got, want)
+	}
+}
+
+// A completed turn settles before it counts as finished: a session that is working again by
+// then (the harness delivering background results) reports nothing; the later turn does.
+func TestTaskEventsFinishedWaitsForTheTaskToSettle(t *testing.T) {
+	var mu sync.Mutex
+	var got []string
+	te := newTaskEvents(nil, func(topic string, s agents.Session) {
+		mu.Lock()
+		got = append(got, topic+" "+s.Result)
+		mu.Unlock()
+	})
+	te.settle = 20 * time.Millisecond
+	current := agents.Session{ID: "mine", Owner: "bot:b1", Status: agents.StatusWorking, Subagents: 1}
+	te.lookup = func(string) (agents.Session, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		return current, nil
+	}
+	first := current
+	first.Status, first.Result = agents.StatusDone, "progress"
+	te.finished(first) // the session is working again (lookup) by the time the settle fires
+	time.Sleep(60 * time.Millisecond)
+	mu.Lock()
+	if len(got) != 0 {
+		t.Fatalf("unsettled turn reported: %v", got)
+	}
+	current.Status, current.Subagents, current.Result = agents.StatusDone, 0, "final"
+	mu.Unlock()
+	te.finished(current)
+	te.finished(current) // a repeated completion coalesces into one settle
+	time.Sleep(60 * time.Millisecond)
+	mu.Lock()
+	defer mu.Unlock()
+	if !slices.Equal(got, []string{"agent.finished final"}) {
+		t.Fatalf("reports = %v", got)
+	}
+	failed := current
+	failed.Status = agents.StatusFailed
+	te.finished(failed) // failed turns are agent.failed through observe, never agent.finished
+	if len(got) != 1 {
+		t.Fatalf("failed turn reported as finished: %v", got)
+	}
+}
+
+// A finished task's report carries its complete result; status reports keep the last message.
+func TestTaskReportTextCarriesTheWholeResult(t *testing.T) {
+	long := strings.Repeat("section ", 1000) // 8000 runes: past the event clip, within the bot bound
+	s := agents.Session{ID: "t", Title: "Research", Kind: "omp", Status: agents.StatusDone, Turns: 3, Result: long, LastMessage: "last"}
+	text := taskReportText("agent.finished", s)
+	if !strings.Contains(text, long) || !strings.Contains(text, "Result (complete)") || !strings.Contains(text, "3 turn(s) completed") || strings.Contains(text, "…") {
+		t.Fatalf("finished report clipped or mislabelled: %.200s", text)
+	}
+	s.Status = agents.StatusNeedsYou
+	s.Questions = []agents.QuestionRequest{{Questions: []agents.Question{{Prompt: "Which repo?"}}}}
+	text = taskReportText("agent.waiting", s)
+	if !strings.Contains(text, "Waiting for:\nquestion: Which repo?") || !strings.Contains(text, "Last message:\nlast") || strings.Contains(text, long) {
+		t.Fatalf("waiting report: %.200s", text)
+	}
+	if info := taskInfo(s, true); info.Result != long || info.Turns != 3 {
+		t.Fatalf("task_status clipped the result: %d runes", len([]rune(info.Result)))
+	}
+	if info := taskInfo(s, false); len([]rune(info.Result)) > appEventText+1 {
+		t.Fatalf("list entry not clipped: %d runes", len([]rune(info.Result)))
 	}
 }
 

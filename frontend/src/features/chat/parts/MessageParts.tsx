@@ -11,6 +11,7 @@ import { MemoryChips } from "@/components/assistant-ui/elements/memory-chips";
 import { AttachmentPill, ReportCard, SourcesButton } from "./Sources";
 import { QuestionCard } from "./Question";
 import { StructuredPart } from "./StructuredPart";
+import { parseDocument } from "./DocumentCard";
 import { MentionText } from "../MentionText";
 import type { MentionTarget } from "../mentions";
 import { splitQuote } from "../quote";
@@ -45,7 +46,7 @@ export function Bubble({ children, className }: { children: ReactNode; className
  * timeline and, for a report, in its "N sources" popover; they are never listed in the answer.
  * Pure over its props (task chips read live task state from the agents store), so the builder preview can use it without a runtime.
  */
-export function MessageParts({ message, onAnswer, botName = "This bot", botAvatar = "", bots = [], onOpenBot }: { message: Pick<Message, "parts" | "status"> & Partial<Pick<Message, "createdAt">>; /** Sends the user's answer to a question; absent = questions are read-only. */ onAnswer?: (answer: string) => void; /** Who wrote the message, named in its handoffs. */ botName?: string; botAvatar?: string; /** Every bot, to draw the avatars of the bots a handoff names. */ bots?: readonly BotRef[]; /** Opens another bot's conversation (a handoff's worker); absent = no link. */ onOpenBot?: (botId: string) => void }) {
+export function MessageParts({ message, onAnswer, botName = "This bot", botAvatar = "", bots = [], onOpenBot }: { message: Pick<Message, "parts" | "status"> & Partial<Pick<Message, "id" | "createdAt">>; /** Sends the user's answer to a question; absent = questions are read-only. */ onAnswer?: (answer: string) => void; /** Who wrote the message, named in its handoffs. */ botName?: string; botAvatar?: string; /** Every bot, to draw the avatars of the bots a handoff names. */ bots?: readonly BotRef[]; /** Opens another bot's conversation (a handoff's worker); absent = no link. */ onOpenBot?: (botId: string) => void }) {
   const active = isActive(message.status);
   const hasReport = message.parts.some((p) => p.type === "report");
   const sources = sourcesOf(message.parts);
@@ -53,6 +54,9 @@ export function MessageParts({ message, onAnswer, botName = "This bot", botAvata
   const memory = message.parts.filter((p) => p.type === "memory");
   // Every task the reply started is listed together, where the first one was started.
   const tasks = message.parts.filter((p) => p.type === "task" && p.id);
+  // A document rewritten under the same title shows once, at its latest version.
+  const latestDocument = new Map<string, number>();
+  message.parts.forEach((p, i) => { if (p.type === "ui" && p.name === "document") latestDocument.set(parseDocument(p.spec)?.title ?? "", i); });
   const blocks: ReactNode[] = [];
   if (work.count > 0) blocks.push(<WorkTimeline key="work" work={work} sources={sources} botName={botName} botAvatar={botAvatar} bots={bots} onOpenBot={onOpenBot} />);
   message.parts.forEach((part, i) => {
@@ -67,7 +71,8 @@ export function MessageParts({ message, onAnswer, botName = "This bot", botAvata
         if (part.text && part.choices?.length) blocks.push(<QuestionCard key={i} text={part.text} choices={part.choices} onAnswer={onAnswer} />);
         break;
       case "ui":
-        blocks.push(<StructuredPart key={i} part={part} />);
+        if (part.name === "document" && latestDocument.get(parseDocument(part.spec)?.title ?? "") !== i) break;
+        blocks.push(<StructuredPart key={i} part={part} at={message.id ? { messageId: message.id, partIndex: i } : undefined} />);
         break;
       case "notice":
         if (part.text) blocks.push(<NoticeLine key={i} text={part.text} />);
