@@ -3,6 +3,7 @@ import { useDaemon } from "@/stores/daemon";
 import { useAgentCounts, useAgents } from "@/stores/agents";
 import { boxStatus, startBoxesPolling, useBoxes, type BoxObservation } from "@/stores/boxes";
 import { useUpdates } from "@/stores/updates";
+import { useBusyBotIds } from "@/stores/botActivity";
 import { useChat } from "@/stores/chat";
 import { useUI } from "@/stores/ui";
 import { cn } from "@/lib/utils";
@@ -87,8 +88,9 @@ export function StatusBar() {
   const mcpError = useBoxes((state) => state.mcpError);
   const botsReady = useChat((state) => state.ready);
   const botTotal = useChat((state) => state.bots.length);
-  // Bots replying right now; the list itself stays synced app-wide (the palette lists every bot).
-  const botsActive = useChat((state) => state.bots.filter((bot) => state.running[bot.id]).length);
+  // Bots replying or running a code task right now; the list itself stays synced app-wide (the palette lists every bot).
+  const busyBots = useBusyBotIds();
+  const botsActive = useChat((state) => state.bots.filter((bot) => state.running[bot.id] || busyBots.includes(bot.id)).length);
   const update = useUpdates((state) => state.status);
   useEffect(() => startBoxesPolling(), []);
   const connected = link === "connected";
@@ -109,7 +111,7 @@ export function StatusBar() {
       <TooltipTrigger render={<button type="button" />} className={footerControl} onClick={() => useUI.getState().setView("chat")}>
         bots <span className="tabular-nums">{connected && botsReady ? `${botsActive}/${botTotal}` : "—"}</span>
       </TooltipTrigger>
-      <TooltipPopup>Active (replying now) / total bots</TooltipPopup>
+      <TooltipPopup>Active (replying or running a code task) / total bots</TooltipPopup>
     </Tooltip>
     <Tooltip>
       <TooltipTrigger render={<button type="button" />} className={footerControl} onClick={() => useUI.getState().openSettings("integrations")}>

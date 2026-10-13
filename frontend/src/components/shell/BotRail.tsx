@@ -4,6 +4,7 @@ import { Chat, type Bot } from "@/mygo";
 import { cn } from "@/lib/utils";
 import { ago } from "@/features/agents/format";
 import { ConfirmDialog } from "@/features/projects/dialogs";
+import { activityOf, useBusyBotIds } from "@/stores/botActivity";
 import { useChat } from "@/stores/chat";
 import { useHasProvider } from "@/stores/llm";
 import { useUI } from "@/stores/ui";
@@ -112,7 +113,10 @@ export function BotRail() {
 }
 
 function BotRow({ bot, selected, tabStop, onFocus }: { bot: Bot; selected: boolean; tabStop: boolean; onFocus: () => void }) {
-  const running = useChat((s) => s.running[bot.id] ?? false);
+  const responding = useChat((s) => s.running[bot.id] ?? false);
+  const hasTask = useBusyBotIds().includes(bot.id);
+  const activity = activityOf(responding, hasTask);
+  const running = activity !== "idle";
   const menu = useRef<HTMLButtonElement>(null);
   const [confirm, setConfirm] = useState<"clear" | "archive" | null>(null);
   const preview = bot.lastMessage;
@@ -137,10 +141,11 @@ function BotRow({ bot, selected, tabStop, onFocus }: { bot: Bot; selected: boole
       >
         <span className="relative shrink-0">
           <BotAvatar name={bot.name} avatar={bot.avatar} className="size-6" />
-          <span aria-hidden="true" data-status={running ? "responding" : awaiting ? "waiting" : "idle"} className={cn(
+          {/* Nothing is drawn while the bot is idle: a dot is only ever a claim that something is happening or waiting. */}
+          {(running || awaiting) && <span aria-hidden="true" data-status={running ? activity : "waiting"} className={cn(
             "absolute -top-0.5 -right-0.5 size-2 rounded-full ring-2 ring-sidebar",
-            running ? "animate-pulse bg-primary motion-reduce:animate-none" : awaiting ? "bg-warning" : "bg-muted-foreground/40",
-          )} />
+            activity === "responding" ? "animate-pulse bg-primary motion-reduce:animate-none" : activity === "working" ? "animate-pulse bg-info motion-reduce:animate-none" : "bg-warning",
+          )} />}
         </span>
         <span className="flex min-w-0 flex-1 flex-col">
           <span className="flex items-center gap-1.5">
@@ -152,7 +157,7 @@ function BotRow({ bot, selected, tabStop, onFocus }: { bot: Bot; selected: boole
             {preview ? (preview.text ? `${preview.role === "user" ? "You: " : ""}${preview.text}` : "Starting…") : "No messages yet"}
           </span>
         </span>
-        {(running || awaiting) && <span className="sr-only">{running ? "Responding" : "Waiting for your answer"}</span>}
+        {(running || awaiting) && <span className="sr-only">{activity === "responding" ? "Responding" : activity === "working" ? "Running a code task" : "Waiting for your answer"}</span>}
       </button>
       <Menu>
         <MenuTrigger ref={menu} render={<button type="button" tabIndex={-1} aria-hidden="true" aria-label={`Actions for ${bot.name}`} className="pointer-events-none absolute top-1 right-1 size-5 opacity-0" />} />

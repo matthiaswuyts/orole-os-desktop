@@ -8,6 +8,9 @@ notes. See `docs/development/updates.md`.
 
 ## Unreleased
 
+### Fixed
+- Bots no longer show an activity indicator while they are idle. The sidebar dot appears only while a bot is replying (pulsing) or running a code task it started (pulsing, blue), or when its last message is a question waiting for you, and it disappears as soon as the work finishes, fails or is stopped. The "bots" count in the status bar follows the same rule.
+
 ### Changed
 - In a bot's settings, "Runs code tasks" moved to the Tools page, and the "All changes saved" footer is gone (changes still save on their own and errors still show).
 - A task's activity list is easier to read. Each step is one plain line with its icon, what it did and the command or file in monospace, without the boxed chips. A chevron appears when you hover a step that has details.
