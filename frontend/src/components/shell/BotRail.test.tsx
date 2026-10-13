@@ -154,7 +154,7 @@ describe("BotRail rows", () => {
     useUI.setState({ view: "automations" });
     loaded({ selectedBotId: "coder" });
     render(<BotRail />);
-    expect(screen.getByRole("heading", { name: "Agents" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Bots" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /^Coder/ })).not.toHaveAttribute("aria-current");
     fireEvent.click(screen.getByRole("button", { name: /^Coder/ }));
     expect(useUI.getState()).toMatchObject({ view: "chat" });

@@ -91,6 +91,12 @@ describe("conversation rendering", () => {
     expect(within(empty).getByText("Say hello to start the conversation.")).toBeInTheDocument();
   });
 
+  it("does not draw a code task's report, only the bot's reply to it", async () => {
+    await open([msg(1), msg(2), msg(3, { author: "task:t-42", parts: [{ type: "text", text: "Task \"Fix login\" finished." }] }), msg(4, { parts: [{ type: "text", text: "The login fix is done." }] })]);
+    expect(screen.getByText("The login fix is done.")).toBeInTheDocument();
+    expect(screen.queryByText(/Fix login/)).toBeNull();
+  });
+
   it("renders the stored conversation with accessible message labels", async () => {
     await open([msg(1), msg(2)]);
     expect(screen.getByRole("region", { name: "Conversation with Atlas" })).toBeInTheDocument();
@@ -413,6 +419,19 @@ describe("mentions, structured output and search", () => {
     expect(screen.queryByRole("option", { name: /Coach/ })).toBeNull();
     fireEvent.click(await screen.findByRole("option", { name: /pdf/ }));
     await waitFor(() => expect(box().value).toContain("/pdf"));
+  });
+
+  it("keeps a picked mention in the draft after leaving the conversation", async () => {
+    withCoach();
+    const first = await open();
+    box().focus();
+    fireEvent.change(box(), { target: { value: "@", selectionStart: 1, selectionEnd: 1 } });
+    fireEvent.select(box(), { target: { selectionStart: 1, selectionEnd: 1 } });
+    fireEvent.click(await screen.findByRole("option", { name: /Coach/ }));
+    await waitFor(() => expect(box().value).toContain("@Coach"));
+    first.unmount();
+    render(<Conversation key="a" bot={bot()} />);
+    await waitFor(() => expect(box().value).toContain("@Coach"));
   });
 
   it("tints typed mentions and deletes a whole mention with one Backspace", async () => {

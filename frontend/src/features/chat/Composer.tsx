@@ -38,25 +38,29 @@ export const Composer = memo(function Composer({ bot, running }: { bot: Bot; run
   const targets = useMentionTargets(bot);
   const mirror = useRef<HTMLDivElement>(null);
 
-  // The composer lives and dies with the bot's conversation; its text is kept per bot in the store, and text put in
-  // the draft from elsewhere (Add to chat on a selected passage) shows up in the box.
-  // Subscribed outside render: every keystroke changes the draft, and it would otherwise cost a second render each.
+  // The composer lives and dies with the bot's conversation; its text is kept per bot in the store. Both directions
+  // are subscribed: text put in the draft from elsewhere (Add to chat on a selected passage) shows up in the box, and
+  // every change to the box (typing, a picked mention, dictation, input history) lands in the draft, so leaving the
+  // view and coming back keeps it. Subscribed outside render: every keystroke changes the draft.
   useEffect(() => {
     const sync = (text: string) => { if (text !== aui.composer.getState().text) aui.composer.setText(text); };
     sync(useChatDrafts.getState().drafts[bot.id]?.text ?? "");
-    return useChatDrafts.subscribe((state, previous) => {
+    const offDraft = useChatDrafts.subscribe((state, previous) => {
       const text = state.drafts[bot.id]?.text ?? "";
       if (text !== (previous.drafts[bot.id]?.text ?? "")) sync(text);
     });
+    const offComposer = aui.subscribe(() => {
+      const text = aui.composer.getState().text;
+      if (text !== (useChatDrafts.getState().drafts[bot.id]?.text ?? "")) useChatDrafts.getState().setDraft(bot.id, { text });
+    });
+    return () => { offDraft(); offComposer(); };
   }, [aui, bot.id]);
 
   const send = () => { if (canSend) aui.composer.send(); };
   const setResearch = (on: boolean) => useChatDrafts.getState().setDraft(bot.id, { research: on });
   const addDictation = (value: string) => {
     const current = aui.composer.getState().text;
-    const next = current ? `${current}${/\s$/.test(current) ? "" : " "}${value}` : value;
-    aui.composer.setText(next);
-    useChatDrafts.getState().setDraft(bot.id, { text: next });
+    aui.composer.setText(current ? `${current}${/\s$/.test(current) ? "" : " "}${value}` : value);
   };
   /** Backspace/Delete next to a mention removes all of it, as one unit; returns whether it did. */
   const removeMention = (event: KeyboardEvent<HTMLTextAreaElement>): boolean => {
@@ -67,7 +71,6 @@ export const Composer = memo(function Composer({ bot, running }: { bot: Bot; run
     event.preventDefault();
     const next = el.value.slice(0, cut.from) + el.value.slice(cut.to);
     aui.composer.setText(next);
-    useChatDrafts.getState().setDraft(bot.id, { text: next });
     requestAnimationFrame(() => el.setSelectionRange(cut.from, cut.from));
     return true;
   };
@@ -97,7 +100,6 @@ export const Composer = memo(function Composer({ bot, running }: { bot: Bot; run
             rows={1}
             maxRows={8}
             className="relative block max-h-48 min-h-9 w-full resize-none overflow-y-auto bg-transparent px-1 py-2 text-sm text-transparent caret-foreground outline-none selection:bg-primary/25 selection:text-transparent placeholder:text-muted-foreground"
-            onChange={(event) => useChatDrafts.getState().setDraft(bot.id, { text: event.target.value })}
             onScroll={(event) => { if (mirror.current) mirror.current.scrollTop = event.currentTarget.scrollTop; }}
             onKeyDown={(event) => {
               if ((event.key === "Backspace" || event.key === "Delete") && removeMention(event)) return;

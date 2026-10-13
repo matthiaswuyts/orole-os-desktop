@@ -10,12 +10,13 @@ vi.mock("@/lib/backend", () => ({ inDesktop: true }));
 vi.mock("@/stores/daemon", () => ({ useDaemon: (select: (state: { link: string }) => unknown) => select({ link: "connected" }) }));
 import { toastManager } from "@/components/ui/toast";
 import { useHarnessOptionsCache } from "@/stores/harnessOptions";
+import { useTaskDrafts } from "@/stores/taskDrafts";
 import { Composer } from "./Composer";
 import { composerState } from "./composerState";
 import { MessageQueue } from "./MessageQueue";
 
 const session = (patch: Partial<Session> = {}): Session => ({ id: "task-a", mode: "structured", machine: "local", live: true, status: "working", pending: [], questions: [], queue: [], ...patch }) as Session;
-beforeEach(() => { vi.clearAllMocks(); useHarnessOptionsCache.setState({ machines: {} }); api.sendMessage.mockResolvedValue(session()); api.options.mockResolvedValue({ harnesses: [] }); });
+beforeEach(() => { vi.clearAllMocks(); useHarnessOptionsCache.setState({ machines: {} }); useTaskDrafts.setState({ drafts: {} }); api.sendMessage.mockResolvedValue(session()); api.options.mockResolvedValue({ harnesses: [] }); });
 afterEach(cleanup);
 
 describe("task composer delivery", () => {
@@ -100,6 +101,17 @@ describe("task composer delivery", () => {
     queued.resolve(session());
     await waitFor(() => expect(api.upsert).toHaveBeenCalled());
     expect(screen.getByLabelText("Message the agent")).toHaveValue("new draft");
+  });
+
+  it("keeps each task's unsent draft after leaving it and coming back", () => {
+    const first = render(<Composer session={session()} />);
+    fireEvent.change(screen.getByLabelText("Message the agent"), { target: { value: "half-written" } });
+    first.unmount();
+    const other = render(<Composer session={session({ id: "task-b" })} />);
+    expect(screen.getByLabelText("Message the agent")).toHaveValue("");
+    other.unmount();
+    render(<Composer session={session()} />);
+    expect(screen.getByLabelText("Message the agent")).toHaveValue("half-written");
   });
 });
 

@@ -131,9 +131,9 @@ state is stored in the bot's conversation as a user message authored `task:<task
 and the bot answers it with an addendum. A finished report carries the task's **complete result** (`Session.Result`,
 up to 32 KiB; `task_status` returns the same, lists stay clipped to 2,000 runes) and the addendum tells the bot to
 relay it as a full overview; waiting and failed reports carry what the task asks, the error and its last message.
-Only the user can answer a task's questions. The UI draws the report as a collapsed "Code task update" card with
-"Open task". The bot's system prompt lists its running tasks, fenced. Reports are best effort: they are not replayed
-after a daemon restart.
+Only the user can answer a task's questions. The report is input for the bot only: the conversation does not draw it
+(nor does Find search it); the user reads the bot's reply to it. The bot's system prompt lists its running tasks,
+fenced. Reports are best effort: they are not replayed after a daemon restart.
 
 A successful `start_task` also stores a `task` part on the reply (`id` task id, `title` title at start, `name` harness).
 The conversation draws the tasks a reply started as a subagent list (`features/chat/parts/TaskChip.tsx`, assistant-ui

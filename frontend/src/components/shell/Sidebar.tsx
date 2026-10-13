@@ -16,7 +16,7 @@ import { useAutomationApprovals } from "@/features/automations/useApprovals";
 
 const row = "flex h-side-row w-full items-center gap-2 rounded-md px-2 text-left text-sidebar-foreground text-sm outline-none hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring";
 
-/** One sidebar: search, navigation (Code views, then Automations), the Agents (bots), the Code projects, and settings. */
+/** One sidebar: search, navigation (Code views, then Automations), the Bots, the Code projects, and settings. */
 export function Sidebar() {
   const view = useUI((s) => s.view);
   const setView = useUI((s) => s.setView);
@@ -56,7 +56,7 @@ export function Sidebar() {
           {PRIMARY.map(item)}
           {item(AUTOMATIONS)}
         </div>
-        {/* Agents and Code scroll together, so a long bot list never squeezes the projects out of view. */}
+        {/* Bots and Code scroll together, so a long bot list never squeezes the projects out of view. */}
         <div className="-mx-2 flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-2">
           <BotRail />
           <SidebarProjects />

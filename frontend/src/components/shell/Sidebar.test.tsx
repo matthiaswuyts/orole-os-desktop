@@ -5,7 +5,7 @@ import { Sidebar } from "./Sidebar";
 
 // The two section bodies are covered by their own tests; here only their place in the one sidebar.
 vi.mock("./SidebarProjects", () => ({ SidebarProjects: () => <section aria-label="Code" /> }));
-vi.mock("./BotRail", () => ({ BotRail: () => <section aria-label="Agents" /> }));
+vi.mock("./BotRail", () => ({ BotRail: () => <section aria-label="Bots" /> }));
 
 beforeEach(() => {
   localStorage.clear();
@@ -14,13 +14,13 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("sidebar", () => {
-  it("shows navigation with Automations last, then Agents, then Code, with no mode tabs", () => {
+  it("shows navigation with Automations last, then Bots, then Code, with no mode tabs", () => {
     render(<Sidebar />);
     expect(screen.queryByRole("tab")).toBeNull();
     const links = ["Home", "Tasks", "Review", "Issues", "Automations"].map((name) => screen.getByRole("button", { name }));
-    const agents = screen.getByRole("region", { name: "Agents" });
+    const bots = screen.getByRole("region", { name: "Bots" });
     const code = screen.getByRole("region", { name: "Code" });
-    const order = [...links, agents, code];
+    const order = [...links, bots, code];
     for (let i = 1; i < order.length; i++) {
       expect(order[i - 1]!.compareDocumentPosition(order[i]!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     }

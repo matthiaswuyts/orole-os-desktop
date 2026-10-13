@@ -6,6 +6,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "@/components/ui/tooltip";
 import { ErrorNote } from "@/features/agents/shared";
 import { useAction } from "@/features/agents/format";
 import { useAgents } from "@/stores/agents";
+import { useTaskDrafts } from "@/stores/taskDrafts";
 import { composerState } from "./composerState";
 import { ComposerContext } from "./ComposerContext";
 import { ComposerVoice } from "./ComposerVoice";
@@ -22,7 +23,9 @@ export function Composer({ session }: { session: Session }) {
 }
 
 function SessionComposer({ session }: { session: Session }) {
-  const [text, setText] = useState("");
+  // The draft lives in a store keyed by session, so it survives leaving the task and coming back.
+  const text = useTaskDrafts((s) => s.drafts[session.id] ?? "");
+  const setText = (next: string | ((current: string) => string)) => useTaskDrafts.getState().setDraft(session.id, next);
   const [voiceActive, setVoiceActive] = useState(false);
   const input = useRef<HTMLTextAreaElement>(null);
   const action = useAction();

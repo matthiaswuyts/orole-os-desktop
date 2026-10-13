@@ -27,7 +27,7 @@ function useMinuteTick() {
   }, []);
 }
 
-/** The sidebar's Agents section: a header with a new-bot button, then one contact row per bot with a status dot. */
+/** The sidebar's Bots section: a header with a new-bot button, then one contact row per bot with a status dot. */
 export function BotRail() {
   const { bots, selectedBotId, available, ready, error, load, startSync } = useChat();
   // On the Automations view no conversation is on screen, so no bot row is current.
@@ -92,9 +92,9 @@ export function BotRail() {
   }
 
   return (
-    <section aria-label="Agents" className="flex shrink-0 flex-col gap-1">
+    <section aria-label="Bots" className="flex shrink-0 flex-col gap-1">
       <div className="flex h-6 shrink-0 items-center gap-1 pr-0.5 pl-2">
-        <h2 className="flex-1 font-medium text-muted-foreground text-xs">Agents</h2>
+        <h2 className="flex-1 font-medium text-muted-foreground text-xs">Bots</h2>
         {available && !(ready && bots.length === 0 && !noProvider) && <Button size="icon-xs" variant="ghost" onClick={newBot} disabled={noProvider} aria-label="New bot" title={noProvider ? "Connect a provider before creating a bot" : "New bot"}>
           <Plus />
         </Button>}

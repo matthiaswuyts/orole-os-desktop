@@ -31,8 +31,9 @@ function isDaemonMessage(value: unknown): value is Message {
 const Turn = memo(function Turn({ bot, bots, targets, running }: { bot: Bot; bots: readonly BotInfo[]; targets: readonly MentionTarget[]; running: boolean }) {
   const raw: unknown = useAuiState((s) => s.message.metadata.custom?.[SOURCE_KEY]);
   const isLast = useAuiState((s) => s.message.isLast);
-  // A message still waiting for the bot is listed in the queue above the composer, not in the thread.
-  if (!isDaemonMessage(raw) || (raw.role === "user" && !hasVisibleParts(raw.parts)) || (raw.role === "user" && raw.author === "user" && raw.status === "pending")) return null;
+  // A message still waiting for the bot is listed in the queue above the composer, not in the thread. A code task's
+  // report (`task:<id>`) is input for the bot only: the bot's reply to it is what the user reads.
+  if (!isDaemonMessage(raw) || (raw.role === "user" && !hasVisibleParts(raw.parts)) || (raw.role === "user" && raw.author === "user" && raw.status === "pending") || (raw.role === "user" && raw.author.startsWith("task:"))) return null;
   const assistant = raw.role !== "user";
   const settled = raw.status !== "running" && raw.status !== "pending";
   const canRegenerate = assistant && isLast && !running;
@@ -40,7 +41,6 @@ const Turn = memo(function Turn({ bot, bots, targets, running }: { bot: Bot; bot
     <ChatMessageView message={raw} botName={bot.name} botAvatar={bot.avatar}
       bots={bots} handoffSettled={!isLast} mentionTargets={targets}
       onOpenBot={(botId) => useChat.getState().open(botId)}
-      onOpenTask={(taskId) => useChat.getState().openTaskPane(taskId)}
       onRetry={canRegenerate ? () => void useChatMessages.getState().regenerate(bot.id, raw.id) : undefined}
       onAnswer={canRegenerate && raw.status === "complete" ? (text) => void useChatMessages.getState().send(bot.id, { text }) : undefined}
       actions={assistant && settled && <MessageActions regenerate={canRegenerate}><CopyButton text={messageText(raw)} label="Copy response" /></MessageActions>} />
@@ -80,6 +80,8 @@ function Thread({ bot, running }: { bot: Bot; running: boolean }) {
   const [searching, setSearching] = useState(false);
   const before = useRef<{ height: number; top: number } | null>(null);
   const firstId = conversation.messages[0]?.id;
+  // Find covers what the thread shows; code task reports are not drawn.
+  const searchable = useMemo(() => conversation.messages.filter((m) => !(m.role === "user" && m.author.startsWith("task:"))), [conversation.messages]);
 
   useEffect(() => useChatMessages.getState().startSync(), []);
   // Ctrl/Cmd+F finds inside this conversation instead of the page; a handler that already took the key (an editor) wins.
@@ -118,7 +120,7 @@ function Thread({ bot, running }: { bot: Bot; running: boolean }) {
   const showEmpty = conversation.loaded && conversation.messages.length === 0;
   return <>
     <ThreadPrimitive.Root ref={thread} className="relative flex min-h-0 flex-1 flex-col">
-      {searching && <ThreadSearch messages={conversation.messages} scope={thread} onClose={closeSearch} />}
+      {searching && <ThreadSearch messages={searchable} scope={thread} onClose={closeSearch} />}
       <SelectionMenu botId={bot.id} root={thread} />
       <ThreadPrimitive.Viewport ref={viewport} role="region" aria-label={`Conversation with ${bot.name}`} tabIndex={0}
         onScroll={(event) => { if (event.currentTarget.scrollTop < LOAD_OLDER_AT) loadOlder(); }}

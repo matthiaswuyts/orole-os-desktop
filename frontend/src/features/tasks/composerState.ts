@@ -14,10 +14,8 @@ export function composerState(session: Session): ComposerState {
   if (remote) return { canSend: true, delivery: "prompt", placeholder: "New task on this box…", label: "Start task", note: "Starts a fresh task on the same box with this session's model and reasoning. It does not resume the previous conversation." };
   if (session.mode === "structured" && session.followup && !session.followup.attachments) return { canSend: false, reason: session.followup.reason };
   if (session.mode === "structured" && session.live && (session.status === "working" || session.status === "needs-you" || !!session.queue?.length)) {
-    return {
-      canSend: true, delivery: "queue", placeholder: "Queue a follow-up…", label: "Queue message",
-      note: session.questions?.length ? "Answer the agent's questions in the question card. Messages here join the follow-up queue." : "Follow-ups wait in the daemon's queue. They do not interrupt the current turn.",
-    };
+    const note = session.questions?.length ? "Answer the agent's questions in the question card. Messages here join the follow-up queue." : undefined;
+    return { canSend: true, delivery: "queue", placeholder: "Queue a follow-up…", label: "Queue message", note };
   }
   return { canSend: true, delivery: "prompt", placeholder: session.live ? "Ask, Search or Chat…" : "Resume with a message…", label: "Send" };
 }

@@ -79,6 +79,10 @@ notes. See `docs/development/updates.md`.
   calls, failed tools and tokens; a row opens the task). They are on the default Home layout; saved layouts keep theirs.
 
 ### Changed
+- The sidebar's Agents section is now called Bots.
+- The task composer no longer shows the "Follow-ups wait in the daemon's queue" note while a task is running.
+- Bot chats no longer show "Code task update" cards. A code task's report still reaches the bot, and you read the bot's
+  reply to it; open the task from the bot's task chip or the sidebar.
 - The Code Home and New task composers are rebuilt on HextaUI's agent Prompt Input: the prompt sits in a card with attach,
   permission mode, the agent menu and send; a footer row below picks where it runs, the project and the worktree. The agent menu
   now shows every agent (with its version, or why it is unavailable) beside its models, searchable once an agent lists seven or
@@ -107,6 +111,9 @@ notes. See `docs/development/updates.md`.
   widget gallery and Reset layout. Saved layouts are carried over in their existing order and closest size.
 
 ### Fixed
+- Text you type in a code task's message box or a bot's chat box is kept when you switch to another screen and come back.
+  Each task and each bot keeps its own unsent text until you send it or close the app. In bot chat this now also covers
+  a picked @mention or /skill.
 - Bots running through the Claude Code or Codex CLI no longer show a long tool call (such as starting a code task) as a raw
   `tool_calls` block. Orole now reads the call's JSON from the block's start, so raw line breaks inside an argument, a
   code fence inside a prompt, one call written as an object, or a reply that stops before the closing fence still run the
