@@ -18,7 +18,7 @@ concurrency:
 
 jobs:
   verify-go:
-    runs-on: avrea-windows-latest-2-vcpu
+    runs-on: windows-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -43,7 +43,7 @@ jobs:
           git diff --exit-code -- frontend/src/mygo.ts
 
   verify-web:
-    runs-on: avrea-windows-latest-2-vcpu
+    runs-on: windows-latest
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -69,7 +69,7 @@ jobs:
 
   release:
     needs: [verify-go, verify-web]
-    runs-on: avrea-windows-latest-2-vcpu
+    runs-on: windows-latest
     timeout-minutes: 45
     environment: release
     permissions:
