@@ -1,6 +1,6 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { Bot, BotChange, Message, RunState } from "@/mygo";
+import type { Bot, BotChange, Message, RunState, Session } from "@/mygo";
 import type { ChatState } from "@/stores/chat";
 
 const bridge = vi.hoisted(() => ({
@@ -28,6 +28,7 @@ vi.mock("@/mygo", async (importOriginal) => {
   };
 });
 
+import { useAgents } from "@/stores/agents";
 import { useChat } from "@/stores/chat";
 import { useDaemon } from "@/stores/daemon";
 import { useUI } from "@/stores/ui";
@@ -55,6 +56,7 @@ beforeEach(() => {
   localStorage.clear();
   useDaemon.setState({ link: "connected" });
   useUI.setState({ view: "chat" });
+  useAgents.setState({ sessions: {} });
   loaded();
 });
 afterEach(() => { cleanup(); vi.useRealTimers(); });
@@ -138,6 +140,42 @@ describe("BotRail rows", () => {
     expect(within(screen.getByRole("button", { name: /^Coder/ })).getByText("Responding")).toBeInTheDocument();
     act(() => useChat.setState({ running: {} }));
     expect(screen.queryByText("Responding")).toBeNull();
+  });
+
+  it("draws no activity indicator at all while every bot is idle", () => {
+    const { container } = render(<BotRail />);
+    expect(container.querySelector("[data-status]")).toBeNull();
+    expect(screen.queryByText(/Responding|Running a code task|Waiting/)).toBeNull();
+  });
+
+  it("shows a working indicator while a bot owns a working code task, and clears it when the task finishes, fails or is stopped", () => {
+    const task = (status: string, owner = "bot:coder") => ({ id: "t1", status, owner, review: "" }) as unknown as Session;
+    const row = () => screen.getByRole("button", { name: /^Coder/ });
+    render(<BotRail />);
+    act(() => useAgents.setState({ sessions: { t1: task("working") } }));
+    expect(within(row()).getByText("Running a code task")).toBeInTheDocument();
+    expect(row().querySelector("[data-status=working]")).not.toBeNull();
+    // Only the owner shows it.
+    expect(within(screen.getByRole("button", { name: /^Travel/ })).queryByText("Running a code task")).toBeNull();
+    for (const status of ["done", "failed", "stopped", "lost", "idle", "needs-you"]) {
+      act(() => useAgents.setState({ sessions: { t1: task(status) } }));
+      expect(row().querySelector("[data-status]")).toBeNull();
+    }
+    act(() => useAgents.setState({ sessions: { t1: task("working") } }));
+    act(() => useAgents.setState({ sessions: {} })); // removed
+    expect(row().querySelector("[data-status]")).toBeNull();
+    // A task the user started belongs to no bot.
+    act(() => useAgents.setState({ sessions: { t1: task("working", "") } }));
+    expect(screen.queryByText("Running a code task")).toBeNull();
+  });
+
+  it("shows responding while a reply streams and nothing once it ends, even with an old finished task", () => {
+    useAgents.setState({ sessions: { t1: { id: "t1", status: "done", owner: "bot:coder", review: "" } as unknown as Session } });
+    render(<BotRail />);
+    act(() => useChat.setState({ running: { coder: true } }));
+    expect(screen.getByRole("button", { name: /^Coder/ }).querySelector("[data-status=responding]")).not.toBeNull();
+    act(() => useChat.setState({ running: { coder: false } }));
+    expect(screen.getByRole("button", { name: /^Coder/ }).querySelector("[data-status]")).toBeNull();
   });
 
   it("selecting a row opens the chat view and marks it current", () => {
