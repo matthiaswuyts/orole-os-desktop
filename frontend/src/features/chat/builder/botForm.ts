@@ -34,14 +34,12 @@ export interface FormState {
   executive: boolean;
   /** May start, watch and steer code tasks (coding agents on this PC). */
   codeTasks: boolean;
-  /** May read the user's automations and draft new ones as cards the user approves. */
-  automations: boolean;
 }
 
 /** A new bot starts with every built-in tool on; each can be switched off in its settings. */
 export const initialForm = (): FormState => ({
   name: "", avatar: "", color: "", description: "", instructions: "", model: "", reasoning: "",
-  tools: Object.values(TOOL_IDS), mcpServers: [], skills: [], memory: [], maxSteps: "", maxToolCalls: "", executive: false, codeTasks: false, automations: false,
+  tools: Object.values(TOOL_IDS), mcpServers: [], skills: [], memory: [], maxSteps: "", maxToolCalls: "", executive: false, codeTasks: false,
 });
 
 export type Action =
@@ -86,7 +84,6 @@ export function formFromInput(bot: Pick<BotInput, "name" | "avatar" | "color" | 
     maxSteps: limit(config.limits?.maxSteps), maxToolCalls: limit(config.limits?.maxToolCalls),
     executive: config.executive ?? false,
     codeTasks: config.codeTasks ?? false,
-    automations: config.automations ?? false,
   };
 }
 
@@ -114,7 +111,6 @@ export function toInput(form: FormState, id: string): BotInput {
       limits: { maxSteps: integer(form.maxSteps), maxToolCalls: integer(form.maxToolCalls) },
       ...(form.executive ? { executive: true } : {}),
       ...(form.codeTasks ? { codeTasks: true } : {}),
-      ...(form.automations ? { automations: true } : {}),
     },
   };
 }

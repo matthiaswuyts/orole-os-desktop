@@ -86,4 +86,5 @@ export function resetBridge() {
   bridge.llm.defaults.mockResolvedValue({ chatModel: "openrouter/gpt-x", memoryModel: "" });
   bridge.llm.models.mockResolvedValue([model("gpt-x", { name: "GPT X" }), model("reason-1", { name: "Reasoner", reasoning: ["low", "high"] })]);
   bridge.automations.stepTypes.mockResolvedValue([]);
+  bridge.chat.automationSignals.mockResolvedValue([]);
 }

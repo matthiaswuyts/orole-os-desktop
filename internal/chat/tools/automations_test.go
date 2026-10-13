@@ -30,24 +30,19 @@ func automationEngine(t *testing.T) *automations.Engine {
 	return e
 }
 
-func automator() chat.Bot { return chat.Bot{ID: "b1", Config: chat.BotConfig{Automations: true}} }
+func automator() chat.Bot { return chat.Bot{ID: "b1"} }
 
 func userRun(b chat.Bot) chat.RunContext { return chat.RunContext{BotID: b.ID, Bot: b, Author: "user"} }
 
 const watchCI = `{"definition":{"name":"Watch CI","trigger":{"type":"watch","watch":{"source":"github","kind":"workflow_failed","repo":"acme/app","branch":"main"}},"steps":[{"id":"tell","type":"bot.tell","params":{"botId":"b1","message":"{{ event.data.name }} failed"}}]},"rationale":"Tells you when CI on main fails."}`
 
-func TestAutomationToolsAreOfferedOnlyToBotsAllowedToDraft(t *testing.T) {
+func TestAutomationToolsAreOfferedToEveryBot(t *testing.T) {
 	tool := Automations{Runtime: automationEngine(t)}
-	if got := tool.Specs(chat.Bot{ID: "b1"}, llm.Caps{Tools: true}); got != nil {
-		t.Fatalf("offered without automations: %d specs", len(got))
-	}
 	if got := tool.Specs(automator(), llm.Caps{Tools: true}); len(got) != 4 {
 		t.Fatalf("specs = %d", len(got))
 	}
-	plain := chat.Bot{ID: "b1"}
-	res, _ := tool.Call(context.Background(), userRun(plain), toolProposeAutomation, json.RawMessage(watchCI))
-	if !res.IsError {
-		t.Fatal("a bot without automations drafted one")
+	if got := tool.Specs(automator(), llm.Caps{}); got != nil {
+		t.Fatalf("offered to a model without tools: %d specs", len(got))
 	}
 }
 

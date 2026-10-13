@@ -10,8 +10,6 @@ import (
 	"github.com/rayorole/orole-os-desktop/internal/chat"
 )
 
-func automates(c *chat.BotConfig) { c.Automations = true }
-
 const ciCheck = `{"repo":"acme/app","branch":"main"}`
 
 // ask records the bot's CI check in a run the user started.
@@ -32,7 +30,7 @@ func (e *env) signals(botID string) []chat.AutomationSignal {
 
 func TestRepeatedRequestsOnSeparateDaysBecomeAnIdea(t *testing.T) {
 	e := newEnv(t)
-	b := e.bot("a", "Alpha", automates)
+	b := e.bot("a", "Alpha")
 	for range 3 {
 		e.ask(b, ciCheck)
 	}
@@ -70,11 +68,10 @@ func TestRepeatedRequestsOnSeparateDaysBecomeAnIdea(t *testing.T) {
 }
 
 // Only calls in turns the user typed count: automation messages, task and bot reports and
-// hand-offs carry outside content. Bots that cannot set up automations collect nothing, and
-// calls that are not integration checks (memory, drafting, display) never count.
+// hand-offs carry outside content. Calls that are not integration checks (memory, drafting, display) never count.
 func TestOnlyTheUsersOwnRequestsCount(t *testing.T) {
 	e := newEnv(t)
-	b := e.bot("a", "Alpha", automates)
+	b := e.bot("a", "Alpha")
 	for _, author := range []string{"automation:a1", "task:t1", "report:b2", "bot:b2", ""} {
 		r := newRun(b)
 		r.Author = author
@@ -85,19 +82,14 @@ func TestOnlyTheUsersOwnRequestsCount(t *testing.T) {
 	for _, name := range []string{"memory", "propose_automation", "show_table", "start_task"} {
 		e.s.ObserveTool(context.Background(), r.RunContext, name, json.RawMessage(`{}`))
 	}
-	plain := e.bot("p", "Plain")
-	e.ask(plain, ciCheck)
 	if got := e.signals(b.ID); len(got) != 0 {
 		t.Fatalf("recorded: %+v", got)
-	}
-	if got := e.signals(plain.ID); len(got) != 0 {
-		t.Fatalf("bot without automations recorded: %+v", got)
 	}
 }
 
 func TestDecliningOrDeletingAnIdeaSilencesIt(t *testing.T) {
 	e := newEnv(t)
-	b := e.bot("a", "Alpha", automates)
+	b := e.bot("a", "Alpha")
 	for range 2 {
 		e.ask(b, ciCheck)
 		e.ask(b, ciCheck)

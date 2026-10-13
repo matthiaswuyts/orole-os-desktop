@@ -1,4 +1,4 @@
-import { BookOpenIcon, CpuIcon, GaugeIcon, PencilIcon, PlugIcon, ScrollTextIcon, SquareTerminalIcon, UsersIcon, WorkflowIcon, WrenchIcon, XIcon } from "lucide-react";
+import { BookOpenIcon, CpuIcon, GaugeIcon, PencilIcon, PlugIcon, ScrollTextIcon, UsersIcon, WrenchIcon, XIcon } from "lucide-react";
 import { useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { BotAvatar } from "@/components/shell/BotAvatar";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -126,8 +126,6 @@ function PanelBody({ bot }: { bot: Bot }) {
         <Group title="Does">
           <NavRow icon={WrenchIcon} label="Tools" value={`${form.tools.length} on`} onOpen={() => setPage("tools")} />
           <NavRow icon={PlugIcon} label="Integrations" invalid={!!problems.mcpServers} value={problems.mcpServers ? "Too many" : `${form.mcpServers.length} on`} onOpen={() => setPage("integrations")} />
-          <SwitchRow icon={SquareTerminalIcon} label="Runs code tasks" hint="Starts coding agents in your projects, follows their progress and tells you when they finish or need you. You approve each start in chat unless you allowed this bot always." checked={form.codeTasks} onChange={(codeTasks) => patch({ codeTasks })} />
-          <SwitchRow icon={WorkflowIcon} label="Sets up automations" hint="Reads your automations and drafts new ones or changes from your chat. Each draft is a card; nothing is saved or turned on until you approve it." checked={form.automations} onChange={(automations) => patch({ automations })} />
         </Group>
         <Group title="Works with">
           <SwitchRow icon={UsersIcon} label="Leads the team" hint="Hands work to your other bots and talks with them to get it done." checked={form.executive} onChange={(executive) => patch({ executive })} />
@@ -136,7 +134,7 @@ function PanelBody({ bot }: { bot: Bot }) {
       {page === "memories" && <>
         <PageHeader title="Memories" onBack={back} />
         <MemoriesPage botId={bot.id} />
-        {form.automations && <AutomationIdeas botId={bot.id} />}
+        <AutomationIdeas botId={bot.id} />
       </>}
       {page === "skills" && <>
         <PageHeader title="Skills" onBack={back} />
@@ -151,9 +149,6 @@ function PanelBody({ bot }: { bot: Bot }) {
         <IntegrationsPage form={form} dispatch={dispatch} problems={problems} />
       </>}
     </div>
-    <p role="status" className="shrink-0 border-t px-4 py-1.5 text-muted-foreground text-xs">
-      {saving ? "Saving…" : invalid ? "Fix the highlighted fields to save." : dirty ? (fingerprint(form) === failed ? "Not saved. Change something to try again." : "Saving soon…") : "All changes saved."}
-    </p>
   </div>;
 }
 

@@ -8,14 +8,17 @@ notes. See `docs/development/updates.md`.
 
 ## Unreleased
 
+### Changed
+- In a bot's settings, "Runs code tasks" moved to the Tools page, and the "All changes saved" footer is gone (changes still save on their own and errors still show).
+
 ### Added
-- Bots can set up automations from chat. Turn on "Sets up automations" in a bot's panel and ask it, for example, to "watch CI
+- Bots can set up automations from chat. Every bot can do this, with no setting to turn on. Ask it, for example, to "watch CI
   on main and tell me when it fails". The bot drafts the flow, Orole validates it, and it appears as a card in the chat with
   the trigger, the steps and anything it runs or sends. Nothing is saved until you choose Turn on, Add turned off or
   Dismiss; drafts that run programs or send web requests can only be added turned off, for review in Automations. Bots can
   also read your automations and their recent runs, and draft changes, which you apply from the card. Automations a bot
   set up show "By <bot>" in the list.
-- Bots that set up automations notice when you keep asking for the same check, such as CI status on a branch, on different
+- Bots notice when you keep asking for the same check, such as CI status on a branch, on different
   days, and offer once to automate it. Only requests you typed count; messages from automations, tasks or other bots do
   not. A bot offers at most one idea a day and stops after you decline. The ideas are listed under the bot's Memories,
   where each can be forgotten.
