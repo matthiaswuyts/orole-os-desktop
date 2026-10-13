@@ -8,6 +8,8 @@ notes. See `docs/development/updates.md`.
 
 ## Unreleased
 
+## 0.3.1-dev - 2026-10-13
+
 ### Fixed
 - Bots no longer show an activity indicator while they are idle. The sidebar dot appears only while a bot is replying (pulsing) or running a code task it started (pulsing, blue), or when its last message is a question waiting for you, and it disappears as soon as the work finishes, fails or is stopped. The "bots" count in the status bar follows the same rule.
 
