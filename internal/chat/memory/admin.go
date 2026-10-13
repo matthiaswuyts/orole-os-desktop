@@ -14,7 +14,7 @@ import (
 // every bot can read and write its own memory and knowledge.
 func (s *Store) Tools() []chat.Tool {
 	return []chat.Tool{
-		memoryTool{s}, memorySearchTool{s}, searchHistoryTool{s}, knowledgeTool{s}, knowledgeWriteTool{s}, askTool{s}, proposeSkillTool{s},
+		memoryTool{s}, memorySearchTool{s}, searchHistoryTool{s}, knowledgeTool{s}, knowledgeWriteTool{s}, askTool{s}, proposeSkillTool{s}, suggestionTool{s},
 	}
 }
 

@@ -85,7 +85,7 @@ func (b botAutomation) TellBot(ctx context.Context, r automations.BotRequest) (a
 	if b.d.Chat == nil {
 		return nil, errors.New("bots are unavailable")
 	}
-	out, err := b.d.Chat.Deliver(ctx, r.BotID, r.AutomationID, r.AutomationName, r.Message, r.Wait)
+	out, err := b.d.Chat.Deliver(ctx, r.BotID, r.AutomationID, r.AutomationName, r.Message, r.Chain, r.Wait)
 	return out, chatError(err)
 }
 

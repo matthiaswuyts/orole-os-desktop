@@ -31,10 +31,12 @@ export const bridge = {
     beginAttachment: vi.fn(), attachmentChunk: vi.fn(), commitAttachment: vi.fn(), discardAttachment: vi.fn(),
     memoryScopes: vi.fn(), createMemoryScope: vi.fn(), deleteMemoryScope: vi.fn(), memoryEntries: vi.fn(), saveMemoryEntry: vi.fn(), deleteMemoryEntry: vi.fn(), resolveMemory: vi.fn(),
     knowledgeFiles: vi.fn(), addKnowledge: vi.fn(), removeKnowledge: vi.fn(), skillProposal: vi.fn(), resolveSkill: vi.fn(), tools: vi.fn(),
+    automationSignals: vi.fn(), deleteAutomationSignal: vi.fn(),
   },
   mcp: { list: vi.fn() },
   skills: { list: vi.fn() },
   llm: { providers: vi.fn(), defaults: vi.fn(), models: vi.fn() },
+  automations: { proposal: vi.fn(), resolveProposal: vi.fn(), stepTypes: vi.fn() },
 };
 
 export const mygoMock = {
@@ -42,6 +44,7 @@ export const mygoMock = {
   MCP: bridge.mcp,
   Skills: bridge.skills,
   LLM: bridge.llm,
+  Automations: bridge.automations,
   Daemon: { health: vi.fn() },
   Desktop: bridge.desktop,
   events: {
@@ -82,4 +85,5 @@ export function resetBridge() {
   bridge.llm.providers.mockResolvedValue([provider()]);
   bridge.llm.defaults.mockResolvedValue({ chatModel: "openrouter/gpt-x", memoryModel: "" });
   bridge.llm.models.mockResolvedValue([model("gpt-x", { name: "GPT X" }), model("reason-1", { name: "Reasoner", reasoning: ["low", "high"] })]);
+  bridge.automations.stepTypes.mockResolvedValue([]);
 }

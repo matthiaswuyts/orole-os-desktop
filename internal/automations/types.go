@@ -111,6 +111,10 @@ type Summary struct {
 	Issues []Issue `json:"issues"`
 	// Watch is the last poll of a watch trigger; nil before its first poll.
 	Watch *WatchStatus `json:"watch,omitempty"`
+	// CreatedBy is "user", or "bot:<id>" for a bot's draft the user approved in chat.
+	CreatedBy string `json:"createdBy"`
+	// UpdatedAt is when the definition was last saved (Unix milliseconds).
+	UpdatedAt int64 `json:"updatedAt"`
 }
 type Run struct {
 	ID           string          `json:"id"`

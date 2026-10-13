@@ -61,9 +61,10 @@ func (m *Manager) Handoff(ctx context.Context, from RunContext, calleeID, task s
 
 	result := make(chan handoffResult, 1)
 	t := turn{
-		depth:  from.Depth + 1,
-		chain:  slices.Clone(from.Chain),
-		result: result,
+		depth:       from.Depth + 1,
+		chain:       slices.Clone(from.Chain),
+		automations: slices.Clone(from.Automations),
+		result:      result,
 		extra: fmt.Sprintf("You are carrying out a task another bot (%q) handed off on the user's behalf. "+
 			"Do the work, then finish with a concise, self-contained result; you cannot ask follow-up questions.", caller.Name),
 	}
@@ -85,12 +86,13 @@ func (m *Manager) Handoff(ctx context.Context, from RunContext, calleeID, task s
 	m.wg.Add(1)
 	m.mu.Unlock()
 
-	go m.awaitReport(caller.ID, callee, h, result)
+	go m.awaitReport(caller.ID, callee, h, result, slices.Clone(from.Automations))
 	return nil
 }
 
 // awaitReport waits for the callee's turn to end and hands its outcome to the caller as a report.
-func (m *Manager) awaitReport(callerID string, callee Bot, h *handoff, result <-chan handoffResult) {
+// automations is the delegating run's automation chain, which the report turn keeps.
+func (m *Manager) awaitReport(callerID string, callee Bot, h *handoff, result <-chan handoffResult, automations []string) {
 	defer m.wg.Done()
 	var r handoffResult
 	select {
@@ -122,7 +124,7 @@ func (m *Manager) awaitReport(callerID string, callee Bot, h *handoff, result <-
 	}
 	text := clip(reportText(callee, r), MaxMessageTextLen-1024)
 	msg := Message{BotID: callerID, Role: "user", Author: ReportPrefix + callee.ID}
-	if _, err := m.submit(ctx, msg, text, nil, turn{extra: reportExtra}); err != nil {
+	if _, err := m.submit(ctx, msg, text, nil, turn{extra: reportExtra, automations: automations}); err != nil {
 		m.log.Warn("chat: report not delivered", "from", callee.ID, "to", callerID, "err", err)
 	}
 }

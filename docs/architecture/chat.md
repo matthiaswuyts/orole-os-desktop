@@ -66,7 +66,7 @@ and a lead-in line with its list stay whole).
 ## Tools
 - Hosted: OpenRouter `openrouter:web_search` / `web_fetch` / `datetime`, OpenAI `web_search`. A tool is offered only
   when the provider+model can run it; `chat.tools.list` returns `available` plus a reason and what leaves the machine.
-- Client: `fetch_url` (fallback), `research`, MCP tools, `orole_get_skill`, memory tools, `ask_bot`.
+- Client: `fetch_url` (fallback), `research`, MCP tools, `orole_get_skill`, memory tools, `ask_bot`, automation tools.
 - MCP and policy: a bot is given whole MCP servers (`BotConfig.MCPServers`, shown as Integrations / MCP in the bot settings) and
   may call every tool of each connected server except those the user set to "deny" in Settings > Integrations (at most 128
   tools per model call; the user prunes with per-tool permissions). Calls use actor `bot:<id>` and the existing approval flow.
@@ -156,6 +156,37 @@ user presses Add. A new proposal under the same name replaces the bot's earlier 
 `chat.skills.pending.resolve`: Add saves the skill (source `chat:<botId>`, so the same bot can update it later) and
 calls `Manager.GrantSkill`, which appends it to that bot's `BotConfig.Skills`, so it works at once; a failure after saving
 leaves the proposal pending and Add can be retried. Dismiss marks it rejected.
+
+## Automation cards (`propose_automation`)
+A bot with `BotConfig.automations` (Settings panel: "Sets up automations"; off by default, never exported) gets
+`automation_reference` (triggers, the live step catalogue, event topics, templates and its own bot id),
+`list_automations`, `automation_detail` (definition plus the last five runs; untrusted data) and
+`propose_automation {definition, rationale, replaces?}` (`internal/chat/tools/automations.go`). There is no tool to save,
+enable, run or delete an automation. `propose_automation` calls `automations.Engine.Propose`, which normalizes the draft,
+forces it off and runs the builder's validation and secret check; problems go back to the model as `path: message` lines
+and nothing is stored. A valid draft becomes a pending `automation_proposals` row (immutable) and a `ui` part of kind
+`automation` (`{proposalId, botId, name}`). `parts/AutomationProposalCard.tsx` draws the daemon's stored draft, never the
+bot's words: trigger, blocks, rationale and the `Risks` Go derives (allowed executables and hosts, `command.run`,
+`test.run`, `http.request`). Decisions go through `automations.proposals.resolve`: **Turn on**, **Add turned off** or
+**Dismiss** for a new automation, **Apply changes** for an edit (`replaces`), which keeps the automation's switch. A draft
+with risks can only be saved turned off for review in the builder. Approval re-validates, refuses an edit whose automation
+changed since the draft (hash of the definition without its switch), saves with `created_by = bot:<id>` and audits.
+Only the user's own turns can draft: a turn whose message came from an automation, a task report, a hand-off or a bot
+report (`RunContext.Author` other than `user`) is refused, so outside content cannot plant a persistent flow. A newer
+draft for the same name (or the same edited automation) replaces the bot's earlier pending one; at most 10 are pending
+per bot.
+
+### Automation ideas
+For bots with `automations`, `memory.Store` is the Manager's `ToolObserver`: each successful client call of an
+integration tool (`mcp__*`), `fetch_url` or `list_tasks` **in a run the user started** (`RunContext.Author == "user"`) is
+counted in `automation_signals` (migration 0106) under the tool name plus a hash of its canonical arguments, with the
+number of distinct local days. Runs answering automation messages, task or bot reports and hand-offs never count, and
+tool results are not read, so outside content cannot fabricate a pattern. A signal is ready at 3 calls on 2 days.
+`SuggestionsPrompt` is a user section (`Manager.AddUserSection`, added only to runs answering the user): it lists at most
+two ready signals and marks them offered, at most once a day per bot, each signal at most twice and a week apart. The bot
+offers in one sentence, drafts with `propose_automation` only after the user agrees, and records the answer with
+`automation_suggestion {key, decision}` (declined: silenced 90 days; accepted: for good). The bot's Memories page lists the
+ideas (`chat.signals.list`) and forgets one (`chat.signals.delete`).
 
 ## Structured output (`show_*` tools)
 Bots whose model can call tools get nine tools that render chat components instead of Markdown: `show_table`,

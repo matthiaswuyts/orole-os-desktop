@@ -71,6 +71,7 @@ type Engine struct {
 	started     bool
 	http        SafeHTTP
 	webhook     *webhookServer
+	proposalMu  sync.Mutex // serializes proposal writes and decisions
 }
 
 func New(o Options) *Engine {

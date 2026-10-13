@@ -25,6 +25,8 @@ type turn struct {
 	chain  []string             // bots waiting on this run's answer, outermost first
 	extra  string               // system prompt addendum for the run
 	result chan<- handoffResult // receives the outcome exactly once; buffered so it never blocks
+	// automations is the automation chain behind this turn (Message.Automations); empty for user turns.
+	automations []string
 }
 
 // handoffResult is how a delegated turn ended.

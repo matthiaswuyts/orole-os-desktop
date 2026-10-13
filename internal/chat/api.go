@@ -88,9 +88,12 @@ type BotConfig struct {
 	Executive  bool      `json:"executive,omitempty"` // an executive assistant may ask every other bot (ask_bot)
 	// CodeTasks lets the bot start, watch and steer code tasks: coding agents that run commands and edit files on
 	// this PC. Every start and message still goes through the shared permission policy as "bot:<id>".
-	CodeTasks bool          `json:"codeTasks,omitempty"`
-	Memory    []ScopeAccess `json:"memory"` // grants beyond the private scope
-	Limits    BotLimits     `json:"limits"`
+	CodeTasks bool `json:"codeTasks,omitempty"`
+	// Automations lets the bot read the user's automations and draft new ones or edits. A draft is
+	// only a card in the chat until the user approves it; the bot can never save, enable or run one.
+	Automations bool          `json:"automations,omitempty"`
+	Memory      []ScopeAccess `json:"memory"` // grants beyond the private scope
+	Limits      BotLimits     `json:"limits"`
 	// Setup marks a freshly created bot that still has to learn its purpose: it is offered the setup
 	// tools (ask_user, save_profile) until it saves its own instructions.
 	Setup bool `json:"setup,omitempty"`
@@ -274,6 +277,11 @@ type Message struct {
 	Error     string        `json:"error,omitempty"`
 	Model     string        `json:"model,omitempty"`
 	CreatedAt int64         `json:"createdAt"`
+	// Automations is the automation chain of the turn this reply answers (automations.Run.Chain:
+	// the flows that led to it, outermost first); empty for turns the user started. It exists only
+	// in the process, on the published snapshots of a reply, so bot.message events stay chain-bounded.
+	// It is never stored or sent to the UI.
+	Automations []string `json:"-"`
 }
 
 // Text is the message's plain text: its text parts joined, without tool or structured parts.

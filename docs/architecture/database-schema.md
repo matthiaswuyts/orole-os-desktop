@@ -33,6 +33,8 @@ prefixes (0010, 0020, ...) so concurrent work does not collide; `DB.Version()` i
 | `agent_sessions(id, kind, status, ..., data JSON)`, `agent_events`, `agent_journal`, `agent_runs` | 0020 | agent runtime state and an at-most-once orchestration journal |
 | `agent_sessions.data.permissionMode` | 0100 | renamed to `manual \| auto \| yolo` (`default`/empty → `manual`, `acceptEdits` → `auto`; `plan` unchanged) |
 | `agent_usage(session_id FK cascade, provider, model, bucket_start, input, output, cache_read, cache_write, reasoning, reported_cost_usd, has_reported_cost)` + index on `bucket_start`; index `agent_sessions(updated_at)` | 0104 | billed tokens per session × model × 15-minute UTC bucket (`bucket_start` = Unix seconds, a multiple of 900, so each bucket lies in one local day in any zone); cost is priced at query time unless every report in the bucket carried the harness's own cost |
+| `automations.created_by`; `automation_proposals(id, bot_id, name, replaces, base_version, rationale, definition, status, automation_id, created_at, decided_at)` + index `(bot_id, status)` | 0105 | who created an automation (`user` or `bot:<id>`, set on insert only); automations a bot drafted in chat, inert until the user approves the card (`pending \| approved \| rejected \| replaced`) |
+| `automation_signals(bot_id FK cascade, key, label, count, days, last_day, first_at, last_at, offered_at, offers, dismissed_until)`, primary key `(bot_id, key)` | 0106 | requests a bot noticed the user repeating (same tool call on separate days) that it may offer to automate; rate-limited and silenced once answered |
 
 Tables for agents, MCP, policy and notifications exist ahead of the daemon services that use them; see
 `daemon.md` for what is actually registered.

@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
 import { Menu, MenuGroup, MenuGroupLabel, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "@/components/ui/menu";
 import { Switch } from "@/components/ui/switch";
+import { useChat } from "@/stores/chat";
 import { api, errorText, newDefinition, type Approval, type Definition, type Summary, type Topic } from "./api";
 import { Failure } from "./fields";
 import { flatten, relativeTime, triggerSummary } from "./flow";
@@ -18,6 +19,7 @@ export function FlowList({ items, approvals, loading, error, offline, topics, te
   onRefresh: () => void; onOpen: (summary: Summary, run?: string) => void; onCreate: (definition: Definition) => void;
 }) {
   const [busy, setBusy] = useState<string | null>(null);
+  const bots = useChat((s) => s.bots);
   const [failure, setFailure] = useState<string | null>(null);
   const [started, setStarted] = useState<{ summary: Summary; run: string } | null>(null);
   const [deleting, setDeleting] = useState<Summary | null>(null);
@@ -74,7 +76,8 @@ export function FlowList({ items, approvals, loading, error, offline, topics, te
           </EmptyHeader>
         </Empty>}
         {!!items?.length && <ul className="flex flex-col gap-2">{items.map((summary) => {
-          const { definition: d, lastStatus, lastRunAt, nextRunAt, issues, watch } = summary;
+          const { definition: d, lastStatus, lastRunAt, nextRunAt, issues, watch, createdBy } = summary;
+          const creator = createdBy?.startsWith("bot:") ? bots.find((b) => b.id === createdBy.slice(4))?.name ?? "a bot" : null;
           const blocks = flatten(d.steps ?? []).length;
           return <li key={d.id} className="rounded-lg border bg-card shadow-xs/5">
             <div className="flex items-center gap-3 px-3 py-2">
@@ -82,6 +85,7 @@ export function FlowList({ items, approvals, loading, error, offline, topics, te
                 <span className="flex min-w-0 items-center gap-2">
                   <span className="truncate text-sm font-medium">{d.name || "Untitled flow"}</span>
                   {issues?.length > 0 && <Badge size="sm" variant="error">{issues.length === 1 ? "1 problem" : `${issues.length} problems`}</Badge>}
+                  {creator && <Badge size="sm" variant="secondary">By {creator}</Badge>}
                 </span>
                 <span className="truncate text-xs text-muted-foreground">{triggerSummary(d.trigger, topics)} · {blocks === 1 ? "1 block" : `${blocks} blocks`}</span>
                 <span className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-muted-foreground tabular-nums">

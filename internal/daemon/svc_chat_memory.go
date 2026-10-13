@@ -29,6 +29,10 @@ func (d *Daemon) registerChatMemory() {
 	}
 	d.ChatMemory = store
 	m.SetMemory(store)
+	// Automation ideas: tool calls in the user's own turns are counted, and repeated ones are offered
+	// to bots that set up automations (only in runs answering the user).
+	m.SetToolObserver(store)
+	m.AddUserSection(store.SuggestionsPrompt)
 
 	handle(d, "chat.memory.scopes.list", func(ctx context.Context, p chat.BotRef) ([]chat.MemoryScope, error) {
 		out, err := store.Scopes(ctx, p.ID)
@@ -107,6 +111,14 @@ func (d *Daemon) registerChatMemory() {
 			d.skillsChanged("save", proposal.Name)
 		}
 		return none{}, chatError(err)
+	})
+
+	handle(d, "chat.signals.list", func(ctx context.Context, p chat.BotRef) ([]chat.AutomationSignal, error) {
+		out, err := store.Signals(ctx, p.ID)
+		return out, chatError(err)
+	})
+	handle(d, "chat.signals.delete", func(ctx context.Context, p chat.SignalRef) (none, error) {
+		return none{}, chatError(store.DeleteSignal(ctx, p))
 	})
 }
 

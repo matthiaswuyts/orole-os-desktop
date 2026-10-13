@@ -170,6 +170,26 @@ export interface AuthStart {
 /** AuthType says how the API key is presented to the provider. */
 export type AuthType = "bearer" | "header" | "none";
 
+/**
+ * AutomationSignal is a request the user keeps making of a bot: the same tool call, with the same
+ * arguments, in turns the user started. A bot that sets up automations may suggest automating it.
+ */
+export interface AutomationSignal {
+  botId: string;
+  key: string;
+  /** the tool and its arguments, one line */
+  label: string;
+  count: number;
+  /** distinct local days it was asked on */
+  days: number;
+  /** Ready reports whether it is repeated enough to be suggested and not silenced. */
+  ready: boolean;
+  /** Answered reports that the user declined or accepted it; it is silenced for a while. */
+  answered: boolean;
+  firstAt: number;
+  lastAt: number;
+}
+
 export interface AutomationsIssue {
   path: string;
   message: string;
@@ -252,6 +272,11 @@ export interface BotConfig {
    * this PC. Every start and message still goes through the shared permission policy as "bot:<id>".
    */
   codeTasks?: boolean;
+  /**
+   * Automations lets the bot read the user's automations and draft new ones or edits. A draft is
+   * only a card in the chat until the user approves it; the bot can never save, enable or run one.
+   */
+  automations?: boolean;
   /** grants beyond the private scope */
   memory: ScopeAccess[];
   limits: BotLimits;
@@ -1975,6 +2000,38 @@ export interface PromptInfo {
   arguments?: PromptArg[];
 }
 
+/** Proposal is an automation a bot drafted; inert until the user approves it. */
+export interface Proposal {
+  id: string;
+  botId: string;
+  /** Replaces is the automation an edit applies to; "" for a new automation. */
+  replaces: string;
+  /** ReplacesEnabled reports whether the automation being replaced is turned on now. */
+  replacesEnabled: boolean;
+  rationale: string;
+  definition: Definition;
+  /**
+   * Risks are effects the user must review in the builder: a draft with any can only be
+   * added turned off.
+   */
+  risks: string[];
+  /** pending | approved | rejected | replaced */
+  status: string;
+  automationId: string;
+  createdAt: number;
+  decidedAt: number;
+}
+
+/**
+ * ProposalDecision is the user's answer to a proposal card. Enable turns the automation on
+ * as it is saved; it is refused for drafts with Risks.
+ */
+export interface ProposalDecision {
+  id: string;
+  approve: boolean;
+  enable: boolean;
+}
+
 /** ProviderManifest is the schema v1 document describing an OpenAI-compatible provider. */
 export interface ProviderManifest {
   schemaVersion: number;
@@ -2626,6 +2683,12 @@ export interface Shortcut {
   updatedAt: number;
 }
 
+/** SignalRef identifies one signal of a bot. */
+export interface SignalRef {
+  botId: string;
+  key: string;
+}
+
 /** Skill is one registry entry. */
 export interface Skill {
   /** slug, also the directory name */
@@ -2778,6 +2841,10 @@ export interface Summary {
   issues: AutomationsIssue[];
   /** Watch is the last poll of a watch trigger; nil before its first poll. */
   watch?: WatchStatus;
+  /** CreatedBy is "user", or "bot:<id>" for a bot's draft the user approved in chat. */
+  createdBy: string;
+  /** UpdatedAt is when the definition was last saved (Unix milliseconds). */
+  updatedAt: number;
 }
 
 /** SyncState is one harness's view of the registry. */
@@ -3831,6 +3898,14 @@ export const Automations = {
   preview(schedule: string): Promise<string[]> {
     return call("Automations.Preview", schedule);
   },
+  /** Proposal returns a bot's automation draft in any state, for its card in the chat. */
+  proposal(id: string): Promise<Proposal> {
+    return call("Automations.Proposal", id);
+  },
+  /** ResolveProposal approves (saving the draft, optionally turned on) or dismisses a bot's draft. */
+  resolveProposal(decision: ProposalDecision): Promise<Proposal> {
+    return call("Automations.ResolveProposal", decision);
+  },
   run(id: string): Promise<AutomationsRun> {
     return call("Automations.Run", id);
   },
@@ -3953,6 +4028,10 @@ export const Chat = {
   attachmentChunk(req: AttachmentChunk): Promise<void> {
     return call("Chat.AttachmentChunk", req);
   },
+  /** AutomationSignals lists the requests a bot noticed the user repeating (automation ideas). */
+  automationSignals(botID: string): Promise<AutomationSignal[]> {
+    return call("Chat.AutomationSignals", botID);
+  },
   beginAttachment(req: AttachmentBegin): Promise<AttachmentUpload> {
     return call("Chat.BeginAttachment", req);
   },
@@ -3976,6 +4055,10 @@ export const Chat = {
   },
   createMemoryScope(name: string): Promise<MemoryScope> {
     return call("Chat.CreateMemoryScope", name);
+  },
+  /** DeleteAutomationSignal forgets one automation idea of a bot. */
+  deleteAutomationSignal(ref: SignalRef): Promise<void> {
+    return call("Chat.DeleteAutomationSignal", ref);
   },
   deleteMemoryEntry(id: string): Promise<void> {
     return call("Chat.DeleteMemoryEntry", id);
