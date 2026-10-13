@@ -57,8 +57,9 @@ notes. See `docs/development/updates.md`.
 - Bots can show their working list (`show_todo_list`: pending, active, done, failed, cancelled steps with an n/m counter,
   updated in place as they work) and documents (`show_document`: a titled Markdown artifact shown as a card in the reply and
   opened beside the conversation with copy and close; revisions bump the version).
-- A bot's reply shows each code task it started as a row in a subagent list with live status (working, done, needs you,
-  failed), its current activity and the coding agent it runs on. Clicking a row opens the task beside the conversation,
+- A bot's reply shows each code task it started as a chat bubble (the same bubble as the bot's messages) with live status
+  (working, done, needs you, failed), its current activity, the coding agent and model it runs on, and a live meter of
+  elapsed time and tokens that freezes when the task stops (a dash where the harness reported nothing). Clicking a bubble opens the task beside the conversation,
   with the agent's live activity and a composer to message that agent directly; "Open in Tasks" moves it to the Tasks view.
   The side pane (task or document) animates its width and slides out when closed instead of snapping.
 - Automations can watch GitHub (new commits on a branch, pull requests opened or merged, failed workflow runs, new issues)
