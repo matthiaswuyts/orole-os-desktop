@@ -19,7 +19,7 @@ concurrency:
 jobs:
   # Go verification. `go test -race` dominates the wall time here, so nothing else waits behind it.
   go:
-    runs-on: windows-latest
+    runs-on: avrea-windows-latest-2-vcpu
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -39,7 +39,7 @@ jobs:
 
   # Frontend verification. No Go needed: it runs next to the go job instead of behind it.
   web:
-    runs-on: windows-latest
+    runs-on: avrea-windows-latest-2-vcpu
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -63,7 +63,7 @@ jobs:
   # Daemon, CLI and the packaged app with its NSIS installer. Independent of the test jobs, so the
   # slowest step (mygo build) overlaps them instead of following them.
   package:
-    runs-on: windows-latest
+    runs-on: avrea-windows-latest-2-vcpu
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -96,7 +96,7 @@ jobs:
           $i | Format-Table Name, Length
 
   portable:
-    runs-on: ubuntu-latest
+    runs-on: avrea-ubuntu-latest-2-vcpu
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -114,7 +114,7 @@ jobs:
         run: ./scripts/check-cli-linkage.sh
 
   actionlint:
-    runs-on: ubuntu-latest
+    runs-on: avrea-ubuntu-latest-2-vcpu
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
