@@ -8,23 +8,83 @@ import (
 	"unicode/utf8"
 )
 
+// All limits are in runes (characters), not bytes.
 const (
 	maxOpener = 240
-	maxName   = 64
+	maxName   = 80
 	maxReason = 160
 )
 
 var appName = regexp.MustCompile(`(?i)orole`)
 
-// CheckOpener accepts a model-written first line only if it names the bot, never names the app, and is one short paragraph.
+// normalize trims and collapses every whitespace run to a single space.
+func normalize(s string) string { return strings.Join(strings.Fields(s), " ") }
+
+// runesCut keeps at most n runes of s.
+func runesCut(s string, n int) string {
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	return string(r[:n])
+}
+
+func isWordRune(r rune) bool { return unicode.IsLetter(r) || unicode.IsDigit(r) }
+
+func equalFoldRune(a, b rune) bool {
+	return a == b || unicode.ToLower(a) == unicode.ToLower(b) || unicode.ToUpper(a) == unicode.ToUpper(b)
+}
+
+// nameSpans returns the rune ranges [start, end) where name occurs in text, case-insensitively,
+// with no letter or digit directly before or after the match.
+func nameSpans(name, text []rune) [][2]int {
+	n := len(name)
+	if n == 0 {
+		return nil
+	}
+	var spans [][2]int
+	for i := 0; i+n <= len(text); i++ {
+		match := true
+		for j := 0; j < n && match; j++ {
+			match = equalFoldRune(text[i+j], name[j])
+		}
+		if !match || (i > 0 && isWordRune(text[i-1])) || (i+n < len(text) && isWordRune(text[i+n])) {
+			continue
+		}
+		spans = append(spans, [2]int{i, i + n})
+		i += n - 1
+	}
+	return spans
+}
+
+// CheckOpener accepts a model-written first line only if it names the bot as a whole word, never
+// names the app outside the bot's own name, and is one short paragraph of at most maxOpener runes.
 func CheckOpener(name, text string) (string, bool) {
-	name = strings.TrimSpace(name)
-	text = strings.TrimSpace(text)
-	if name == "" || len(name) > maxName || text == "" || len(text) > maxOpener || strings.ContainsAny(text, "\r\n") || appName.MatchString(text) {
+	raw := strings.TrimSpace(text)
+	if raw == "" || strings.ContainsAny(raw, "\r\n  ") {
 		return "", false
 	}
-	re := regexp.MustCompile(`(?i)\b` + regexp.QuoteMeta(name) + `\b`)
-	if !re.MatchString(text) {
+	nr := []rune(normalize(name))
+	if len(nr) == 0 || len(nr) > maxName {
+		return "", false
+	}
+	text = normalize(raw)
+	tr := []rune(text)
+	if len(tr) > maxOpener {
+		return "", false
+	}
+	spans := nameSpans(nr, tr)
+	if len(spans) == 0 {
+		return "", false
+	}
+	// Blank out the bot's own name, then look for the app name in what remains.
+	rest := append([]rune(nil), tr...)
+	for _, sp := range spans {
+		for k := sp[0]; k < sp[1]; k++ {
+			rest[k] = ' '
+		}
+	}
+	if strings.Contains(strings.ToLower(string(rest)), "orole") {
 		return "", false
 	}
 	return text, true
@@ -39,38 +99,36 @@ var fallbacks = []string{
 	"Hey, %s here. %s.",
 }
 
-// cutRunes shortens s to at most max bytes without splitting a UTF-8 sequence.
-func cutRunes(s string, max int) string {
-	if len(s) <= max {
+func upperFirst(s string) string {
+	r, size := utf8.DecodeRuneInString(s)
+	if size == 0 {
 		return s
 	}
-	n := max
-	for n > 0 && !utf8.RuneStart(s[n]) {
-		n--
-	}
-	return s[:n]
+	return string(unicode.ToUpper(r)) + s[size:]
 }
 
-// FallbackOpener is used when the model's opener is late or fails CheckOpener.
-// The result always passes CheckOpener for the (possibly shortened) name it was given.
+// FallbackOpener is used when the model's opener is late or fails CheckOpener. For any name
+// CheckOpener accepts (1 to maxName runes), the result passes CheckOpener with that name.
 func FallbackOpener(name, reason string, seed int) string {
-	name = cutRunes(strings.Join(strings.Fields(name), " "), maxName)
-	reason = strings.TrimSuffix(strings.Join(strings.Fields(reason), " "), ".")
+	name = runesCut(normalize(name), maxName)
+	reason = strings.TrimSuffix(normalize(reason), ".")
+	reason = appName.ReplaceAllString(reason, "the app")
 	if reason == "" {
 		reason = "I have an update for you"
 	}
-	reason = appName.ReplaceAllString(reason, "the app")
 	f := fallbacks[((seed%len(fallbacks))+len(fallbacks))%len(fallbacks)]
-	// Budget the reason so the whole line fits maxOpener.
-	overhead := len(fmt.Sprintf(f, name, ""))
+	// Budget the reason so the whole line fits maxOpener runes.
+	overhead := utf8.RuneCountInString(fmt.Sprintf(f, name, ""))
 	budget := min(maxReason, maxOpener-overhead)
-	reason = strings.TrimSpace(cutRunes(reason, budget))
-	if strings.HasPrefix(f, "%s") {
-		return fmt.Sprintf(f, name, reason)
+	part := strings.TrimSpace(runesCut(reason, budget))
+	if !strings.HasPrefix(f, "%s") {
+		part = upperFirst(part)
 	}
-	r, size := utf8.DecodeRuneInString(reason)
-	if size > 0 {
-		reason = string(unicode.ToUpper(r)) + reason[size:]
+	out := fmt.Sprintf(f, name, part)
+	// Defensive: trim the reason again if the rebuilt line is still too long.
+	if extra := utf8.RuneCountInString(out) - maxOpener; extra > 0 {
+		part = strings.TrimSpace(runesCut(part, utf8.RuneCountInString(part)-extra))
+		out = fmt.Sprintf(f, name, part)
 	}
-	return fmt.Sprintf(f, name, reason)
+	return out
 }

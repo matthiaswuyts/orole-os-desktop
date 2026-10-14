@@ -110,19 +110,60 @@ func TestFallbackNonASCIIReason(t *testing.T) {
 	}
 }
 
-func TestFallbackNewlineAndLongName(t *testing.T) {
-	long := strings.Repeat("B", 300)
-	for i := 0; i < 6; i++ {
-		f := FallbackOpener("Atlas", "the deploy\nfailed\r\n on tests", i)
-		if _, ok := CheckOpener("Atlas", f); !ok {
-			t.Errorf("newline reason, fallback %d fails: %q", i, f)
+func TestFallbackAlwaysPassesCheck(t *testing.T) {
+	names := []string{
+		"Atlas", "日本", "Atlas!", "Nova  Bot", "Orolebot",
+		strings.Repeat("A", 80), strings.Repeat("日", 80),
+	}
+	reasons := []string{
+		"the deploy finished",
+		strings.Repeat("échec du déploiement ünd 日本語 ", 20),
+		"the deploy\nfailed\r\n on tests",
+		"Orole sync failed",
+	}
+	for _, name := range names {
+		for _, reason := range reasons {
+			for seed := 0; seed < 6; seed++ {
+				f := FallbackOpener(name, reason, seed)
+				if !utf8.ValidString(f) {
+					t.Errorf("name %q seed %d: invalid UTF-8", name, seed)
+				}
+				if n := utf8.RuneCountInString(f); n > maxOpener {
+					t.Errorf("name %q seed %d: %d runes", name, seed, n)
+				}
+				if strings.Contains(f, "\n") {
+					t.Errorf("name %q seed %d: newline in %q", name, seed, f)
+				}
+				if _, ok := CheckOpener(name, f); !ok {
+					t.Errorf("name %q seed %d fails CheckOpener: %q", name, seed, f)
+				}
+			}
 		}
-		g := FallbackOpener(long, strings.Repeat("x ", 200), i)
-		if len(g) > maxOpener {
-			t.Errorf("fallback %d over %d bytes: %d", i, maxOpener, len(g))
-		}
-		if _, ok := CheckOpener(long[:maxName], g); !ok {
-			t.Errorf("long name, fallback %d fails: %q", i, g)
+	}
+}
+
+func TestCheckOpenerBoundaries(t *testing.T) {
+	cases := []struct {
+		name, text string
+		want       bool
+	}{
+		{"Atlas", "Hey, Atlas here.", true},
+		{"Atlas!", "Hey, Atlas! here.", true},
+		{"Nova  Bot", "Hey, Nova Bot here.", true},
+		{"Orolebot", "Hey, Orolebot here.", true},
+		{"Atlas", "Atlas from Orole here.", false},
+		{"Atlas", "Atlasian bots say hi.", false},
+		{"Atlas", "Atlas1 here.", false},
+		{"日本", "日本 here.", true},
+		{"日本", "今日本 here.", false},
+		{"Atlas", "Hi, it's your assistant.", false},
+		{"Atlas", "Hey Atlas here.\nSecond.", false},
+		{"", "Hey, anything here.", false},
+		{"   ", "Hey, anything here.", false},
+	}
+	for _, c := range cases {
+		if _, ok := CheckOpener(c.name, c.text); ok != c.want {
+			t.Errorf("CheckOpener(%q, %q) = %v, want %v", c.name, c.text, ok, c.want)
 		}
 	}
 }
