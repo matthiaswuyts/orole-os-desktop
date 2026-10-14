@@ -1,6 +1,6 @@
 import { useEffect, useId, useState, type ReactNode } from "react";
 import { CheckCircle2Icon, CircleIcon, CopyIcon, XIcon } from "lucide-react";
-import { Jarvis, type PhoneSettings as PhoneConfig, type StatusView, type TTSModel, type Voice } from "@/mygo";
+import { Jarvis, type PhoneSettings as PhoneConfig, type StatusView, type TTSModel } from "@/mygo";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "@/components/ui/tooltip";
@@ -9,7 +9,7 @@ import { Failure, Loading } from "@/features/mcp/shared";
 import { SettingsSection } from "@/features/settings/SettingsSection";
 import { inDesktop } from "@/lib/backend";
 import { useJarvis } from "./store";
-import { LanguagePicker, ModelPicker, VoicePicker } from "./VoicePicker";
+import { LanguagePicker, LanguageVoicePicker, ModelPicker } from "./VoicePicker";
 
 /** One labelled control row. */
 function Row({ label, htmlFor, hint, children }: { label: string; htmlFor?: string; hint?: string; children: ReactNode }) {
@@ -274,16 +274,15 @@ function CallsSection({ status }: { status: StatusView }) {
   const [voiceId, setVoiceId] = useState(s.defaultVoiceId ?? "");
   const [ttsModel, setTtsModel] = useState(s.defaultTtsModel ?? "");
   const [language, setLanguage] = useState(s.callLanguage || "nl");
-  const [voices, setVoices] = useState<Voice[]>([]);
   const [models, setModels] = useState<TTSModel[]>([]);
   const [lookupError, setLookupError] = useState<string | null>(null);
   const action = useAction();
 
   useEffect(() => {
-    if (!status.hasElevenLabs) return; // the lists come from ElevenLabs: nothing to ask without a key
+    if (!status.hasElevenLabs) return; // the list comes from ElevenLabs: nothing to ask without a key
     let active = true;
-    Promise.all([Jarvis.voices(), Jarvis.models()])
-      .then(([v, m]) => { if (active) { setVoices(v); setModels(m); setLookupError(null); } })
+    Jarvis.models()
+      .then((m) => { if (active) { setModels(m); setLookupError(null); } })
       .catch((failure: unknown) => { if (active) setLookupError(errText(failure)); });
     return () => { active = false; };
   }, [status.hasElevenLabs]);
@@ -322,7 +321,7 @@ function CallsSection({ status }: { status: StatusView }) {
         <LanguagePicker id={ids.language} value={language} onChange={setLanguage} />
       </Row>
       <Row label="Default voice" htmlFor={ids.voice}>
-        <VoicePicker id={ids.voice} value={voiceId} voices={voices} defaultId="" onChange={setVoiceId} />
+        <LanguageVoicePicker id={ids.voice} value={voiceId} language={language} enabled={status.hasElevenLabs} defaultId="" previewSelected onChange={setVoiceId} />
       </Row>
       <Row label="Default voice model" htmlFor={ids.model}>
         <ModelPicker id={ids.model} value={ttsModel} models={models} defaultId="" onChange={setTtsModel} />
@@ -332,7 +331,7 @@ function CallsSection({ status }: { status: StatusView }) {
         <Button size="sm" loading={action.busy} onClick={() => void save()}>Save</Button>
       </div>
       <ErrorLine message={action.error} />
-      <ErrorLine message={lookupError && `Could not load voices: ${lookupError}`} />
+      <ErrorLine message={lookupError && `Could not load voice models: ${lookupError}`} />
     </SettingsSection>
   );
 }

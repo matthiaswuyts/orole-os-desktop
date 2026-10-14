@@ -8,12 +8,12 @@ import { LIMITS, validate, type FormState } from "@/features/chat/builder/botFor
 import { ControlRow, Group, SwitchRow } from "@/features/chat/panel/rows";
 import type { AgentsSetting } from "@/features/settings/AgentSafetySettings";
 import { inDesktop } from "@/lib/backend";
-import { Jarvis, Settings, type Bot, type JarvisRule, type TTSModel, type Voice } from "@/mygo";
+import { Jarvis, Settings, type Bot, type JarvisRule, type TTSModel } from "@/mygo";
 import { useUI } from "@/stores/ui";
 import { describeRule } from "./describe";
 import { jarvisGate } from "./gate";
 import { phoneReady, useJarvis } from "./store";
-import { ModelPicker, VoicePicker } from "./VoicePicker";
+import { LanguageVoicePicker, ModelPicker } from "./VoicePicker";
 
 function Note({ children, alert }: { children: React.ReactNode; alert?: boolean }) {
   return <p role={alert ? "alert" : undefined} className="selectable break-words px-1 text-muted-foreground text-xs">{children}</p>;
@@ -36,7 +36,6 @@ export function JarvisPage({ bot, form, patch, onOpenPermissions }: { bot: Bot; 
 
   const [agents, setAgents] = useState<AgentsSetting | null>(null);
   const [rules, setRules] = useState<JarvisRule[] | null>(null);
-  const [voices, setVoices] = useState<Voice[]>([]);
   const [models, setModels] = useState<TTSModel[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [testing, setTesting] = useState(false);
@@ -65,8 +64,8 @@ export function JarvisPage({ bot, form, patch, onOpenPermissions }: { bot: Bot; 
   useEffect(() => {
     if (!inDesktop || !setUp || !hasElevenLabs) return;
     let live = true;
-    // The lists come from ElevenLabs; without them the selects keep "Default" and any stored choice.
-    Promise.all([Jarvis.voices(), Jarvis.models()]).then(([v, m]) => { if (live) { setVoices(v); setModels(m); } }, () => {});
+    // The list comes from ElevenLabs; without it the select keeps "Default" and any stored choice.
+    Jarvis.models().then((m) => { if (live) setModels(m); }, () => {});
     return () => { live = false; };
   }, [setUp, hasElevenLabs]);
 
@@ -129,7 +128,8 @@ export function JarvisPage({ bot, form, patch, onOpenPermissions }: { bot: Bot; 
 
     <Group title="Voice">
       <ControlRow icon={MicIcon} label="Voice" htmlFor={ids.voice}>
-        <VoicePicker compact id={ids.voice} value={form.jarvisVoice} voices={voices} defaultId={status?.settings.defaultVoiceId ?? ""} onChange={(jarvisVoice) => patch({ jarvisVoice })} />
+        <LanguageVoicePicker compact previewSelected id={ids.voice} value={form.jarvisVoice} language={status?.settings.callLanguage ?? ""} enabled={hasElevenLabs}
+          defaultId={status?.settings.defaultVoiceId ?? ""} onChange={(jarvisVoice) => patch({ jarvisVoice })} />
       </ControlRow>
       <ControlRow icon={MicIcon} label="Voice model" htmlFor={ids.model}>
         <ModelPicker compact id={ids.model} value={form.jarvisModel} models={models} defaultId={status?.settings.defaultTtsModel ?? ""} onChange={(jarvisModel) => patch({ jarvisModel })} />
