@@ -118,6 +118,7 @@ type Service struct {
 	lastTick    time.Time
 	startedAt   time.Time
 	relayUpOnce bool          // the relay has connected at least once since Start
+	voices      voiceCache    // jarvis.voices lists per language
 	changedCh   chan struct{} // coalesced Changed notifications
 	baseCtx     context.Context
 	cancel      context.CancelFunc
@@ -748,6 +749,9 @@ func (s *Service) SetSecrets(in SecretsInput) error {
 		}
 		if err := s.cfg.Creds.Set(p.key, []byte(v)); err != nil {
 			return err
+		}
+		if p.key == KeyElevenLabs {
+			s.voices.clear() // another account has another library
 		}
 	}
 	return nil

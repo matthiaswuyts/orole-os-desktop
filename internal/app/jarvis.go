@@ -55,9 +55,17 @@ func (s Jarvis) ConfirmVerification(ctx context.Context, code string) (jarvis.St
 	return out, s.L.call(ctx, "jarvis.verify.confirm", map[string]string{"code": code}, &out)
 }
 
-func (s Jarvis) Voices(ctx context.Context) ([]jarvis.Voice, error) {
-	var out []jarvis.Voice
-	return out, s.L.call(ctx, "jarvis.voices", nil, &out)
+// Voices lists ElevenLabs voices suited to a call language ("" = the chosen one), grouped for the picker.
+func (s Jarvis) Voices(ctx context.Context, language string) (jarvis.VoiceList, error) {
+	var out jarvis.VoiceList
+	return out, s.L.call(ctx, "jarvis.voices", map[string]string{"language": language}, &out)
+}
+
+// AddVoice makes a chosen voice usable by the agent (adding a Voice Library voice to the owner's ElevenLabs
+// library when needed) and returns the voice id to store.
+func (s Jarvis) AddVoice(ctx context.Context, voiceID, publicOwnerID string) (string, error) {
+	var out string
+	return out, s.L.call(ctx, "jarvis.voices.add", map[string]string{"voiceId": voiceID, "publicOwnerId": publicOwnerID}, &out)
 }
 
 func (s Jarvis) Models(ctx context.Context) ([]jarvis.TTSModel, error) {

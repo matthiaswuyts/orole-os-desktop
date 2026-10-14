@@ -26,6 +26,14 @@ type Voice struct {
 	ID          string `json:"id"`
 	Name        string `json:"name"`
 	Description string `json:"description"` // ElevenLabs' text, else built from the labels
+	// PublicOwnerID is set for a Voice Library (shared) voice: with ID it identifies the voice to add.
+	PublicOwnerID string `json:"publicOwnerId,omitempty"`
+	Accent        string `json:"accent,omitempty"`
+	Gender        string `json:"gender,omitempty"`
+	Age           string `json:"age,omitempty"`
+	PreviewURL    string `json:"previewUrl,omitempty"`
+	// InLibrary reports that the voice is in the account's own library (usable without adding it first).
+	InLibrary bool `json:"inLibrary,omitempty"`
 }
 
 // TTSModel is a curated text-to-speech model (see curatedModels).
@@ -141,21 +149,40 @@ func voiceDescription(description string, labels map[string]string) string {
 	return strings.ToUpper(string(r[:1])) + string(r[1:])
 }
 
+// Voices returns the account's own voice library.
 func (e *ElevenLabs) Voices(ctx context.Context) ([]Voice, error) {
+	lib, err := e.libraryVoices(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]Voice, 0, len(lib))
+	for _, v := range lib {
+		out = append(out, v.Voice)
+	}
+	return out, nil
+}
+
+func (e *ElevenLabs) libraryVoices(ctx context.Context) ([]libraryVoice, error) {
 	var res struct {
 		Voices []struct {
 			VoiceID     string            `json:"voice_id"`
 			Name        string            `json:"name"`
 			Description string            `json:"description"`
+			Category    string            `json:"category"`
+			PreviewURL  string            `json:"preview_url"`
 			Labels      map[string]string `json:"labels"`
 		} `json:"voices"`
 	}
 	if err := e.do(ctx, "GET", "/v1/voices", nil, &res); err != nil {
 		return nil, err
 	}
-	out := make([]Voice, 0, len(res.Voices))
+	out := make([]libraryVoice, 0, len(res.Voices))
 	for _, v := range res.Voices {
-		out = append(out, Voice{ID: v.VoiceID, Name: v.Name, Description: voiceDescription(v.Description, v.Labels)})
+		out = append(out, libraryVoice{
+			Voice: Voice{ID: v.VoiceID, Name: v.Name, Description: voiceDescription(v.Description, v.Labels),
+				Accent: v.Labels["accent"], Gender: v.Labels["gender"], Age: v.Labels["age"], PreviewURL: v.PreviewURL, InLibrary: true},
+			Category: v.Category, UseCase: v.Labels["use_case"],
+		})
 	}
 	return out, nil
 }

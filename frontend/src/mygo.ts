@@ -3359,6 +3359,31 @@ export interface Voice {
   name: string;
   /** ElevenLabs' text, else built from the labels */
   description: string;
+  /** PublicOwnerID is set for a Voice Library (shared) voice: with ID it identifies the voice to add. */
+  publicOwnerId?: string;
+  accent?: string;
+  gender?: string;
+  age?: string;
+  previewUrl?: string;
+  /** InLibrary reports that the voice is in the account's own library (usable without adding it first). */
+  inLibrary?: boolean;
+}
+
+/** VoiceGroup is one titled block of voices in the voice picker. */
+export interface VoiceGroup {
+  label: string;
+  voices: Voice[];
+}
+
+/**
+ * VoiceList is the jarvis.voices result: voices suited to one call language, grouped, plus the account's own library
+ * (used to name a stored or default voice that is not in the groups).
+ */
+export interface VoiceList {
+  /** the call language the groups are for: "nl" or "en" */
+  language: string;
+  groups: VoiceGroup[];
+  library: Voice[];
 }
 
 /**
@@ -3878,6 +3903,13 @@ export const Notifications = {
 /** Jarvis configures phone calls with bots. Secrets go straight to the daemon's Credential Manager and are never read back. */
 export const Jarvis = {
   /**
+   * AddVoice makes a chosen voice usable by the agent (adding a Voice Library voice to the owner's ElevenLabs
+   * library when needed) and returns the voice id to store.
+   */
+  addVoice(voiceID: string, publicOwnerID: string): Promise<string> {
+    return call("Jarvis.AddVoice", voiceID, publicOwnerID);
+  },
+  /**
    * Configure saves the phone settings and provisions the ElevenLabs agent. The result carries the post-call
    * webhook secret once, on the run that created the webhook.
    */
@@ -3915,8 +3947,9 @@ export const Jarvis = {
   transcript(callID: string): Promise<CallTranscript> {
     return call("Jarvis.Transcript", callID);
   },
-  voices(): Promise<Voice[]> {
-    return call("Jarvis.Voices");
+  /** Voices lists ElevenLabs voices suited to a call language ("" = the chosen one), grouped for the picker. */
+  voices(language: string): Promise<VoiceList> {
+    return call("Jarvis.Voices", language);
   },
 } as const;
 

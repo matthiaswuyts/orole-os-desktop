@@ -205,7 +205,7 @@ func (l *Link) call(ctx context.Context, method string, params, out any) error {
 		"machines.health", "machines.execute", "machines.files.list", "machines.files.stat",
 		"machines.files.read", "machines.files.write",
 		"files.list", "files.stat", "files.read", "files.write", "files.search",
-		"jarvis.configure", "jarvis.verify.start", "jarvis.call.test", "jarvis.voices", "jarvis.models":
+		"jarvis.configure", "jarvis.verify.start", "jarvis.call.test", "jarvis.voices", "jarvis.voices.add", "jarvis.models":
 		timeout = 16 * time.Minute // five-minute approval followed by a bounded tool call
 	case "dictation.transcribe":
 		timeout = dictation.TranscribeTimeout + 15*time.Second // the daemon bounds it itself; this only catches a lost reply

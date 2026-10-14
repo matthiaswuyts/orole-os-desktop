@@ -444,9 +444,25 @@ func (d *Daemon) registerJarvis() {
 		d.jarvisChanged()
 		return d.Jarvis.Status(ctx), nil
 	})
-	handle(d, "jarvis.voices", func(ctx context.Context, _ none) ([]jarvis.Voice, error) {
-		v, err := d.Jarvis.Voices(ctx)
+	handle(d, "jarvis.voices", func(ctx context.Context, p struct {
+		Language string `json:"language"`
+	}) (jarvis.VoiceList, error) {
+		v, err := d.Jarvis.VoiceList(ctx, p.Language)
 		return v, jarvisErr(err)
+	})
+	// jarvis.voices.add makes a chosen voice usable: the daemon decides whether it must first be added to the owner's
+	// ElevenLabs library and returns the id to store.
+	handle(d, "jarvis.voices.add", func(ctx context.Context, p struct {
+		VoiceID       string `json:"voiceId"`
+		PublicOwnerID string `json:"publicOwnerId"`
+	}) (string, error) {
+		id, err := d.Jarvis.AddVoice(ctx, p.VoiceID, p.PublicOwnerID)
+		if err != nil {
+			d.audit("jarvis.voice.add", p.VoiceID, "error", "")
+			return "", jarvisErr(err)
+		}
+		d.audit("jarvis.voice.add", id, "allowed", "")
+		return id, nil
 	})
 	handle(d, "jarvis.models", func(ctx context.Context, _ none) ([]jarvis.TTSModel, error) {
 		v, err := d.Jarvis.Models(ctx)
