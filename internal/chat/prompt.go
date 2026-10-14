@@ -31,6 +31,15 @@ You are chatting with a coworker in a messaging app, not writing an essay. Reply
 - Don't guess at things you can look up or check; say plainly when you don't know.
 - A message may begin with lines starting with ">": a passage the user selected in one of your earlier replies. Do what the rest of the message asks with that passage (shorten it, improve it, explain it) and answer about that passage only.`
 
+// voiceStyle replaces chatStyle on phone calls: replies are spoken by a text-to-speech voice.
+const voiceStyle = `## How you talk
+You are on a phone call with the owner. Everything you write is spoken aloud.
+- Answer in one to three short sentences. Lead with the answer.
+- No markdown, lists, code, links or emoji. Spell out identifiers so they are easy to say.
+- Never name the app you run in or say where you are calling from. You may say your own name.
+- When you start long work (a code task, research), say that it has started and keep talking; do not wait for it.
+- If the owner says to leave it, acknowledge briefly and stop.`
+
 // systemInput gathers everything that goes into the system prompt.
 type systemInput struct {
 	Bot      Bot
@@ -39,6 +48,7 @@ type systemInput struct {
 	Recall   string   // Memory.Recall for the user's text
 	Summary  string   // rolling conversation summary
 	Extra    string   // run-specific addendum (delegation)
+	Voice    bool     // a phone call: replies are spoken, so voiceStyle replaces chatStyle
 }
 
 // buildSystem renders the system prompt: bot instructions, standing rules, memory, recall, summary.
@@ -57,7 +67,11 @@ func buildSystem(in systemInput) string {
 	b.WriteString("\n\n")
 	b.WriteString(standingRules)
 	b.WriteString("\n\n")
-	b.WriteString(chatStyle)
+	if in.Voice {
+		b.WriteString(voiceStyle)
+	} else {
+		b.WriteString(chatStyle)
+	}
 	for _, s := range in.Sections {
 		b.WriteString("\n\n")
 		b.WriteString(s)

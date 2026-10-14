@@ -93,9 +93,11 @@ type BotConfig struct {
 	// integrations and tools without asking (one of the ToolAccess* values; "" = the global setting).
 	ToolAccess string `json:"toolAccess,omitempty"`
 	// Tasks overrides the global defaults for code tasks this bot starts; empty fields inherit them.
-	Tasks  BotTaskDefaults `json:"tasks,omitzero"`
-	Memory []ScopeAccess   `json:"memory"` // grants beyond the private scope
-	Limits BotLimits       `json:"limits"`
+	Tasks BotTaskDefaults `json:"tasks,omitzero"`
+	// Jarvis lets the bot phone the owner and take their calls.
+	Jarvis BotJarvis     `json:"jarvis,omitzero"`
+	Memory []ScopeAccess `json:"memory"` // grants beyond the private scope
+	Limits BotLimits     `json:"limits"`
 	// Setup marks a freshly created bot that still has to learn its purpose: it is offered the setup
 	// tools (ask_user, save_profile) until it saves its own instructions.
 	Setup bool `json:"setup,omitempty"`
@@ -124,6 +126,18 @@ type BotTaskDefaults struct {
 	Reasoning      string `json:"reasoning,omitempty"`
 	PermissionMode string `json:"permissionMode,omitempty"` // manual | auto | yolo
 }
+
+// BotJarvis configures Jarvis mode: the bot may phone the owner and take their calls. Enabling it requires full
+// permissions, checked by the daemon on save and before every call and action (see internal/jarvis).
+type BotJarvis struct {
+	Enabled  bool   `json:"enabled,omitempty"`
+	Policy   string `json:"policy,omitempty"`   // "When to call me", <= MaxJarvisPolicy
+	VoiceID  string `json:"voiceId,omitempty"`  // ElevenLabs voice; "" = global default
+	TTSModel string `json:"ttsModel,omitempty"` // ElevenLabs TTS model; "" = global default
+}
+
+// MaxJarvisPolicy caps BotJarvis.Policy in bytes.
+const MaxJarvisPolicy = 2000
 
 // Bot is a contact: identity, brain settings and live status.
 type Bot struct {
@@ -234,6 +248,7 @@ const (
 	PartQuestion   = "question"   // a question with suggested answers (ask_user)
 	PartUI         = "ui"         // structured component (table, chart, diagram, ...) shown by the `show` tool
 	PartTask       = "task"       // code task started by start_task: ID task id, Title its title, Name the harness
+	PartCall       = "call"       // phone call card: ID call id, Name direction, Status, Title reason, DurationMs, Summary cost
 )
 
 // MsgPart is one renderable piece of a message; fields are used per Type.

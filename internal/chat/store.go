@@ -343,6 +343,14 @@ func (s *store) validateConfig(ctx context.Context, selfID string, c BotConfig) 
 	default:
 		return c, invalidf("Code task permission mode must be manual, auto or yolo (or empty for the global setting).")
 	}
+	if len(c.Jarvis.Policy) > MaxJarvisPolicy || !utf8.ValidString(c.Jarvis.Policy) {
+		return c, invalidf("The \"When to call me\" text is limited to %d characters.", MaxJarvisPolicy)
+	}
+	for _, v := range []string{c.Jarvis.VoiceID, c.Jarvis.TTSModel} {
+		if len(v) > 128 || !utf8.ValidString(v) || strings.ContainsFunc(v, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }) {
+			return c, invalidf("The Jarvis voice or voice model is not valid.")
+		}
+	}
 	return normalizeConfig(c), nil
 }
 

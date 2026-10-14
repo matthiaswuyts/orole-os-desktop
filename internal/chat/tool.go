@@ -33,6 +33,8 @@ type RunContext struct {
 	Emit func(MsgPart)
 	// Caps of the model serving this run.
 	Caps llm.Caps
+	// CallID is set while the bot speaks on a phone call.
+	CallID string
 }
 
 // ToolResult is what the model sees plus what the UI persists.

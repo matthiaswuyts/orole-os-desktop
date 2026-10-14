@@ -33,6 +33,8 @@ type turnEnv struct {
 	history   []llm.Message // ends with the current user message
 	tools     toolset
 	sink      *sink
+	onText    func(string) // voice: every text delta, as it streams
+	onTool    func(string) // voice: a tool name, just before the tool runs
 }
 
 // toolset is the tool registry for one run: specs offered to the model and the client tools that
@@ -194,6 +196,10 @@ type prep struct {
 	memory  bool // use the memory snapshot and recall for this run
 	draft   bool
 	extra   string // system prompt addendum
+	// voice makes this a phone-call turn: spoken style, cheapest reasoning, tight limits.
+	voice  bool
+	onText func(string)
+	onTool func(string)
 }
 
 // prepare resolves the model, gates attachments by capability, gathers memory and history and
@@ -230,7 +236,7 @@ func (m *Manager) prepare(ctx context.Context, p prep) (*turnEnv, error) {
 	}
 
 	fromUser := p.rc.Author == "user" && !p.draft && p.bot.ID != ""
-	in := systemInput{Bot: p.bot, Sections: m.promptSections(p.bot, fromUser), Snapshot: snapshot, Recall: recall, Extra: p.extra}
+	in := systemInput{Bot: p.bot, Sections: m.promptSections(p.bot, fromUser), Snapshot: snapshot, Recall: recall, Extra: p.extra, Voice: p.voice}
 	cur := llm.Message{Role: llm.RoleUser, Parts: userParts(p.text, atts)}
 	history := p.history
 	if p.userSeq > 0 {
@@ -261,6 +267,11 @@ func (m *Manager) prepare(ctx context.Context, p prep) (*turnEnv, error) {
 	}
 	if p.bot.Reasoning != "" && slices.Contains(mdl.Reasoning, p.bot.Reasoning) {
 		env.reasoning = p.bot.Reasoning
+	}
+	if p.voice {
+		env.reasoning = voiceReasoning(mdl.Reasoning)
+		env.bot.Config.Limits = BotLimits{MaxSteps: voiceMaxSteps, MaxToolCalls: voiceMaxToolCalls}
+		env.onText, env.onTool = p.onText, p.onTool
 	}
 	return env, nil
 }
@@ -442,6 +453,9 @@ func (m *Manager) consume(ctx context.Context, env *turnEnv, step int, req llm.R
 			case llm.DeltaText:
 				text.WriteString(d.Text)
 				env.sink.appendText(PartText, d.Text)
+				if env.onText != nil {
+					env.onText(d.Text)
+				}
 			case llm.DeltaReasoning:
 				env.sink.appendText(PartReasoning, d.Text)
 			case llm.DeltaToolCall:
@@ -505,6 +519,9 @@ func drain(ch <-chan llm.Delta) {
 // runTool executes one client tool call and records its row and parts on the message.
 // A tool that shows the user a question reports it as asked: the turn must then end and wait for the answer.
 func (m *Manager) runTool(ctx context.Context, env *turnEnv, step int, c llm.ToolCall) (llm.Part, bool) {
+	if env.onTool != nil {
+		env.onTool(c.Name)
+	}
 	row := MsgPart{Type: PartTool, ID: fmt.Sprintf("s%d-%s", step, c.ID), Name: c.Name, Status: "running"}
 	env.sink.upsertTool(row)
 	start := time.Now()

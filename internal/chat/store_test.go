@@ -143,6 +143,7 @@ func TestImportExportIsPortable(t *testing.T) {
 			Limits:     BotLimits{MaxSteps: 3},
 			ToolAccess: ToolAccessAll,
 			Tasks:      BotTaskDefaults{Harness: "codex", PermissionMode: "yolo"},
+			Jarvis:     BotJarvis{Enabled: true, Policy: "only failures", VoiceID: "v1"},
 		}
 	})
 	e.send(src.ID, "secret conversation")
@@ -156,7 +157,7 @@ func TestImportExportIsPortable(t *testing.T) {
 		t.Fatalf("export: %+v", exp)
 	}
 	if len(exp.Bot.Config.MCPServers)+len(exp.Bot.Config.Skills)+len(exp.Bot.Config.Memory) != 0 || exp.Bot.Config.Executive ||
-		exp.Bot.Config.ToolAccess != "" || exp.Bot.Config.Tasks != (BotTaskDefaults{}) {
+		exp.Bot.Config.ToolAccess != "" || exp.Bot.Config.Tasks != (BotTaskDefaults{}) || exp.Bot.Config.Jarvis != (BotJarvis{}) {
 		t.Fatalf("export leaks local grants: %+v", exp.Bot.Config)
 	}
 
@@ -166,11 +167,12 @@ func TestImportExportIsPortable(t *testing.T) {
 	exp.Bot.Config.Executive = true
 	exp.Bot.Config.ToolAccess = ToolAccessAll
 	exp.Bot.Config.Tasks = BotTaskDefaults{Harness: "codex", PermissionMode: "yolo"}
+	exp.Bot.Config.Jarvis = BotJarvis{Enabled: true, Policy: "call me always"}
 	imp, err := e.m.ImportBot(ctx, exp)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if imp.ID == src.ID || len(imp.Config.MCPServers) != 0 || imp.Config.Executive || imp.Config.ToolAccess != "" || imp.Config.Tasks != (BotTaskDefaults{}) {
+	if imp.ID == src.ID || len(imp.Config.MCPServers) != 0 || imp.Config.Executive || imp.Config.ToolAccess != "" || imp.Config.Tasks != (BotTaskDefaults{}) || imp.Config.Jarvis != (BotJarvis{}) {
 		t.Fatalf("import: %+v", imp)
 	}
 	if h := e.history(imp.ID); len(h) != 0 {
