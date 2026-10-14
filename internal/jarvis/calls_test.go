@@ -23,6 +23,9 @@ type fakeHost struct {
 	notices        []string
 	disabled       []string
 	toolDuringTurn string
+	holdFirst      bool          // the first VoiceTurn blocks until its context is canceled
+	started        chan struct{} // signaled when the held turn is running
+	botErr         error
 }
 
 func newFakeHost() *fakeHost {
@@ -41,6 +44,9 @@ func newFakeHost() *fakeHost {
 func (h *fakeHost) Bot(_ context.Context, id string) (chat.Bot, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if h.botErr != nil {
+		return chat.Bot{}, h.botErr
+	}
 	b, ok := h.bots[id]
 	if !ok {
 		return b, errors.New("no bot")
@@ -60,11 +66,18 @@ func (h *fakeHost) Gate(_ context.Context, b chat.Bot) error {
 	}
 	return h.gateErr
 }
-func (h *fakeHost) VoiceTurn(_ context.Context, r chat.VoiceRequest) (string, error) {
+func (h *fakeHost) VoiceTurn(ctx context.Context, r chat.VoiceRequest) (string, error) {
 	h.mu.Lock()
 	h.turns = append(h.turns, r)
+	hold := h.holdFirst && len(h.turns) == 1
 	tool, reply := h.toolDuringTurn, h.reply
 	h.mu.Unlock()
+	if hold {
+		h.started <- struct{}{}
+		<-ctx.Done()
+		r.OnText("stale words")
+		return "stale reply", ctx.Err()
+	}
 	if tool != "" && r.OnTool != nil {
 		r.OnTool(tool)
 	}
@@ -695,6 +708,9 @@ func TestSanitizer(t *testing.T) {
 		{"bot named Orolebot", "Orolebot", []string{"Orolebot here, in Orole OS"}, "Orolebot here, in the app"},
 		{"bot named Orolebot split", "Orolebot", []string{"Oro", "lebot says Or", "ole"}, "Orolebot says the app"},
 		{"bot name split from context", "Big Orole", []string{"Big ", "Orole speaking, Orole"}, "Big Orole speaking, the app"},
+		{"bot name split mid-name", "Orolebot", strings.Split("Orolebot, Orole OS and Orolebot", ""), "Orolebot, the app and Orolebot"},
+		{"bot name chunk Orolebo+t", "Orolebot", []string{"Orolebo", "t rocks"}, "Orolebot rocks"},
+		{"Orole Oscar bytewise", "Atlas", strings.Split("Orole Oscar", ""), "the app Oscar"},
 		{"unicode", "Atlas", []string{"Orolé ", "Orole"}, "Orolé the app"},
 	}
 	for _, c := range cases {
@@ -711,5 +727,104 @@ func TestSanitizerHoldsBackAtMostEightBytes(t *testing.T) {
 	}
 	if len(s.pend) > 8 {
 		t.Fatalf("held %d bytes", len(s.pend))
+	}
+}
+
+// ---- barge-in and call-speech hardening ----
+
+func TestBargeInCancelsStaleTurn(t *testing.T) {
+	e := newCallEnv(t)
+	e.host.holdFirst = true
+	e.host.started = make(chan struct{}, 1)
+	call, _ := e.c.Place(context.Background(), PlaceRequest{BotID: "b1", Reason: "x"})
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		e.c.HandleFrame(context.Background(), llmFrame("r1", call.ID, "first question"))
+	}()
+	<-e.host.started
+	e.c.HandleFrame(context.Background(), llmFrame("r2", call.ID, "second question"))
+	wg.Wait()
+	if got := e.relay.text("r1"); got != "" {
+		t.Fatalf("stale turn spoke %q", got)
+	}
+	if got := e.relay.text("r2"); got != "Two tasks are running." {
+		t.Fatalf("owner heard %q", got)
+	}
+	for _, f := range e.relay.all() {
+		if f.ID == "r1" && f.Type == FrameLLMDone {
+			t.Fatal("stale turn sent done")
+		}
+		if strings.Contains(f.Text, "That failed") {
+			t.Fatal("owner heard a failure")
+		}
+	}
+	e.c.HandleFrame(context.Background(), llmFrame("r3", call.ID, "third"))
+	turns := e.host.turnList()
+	for _, l := range turns[2].History {
+		if strings.Contains(l.Text, "first question") || strings.Contains(l.Text, "stale") {
+			t.Fatalf("canceled turn leaked into history: %+v", turns[2].History)
+		}
+	}
+	if len(turns[2].History) != 2 || turns[2].History[0].Text != "second question" {
+		t.Fatalf("history %+v", turns[2].History)
+	}
+}
+
+func TestNonGateErrorSpeaksFixedLine(t *testing.T) {
+	e := newCallEnv(t)
+	call, _ := e.c.Place(context.Background(), PlaceRequest{BotID: "b1", Reason: "x"})
+	e.host.mu.Lock()
+	e.host.botErr = errors.New("database is locked at secret path")
+	e.host.mu.Unlock()
+	e.c.HandleFrame(context.Background(), llmFrame("r1", call.ID, "hi"))
+	if got := e.relay.text("r1"); got != "I can't do that right now." {
+		t.Fatalf("spoke %q", got)
+	}
+}
+
+func TestGateFailureHangsUp(t *testing.T) {
+	e := newCallEnv(t)
+	call, _ := e.c.Place(context.Background(), PlaceRequest{BotID: "b1", Reason: "x"})
+	e.host.mu.Lock()
+	e.host.gateErr = &GateError{"tool access is off"}
+	e.host.mu.Unlock()
+	e.c.HandleFrame(context.Background(), llmFrame("r1", call.ID, "hi"))
+	if !e.relay.hungUp(call.ID) {
+		t.Fatal("no hangup after a gate refusal")
+	}
+}
+
+func TestVerifyCodeSpokenEvenIfFirstRequestHasUtterance(t *testing.T) {
+	e := newCallEnv(t)
+	call, _ := e.c.Place(context.Background(), PlaceRequest{Verify: "123456"})
+	e.c.HandleFrame(context.Background(), llmFrame("r0", call.ID, "hello?"))
+	if got := e.relay.text("r0"); !strings.Contains(got, "1 2 3 4 5 6") {
+		t.Fatalf("spoke %q", got)
+	}
+	if !e.relay.hungUp(call.ID) || len(e.host.turnList()) != 0 {
+		t.Fatal("verify call ran a turn or did not hang up")
+	}
+}
+
+func TestRetryHookIsUsed(t *testing.T) {
+	e := newCallEnv(t)
+	fa := e.withClock()
+	got := make(chan PlaceRequest, 1)
+	e.c.Retry = func(_ context.Context, r PlaceRequest) { got <- r }
+	call, _ := e.c.Place(context.Background(), PlaceRequest{BotID: "b1", Reason: "prod is down", Urgent: true})
+	e.c.HandleFrame(context.Background(), Frame{Type: FrameCallStatus, CallID: call.ID, Status: "no-answer"})
+	fa.fire(t, urgentRetryWait)
+	select {
+	case r := <-got:
+		if r.BotID != "b1" || r.Urgent {
+			t.Fatalf("retry %+v", r)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("hook not called")
+	}
+	if len(e.dial.dialed()) != 1 {
+		t.Fatal("retry bypassed the hook")
 	}
 }

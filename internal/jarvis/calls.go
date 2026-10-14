@@ -70,6 +70,9 @@ type live struct {
 	done   chan struct{} // closed when the call ends
 	verify string
 	urgent bool
+
+	turnCancel context.CancelFunc // in-flight model turn, if any
+	turnDone   chan struct{}
 }
 
 type Calls struct {
@@ -81,6 +84,9 @@ type Calls struct {
 	now      func() time.Time
 	log      *slog.Logger
 	after    func(time.Duration) <-chan time.Time // injectable for tests
+	// Retry places the second attempt after an unanswered urgent call. The daemon points it at the policy-checked path
+	// (caps, quiet hours); the default calls Place directly.
+	Retry func(ctx context.Context, req PlaceRequest)
 
 	baseCtx context.Context
 	stop    context.CancelFunc
@@ -94,8 +100,10 @@ type Calls struct {
 
 func NewCalls(store *Store, host Host, dial Dialer, relay Sender, settings func() Settings, now func() time.Time, log *slog.Logger) *Calls {
 	ctx, cancel := context.WithCancel(context.Background())
-	return &Calls{store: store, host: host, dial: dial, relay: relay, settings: settings, now: now, log: log,
+	c := &Calls{store: store, host: host, dial: dial, relay: relay, settings: settings, now: now, log: log,
 		after: time.After, baseCtx: ctx, stop: cancel}
+	c.Retry = func(ctx context.Context, req PlaceRequest) { _, _ = c.Place(ctx, req) }
+	return c
 }
 
 // Close stops the background watchers (status polling, retries) and waits for them. A live call is left to the provider.
@@ -282,7 +290,8 @@ const holdTarget = "orole os"
 // until the next chunk or Flush. Occurrences inside the bot's own name (e.g. "Orolebot") are left alone.
 type sanitizer struct {
 	bot  *regexp.Regexp // nil unless the bot's name contains the app name
-	keep int            // bytes of already-emitted text kept as context for bot-name matching
+	name string
+	keep int // bytes of already-emitted text kept as context for bot-name matching
 	ctx  string
 	pend string
 }
@@ -292,8 +301,21 @@ func newSanitizer(botName string) *sanitizer {
 	if botName != "" && appNameRE.MatchString(botName) {
 		s.bot = regexp.MustCompile(`(?i)` + regexp.QuoteMeta(botName))
 		s.keep = len(botName)
+		s.name = botName
 	}
 	return s
+}
+
+// hold is how many trailing bytes of pend must wait for the next chunk: a partial app name, or a partial bot name
+// (so a chunk boundary inside the bot's own name never lets the app-name match fire on its first half).
+func (s *sanitizer) hold() int {
+	n := holdLen(s.pend)
+	for k := min(len(s.name)-1, len(s.pend)); k > n; k-- {
+		if strings.EqualFold(s.pend[len(s.pend)-k:], s.name[:k]) {
+			return k
+		}
+	}
+	return n
 }
 
 func (s *sanitizer) Write(t string) string { s.pend += t; return s.drain(false) }
@@ -314,7 +336,7 @@ func (s *sanitizer) drain(final bool) string {
 	start := len(s.ctx)
 	end := len(full)
 	if !final {
-		end -= holdLen(s.pend)
+		end -= s.hold()
 	}
 	var spans [][]int
 	if s.bot != nil {
@@ -358,6 +380,7 @@ func (s *sanitizer) drain(final bool) string {
 type speaker struct {
 	c          *Calls
 	ctx        context.Context
+	quiet      context.Context // when done, this turn was superseded or aborted and must stay silent
 	id, callID string
 
 	mu         sync.Mutex
@@ -371,7 +394,7 @@ func (c *Calls) newSpeaker(ctx context.Context, id, callID, botName string) *spe
 }
 
 func (s *speaker) emit(out string) {
-	if out == "" {
+	if out == "" || (s.quiet != nil && s.quiet.Err() != nil) {
 		return
 	}
 	if s.first.IsZero() {
@@ -402,6 +425,9 @@ func (s *speaker) finish() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.emit(s.san.Flush())
+	if s.quiet != nil && s.quiet.Err() != nil {
+		return
+	}
 	_ = s.c.relay.Send(s.ctx, Frame{Type: FrameLLMDone, ID: s.id, CallID: s.callID})
 }
 
@@ -444,7 +470,7 @@ func (c *Calls) turn(ctx context.Context, f Frame) {
 	sp := c.newSpeaker(ctx, f.ID, f.CallID, botName)
 
 	utter := lastUser(f.Messages)
-	if first && utter == "" {
+	if first && (utter == "" || l.verify != "") {
 		var text string
 		select {
 		case text = <-l.opener:
@@ -472,16 +498,49 @@ func (c *Calls) turn(ctx context.Context, f Frame) {
 		sp.finish()
 		return
 	}
-	bot, err := c.host.Bot(ctx, botID)
+	// A new request for this call means the owner barged in: cancel the in-flight turn and wait for it to release
+	// chat's run slot before starting this one. The superseded turn stays silent and leaves no history.
+	tctx, tcancel := context.WithCancel(ctx)
+	sp.quiet = tctx
+	myDone := make(chan struct{})
+	c.mu.Lock()
+	prevCancel, prevDone := l.turnCancel, l.turnDone
+	l.turnCancel, l.turnDone = tcancel, myDone
+	c.mu.Unlock()
+	defer func() {
+		tcancel()
+		close(myDone)
+		c.mu.Lock()
+		if l.turnDone == myDone {
+			l.turnCancel, l.turnDone = nil, nil
+		}
+		c.mu.Unlock()
+	}()
+	if prevCancel != nil {
+		prevCancel()
+		select {
+		case <-prevDone:
+		case <-ctx.Done():
+			return
+		}
+	}
+	if tctx.Err() != nil {
+		return
+	}
+	bot, err := c.host.Bot(tctx, botID)
 	if err == nil {
-		err = c.host.Gate(ctx, bot)
+		err = c.host.Gate(tctx, bot)
 	}
 	if err != nil {
 		var ge *GateError
 		if errors.As(err, &ge) {
 			c.host.DisableJarvis(ctx, botID, ge.Reason)
+			sp.say("I can't act on that: " + ge.Reason)
+			sp.finish()
+			c.hangup(ctx, f.CallID)
+			return
 		}
-		sp.say("I can't act on that: " + err.Error())
+		sp.say("I can't do that right now.")
 		sp.finish()
 		return
 	}
@@ -492,9 +551,12 @@ func (c *Calls) turn(ctx context.Context, f Frame) {
 	}
 	history := append([]chat.VoiceLine(nil), l.history...)
 	c.mu.Unlock()
-	reply, err := c.host.VoiceTurn(ctx, chat.VoiceRequest{BotID: bot.ID, CallID: f.CallID, Text: utter, Brief: brief, History: history,
+	reply, err := c.host.VoiceTurn(tctx, chat.VoiceRequest{BotID: bot.ID, CallID: f.CallID, Text: utter, Brief: brief, History: history,
 		OnText: sp.say, OnTool: sp.filler})
-	if err != nil && !errors.Is(err, context.Canceled) {
+	if tctx.Err() != nil {
+		return // superseded or aborted: no more speech, no history
+	}
+	if err != nil {
 		sp.say(" That failed: " + firstSentence(err.Error()))
 	}
 	c.mu.Lock()
@@ -775,7 +837,7 @@ func (c *Calls) retry(call Call, brief string) {
 	case <-c.baseCtx.Done():
 		return
 	}
-	_, _ = c.Place(c.baseCtx, PlaceRequest{BotID: call.BotID, Reason: call.Reason, Brief: brief, RuleID: call.RuleID})
+	c.Retry(c.baseCtx, PlaceRequest{BotID: call.BotID, Reason: call.Reason, Brief: brief, RuleID: call.RuleID})
 }
 
 func (c *Calls) clear(l *live) {
