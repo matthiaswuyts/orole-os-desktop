@@ -106,9 +106,11 @@ attached as if typed.
    name-only fallback that never names the app. The reason is given in the first model turn after the owner answers
    (the brief tells the bot so).
 4. The first turn **always** speaks the opener, whatever the request carries. If the owner already said something: a
-   bare greeting (at most four words starting with "hello", "yes", "who is this", "met <name>" and the like) is
-   recorded in the call history and gets only the opener; a real request gets the opener and the answer in the same
-   response.
+   bare greeting (every word a greeting or filler such as "hello", "yes", "hallo", "speaking", "goedemorgen", apart
+   from a name in "met <name>", "this is <name>" or "<name> speaking", and no question word or request verb such as
+   "what", "who", "can", "check", "start", "wat", "hoe") is recorded in the call history and gets only the opener;
+   anything else, however short ("ok, what's running?", "yes, start it"), is a real request and gets the opener and
+   the answer in the same response.
 5. **Voicemail.** Until someone answers, every utterance is checked for answering-machine phrases (English, Dutch,
    French and German: "leave a message", "after the tone", "spreek een bericht in", "na de piep", "laissez un message",
    "nach dem Signalton", "mailbox" and so on). On a match the daemon says nothing more, hangs up through Twilio and ends

@@ -712,20 +712,50 @@ func (c *Calls) modelTurn(ctx context.Context, l *live, f Frame, sp *speaker, ut
 	sp.finish()
 }
 
-// greetingWords open a reply that only answers the phone ("hello", "yes?", "who is this", "met Ray").
+// greetingWords only answer the phone; an utterance made of nothing else is a bare greeting.
 var greetingWords = map[string]bool{
-	"hello": true, "hallo": true, "hi": true, "hey": true, "hoi": true, "yes": true, "yeah": true, "yep": true, "ja": true,
-	"oui": true, "allo": true, "allô": true, "bonjour": true, "salut": true, "met": true, "who": true, "wie": true, "qui": true,
-	"wer": true, "ok": true, "okay": true, "sure": true, "speaking": true, "morning": true, "good": true,
-	"goedemorgen": true, "goedemiddag": true, "goedenavond": true, "dag": true, "guten": true, "moin": true,
+	"hello": true, "hallo": true, "hi": true, "hey": true, "hiya": true, "hoi": true, "yes": true, "yeah": true, "yep": true,
+	"ja": true, "oui": true, "allo": true, "allô": true, "bonjour": true, "salut": true, "speaking": true, "morning": true,
+	"goedemorgen": true, "goedemiddag": true, "goedenavond": true, "moin": true,
 }
 
-// bareGreeting reports whether an utterance only answers the phone: at most four words starting with a greeting.
+// requestWords make an utterance a question or a request, never a bare greeting.
+var requestWords = map[string]bool{
+	"what": true, "who": true, "why": true, "how": true, "when": true, "where": true, "which": true, "can": true, "could": true,
+	"check": true, "start": true, "tell": true, "wat": true, "wie": true, "hoe": true, "waarom": true,
+}
+
+// bareGreeting reports whether an utterance only answers the phone: every word is a greeting or filler word, apart
+// from a name in "met <name>", "this is <name>" or "<name> speaking", and no word asks or requests anything.
 func bareGreeting(utter string) bool {
-	words := strings.FieldsFunc(strings.ToLower(utter), func(r rune) bool {
-		return !unicode.IsLetter(r) && !unicode.IsDigit(r) && r != '\''
-	})
-	return len(words) > 0 && len(words) <= 4 && greetingWords[words[0]]
+	words := strings.FieldsFunc(strings.ToLower(utter), func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsDigit(r) })
+	if len(words) == 0 || len(words) > 6 {
+		return false
+	}
+	for _, w := range words {
+		if requestWords[w] {
+			return false
+		}
+	}
+	// name reports whether words[i:] is a name of one or two words that ends the utterance.
+	name := func(i int) bool { n := len(words) - i; return n == 1 || n == 2 }
+	for i := 0; i < len(words); i++ {
+		w := words[i]
+		switch {
+		case greetingWords[w]:
+		case w == "good" && i+1 < len(words) && (words[i+1] == "morning" || words[i+1] == "afternoon" || words[i+1] == "evening"):
+			i++
+		case w == "met" && name(i+1):
+			return true
+		case w == "this" && i+1 < len(words) && words[i+1] == "is" && name(i+2):
+			return true
+		case len(words)-i == 2 && words[i+1] == "speaking":
+			return true // "<name> speaking"
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // voicemailPhrases are answering-machine prompts (English, Dutch, French, German), lower case.

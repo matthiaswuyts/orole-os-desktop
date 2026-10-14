@@ -980,6 +980,23 @@ func TestRealRequestFirstGetsOpenerThenAnswer(t *testing.T) {
 	}
 }
 
+func TestShortRequestFirstGetsOpenerThenAnswer(t *testing.T) {
+	for _, utter := range []string{"ok, what's running?", "who called me today?", "check my automations", "yes, start it"} {
+		t.Run(utter, func(t *testing.T) {
+			e := newCallEnv(t)
+			call, _ := e.c.Place(context.Background(), PlaceRequest{BotID: "b1", Reason: "x"})
+			e.c.HandleFrame(context.Background(), llmFrame("r0", call.ID, utter))
+			got := e.relay.text("r0")
+			if !strings.HasPrefix(got, e.host.opener) || !strings.HasSuffix(got, e.host.reply) {
+				t.Fatalf("spoke %q", got)
+			}
+			if turns := e.host.turnList(); len(turns) != 1 || turns[0].Text != utter {
+				t.Fatalf("turns %+v", turns)
+			}
+		})
+	}
+}
+
 // ---- carrier: hang-up and polling ----
 
 func TestTwilioPollEndsCall(t *testing.T) {

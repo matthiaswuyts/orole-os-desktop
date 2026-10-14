@@ -167,11 +167,21 @@ func TestBareGreeting(t *testing.T) {
 		text string
 		want bool
 	}{
-		{"Hello?", true}, {"hallo", true}, {"Yes?", true}, {"Hi", true}, {"Who is this?", true}, {"Met Ray", true},
-		{"Hey, what's up?", true}, {"Yes, Ray speaking.", true},
+		{"Hello?", true}, {"hallo", true}, {"Yes?", true}, {"Hi", true}, {"Met Ray", true}, {"Hallo, met Ray", true},
+		{"Yes, Ray speaking.", true}, {"Hi, this is Ray.", true}, {"Hey, hiya", true}, {"Goedemorgen!", true},
+		{"Bonjour", true}, {"Yeah, speaking", true}, {"Good morning", true}, {"Ja, met Ray Orolé", true},
+		{"ok, what's running?", false},
+		{"who called me today?", false},
+		{"check my automations", false},
+		{"yes, start it", false},
+		{"Who is this?", false},
+		{"Hey, what's up?", false},
+		{"good", false},
 		{"Hello, can you start the deploy for me?", false},
 		{"What's running?", false},
 		{"Start the nightly build now", false},
+		{"met wat?", false},
+		{"this is what", false},
 		{"", false},
 	}
 	for _, c := range cases {
