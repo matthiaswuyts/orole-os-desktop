@@ -211,9 +211,26 @@ func (e *ElevenLabs) Models(ctx context.Context) ([]TTSModel, error) {
 	return out, nil
 }
 
+// agentRevision numbers the shape of agentBody. Provisioning records it in PhoneSettings.AgentRevision, and the daemon
+// re-provisions an agent recorded with a lower number once in the background (Service.syncAgent). Bump it whenever
+// agentBody changes in a way an existing agent has to pick up. 0 is an agent from before revisions existed.
+//
+// 2: patient turn-taking and the longer custom-LLM timeout after the 2026-10-14 test calls, and the skip_turn tool.
+const agentRevision = 2
+
 // agentBody configures the shared agent: the brain is our relay (custom LLM) and the first turn comes from the LLM
-// (first_message empty) so the daemon's cached opener is spoken. The end_call and voicemail_detection tools stay
-// configured, but nothing relies on them: the daemon detects voicemail itself and hangs up through Twilio.
+// (first_message empty) so the daemon's cached opener is spoken. The end_call and skip_turn system tools are
+// configured so ElevenLabs offers them to the custom LLM (it calls one by returning an ordinary function call in the
+// stream); voicemail_detection stays configured too, but nothing relies on it: the daemon detects voicemail itself and
+// hangs up through Twilio.
+//
+// Turn-taking is patient and never ends the call on silence: the owner hesitates ("uhm") mid-sentence, so eager turn
+// ending cut them off. After turn_timeout seconds of owner silence ElevenLabs sends a "..." user message and the LLM
+// decides what to do (speak, or skip_turn to keep waiting). initial_wait_time keeps an inbound caller from hearing the
+// default 7 s of silence before the opener. cascade_timeout_seconds is how long ElevenLabs waits for the custom LLM's first token
+// before it retries, and after a few retries fails the whole call (the default is 4 s, too short for a bot that runs a
+// tool). max_duration_seconds matches the daemon's own ceiling (maxCallDuration). Field names checked against the
+// ElevenLabs agent configuration docs on 2026-10-14.
 //
 // The agent language follows the call language (speech recognition and voice): "nl" or "en". Auto starts in Dutch and
 // adds ElevenLabs' language_detection system tool with an English preset, so the agent can switch when the owner
@@ -224,7 +241,8 @@ func agentBody(c AgentConfig) map[string]any {
 		lang = LangEnglish
 	}
 	tools := map[string]any{
-		"end_call": map[string]any{"name": "end_call", "params": map[string]any{"system_tool_type": "end_call"}},
+		"end_call":  map[string]any{"name": "end_call", "params": map[string]any{"system_tool_type": "end_call"}},
+		"skip_turn": map[string]any{"name": "skip_turn", "params": map[string]any{"system_tool_type": "skip_turn"}},
 		"voicemail_detection": map[string]any{
 			"name":   "voicemail_detection",
 			"params": map[string]any{"system_tool_type": "voicemail_detection", "voicemail_message": ""},
@@ -249,10 +267,19 @@ func agentBody(c AgentConfig) map[string]any {
 					"model_id":        "bot",
 					"request_headers": map[string]string{"x-orole-relay": c.LLMSecret},
 				},
-				"built_in_tools": tools,
+				"built_in_tools":          tools,
+				"cascade_timeout_seconds": 15,
 			},
 		},
-		"turn": map[string]any{"turn_eagerness": "eager"},
+		"turn": map[string]any{
+			"turn_eagerness":           "patient",
+			"turn_timeout":             10,
+			"initial_wait_time":        1,
+			"speculative_turn":         false,
+			"silence_end_call_timeout": -1,
+			"soft_timeout_config":      map[string]any{"timeout_seconds": -1},
+		},
+		"conversation": map[string]any{"max_duration_seconds": int(maxCallDuration / time.Second)},
 	}
 	conv["language_presets"] = map[string]any{}
 	if c.Language == LangAuto {
@@ -391,4 +418,92 @@ func (e *ElevenLabs) ConversationStatus(ctx context.Context, id string) (string,
 	}
 	err := e.do(ctx, "GET", "/v1/convai/conversations/"+url.PathEscape(id), nil, &res)
 	return res.Status, res.Metadata.Duration, err
+}
+
+// Outcome is how ElevenLabs recorded a conversation, read after the call: its status and, when the platform ended it
+// abnormally, why. These are provider metadata (for example status "failed", error type "llm_error"), never spoken or
+// transcribed text, so they can be logged.
+type Outcome struct {
+	Status, TerminationReason, ErrorType, ErrorReason string
+}
+
+// conversationDetail is the part of GET /v1/convai/conversations/{id} the diagnostics read.
+type conversationDetail struct {
+	Status   string `json:"status"`
+	Metadata struct {
+		TerminationReason string          `json:"termination_reason"`
+		Error             json.RawMessage `json:"error"` // {code, error_type, reason}, or null
+		PhoneCall         struct {
+			CallSID string `json:"call_sid"`
+		} `json:"phone_call"`
+	} `json:"metadata"`
+}
+
+func (e *ElevenLabs) conversation(ctx context.Context, id string) (conversationDetail, error) {
+	var d conversationDetail
+	err := e.do(ctx, "GET", "/v1/convai/conversations/"+url.PathEscape(id), nil, &d)
+	return d, err
+}
+
+// ConversationOutcome reads a conversation's status, termination reason and error (type and reason) from its detail.
+func (e *ElevenLabs) ConversationOutcome(ctx context.Context, conversationID string) (Outcome, error) {
+	d, err := e.conversation(ctx, conversationID)
+	if err != nil {
+		return Outcome{}, err
+	}
+	o := Outcome{Status: d.Status, TerminationReason: e.scrub(d.Metadata.TerminationReason)}
+	var detail struct {
+		ErrorType string `json:"error_type"`
+		Reason    string `json:"reason"`
+	}
+	if raw := d.Metadata.Error; len(raw) > 0 {
+		var text string
+		switch err := json.Unmarshal(raw, &detail); {
+		case err == nil:
+			o.ErrorType, o.ErrorReason = detail.ErrorType, e.scrub(detail.Reason)
+		case json.Unmarshal(raw, &text) == nil:
+			o.ErrorReason = e.scrub(text) // a bare string instead of the usual object
+		}
+	}
+	return o, nil
+}
+
+// conversationWindow is how far a conversation's start may be from the time a call started and still be that call's.
+const conversationWindow = 120 * time.Second
+
+// FindConversation finds the conversation of a phone call by its Twilio call SID, for calls whose conversation id was
+// never recorded (an inbound call). It lists the agent's latest conversations, looks at the ones that started within
+// conversationWindow of near and returns the id of the one whose phone call has that SID. "" with no error means none
+// matched.
+func (e *ElevenLabs) FindConversation(ctx context.Context, agentID, callSID string, near time.Time) (string, error) {
+	if agentID == "" || callSID == "" {
+		return "", fmt.Errorf("ElevenLabs: finding a conversation needs an agent id and a call SID")
+	}
+	var list struct {
+		Conversations []struct {
+			ID    string `json:"conversation_id"`
+			Start int64  `json:"start_time_unix_secs"`
+		} `json:"conversations"`
+	}
+	q := url.Values{"agent_id": {agentID}, "page_size": {"10"}}
+	if err := e.do(ctx, "GET", "/v1/convai/conversations?"+q.Encode(), nil, &list); err != nil {
+		return "", err
+	}
+	var firstErr error
+	for _, c := range list.Conversations {
+		if c.ID == "" || near.Sub(time.Unix(c.Start, 0)).Abs() > conversationWindow {
+			continue
+		}
+		d, err := e.conversation(ctx, c.ID)
+		if err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+		if d.Metadata.PhoneCall.CallSID == callSID {
+			return c.ID, nil
+		}
+	}
+	return "", firstErr
 }

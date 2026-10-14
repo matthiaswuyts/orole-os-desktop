@@ -102,6 +102,10 @@ type PhoneSettings struct {
 	// AgentLanguage is the call language the ElevenLabs agent was last provisioned with, set only by provisioning
 	// (Configure ignores it from the UI). "" with an AgentID is an agent from before the setting existed: English.
 	AgentLanguage string `json:"agentLanguage"`
+	// AgentRevision is the agentRevision the ElevenLabs agent was last provisioned with, set only by provisioning
+	// (Configure ignores it from the UI). Lower than agentRevision, including 0 for an agent from before revisions
+	// existed, means the agent still has an older configuration and the daemon updates it in the background.
+	AgentRevision int `json:"agentRevision"`
 }
 
 // Call languages (PhoneSettings.CallLanguage).
@@ -123,17 +127,6 @@ func (s PhoneSettings) spokenLanguage() string {
 		return s.AgentLanguage
 	}
 	return LangEnglish
-}
-
-// languageName names a call language for the owner.
-func languageName(lang string) string {
-	switch lang {
-	case LangEnglish:
-		return "English"
-	case LangAuto:
-		return "Auto (Dutch first)"
-	}
-	return "Dutch"
 }
 
 // callLanguage is the chosen call language; empty means Dutch.

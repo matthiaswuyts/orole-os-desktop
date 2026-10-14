@@ -510,7 +510,7 @@ func TestConfigureProvisionsAndReturnsWebhookSecretOnce(t *testing.T) {
 		t.Fatal("webhook secret not stored")
 	}
 	got := e.svc.Settings()
-	if got.AgentID != "ag1" || got.PhoneNumberID != "pn1" || got.PostCallWebhookID != "wh1" {
+	if got.AgentID != "ag1" || got.PhoneNumberID != "pn1" || got.PostCallWebhookID != "wh1" || got.AgentRevision != agentRevision {
 		t.Fatalf("settings=%+v", got)
 	}
 	res, err = e.svc.Configure(ctx, in)
@@ -744,7 +744,7 @@ func TestStartSyncFailureNotifiesAndKeepsLanguage(t *testing.T) {
 		e.host.mu.Lock()
 		n := strings.Join(e.host.notices, "|")
 		e.host.mu.Unlock()
-		if strings.Contains(n, "Couldn't switch the phone agent to Dutch") {
+		if strings.Contains(n, "Couldn't update the phone agent") {
 			break
 		}
 		if time.Now().After(deadline) {
@@ -754,5 +754,69 @@ func TestStartSyncFailureNotifiesAndKeepsLanguage(t *testing.T) {
 	}
 	if got := e.svc.callSettings().spokenLanguage(); got != LangEnglish {
 		t.Fatalf("calls switched without the agent: %q", got)
+	}
+}
+
+// An agent that is in the right language but was provisioned with an older agentRevision is updated once on Start, and
+// the new revision is recorded.
+func TestStartSyncsAgentWhenOnlyRevisionIsBehind(t *testing.T) {
+	srv, reqs := provisionFake(t, map[string]string{"PATCH /v1/convai/agents/ag1": `{}`})
+	behind := PhoneSettings{RelayURL: "https://relay.example", TwilioNumber: "+3220000000", OwnerNumber: "+32470000000", OwnerVerified: true,
+		AgentID: "ag1", PhoneNumberID: "pn1", PostCallWebhookID: "wh1", AgentLanguage: LangDutch, AgentRevision: agentRevision - 1}
+	e := newSvcEnv(t, func(c *ServiceConfig) {
+		c.HTTP, c.ElevenLabsURL, c.TwilioURL = srv.Client(), srv.URL, srv.URL
+		c.LoadSettings = func() (PhoneSettings, error) { return behind, nil }
+	})
+	_ = e.svc.SetSecrets(SecretsInput{ElevenLabs: "k"})
+	_ = e.creds.Set(KeyLLMSecret, []byte("ls"))
+	e.svc.Start(context.Background())
+	waitFor(t, func() bool { return e.svc.Settings().AgentRevision == agentRevision })
+	e.svc.Close() // waits for the sync to finish saving
+	var patches []string
+	for _, r := range reqs() {
+		if r.Method == "PATCH" && r.Path == "/v1/convai/agents/ag1" {
+			b, _ := json.Marshal(r.Body)
+			patches = append(patches, string(b))
+		} else {
+			t.Errorf("sync made another request: %s %s", r.Method, r.Path)
+		}
+	}
+	if len(patches) != 1 || !strings.Contains(patches[0], `"turn_eagerness":"patient"`) || !strings.Contains(patches[0], `"skip_turn"`) {
+		t.Fatalf("agent updates %v", patches)
+	}
+	if len(e.saved) != 1 || e.saved[0].AgentRevision != agentRevision || e.saved[0].AgentLanguage != LangDutch {
+		t.Fatalf("not persisted: %+v", e.saved)
+	}
+}
+
+func TestStartLeavesCurrentAgentAlone(t *testing.T) {
+	srv, reqs := provisionFake(t, nil)
+	current := PhoneSettings{RelayURL: "https://relay.example", TwilioNumber: "+3220000000", OwnerNumber: "+32470000000", OwnerVerified: true,
+		AgentID: "ag1", PhoneNumberID: "pn1", PostCallWebhookID: "wh1", AgentLanguage: LangDutch, AgentRevision: agentRevision}
+	e := newSvcEnv(t, func(c *ServiceConfig) {
+		c.HTTP, c.ElevenLabsURL, c.TwilioURL = srv.Client(), srv.URL, srv.URL
+		c.LoadSettings = func() (PhoneSettings, error) { return current, nil }
+	})
+	_ = e.svc.SetSecrets(SecretsInput{ElevenLabs: "k"})
+	_ = e.creds.Set(KeyLLMSecret, []byte("ls"))
+	e.svc.Start(context.Background())
+	e.svc.Close() // waits for any sync that was started
+	if got := reqs(); len(got) != 0 || len(e.saved) != 0 || len(e.host.noticeList()) != 0 {
+		t.Fatalf("an up-to-date agent was touched: requests=%v saved=%+v notices=%v", got, e.saved, e.host.noticeList())
+	}
+}
+
+// Configure never takes the agent revision from the caller, and keeps the recorded one when it does not provision.
+func TestConfigureKeepsAgentRevision(t *testing.T) {
+	e := newSvcEnv(t, func(c *ServiceConfig) {
+		c.LoadSettings = func() (PhoneSettings, error) {
+			return PhoneSettings{OwnerNumber: "+32470000000", OwnerVerified: true, AgentID: "ag", AgentLanguage: LangDutch, AgentRevision: agentRevision}, nil
+		}
+	})
+	if _, err := e.svc.Configure(context.Background(), PhoneSettings{QuietStart: "22:00", QuietEnd: "07:00", AgentRevision: 99}); err != nil {
+		t.Fatal(err)
+	}
+	if got := e.svc.Settings(); got.AgentRevision != agentRevision || got.AgentLanguage != LangDutch {
+		t.Fatalf("settings=%+v", got)
 	}
 }

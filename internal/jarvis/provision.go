@@ -40,7 +40,7 @@ func Provision(ctx context.Context, el *ElevenLabs, tw *Twilio, s PhoneSettings,
 	} else if err := el.UpdateAgent(ctx, s.AgentID, cfg); err != nil {
 		return s, err
 	}
-	s.AgentLanguage = cfg.Language
+	s.AgentLanguage, s.AgentRevision = cfg.Language, agentRevision
 	if s.PhoneNumberID == "" {
 		if s.PhoneNumberID, err = el.ImportTwilioNumber(ctx, s.TwilioNumber, "Jarvis", sec.TwilioSID, sec.TwilioToken); err != nil {
 			return s, err

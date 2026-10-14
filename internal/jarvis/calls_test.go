@@ -1,6 +1,7 @@
 package jarvis
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -24,6 +25,7 @@ type fakeHost struct {
 	reply          string
 	cards          map[string]chat.MsgPart
 	notices        []string
+	noticeMeta     []string // "level target" of each notice, parallel to notices
 	disabled       []string
 	toolDuringTurn string
 	holdFirst      bool          // the first VoiceTurn blocks until its context is canceled
@@ -127,6 +129,7 @@ func (h *fakeHost) UpdateCallCard(_ context.Context, id string, p chat.MsgPart) 
 func (h *fakeHost) Notify(title, body, target, level string) {
 	h.mu.Lock()
 	h.notices = append(h.notices, title+": "+body)
+	h.noticeMeta = append(h.noticeMeta, level+" "+target)
 	h.mu.Unlock()
 }
 func (h *fakeHost) Audit(string, string, string, string) {}
@@ -151,6 +154,19 @@ type fakeDialer struct {
 	calls  []OutboundCall
 	status string
 	err    error
+	// Diagnostics after a call (see Calls.checkOutcome): the outcome returned for any conversation, the conversation
+	// FindConversation reports, and what was asked.
+	outcome    Outcome
+	outcomeErr error
+	outcomeFor []string
+	found      string
+	findErr    error
+	finds      []findQuery
+}
+
+type findQuery struct {
+	AgentID, CallSID string
+	Near             time.Time
 }
 
 func (d *fakeDialer) OutboundCall(_ context.Context, c OutboundCall) (string, string, error) {
@@ -164,7 +180,30 @@ func (d *fakeDialer) ConversationStatus(context.Context, string) (string, int, e
 	defer d.mu.Unlock()
 	return d.status, 0, nil
 }
-func (d *fakeDialer) setStatus(s string) { d.mu.Lock(); d.status = s; d.mu.Unlock() }
+func (d *fakeDialer) ConversationOutcome(_ context.Context, id string) (Outcome, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.outcomeFor = append(d.outcomeFor, id)
+	return d.outcome, d.outcomeErr
+}
+func (d *fakeDialer) FindConversation(_ context.Context, agentID, callSID string, near time.Time) (string, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.finds = append(d.finds, findQuery{agentID, callSID, near})
+	return d.found, d.findErr
+}
+func (d *fakeDialer) setStatus(s string)   { d.mu.Lock(); d.status = s; d.mu.Unlock() }
+func (d *fakeDialer) setOutcome(o Outcome) { d.mu.Lock(); d.outcome = o; d.mu.Unlock() }
+func (d *fakeDialer) outcomesAsked() []string {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return append([]string(nil), d.outcomeFor...)
+}
+func (d *fakeDialer) findsAsked() []findQuery {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return append([]findQuery(nil), d.finds...)
+}
 func (d *fakeDialer) dialed() []OutboundCall {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -1531,5 +1570,228 @@ func TestIsSilence(t *testing.T) {
 		if got := isSilence(in); got != want {
 			t.Errorf("isSilence(%q) = %v", in, got)
 		}
+	}
+}
+
+// ---- diagnostics after a call ----
+
+// lockedBuf is a log sink the check goroutine can write while the test reads.
+type lockedBuf struct {
+	mu sync.Mutex
+	b  bytes.Buffer
+}
+
+func (l *lockedBuf) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.b.Write(p)
+}
+
+func (l *lockedBuf) String() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.b.String()
+}
+
+// settle waits for the call manager's tracked goroutines, the outcome check among them, to finish.
+func (e *callEnv) settle(t *testing.T) {
+	t.Helper()
+	done := make(chan struct{})
+	go func() { e.c.wg.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("background work still running")
+	}
+}
+
+// answeredCall places a call, lets the owner speak (so it counts as answered) and ends it as the post-call webhook would.
+func (e *callEnv) answeredCall(t *testing.T) CallRecord {
+	t.Helper()
+	call, err := e.c.Place(context.Background(), PlaceRequest{BotID: "b1", Reason: "x"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.c.HandleFrame(context.Background(), llmFrame("r1", call.ID, "hi"))
+	e.c.HandleFrame(context.Background(), Frame{Type: FrameCallStatus, CallID: call.ID, Status: "done"})
+	e.waitInactive(t)
+	return call
+}
+
+func TestCallOutcomeFailedNotifiesOwnerOnce(t *testing.T) {
+	e := newCallEnv(t)
+	logs := &lockedBuf{}
+	e.c.log = slog.New(slog.NewTextHandler(logs, nil))
+	fa := e.withClock()
+	e.dial.setOutcome(Outcome{Status: "failed", TerminationReason: "custom_llm generation failed", ErrorType: "llm_error",
+		ErrorReason: "custom_llm_error: LLM Cascade Error: TimeoutError"})
+	call := e.answeredCall(t)
+	if len(e.dial.outcomesAsked()) != 0 || len(e.host.noticeList()) != 0 {
+		t.Fatal("the outcome was read before the delay")
+	}
+	fa.fire(t, 10*time.Second)
+	e.settle(t)
+	want := "Call with Atlas dropped: The voice service ended the call: custom_llm_error: LLM Cascade Error: TimeoutError"
+	if got := e.host.noticeList(); len(got) != 1 || got[0] != want {
+		t.Fatalf("notices %q", got)
+	}
+	if e.host.noticeMeta[0] != "warning bot:b1" {
+		t.Fatalf("notice level and target %q", e.host.noticeMeta[0])
+	}
+	if got := e.dial.outcomesAsked(); len(got) != 1 || got[0] != "conv-"+call.ID || len(e.dial.findsAsked()) != 0 {
+		t.Fatalf("asked %v, found %v", got, e.dial.findsAsked())
+	}
+	out := logs.String()
+	for _, want := range []string{"jarvis: call outcome", "call=" + call.ID, "status=failed", `termination_reason="custom_llm generation failed"`,
+		"error_type=llm_error", `error_reason="custom_llm_error: LLM Cascade Error: TimeoutError"`} {
+		if !strings.Contains(out, want) {
+			t.Errorf("log lacks %s:\n%s", want, out)
+		}
+	}
+}
+
+// The reason is the error reason, else the termination reason, clipped; a failed call with neither still says so.
+func TestCallOutcomeFailedReasonFallbackAndClip(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		out  Outcome
+		want string
+	}{
+		{"termination reason", Outcome{Status: "failed", TerminationReason: "Remote party hung up"}, "The voice service ended the call: Remote party hung up"},
+		{"clipped", Outcome{Status: "FAILED", ErrorReason: strings.Repeat("é", 300)}, "The voice service ended the call: " + strings.Repeat("é", maxTitle) + "…"},
+		{"no reason", Outcome{Status: "failed"}, "The voice service ended the call: no reason was given"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			e := newCallEnv(t)
+			fa := e.withClock()
+			e.dial.setOutcome(c.out)
+			e.answeredCall(t)
+			fa.fire(t, 10*time.Second)
+			e.settle(t)
+			if got := e.host.noticeList(); len(got) != 1 || got[0] != "Call with Atlas dropped: "+c.want {
+				t.Fatalf("notices %q", got)
+			}
+		})
+	}
+}
+
+func TestCallOutcomeDoneStaysQuiet(t *testing.T) {
+	e := newCallEnv(t)
+	logs := &lockedBuf{}
+	e.c.log = slog.New(slog.NewTextHandler(logs, nil))
+	fa := e.withClock()
+	e.dial.setOutcome(Outcome{Status: "done", TerminationReason: "end_call tool was called."})
+	e.answeredCall(t)
+	fa.fire(t, 10*time.Second)
+	e.settle(t)
+	if got := e.dial.outcomesAsked(); len(got) != 1 {
+		t.Fatalf("asked %v", got)
+	}
+	if got := e.host.noticeList(); len(got) != 0 {
+		t.Fatalf("a finished call notified: %q", got)
+	}
+	if out := logs.String(); !strings.Contains(out, "jarvis: call outcome") || !strings.Contains(out, "status=done") {
+		t.Fatalf("outcome not logged:\n%s", out)
+	}
+}
+
+// An unanswered call already produced "tried to call"; the provider calling it failed must not add a second notice.
+func TestCallOutcomeFailedAfterNoAnswerDoesNotNotifyAgain(t *testing.T) {
+	e := newCallEnv(t)
+	fa := e.withClock()
+	e.dial.setOutcome(Outcome{Status: "failed", TerminationReason: "no answer"})
+	call, _ := e.c.Place(context.Background(), PlaceRequest{BotID: "b1", Reason: "x"})
+	e.c.HandleFrame(context.Background(), Frame{Type: FrameCallStatus, CallID: call.ID, Status: "no-answer"})
+	fa.fire(t, 10*time.Second)
+	e.settle(t)
+	if got := e.host.noticeList(); len(got) != 1 || !strings.HasPrefix(got[0], "Atlas tried to call") {
+		t.Fatalf("notices %q", got)
+	}
+	if len(e.dial.outcomesAsked()) != 1 {
+		t.Fatalf("outcome not read: %v", e.dial.outcomesAsked())
+	}
+}
+
+func TestCallOutcomeFindsMissingConversationBySID(t *testing.T) {
+	e := newCallEnv(t)
+	fa := e.withClock()
+	e.dial.mu.Lock()
+	e.dial.found = "conv-found"
+	e.dial.outcome = Outcome{Status: "failed", ErrorReason: "boom"}
+	e.dial.mu.Unlock()
+	e.c.HandleFrame(context.Background(), Frame{Type: FrameInboundLookup, ID: "i1", Caller: "+32470000000", CallSID: testSID})
+	call, ok := e.c.Active()
+	if !ok || call.ConversationID != "" {
+		t.Fatalf("inbound call %+v", call)
+	}
+	e.c.HandleFrame(context.Background(), Frame{Type: FrameCallStatus, CallID: call.ID, Status: "done"})
+	e.waitInactive(t)
+	fa.fire(t, 10*time.Second)
+	e.settle(t)
+	finds := e.dial.findsAsked()
+	if len(finds) != 1 || finds[0].AgentID != "ag" || finds[0].CallSID != testSID || !finds[0].Near.Equal(*e.now) {
+		t.Fatalf("finds %+v", finds)
+	}
+	if got := e.dial.outcomesAsked(); len(got) != 1 || got[0] != "conv-found" {
+		t.Fatalf("asked %v", got)
+	}
+	stored, err := e.store.GetCall(context.Background(), call.ID)
+	if err != nil || stored.ConversationID != "conv-found" || stored.Status != StatusCompleted {
+		t.Fatalf("stored %+v err=%v", stored, err)
+	}
+	if got := e.host.noticeList(); len(got) != 2 || !strings.HasPrefix(got[1], "Call with ") || !strings.HasSuffix(got[1], "boom") {
+		t.Fatalf("notices %q", got)
+	}
+}
+
+func TestCallOutcomeIsBestEffort(t *testing.T) {
+	t.Run("conversation not found", func(t *testing.T) {
+		e := newCallEnv(t)
+		fa := e.withClock()
+		e.c.HandleFrame(context.Background(), Frame{Type: FrameInboundLookup, ID: "i1", Caller: "+32470000000", CallSID: testSID})
+		call, _ := e.c.Active()
+		e.c.HandleFrame(context.Background(), Frame{Type: FrameCallStatus, CallID: call.ID, Status: "done"})
+		fa.fire(t, 10*time.Second)
+		e.settle(t)
+		if len(e.dial.findsAsked()) != 1 || len(e.dial.outcomesAsked()) != 0 || len(e.host.noticeList()) != 1 {
+			t.Fatalf("finds %v asked %v notices %q", e.dial.findsAsked(), e.dial.outcomesAsked(), e.host.noticeList())
+		}
+	})
+	t.Run("provider error", func(t *testing.T) {
+		e := newCallEnv(t)
+		fa := e.withClock()
+		e.dial.mu.Lock()
+		e.dial.outcomeErr = errors.New("ElevenLabs GET: 500")
+		e.dial.mu.Unlock()
+		e.answeredCall(t)
+		fa.fire(t, 10*time.Second)
+		e.settle(t)
+		if len(e.dial.outcomesAsked()) != 1 || len(e.host.noticeList()) != 0 {
+			t.Fatalf("asked %v notices %q", e.dial.outcomesAsked(), e.host.noticeList())
+		}
+	})
+	t.Run("call that never reached the provider", func(t *testing.T) {
+		e := newCallEnv(t)
+		e.withClock()
+		e.dial.mu.Lock()
+		e.dial.err = errors.New("ElevenLabs POST: 500")
+		e.dial.mu.Unlock()
+		if _, err := e.c.Place(context.Background(), PlaceRequest{BotID: "b1", Reason: "x"}); err == nil {
+			t.Fatal("place succeeded")
+		}
+		e.settle(t) // nothing waits for a timer
+		if len(e.dial.outcomesAsked()) != 0 || len(e.dial.findsAsked()) != 0 {
+			t.Fatal("the provider was asked about a call it never started")
+		}
+	})
+}
+
+func TestCallOutcomeStopsWhenClosed(t *testing.T) {
+	e := newCallEnv(t)
+	e.withClock() // the delay never fires
+	e.answeredCall(t)
+	e.c.Close() // must not hang on the pending delay
+	if len(e.dial.outcomesAsked()) != 0 {
+		t.Fatal("outcome read after Close")
 	}
 }

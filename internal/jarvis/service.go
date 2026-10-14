@@ -124,7 +124,7 @@ type Service struct {
 	cancel      context.CancelFunc
 	started     bool
 	closed      bool
-	syncing     bool           // syncAgentLanguage is running
+	syncing     bool           // syncAgent is running
 	wg          sync.WaitGroup // event, tick and frame goroutines
 
 	relayMu     sync.Mutex
@@ -227,6 +227,22 @@ func (d elDialer) ConversationStatus(ctx context.Context, id string) (string, in
 	return el.ConversationStatus(ctx, id)
 }
 
+func (d elDialer) ConversationOutcome(ctx context.Context, id string) (Outcome, error) {
+	el, err := d.s.elevenLabs()
+	if err != nil {
+		return Outcome{}, err
+	}
+	return el.ConversationOutcome(ctx, id)
+}
+
+func (d elDialer) FindConversation(ctx context.Context, agentID, callSID string, near time.Time) (string, error) {
+	el, err := d.s.elevenLabs()
+	if err != nil {
+		return "", err
+	}
+	return el.FindConversation(ctx, agentID, callSID, near)
+}
+
 // twilioPhone reads the Twilio credentials from Credential Manager on every use.
 type twilioPhone struct{ s *Service }
 
@@ -309,7 +325,7 @@ func (s *Service) Start(ctx context.Context) {
 	base := s.baseCtx
 	s.wg.Add(2)
 	s.mu.Unlock()
-	s.syncAgentLanguage()
+	s.syncAgent()
 	go func() {
 		defer s.wg.Done()
 		for {
@@ -829,7 +845,8 @@ func (s *Service) Configure(ctx context.Context, in PhoneSettings) (ConfigureRes
 	}
 	cur := s.Settings()
 	in.OwnerNumber, in.OwnerVerified = cur.OwnerNumber, cur.OwnerVerified
-	in.AgentID, in.PhoneNumberID, in.PostCallWebhookID, in.AgentLanguage = cur.AgentID, cur.PhoneNumberID, cur.PostCallWebhookID, cur.AgentLanguage
+	in.AgentID, in.PhoneNumberID, in.PostCallWebhookID, in.AgentLanguage, in.AgentRevision = cur.AgentID, cur.PhoneNumberID, cur.PostCallWebhookID,
+		cur.AgentLanguage, cur.AgentRevision
 	if in.TwilioNumber != cur.TwilioNumber {
 		in.PhoneNumberID = "" // a different number has to be imported
 	}
@@ -875,7 +892,7 @@ func (s *Service) Configure(ctx context.Context, in PhoneSettings) (ConfigureRes
 		return ConfigureResult{}, err
 	}
 	s.noticeOrphan(orphan)
-	s.syncAgentLanguage() // only when provisioning above did not already bring the agent to the chosen language
+	s.syncAgent() // only when provisioning above did not already bring the agent to the chosen language and revision
 	return ConfigureResult{Status: s.Status(ctx), WebhookSecret: webhookSecret}, nil
 }
 
@@ -890,14 +907,16 @@ func (s *Service) noticeOrphan(id string) {
 	s.cfg.Host.Audit("jarvis.webhook.orphaned", id, "allowed", "relay url changed")
 }
 
-// syncAgentLanguage re-provisions the agent's language in the background when it differs from the chosen call
-// language (an agent from before the setting, or a Configure whose provisioning did not run). It only updates the
-// agent: no number import, no webhook. Until it succeeds, calls keep the agent's language (spokenLanguage). Missing
-// prerequisites (no ElevenLabs key, relay URL or relay secret) skip it quietly: Connect provisions everything later.
-func (s *Service) syncAgentLanguage() {
+// syncAgent re-provisions the agent in the background when it is out of date: its language differs from the chosen call
+// language (an agent from before the setting, or a Configure whose provisioning did not run), or it was provisioned with
+// an older agentRevision (a release changed what the agent should be configured with). It only updates the agent: no
+// number import, no webhook. Until it succeeds, calls keep the agent's language (spokenLanguage). Missing prerequisites
+// (no ElevenLabs key, relay URL or relay secret) skip it quietly: Connect provisions everything later.
+func (s *Service) syncAgent() {
 	s.mu.Lock()
 	set := s.settings
-	if !s.started || s.closed || s.syncing || set.AgentID == "" || set.AgentLanguage == set.callLanguage() || set.RelayURL == "" {
+	if !s.started || s.closed || s.syncing || set.AgentID == "" || set.RelayURL == "" ||
+		set.AgentLanguage == set.callLanguage() && set.AgentRevision >= agentRevision {
 		s.mu.Unlock()
 		return
 	}
@@ -911,12 +930,12 @@ func (s *Service) syncAgentLanguage() {
 		lang := set.callLanguage()
 		el, err := s.elevenLabs()
 		if err != nil {
-			s.log.Info("jarvis: agent language not synced", "reason", "no ElevenLabs key")
+			s.log.Info("jarvis: agent not synced", "reason", "no ElevenLabs key")
 			return
 		}
 		secret, err := s.cfg.Creds.Get(KeyLLMSecret)
 		if err != nil || len(secret) == 0 {
-			s.log.Info("jarvis: agent language not synced", "reason", "no relay secret")
+			s.log.Info("jarvis: agent not synced", "reason", "no relay secret")
 			return
 		}
 		ctx, cancel := context.WithTimeout(base, time.Minute)
@@ -925,8 +944,8 @@ func (s *Service) syncAgentLanguage() {
 			TTSModel: set.DefaultTTSModel, Language: lang}
 		if err := el.UpdateAgent(ctx, set.AgentID, cfg); err != nil {
 			if base.Err() == nil {
-				s.log.Warn("jarvis: cannot switch the agent language", "err", err)
-				s.cfg.Host.Notify("Couldn't switch the phone agent to "+languageName(lang), err.Error(), "", "warning")
+				s.log.Warn("jarvis: cannot update the agent", "err", err)
+				s.cfg.Host.Notify("Couldn't update the phone agent", err.Error(), "", "warning")
 			}
 			return
 		}
@@ -938,7 +957,7 @@ func (s *Service) syncAgentLanguage() {
 		if cur.AgentID != set.AgentID || cur.callLanguage() != lang {
 			return // changed meanwhile; that change provisions or syncs itself
 		}
-		cur.AgentLanguage = lang
+		cur.AgentLanguage, cur.AgentRevision = lang, agentRevision
 		if s.cfg.SaveSettings != nil {
 			if err := s.cfg.SaveSettings(cur); err != nil {
 				s.log.Warn("jarvis: cannot save settings", "err", err)

@@ -4,12 +4,16 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 type recorded struct {
@@ -432,5 +436,195 @@ func TestNonEnglishCallsGetMultilingualModel(t *testing.T) {
 	}
 	if ttsModel(LangEnglish, "") != "" || ttsModel(LangDutch, "") != multilingualModel || ttsModel(LangAuto, "x") != "x" {
 		t.Error("ttsModel")
+	}
+}
+
+// jsonPath reads a nested value out of a decoded JSON document ("conversation_config", "turn", ...).
+func jsonPath(t *testing.T, doc any, path ...string) any {
+	t.Helper()
+	for _, k := range path {
+		m, ok := doc.(map[string]any)
+		if !ok {
+			t.Fatalf("%v: not an object at %q", path, k)
+		}
+		if doc, ok = m[k]; !ok {
+			t.Fatalf("%v: missing %q", path, k)
+		}
+	}
+	return doc
+}
+
+// The agent is patient (no cut-offs on hesitations), waits for a slow custom LLM, never ends a call on silence, ends at
+// the daemon's ceiling and offers end_call and skip_turn to the LLM; everything it sent before stays.
+func TestAgentBodyTurnTakingAndTimeouts(t *testing.T) {
+	for _, lang := range []string{"", LangDutch, LangEnglish, LangAuto} {
+		raw, err := json.Marshal(agentBody(AgentConfig{RelayURL: "https://r/", LLMSecret: "s", Language: lang, VoiceID: "v1"}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var doc map[string]any
+		if err := json.Unmarshal(raw, &doc); err != nil {
+			t.Fatal(err)
+		}
+		cfg := func(path ...string) any { return jsonPath(t, doc, append([]string{"conversation_config"}, path...)...) }
+		for _, c := range []struct {
+			path []string
+			want any
+		}{
+			{[]string{"turn", "turn_eagerness"}, "patient"},
+			{[]string{"turn", "turn_timeout"}, 10.0},
+			{[]string{"turn", "initial_wait_time"}, 1.0},
+			{[]string{"turn", "speculative_turn"}, false},
+			{[]string{"turn", "silence_end_call_timeout"}, -1.0},
+			{[]string{"turn", "soft_timeout_config", "timeout_seconds"}, -1.0},
+			{[]string{"conversation", "max_duration_seconds"}, 1800.0},
+			{[]string{"agent", "prompt", "cascade_timeout_seconds"}, 15.0},
+			{[]string{"agent", "prompt", "built_in_tools", "skip_turn", "name"}, "skip_turn"},
+			{[]string{"agent", "prompt", "built_in_tools", "skip_turn", "params", "system_tool_type"}, "skip_turn"},
+			// unchanged
+			{[]string{"agent", "prompt", "built_in_tools", "end_call", "params", "system_tool_type"}, "end_call"},
+			{[]string{"agent", "prompt", "built_in_tools", "voicemail_detection", "params", "system_tool_type"}, "voicemail_detection"},
+			{[]string{"agent", "prompt", "llm"}, "custom-llm"},
+			{[]string{"agent", "prompt", "custom_llm", "url"}, "https://r/llm"},
+			{[]string{"agent", "prompt", "custom_llm", "request_headers", "x-orole-relay"}, "s"},
+			{[]string{"agent", "first_message"}, ""},
+			{[]string{"tts", "voice_id"}, "v1"},
+		} {
+			if got := cfg(c.path...); got != c.want {
+				t.Errorf("%q: %s = %v, want %v", lang, strings.Join(c.path, "."), got, c.want)
+			}
+		}
+		if got := jsonPath(t, doc, "platform_settings", "overrides", "custom_llm_extra_body"); got != true {
+			t.Errorf("%q: custom_llm_extra_body override = %v", lang, got)
+		}
+	}
+	if agentRevision < 2 {
+		t.Errorf("agentRevision %d: the turn-taking change needs revision 2 or later", agentRevision)
+	}
+}
+
+func TestProvisionRecordsAgentRevision(t *testing.T) {
+	srv, _ := provisionFake(t, map[string]string{"PATCH /v1/convai/agents/ag1": `{}`})
+	el := &ElevenLabs{Key: "k", BaseURL: srv.URL, HTTP: srv.Client()}
+	tw := &Twilio{SID: "AC1", Token: "t", BaseURL: srv.URL, HTTP: srv.Client()}
+	base := PhoneSettings{RelayURL: "https://relay.example", TwilioNumber: "+3220000000", CallLanguage: LangDutch}
+	// Create path (no agent yet), then update path (an agent recorded with an older revision).
+	created, err := Provision(context.Background(), el, tw, base, ProvisionSecrets{LLMSecret: "ls", StoreWebhookSecret: func(string) error { return nil }})
+	if err != nil || created.AgentRevision != agentRevision || created.AgentLanguage != LangDutch {
+		t.Fatalf("created: %+v err=%v", created, err)
+	}
+	old := created
+	old.AgentRevision = 0
+	updated, err := Provision(context.Background(), el, tw, old, ProvisionSecrets{LLMSecret: "ls"})
+	if err != nil || updated.AgentRevision != agentRevision {
+		t.Fatalf("updated: %+v err=%v", updated, err)
+	}
+}
+
+func TestConversationOutcome(t *testing.T) {
+	failed := `{"agent_id":"ag","conversation_id":"c1","status":"failed","transcript":[{"role":"user","message":"never read"}],
+"metadata":{"start_time_unix_secs":1,"call_duration_secs":9,"termination_reason":"custom_llm generation failed",
+"error":{"code":1002,"error_type":"llm_error","reason":"custom_llm_error: LLM Cascade Error: TimeoutError"},
+"phone_call":{"direction":"outbound","call_sid":"CA1"}}}`
+	srv, _ := fakeAPI(t, map[string]string{
+		"GET /v1/convai/conversations/c1": failed,
+		"GET /v1/convai/conversations/c2": `{"status":"done","metadata":{"termination_reason":"end_call tool was called.","error":null,"phone_call":null}}`,
+		"GET /v1/convai/conversations/c3": `{"status":"failed","metadata":{"error":"plain text with sekret-relay"}}`,
+		"GET /v1/convai/conversations/c4": `{"status":"processing"}`,
+	})
+	el := &ElevenLabs{Key: "xi-test-key", BaseURL: srv.URL, HTTP: srv.Client(), Scrub: []string{"sekret-relay"}}
+	for _, c := range []struct {
+		id   string
+		want Outcome
+	}{
+		{"c1", Outcome{Status: "failed", TerminationReason: "custom_llm generation failed", ErrorType: "llm_error", ErrorReason: "custom_llm_error: LLM Cascade Error: TimeoutError"}},
+		{"c2", Outcome{Status: "done", TerminationReason: "end_call tool was called."}},
+		{"c3", Outcome{Status: "failed", ErrorReason: "plain text with [redacted]"}},
+		{"c4", Outcome{Status: "processing"}},
+	} {
+		got, err := el.ConversationOutcome(context.Background(), c.id)
+		if err != nil || got != c.want {
+			t.Errorf("%s: got %+v err=%v, want %+v", c.id, got, err, c.want)
+		}
+	}
+	if _, err := el.ConversationOutcome(context.Background(), "missing"); err == nil {
+		t.Error("an unknown conversation was not an error")
+	}
+}
+
+func TestFindConversationMatchesByCallSID(t *testing.T) {
+	near := time.Date(2026, 10, 14, 12, 0, 0, 0, time.UTC)
+	at := func(d time.Duration) int64 { return near.Add(d).Unix() }
+	var mu sync.Mutex
+	var listQuery url.Values
+	var details []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.URL.Path == "/v1/convai/conversations":
+			listQuery = r.URL.Query()
+			// Newest first, as the real list is. conv-far has the right SID but started ten minutes away.
+			_, _ = fmt.Fprintf(w, `{"conversations":[
+{"conversation_id":"conv-new","start_time_unix_secs":%d,"status":"done"},
+{"conversation_id":"conv-hit","start_time_unix_secs":%d,"status":"failed"},
+{"conversation_id":"conv-other","start_time_unix_secs":%d,"status":"done"},
+{"conversation_id":"conv-far","start_time_unix_secs":%d,"status":"done"}],"has_more":false}`,
+				at(90*time.Second), at(-20*time.Second), at(-100*time.Second), at(-10*time.Minute))
+		case strings.HasPrefix(r.URL.Path, "/v1/convai/conversations/"):
+			id := strings.TrimPrefix(r.URL.Path, "/v1/convai/conversations/")
+			details = append(details, id)
+			sid := map[string]string{"conv-new": "CAnew", "conv-hit": "CAwanted", "conv-other": "CAother", "conv-far": "CAwanted"}[id]
+			_, _ = fmt.Fprintf(w, `{"conversation_id":%q,"status":"done","metadata":{"phone_call":{"direction":"inbound","call_sid":%q}}}`, id, sid)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	el := &ElevenLabs{Key: "k", BaseURL: srv.URL, HTTP: srv.Client()}
+
+	id, err := el.FindConversation(context.Background(), "ag1", "CAwanted", near)
+	if err != nil || id != "conv-hit" {
+		t.Fatalf("id=%q err=%v", id, err)
+	}
+	mu.Lock()
+	if listQuery.Get("agent_id") != "ag1" || listQuery.Get("page_size") != "10" {
+		t.Errorf("list query %v", listQuery)
+	}
+	if !slices.Equal(details, []string{"conv-new", "conv-hit"}) {
+		t.Errorf("details fetched for %v: the far conversation must be skipped and the search must stop at the match", details)
+	}
+	details = nil
+	mu.Unlock()
+
+	// No call in the window has that SID: nothing found, no error. The far conversation is not a candidate.
+	id, err = el.FindConversation(context.Background(), "ag1", "CAnobody", near)
+	if err != nil || id != "" {
+		t.Fatalf("id=%q err=%v", id, err)
+	}
+	if id, err = el.FindConversation(context.Background(), "ag1", "CAwanted", near.Add(time.Hour)); err != nil || id != "" {
+		t.Fatalf("a window an hour later matched %q err=%v", id, err)
+	}
+	if _, err = el.FindConversation(context.Background(), "", "CAwanted", near); err == nil {
+		t.Error("an empty agent id was accepted")
+	}
+	if _, err = el.FindConversation(context.Background(), "ag1", "", near); err == nil {
+		t.Error("an empty call SID was accepted")
+	}
+}
+
+func TestFindConversationReportsErrors(t *testing.T) {
+	near := time.Now()
+	srv, _ := fakeAPI(t, nil) // everything 404s
+	el := &ElevenLabs{Key: "k", BaseURL: srv.URL, HTTP: srv.Client()}
+	if id, err := el.FindConversation(context.Background(), "ag1", "CA1", near); err == nil || id != "" {
+		t.Fatalf("list failure: id=%q err=%v", id, err)
+	}
+	// The list works but the detail of the only candidate fails, and nothing else matches: that is an error, not "none".
+	srv2, _ := fakeAPI(t, map[string]string{"GET /v1/convai/conversations": fmt.Sprintf(`{"conversations":[{"conversation_id":"c1","start_time_unix_secs":%d}]}`, near.Unix())})
+	el2 := &ElevenLabs{Key: "k", BaseURL: srv2.URL, HTTP: srv2.Client()}
+	if id, err := el2.FindConversation(context.Background(), "ag1", "CA1", near); err == nil || id != "" {
+		t.Fatalf("detail failure: id=%q err=%v", id, err)
 	}
 }
