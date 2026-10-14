@@ -392,3 +392,29 @@ daemon was down, or more than two minutes late, becomes a notification ("<bot> m
 
 **Records.** Per-turn timings (`first_audio_ms`, `total_ms`) go to `logs/daemon.log` as `jarvis: turn` lines, not into the
 call record. The call card's cost is an estimate from the `centsPerMinute` setting (default 12).
+
+## Amendment (2026-10-15): call flow
+
+The first real calls (2026-10-14) were dropped by ElevenLabs (`custom_llm generation failed`, a cascade `TimeoutError`
+after our stream went quiet) and cut the owner off on hesitations; the owner also wants nothing from a call in the
+bot's main chat. The plan is `docs/superpowers/plans/2026-10-14-jarvis-call-flow.md`; the behaviour is in
+`docs/architecture/jarvis.md`. It changes §6.3 and §6.4 as follows.
+
+- **Agent configuration.** Patient turn-taking (`turn_eagerness: patient`, `turn_timeout` 10 s, `initial_wait_time` 1 s,
+  no ElevenLabs silence hang-up), `cascade_timeout_seconds` 15 (the default 4 s ended calls), `max_duration_seconds`
+  1800 and the `skip_turn` system tool. `PhoneSettings.agentRevision` makes the daemon update an existing agent once,
+  in the background, after an upgrade. The relay gains an `llm.tool` frame (a streamed OpenAI tool call, used for
+  `skip_turn`) and speaks its own lines in the call language; it must be redeployed.
+- **Turns.** Every model turn streams a `"... "` buffer chunk first and whenever it goes quiet, acknowledges a slow
+  turn, and is cancelled after about a minute with an offer to run the work as a background task. Silence prompts are answered with
+  `skip_turn` (never an empty response, which ElevenLabs retries), "Are you still there?" on the 3rd in a row and a
+  goodbye with hang-up on the 9th. An utterance that trails off ("geef me een, uhm") is not answered at once: the bot
+  waits about 2.5 s and answers it together with whatever follows. `end_call` is refused unless the owner's words are a closing. News that arrives
+  while the owner is silent is told in a cue turn. After each call the daemon reads ElevenLabs' record of the
+  conversation and notifies "Call with <bot> dropped" when the voice service failed it.
+- **Follow-ups stay in the call.** The spoken turns were already kept out of the chat (`messages.call_id`, read in the
+  call pane); now nothing else from a call appears in the bot's main chat thread either, and the call card is its only
+  entry there. Reports of bots the call's bot handed work to, reports of code tasks started or steered from the call,
+  and the bot's written answers to them are stored with the call id. During the call they are told on the phone as news;
+  afterwards the owner gets a notice that opens the bot, and the call pane shows them. A new rule trigger,
+  `bot_reported` (migration 0111), lets the owner ask "call me back when <bot> reports back".

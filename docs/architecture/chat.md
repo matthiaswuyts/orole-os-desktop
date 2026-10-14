@@ -85,11 +85,17 @@ Bots with Jarvis mode on can speak on the phone (`docs/architecture/jarvis.md`).
   `chat:call-delta` for the call pane. The model's history (`tail`, `transcript`), the rolling summary, memory
   consolidation and `search_history` still include them, so the bot remembers the call. `CallMessages(ctx, callID)`
   returns them in order for `jarvis.calls.transcript`. Calls made before 0110 keep their turns in the thread (no backfill).
-- Voice options: `voiceStyle` replaces `chatStyle` (spoken, one to three sentences, no markdown, never name the app);
-  reasoning is the cheapest level the model offers (`none`, `minimal` or `low`); no attachments or compaction; at most 6
-  steps and 10 tool calls, never above the bot's own limits; the call brief is passed as the run-specific addendum so the
-  prompt prefix stays stable; the call layer supplies its own history (a connected cue is added when it starts with the
-  bot's opener). `RunContext.CallID` is set, which `call_owner` and `switch_bot` check.
+- Voice options: `voiceStyle` replaces `chatStyle` (spoken, one to three sentences, no markdown, never name the app; it
+  also says who is doing handed-off work and why, to check a task before saying how it is going, to save a call-back
+  rule when asked, and to end the call only when the owner is done), followed by the bot's own name (`voiceName`) and the
+  call language; reasoning is the cheapest level the model offers (`none`, `minimal` or `low`); no attachments or
+  compaction; at most 6 steps and 10 tool calls, never above the bot's own limits; the call brief and the list of
+  handoffs that have not reported back (`handoffsNote`) are passed as the run-specific addendum so the prompt prefix
+  stays stable; the call layer supplies its own history (a connected cue is added when it starts with the bot's opener).
+  `RunContext.CallID` is set, which `call_owner` (refused on a call), `switch_bot` and `end_call` (only on a call) check.
+- **Cue turns.** `VoiceRequest.Cue` marks `Text` as an instruction from the daemon (for example "Nobody spoke. News came
+  in..."), not the owner's words. It is stored as the user message with author `cue` and the call id, so the model's
+  history keeps it, but `CallMessages` (the transcript) leaves it out and it is never published to the call pane.
 - Callbacks: `OnText` streams the spoken text, `OnTool` is called as a tool starts (the call layer speaks a filler).
 - **Follow-ups of a call stay in the call's thread.** `RunContext.CallThread` is the call whose thread a run writes
   into: voice turns set it with `CallID`; the written answer to a call follow-up sets only `CallThread` (it is not

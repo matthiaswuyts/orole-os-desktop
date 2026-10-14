@@ -1,7 +1,7 @@
 # Database schema
 
 SQLite via `modernc.org/sqlite` (pure Go, no cgo). File: `<data dir>/orole.db`. The SQL in `migrations/*.sql`
-is authoritative; this page summarises it. Migrations present in this tree: `0001`, `0010`, `0020`, `0030`, `0050`, and the chat series `0096`-`0110`.
+is authoritative; this page summarises it. Migrations present in this tree: `0001`, `0010`, `0020`, `0030`, `0050`, and the chat series `0096`-`0111`.
 
 ## Connection and migrations
 
@@ -41,11 +41,11 @@ prefixes (0010, 0020, ...) so concurrent work does not collide; `DB.Version()` i
 Tables for agents, MCP, policy and notifications exist ahead of the daemon services that use them; see
 `daemon.md` for what is actually registered.
 
-## Jarvis (migration 0109)
+## Jarvis (migrations 0109, 0111)
 
 | Table | Purpose |
 |---|---|
-| `jarvis_rules(id, bot_id FK cascade, trigger, target, repeat, urgent, quiet_override, note <= 280, expires_at, created_at)` + index on `trigger` | when a bot phones the owner: `trigger` is `task_finished \| task_failed \| automation_finished \| automation_failed \| notification \| at_time`, `target` a task or automation id, `any`, a notification `kind[:source]` or `HH:MM`; a rule with `repeat=0` is deleted after it fires; times are Unix ms |
+| `jarvis_rules(id, bot_id FK cascade, trigger, target, repeat, urgent, quiet_override, note <= 280, expires_at, created_at)` + index on `trigger` | when a bot phones the owner: `trigger` is `task_finished \| task_failed \| automation_finished \| automation_failed \| notification \| at_time \| bot_reported`, `target` a task or automation id, `any`, a notification `kind[:source]`, `HH:MM`, or for `bot_reported` the name of a bot the rule's bot handed work to (or `any`); a rule with `repeat=0` is deleted after it fires; times are Unix ms. `bot_reported` came with 0111, which rebuilt the table (SQLite cannot widen a CHECK constraint) and kept every rule |
 | `jarvis_calls(id, bot_id, direction outbound\|inbound, rule_id, reason, status, provider_call_id, conversation_id, message_id, started_at, answered_at, ended_at, est_cost_micros, created_at)` + indexes on `created_at` and `(bot_id, created_at)` | one row per phone call (status `dialing \| in_progress \| completed \| no_answer \| voicemail \| failed \| rejected`); `message_id` is the chat message holding the call card; `est_cost_micros` is an estimate (1 USD = 1,000,000) |
 
 The global phone settings are JSON under the `jarvis` settings key and the daemon's last scheduler tick under
