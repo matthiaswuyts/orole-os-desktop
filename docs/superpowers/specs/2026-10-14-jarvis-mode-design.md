@@ -1,6 +1,6 @@
 # Jarvis mode: phone calls with your bots
 
-Status: design, awaiting review · Date: 2026-10-14
+Status: implemented on `feat/jarvis-mode` (see section 14 for where the build differs) · Date: 2026-10-14
 
 ## 1. Goal
 
@@ -187,7 +187,7 @@ completion notifications and any matching rules apply.
 
 ### 6.4 Call record
 
-Each call gets one assistant message with a `PartCall` card, created at call start and updated at call end; the spoken turns are stored between it as ordinary user/assistant messages. Tool, task and research parts produced
+Each call gets one assistant message with a `PartCall` card, created at call start and updated at call end; the spoken turns are stored between it as ordinary user/assistant messages. The card shows the call's direction (outbound or inbound), status, reason, duration and estimated cost; the transcript is the normal chat messages around it. Tool, task and research parts produced
 during the call are attached to the same message so the chat shows them exactly as if typed. The bot sees the call in its
 later history (transcript summarised when long).
 
@@ -296,7 +296,7 @@ CREATE INDEX jarvis_calls_created ON jarvis_calls(created_at);
 ## 11. Testing
 
 - Go unit tests: permission gate matrix; rule matching per trigger, expiry, once/repeat, quiet hours and override; caps
-  and cool-down; opener check and fallback; inbound caller-ID and STIR/SHAKEN acceptance; call state machine.
+  and cool-down; opener check and fallback; inbound caller-ID acceptance; call state machine.
 - Relay protocol: a fake relay in Go tests drives `internal/jarvis` end to end (outbound call, opener served on answer,
   voice turn with a tool call and filler, voicemail path, socket drop).
 - Fake provider servers (`httptest`) for Twilio and ElevenLabs APIs used by provisioning and call placement.
@@ -318,3 +318,50 @@ The UI and docs state that calls require the daemon to be running and the relay 
 - ElevenLabs account and API key with Agents, Voices and Text-to-Speech access.
 - Cloudflare account with Workers (already logged in via wrangler on this machine).
 - Keys are entered by the owner in Settings › Phone.
+
+## 14. Implementation notes
+
+What was built differs from the text above in these places. The code is authoritative; `docs/architecture/jarvis.md`
+describes it.
+
+**Renamed.** Go types are `JarvisRule`, `JarvisTrigger`, `CallRecord` and `PhoneSettings` (the spec's `Rule`, `Trigger`,
+`Call`, `Settings`). Statuses: `dialing | in_progress | completed | no_answer | voicemail | failed | rejected` (no
+`queued`, `ringing` or `canceled`; `rejected` is an inbound call turned away). Chat adds `VoiceTurn`, `Compose`,
+`PostCallCard`, `UpdateCallCard` and `SetSaveCheck` (`internal/chat/voice.go`). The migration is `0109_jarvis.sql`
+(adds `trigger` and length checks and an index on `(bot_id, created_at)`; `provider_call_id`, `conversation_id` and
+`message_id` default to `''` instead of NULL). The IPC methods are `jarvis.status`, `.secrets.set`,
+`.relaySecrets.generate`, `.configure`, `.verify.start`, `.verify.confirm`, `.voices`, `.models`, `.rules.list`,
+`.rules.delete`, `.calls.recent` and `.call.test`, with the `jarvis.changed` event. The relay's custom-LLM path is
+`/llm/chat/completions` (the agent's URL is `<relay>/llm`; ElevenLabs appends the rest).
+
+**Relay authentication.** `/llm/chat/completions` and `/inbound` are authenticated by the secret header `x-orole-relay`
+(not an HMAC on `/inbound`); `/status` by the `ElevenLabs-Signature` HMAC. There is no Twilio status callback, so no
+Twilio signature check and no Twilio auth token on the Worker. The Worker secrets are `RELAY_TOKEN`, `LLM_SECRET` and
+`WEBHOOK_SECRET`. The relay fails closed with 503 until all three are set, and bounds a pending turn at 20 s idle with
+the daemon connected, 5 s grace when the socket is gone, and 120 s in total.
+
+**Secrets.** ElevenLabs generates the post-call webhook signing secret when the webhook is created. The app stores it
+(`jarvis/relay/webhook`) and shows it once after Connect, with the `wrangler secret put WEBHOOK_SECRET` step; it
+generates only the relay token and the LLM secret itself. Changing the relay URL creates a new webhook and orphans the
+old one: the app sends a notice naming the old id to delete.
+
+**Workspace-wide settings.** ElevenLabs' inbound personalization webhook and post-call webhook are settings of the
+owner's whole workspace, so Connect changes them for every agent in that account.
+
+**Call ending.** The post-call webhook is not the only way a call ends. While a call is live the daemon polls the
+ElevenLabs conversation every 5 s (`done` or `failed`) and enforces a 30-minute ceiling. A `done` call that was never
+answered is `no_answer`. An `urgent` retry goes through the same policy checks (caps, quiet hours) as any call.
+
+**Turns.** A new request for a call cancels the in-flight turn (barge-in); the cancelled turn speaks no more and leaves
+no history. Streamed speech passes a sanitizer that replaces "Orole" and "Orole OS" with "the app". Voice limits are the
+smaller of the voice cap and the bot's own limit. A scripted filler is spoken when a tool starts.
+
+**Gate timing.** The gate runs on save, before a call, on bot switch and at the start of each spoken turn (not before
+every individual tool call). A failure mid-call turns Jarvis off for the bot and ends the call. The save check currently
+refuses any save of a Jarvis-enabled bot whose permissions fail the gate, rather than saving it with Jarvis switched off.
+
+**Missed scheduled calls.** The ticker keeps its last tick across restarts. An `at_time` rule that fell due while the
+daemon was down, or more than two minutes late, becomes a notification ("<bot> missed a scheduled call").
+
+**Records.** Per-turn timings (`first_audio_ms`, `total_ms`) go to `logs/daemon.log` as `jarvis: turn` lines, not into the
+call record. The call card's cost is an estimate from the `centsPerMinute` setting (default 12).

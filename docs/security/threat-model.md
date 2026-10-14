@@ -25,6 +25,8 @@ agents, integrations, automations, machine transport and declarative plugins as 
 5. **Daemon -> external services** (GitHub API, MCP servers): HTTPS to user-configured endpoints; OAuth endpoints
    must be https (or loopback http) with no embedded credentials (`internal/mcp/oauth_discovery.go`). On request, the
    daemon downloads the speech engine and dictation models from GitHub and Hugging Face; see `docs/architecture/daemon.md`.
+6. **Phone -> bots (Jarvis):** calls pass through Twilio, ElevenLabs and a Cloudflare relay the owner deploys; the daemon only
+   connects outbound to the relay. See [Jarvis phone calls](#jarvis-phone-calls).
 
 ## Threats and controls
 
@@ -42,6 +44,25 @@ agents, integrations, automations, machine transport and declarative plugins as 
 | Persistence abuse via autostart | per-user logon task, `LeastPrivilege`, runs only the daemon path chosen at install | task points at a fixed exe path; whoever can write that file can run code at logon (normal per-user install risk) |
 | Microphone audio leaves the machine unexpectedly | dictation is recognized locally (`internal/dictation`); recording starts only from the dictation control and audio goes only to the daemon's helper process; audio and transcript are never logged, stored or sent; 120 s cap | same-user malware can still use the microphone itself |
 | Tampered speech engine or model download | every file pinned by URL (repository revision or release tag), size and SHA-256, verified while streaming before it is moved into place; the helper refuses an engine DLL reporting another version; native code runs in a separate helper process | the pinned hashes are the ones Hugging Face and GitHub publish; whoever can write `%LOCALAPPDATA%\Orole\voice` (same user) can replace the DLLs after verification |
+
+## Jarvis phone calls
+
+Bots with full permissions can phone the owner and be phoned (`docs/architecture/jarvis.md`). New boundaries:
+
+| Threat | Control | Gap / accepted risk |
+|---|---|---|
+| The relay (Cloudflare Worker) sees call traffic | it holds no database or storage and keeps only the in-flight request; transcripts and turns pass through it in memory; the daemon connects outbound (no listener); fails closed (503) until all three secrets are set | whoever controls the owner's Cloudflare account can read traffic in flight or redeploy the Worker |
+| Stolen relay token | lets an attacker impersonate the daemon to the relay (see call traffic, answer ElevenLabs' requests) but not reach the daemon; rotate with "Generate relay secrets" in Settings > Phone, redeploy the relay secrets and run Connect again | no automatic rotation |
+| Forged requests to the relay | bearer token for the daemon socket; `x-orole-relay` secret compared in constant time for `/llm` and `/inbound`; HMAC with a 30-minute timestamp window for `/status` | a replayed `/status` inside 30 minutes is ignored once the call has ended (the daemon only acts on the live call) |
+| ElevenLabs and Twilio process call audio and transcripts | the owner chooses and pays for both accounts; keys live in Credential Manager; the app and UI state that conversations pass through them | provider retention is the provider's policy; the daemon cannot enforce it |
+| ElevenLabs webhooks are workspace-wide | Connect sets the inbound personalization and post-call webhooks for the owner's whole workspace, so they apply to every agent there | use a workspace without other agents; the app notifies the id of an orphaned webhook after a relay URL change but does not delete it |
+| Full-permission bots reachable by phone | Jarvis can only be enabled when the gate holds (tool access All, code tasks YOLO); re-checked at call start and every spoken turn, and Jarvis turns itself off when it fails; outbound calls go only to the verified owner number; voicemail detection speaks no details | whoever is on the line can direct the bot |
+| Caller-ID spoofing on inbound calls | **accepted risk (owner decision, 2026-10-14):** inbound acceptance is a caller-ID match against the verified number only, no second factor. Mitigations: nothing is spoken to a non-matching caller (`jarvis.inbound.rejected` audit entry); every accepted inbound call is audited (`jarvis.call.started`), shown in the bot's chat and notified, so a call the owner did not make is visible at once | a spoofed call from the owner's number reaches a full-permission bot |
+| Prompt injection into a call | task output, automation errors, rule notes and notification text enter the call brief only as fenced data (`chat.Fence`); tool results are fenced as in chat; the model cannot choose the number dialled | same limits as the prompt-injection rule above |
+| Runaway cost or call spam | daily call cap (10), monthly estimated-cost cap ($20), 10-minute cool-down per bot for `call_owner`, quiet hours, one call at a time, 30-minute ceiling per call | the cost figure is an estimate from a per-minute rate setting, not the provider's bill |
+| Verification code | the owner number becomes verified only after a spoken six-digit code is entered (10 minutes, 5 attempts); `jarvis.*` settings cannot be written through `settings.set` | none known |
+
+Calls and rules are audited; secrets, transcripts and spoken text are never logged (timings only).
 
 ## Prompt injection
 

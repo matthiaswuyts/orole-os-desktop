@@ -77,6 +77,32 @@ The engine runs on Windows x64 only; elsewhere the Voice page says so. The MyGo 
 the app's own pages by default; Windows can still block it under Settings > Privacy & security > Microphone, which the
 UI explains.
 
+### Jarvis (`svc_jarvis.go`, `internal/jarvis`)
+
+Phone calls with bots (`jarvis.md`). The service is built by `registerJarvis`, **after** `registerChatTools` (it runs bot
+turns through `d.Chat`). `Daemon.Run` starts it (`Jarvis.Start`: the 20 s ticker and the relay connection) and
+shutdown closes it **before** the chat manager and notices, because voice turns run in chat and call endings report
+there. A live call is left to the provider; it does not survive a daemon restart. The service also hooks the agent
+manager (task finished/failed), the automation engine (run results) and the notifications store (never its own `jarvis`
+notices) to evaluate rules, and installs the bot save check that enforces the permission gate. The desktop app and CLI
+need not be open for calls.
+
+| Method | Behaviour |
+|---|---|
+| `jarvis.status` | `StatusView`: settings, which credentials exist (never values), relay connected, verification pending, calls today, month cost, last error |
+| `jarvis.secrets.set` | `{twilioSid, twilioToken, elevenLabsKey}`; empty fields unchanged; audited by name only |
+| `jarvis.relaySecrets.generate` | creates the relay token and LLM secret, returns them once |
+| `jarvis.configure` | saves the settings and provisions ElevenLabs; returns the status and, once, the post-call webhook secret |
+| `jarvis.verify.start` / `.confirm` | place the code call to a number / enter the six digits |
+| `jarvis.voices` / `jarvis.models` | ElevenLabs voices and TTS models for the pickers |
+| `jarvis.rules.list` / `.delete` | `{botId}` / `{id}` |
+| `jarvis.calls.recent` | `{botId}` -> last 20 `CallRecord`s |
+| `jarvis.call.test` | `{botId}` -> places a test call (caps apply; quiet hours and cool-down do not) |
+
+Event `jarvis.changed` carries the `StatusView` when the relay connects or drops, a call starts or ends, or settings and
+rules change. `settings.set` refuses the `jarvis` and `jarvis.state` keys. The bot tools (`jarvis_rule_*`, `call_owner`,
+`switch_bot`) go through the same service, scoped to the calling bot.
+
 ## Operating it
 
 ```

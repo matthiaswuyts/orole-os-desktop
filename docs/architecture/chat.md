@@ -71,6 +71,26 @@ colleague in a messaging app, short and direct, one idea per paragraph, structur
 output in files. The thread draws each paragraph of a reply as its own bubble (`parts/bubbles.ts`; fenced code
 and a lead-in line with its list stay whole).
 
+### Phone calls (voice turns)
+Bots with Jarvis mode on can speak on the phone (`docs/architecture/jarvis.md`). `internal/chat/voice.go` adds:
+- `VoiceTurn(ctx, VoiceRequest)` answers one spoken utterance with the bot's own model and tools. It runs under its own
+  run key `call:<callId>`, so a call never waits behind the bot's chat queue (a second concurrent turn for the same call
+  gets "busy"; the call layer cancels the old turn first, which is how barge-in works). The utterance and the reply are
+  stored in the bot's thread like a typed exchange.
+- Voice options: `voiceStyle` replaces `chatStyle` (spoken, one to three sentences, no markdown, never name the app);
+  reasoning is the cheapest level the model offers (`none`, `minimal` or `low`); no attachments or compaction; at most 6
+  steps and 10 tool calls, never above the bot's own limits; the call brief is passed as the run-specific addendum so the
+  prompt prefix stays stable; the call layer supplies its own history (a connected cue is added when it starts with the
+  bot's opener). `RunContext.CallID` is set, which `call_owner` and `switch_bot` check.
+- Callbacks: `OnText` streams the spoken text, `OnTool` is called as a tool starts (the call layer speaks a filler).
+- `Compose(ctx, botID, instruction)` asks the model for one short line (the call opener): nothing stored, no tools.
+- `PartCall` is a message part for the phone call card (`ID` call id, `Name` direction `outbound|inbound`, `Status`,
+  `Title` reason, `DurationMs`, `Summary` estimated cost). `PostCallCard` inserts a message holding it and
+  `UpdateCallCard` rewrites it when the call ends.
+- `SetSaveCheck(f)`: a hook run by `SaveBot` before a bot saved with `Jarvis.Enabled` is stored; the daemon installs the
+  permission gate there, and a failing check refuses the save with the failing condition. Jarvis tools are offered only
+  to bots with Jarvis on, and their prompt section carries the owner's call policy as fenced data.
+
 ## Tools
 - Hosted: OpenRouter `openrouter:web_search` / `web_fetch` / `datetime`, OpenAI `web_search`. A tool is offered only
   when the provider+model can run it; `chat.tools.list` returns `available` plus a reason and what leaves the machine.
