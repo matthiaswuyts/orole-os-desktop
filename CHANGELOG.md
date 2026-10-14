@@ -15,6 +15,7 @@ notes. See `docs/development/updates.md`.
 
 ### Changed
 - AI providers settings are shorter: the intro box about where keys are stored is gone, account rows no longer carry a "Uses your … plan through …" note, and a CLI Orole OS installed itself is no longer labelled "Orole's copy".
+- A coding agent or document opened from a bot's chat now sits beside the conversation like the bot settings panel, at any window width, instead of sliding over the chat on narrower windows. Drag the divider on its left edge (or focus it and use the arrow keys) to resize it; the width is remembered, and double-clicking the divider resets it.
 - The permission mode of a bot's code task now always comes from your settings (the bot's own setting, then Bot code tasks, then your default mode). The bot can no longer choose Manual itself. If your setting is Yolo but "Bots may use Yolo" is off, the task doesn't start and the bot tells you why, instead of quietly starting in Manual.
 - Bot approvals now also show up in Home › Needs you and as a count on the bot in the sidebar, so a bot no longer waits on a chat you aren't looking at. Settings › Remembered approvals lists every rule you saved for a bot.
 

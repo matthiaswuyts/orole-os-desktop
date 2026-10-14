@@ -86,7 +86,7 @@ export function ChatView() {
       ? <NoBots />
       : <CenteredCard title="Pick a bot"><p>Choose a bot from the list to open its conversation.</p></CenteredCard>;
   }
-  // The container sizes the side pane: beside the conversation when there is room, over it when there is not.
+  // The container sizes the side pane, which takes its own column beside the conversation like the settings panel.
   return <div ref={container} className="@container/chat relative flex h-full min-w-0 overflow-hidden">
     <div className="min-w-0 flex-1"><Conversation key={bot.id} bot={bot} /></div>
     {settingsOpen && <BotPanel bot={bot} />}

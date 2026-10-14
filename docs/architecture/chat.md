@@ -157,7 +157,10 @@ subagent-list element) whose status glyph, activity and title come live from the
 fetches a task the list does not hold with `Agents.get`). A row, or a report's "Open task", opens `TaskPane` beside
 the conversation (`useChat.pane`, also used for `show_document` artifacts; it replaces the settings panel and closes
 when another bot is selected): the Tasks view's own `TaskView`, so the feed and composer talk to that task directly.
-Below a `@3xl` chat container the pane overlays the conversation instead of splitting it.
+Like the settings panel it always takes its own column and the conversation narrows to make room; it never overlays
+the thread. It opens at 45% of the chat width (at least 24rem); the divider on its left edge resizes it (drag, arrow keys, Home/End,
+double-click to reset) between 20rem and the width that leaves the conversation 20rem (or 40% of the chat when that is
+less), and the chosen width is kept in `localStorage` (`orole.chat.paneWidth`).
 
 ## @mentions and skills
 Typing `@` in the composer opens the assistant-ui trigger popover: the other bots and the skills this bot has been

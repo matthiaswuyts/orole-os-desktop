@@ -179,3 +179,41 @@ describe("task pane state", () => {
     expect(pane()).toBeNull();
   });
 });
+
+describe("side pane size", () => {
+  // jsdom has no layout: give every element a 1000px width so the chat container has room to split.
+  beforeEach(() => {
+    localStorage.removeItem("orole.chat.paneWidth");
+    vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
+  });
+  afterEach(() => vi.restoreAllMocks());
+  const divider = () => screen.getByRole("separator", { name: "Resize side pane" });
+  const paneWidth = () => divider().nextElementSibling!.getAttribute("style");
+
+  it("opens a task in a column of its own sized from the chat width", async () => {
+    render(<ChatView />);
+    fireEvent.click(chips()[0]!);
+    await waitFor(() => expect(divider()).toHaveAttribute("aria-valuenow", "450"));
+    expect(paneWidth()).toContain("width: 450px");
+    expect(divider()).toHaveAttribute("aria-valuemin", "320");
+    expect(divider()).toHaveAttribute("aria-valuemax", "680");
+  });
+
+  it("resizes within bounds, remembers the width and resets on double-click", async () => {
+    const view = render(<ChatView />);
+    fireEvent.click(chips()[0]!);
+    await waitFor(() => expect(divider()).toHaveAttribute("aria-valuenow", "450"));
+    fireEvent.keyDown(divider(), { key: "ArrowLeft" });
+    expect(divider()).toHaveAttribute("aria-valuenow", "482");
+    fireEvent.keyDown(divider(), { key: "End" });
+    fireEvent.keyDown(divider(), { key: "ArrowLeft" });
+    expect(divider()).toHaveAttribute("aria-valuenow", "680");
+    expect(localStorage.getItem("orole.chat.paneWidth")).toBe("680");
+    view.unmount();
+    render(<ChatView />);
+    await waitFor(() => expect(divider()).toHaveAttribute("aria-valuenow", "680"));
+    fireEvent.doubleClick(divider());
+    expect(divider()).toHaveAttribute("aria-valuenow", "450");
+    expect(localStorage.getItem("orole.chat.paneWidth")).toBeNull();
+  });
+});
