@@ -42,11 +42,12 @@ function sseChunk(content: string): Uint8Array {
 const sseDone = enc.encode(`${sseEvent({}, "stop")}data: [DONE]\n\n`);
 
 // A function call in the OpenAI streaming format, which ElevenLabs executes (for example its skip_turn system tool):
-// one chunk whose delta.tool_calls holds the complete call (index, id, type, function.name, function.arguments as a
-// JSON string), then a chunk with finish_reason "tool_calls" and an empty delta, then [DONE].
+// one chunk whose delta carries role "assistant" (OpenAI streams the role in the first assistant delta) and
+// tool_calls holding the complete call (index, id, type, function.name, function.arguments as a JSON string), then a
+// chunk with finish_reason "tool_calls" and an empty delta, then [DONE].
 function sseTool(name: string, args: string): Uint8Array {
   const call = { index: 0, id: `call_${crypto.randomUUID().replaceAll("-", "").slice(0, 24)}`, type: "function", function: { name, arguments: args } };
-  return enc.encode(`${sseEvent({ tool_calls: [call] }, null)}${sseEvent({}, "tool_calls")}data: [DONE]\n\n`);
+  return enc.encode(`${sseEvent({ role: "assistant", tool_calls: [call] }, null)}${sseEvent({}, "tool_calls")}data: [DONE]\n\n`);
 }
 
 // The arguments of a tool call must be a JSON object string; anything else becomes "{}".

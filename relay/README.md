@@ -30,9 +30,8 @@ carry the same `id`, and the relay streams them to ElevenLabs as OpenAI-style SS
 `llm.tool` answers the turn with a function call instead of ending it. ElevenLabs passes the agent's system tools
 (`end_call`, `skip_turn`, ...) to a custom LLM in the OpenAI `tools` parameter and runs a call that comes back in the
 stream; the daemon uses `skip_turn` to keep the agent silent and waiting for the owner. The relay writes one
-`chat.completion.chunk` whose `choices[0].delta.tool_calls` is
-`[{"index":0,"id":"call_<random>","type":"function","function":{"name":"skip_turn","arguments":"{}"}}]`, then a chunk with an
-empty delta and `finish_reason: "tool_calls"`, then `data: [DONE]`. Text deltas sent before the tool frame stay ahead of
+`chat.completion.chunk` whose `choices[0].delta` is `{"role":"assistant","tool_calls":[{"index":0,"id":"call_<random>","type":"function","function":{"name":"skip_turn","arguments":"{}"}}]}`,
+then a chunk with an empty delta and `finish_reason: "tool_calls"`, then `data: [DONE]`. Text deltas sent before the tool frame stay ahead of
 the call. `args` that is not a JSON object is replaced by `{}`, and a frame without `tool` is ignored.
 
 The daemon follows every `llm.tool` with an `llm.done` for the same request. The relay has already finished the stream

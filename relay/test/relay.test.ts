@@ -141,6 +141,8 @@ describe("llm tool calls", () => {
     expect(call.object).toBe("chat.completion.chunk");
     expect(call.choices[0].finish_reason).toBeNull();
     expect(call.choices[0].delta.content).toBeUndefined();
+    expect(call.choices[0].delta.role).toBe("assistant");
+    expect(Object.keys(call.choices[0].delta).sort()).toEqual(["role", "tool_calls"]);
     expect(call.choices[0].delta.tool_calls).toEqual([
       { index: 0, id: expect.stringMatching(/^call_[0-9a-f]{24}$/), type: "function", function: { name: "skip_turn", arguments: "{}" } },
     ]);
