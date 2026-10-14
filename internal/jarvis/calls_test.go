@@ -997,6 +997,26 @@ func TestShortRequestFirstGetsOpenerThenAnswer(t *testing.T) {
 	}
 }
 
+// A call that ends while a turn is recording the answer stays ended: the stale answer write must not reopen it.
+func TestAnswerWriteRacingFinishLeavesCallEnded(t *testing.T) {
+	e := newCallEnv(t)
+	call, _ := e.c.Place(context.Background(), PlaceRequest{BotID: "b1", Reason: "x"})
+	e.c.afterAnswer = func() {
+		e.c.HandleFrame(context.Background(), Frame{Type: FrameCallStatus, CallID: call.ID, Status: "done"})
+	}
+	e.c.HandleFrame(context.Background(), llmFrame("r1", call.ID, "hello?"))
+	got := e.record(t, call.ID)
+	if got.Status != StatusCompleted || got.EndedAt == 0 || got.AnsweredAt == 0 {
+		t.Fatalf("row %+v", got)
+	}
+	e.host.mu.Lock()
+	card := e.host.cards[got.MessageID]
+	e.host.mu.Unlock()
+	if got.MessageID == "" || card.Status != StatusCompleted {
+		t.Fatalf("card %+v (message %q)", card, got.MessageID)
+	}
+}
+
 // ---- carrier: hang-up and polling ----
 
 func TestTwilioPollEndsCall(t *testing.T) {

@@ -85,6 +85,9 @@ type live struct {
 
 	turnCancel context.CancelFunc // in-flight model turn, if any
 	turnDone   chan struct{}
+
+	// persistMu serializes writes of this call's row and card; see Calls.persist.
+	persistMu sync.Mutex
 }
 
 // injected is a call request folded into the call in progress.
@@ -107,6 +110,8 @@ type Calls struct {
 	Retry func(ctx context.Context, req PlaceRequest)
 	// Changed, if set, is called (and must not block) when a call is recorded or ends.
 	Changed func()
+	// afterAnswer, if set, runs after a turn marks the call answered and before that is persisted (tests only).
+	afterAnswer func()
 
 	baseCtx context.Context
 	stop    context.CancelFunc
@@ -231,7 +236,7 @@ func (c *Calls) Place(ctx context.Context, req PlaceRequest) (CallRecord, error)
 	l.call.ConversationID, l.call.ProviderCallID = conv, sid
 	snap := l.call
 	c.mu.Unlock()
-	_ = c.store.UpdateCall(ctx, snap)
+	c.persist(ctx, l, false)
 	c.host.Audit("jarvis.call.started", call.ID, "allowed", bot.Name+": "+req.Reason)
 	c.spawn(func() { c.monitor(l) })
 
@@ -549,22 +554,21 @@ func (c *Calls) turn(ctx context.Context, f Frame) {
 		c.log.Info("jarvis: voicemail detected", "call", f.CallID)
 		return
 	}
-	var answered *CallRecord
+	answered := false
 	if l.call.AnsweredAt == 0 && (utter != "" || verify) {
 		l.call.AnsweredAt = c.now().UnixMilli()
 		l.call.Status = StatusInProgress
-		snap := l.call
-		answered = &snap
+		answered = true
 	}
 	first := !l.spoken
 	l.spoken = true
 	botName := l.botName
 	c.mu.Unlock()
-	if answered != nil {
-		_ = c.store.UpdateCall(ctx, *answered)
-		if answered.MessageID != "" {
-			_ = c.host.UpdateCallCard(ctx, answered.MessageID, c.card(*answered))
-		}
+	if answered && c.afterAnswer != nil {
+		c.afterAnswer()
+	}
+	if answered {
+		c.persist(ctx, l, true)
 		c.changed()
 	}
 	sp := c.newSpeaker(ctx, f.ID, f.CallID, botName)
@@ -848,9 +852,8 @@ func (c *Calls) inbound(ctx context.Context, f Frame) {
 	if id, err := c.host.PostCallCard(ctx, bot.ID, c.card(call)); err == nil {
 		c.mu.Lock()
 		l.call.MessageID = id
-		snap := l.call
 		c.mu.Unlock()
-		_ = c.store.UpdateCall(ctx, snap)
+		c.persist(ctx, l, false)
 	}
 	octx := context.WithoutCancel(ctx)
 	c.spawn(func() {
@@ -1063,10 +1066,7 @@ func (c *Calls) finish(ctx context.Context, l *live, status string, durationSecs
 	}
 	c.mu.Unlock()
 	ctx = context.WithoutCancel(ctx)
-	_ = c.store.UpdateCall(ctx, call)
-	if call.MessageID != "" {
-		_ = c.host.UpdateCallCard(ctx, call.MessageID, c.card(call))
-	}
+	c.persist(ctx, l, true)
 	c.host.Audit("jarvis.call.ended", call.ID, "allowed", status)
 	c.changed()
 	if len(missed) > 0 {
@@ -1091,6 +1091,21 @@ func (c *Calls) retry(call CallRecord, brief string, quiet bool) {
 		return
 	}
 	c.Retry(c.baseCtx, PlaceRequest{BotID: call.BotID, Reason: call.Reason, Brief: brief, RuleID: call.RuleID, QuietOverride: quiet})
+}
+
+// persist writes the call's row (and its card, if asked) as the call stands now. Writers for one call are serialized
+// and each one reads the state only once it holds the call's write lock, so a write that started before the call
+// ended can never land after finish's and reopen it: whichever write comes last carries the final state.
+func (c *Calls) persist(ctx context.Context, l *live, card bool) {
+	l.persistMu.Lock()
+	defer l.persistMu.Unlock()
+	c.mu.Lock()
+	call := l.call
+	c.mu.Unlock()
+	_ = c.store.UpdateCall(ctx, call)
+	if card && call.MessageID != "" {
+		_ = c.host.UpdateCallCard(ctx, call.MessageID, c.card(call))
+	}
 }
 
 func (c *Calls) changed() {
