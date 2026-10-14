@@ -23,14 +23,25 @@ type ElevenLabs struct {
 }
 
 type Voice struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description"` // ElevenLabs' text, else built from the labels
 }
 
+// TTSModel is a curated text-to-speech model (see curatedModels).
 type TTSModel struct {
-	ID      string `json:"id"`
-	Name    string `json:"name"`
-	Latency string `json:"latency"` // "fast" | "expressive"
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Recommended bool   `json:"recommended"`
+}
+
+// curatedModels is the single source for the voice model choices, in display order. Models() offers only the ones
+// the account's /v1/models actually lists.
+var curatedModels = []TTSModel{
+	{ID: "eleven_flash_v2_5", Name: "Flash v2.5 — recommended for calls", Description: "Fastest and cheapest (~75 ms), 32 languages.", Recommended: true},
+	{ID: "eleven_v3_conversational", Name: "v3 Conversational", Description: "Most natural and expressive, built for agents, 70+ languages. A bit slower and pricier."},
+	{ID: "eleven_turbo_v2_5", Name: "Turbo v2.5 (older)", Description: "Slightly richer than Flash but slower; ElevenLabs now recommends Flash for new projects."},
 }
 
 // AgentConfig describes the shared agent. Empty VoiceID/TTSModel are omitted from the request.
@@ -96,11 +107,33 @@ func (e *ElevenLabs) scrub(s string) string {
 	return s
 }
 
+// voiceDescription is ElevenLabs' own description, or a short line built from the labels, for example
+// "Calm · female · British · narration".
+func voiceDescription(description string, labels map[string]string) string {
+	if d := strings.TrimSpace(description); d != "" {
+		return d
+	}
+	var parts []string
+	for _, k := range []string{"descriptive", "gender", "age", "accent", "use_case"} {
+		if v := strings.TrimSpace(labels[k]); v != "" {
+			parts = append(parts, strings.ReplaceAll(v, "_", " "))
+		}
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	out := strings.Join(parts, " · ")
+	r := []rune(out)
+	return strings.ToUpper(string(r[:1])) + string(r[1:])
+}
+
 func (e *ElevenLabs) Voices(ctx context.Context) ([]Voice, error) {
 	var res struct {
 		Voices []struct {
-			VoiceID string `json:"voice_id"`
-			Name    string `json:"name"`
+			VoiceID     string            `json:"voice_id"`
+			Name        string            `json:"name"`
+			Description string            `json:"description"`
+			Labels      map[string]string `json:"labels"`
 		} `json:"voices"`
 	}
 	if err := e.do(ctx, "GET", "/v1/voices", nil, &res); err != nil {
@@ -108,30 +141,31 @@ func (e *ElevenLabs) Voices(ctx context.Context) ([]Voice, error) {
 	}
 	out := make([]Voice, 0, len(res.Voices))
 	for _, v := range res.Voices {
-		out = append(out, Voice{ID: v.VoiceID, Name: v.Name})
+		out = append(out, Voice{ID: v.VoiceID, Name: v.Name, Description: voiceDescription(v.Description, v.Labels)})
 	}
 	return out, nil
 }
 
+// Models returns the curated models the account offers for text to speech, in curated order.
 func (e *ElevenLabs) Models(ctx context.Context) ([]TTSModel, error) {
 	var res []struct {
 		ModelID string `json:"model_id"`
-		Name    string `json:"name"`
 		TTS     bool   `json:"can_do_text_to_speech"`
 	}
 	if err := e.do(ctx, "GET", "/v1/models", nil, &res); err != nil {
 		return nil, err
 	}
-	var out []TTSModel
+	offered := map[string]bool{}
 	for _, m := range res {
-		if !m.TTS {
-			continue
+		if m.TTS {
+			offered[m.ModelID] = true
 		}
-		lat := "expressive"
-		if strings.Contains(m.ModelID, "flash") || strings.Contains(m.ModelID, "turbo") {
-			lat = "fast"
+	}
+	out := []TTSModel{}
+	for _, m := range curatedModels {
+		if offered[m.ID] {
+			out = append(out, m)
 		}
-		out = append(out, TTSModel{ID: m.ModelID, Name: m.Name, Latency: lat})
 	}
 	return out, nil
 }

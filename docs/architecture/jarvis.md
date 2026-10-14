@@ -190,6 +190,9 @@ Plain settings (`PhoneSettings`, settings key `jarvis`, writable only through `j
 `settings.set`): relay URL (https, or loopback http), Jarvis number, verified owner number, quiet hours, daily cap,
 monthly cost cap, cents per minute, default voice and TTS model, and the provider ids provisioning created (agent, phone
 number, post-call webhook). Per bot (`BotConfig.Jarvis`): enabled, policy text (2000 characters), voice, TTS model.
+The voice model choices are a curated list in `internal/jarvis/elevenlabs.go` (`curatedModels`: Flash v2.5, recommended
+for calls; v3 Conversational; Turbo v2.5, older), filtered to what the account's `/v1/models` offers. Voices carry
+ElevenLabs' description, or one built from their labels. The UI picker is `frontend/src/features/jarvis/VoicePicker.tsx`.
 
 | Credential key (`internal/credentials`) | Holds | Set by |
 |---|---|---|

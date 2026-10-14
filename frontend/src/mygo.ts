@@ -3086,11 +3086,12 @@ export interface SyncState {
   error: string;
 }
 
+/** TTSModel is a curated text-to-speech model (see curatedModels). */
 export interface TTSModel {
   id: string;
   name: string;
-  /** "fast" | "expressive" */
-  latency: string;
+  description: string;
+  recommended: boolean;
 }
 
 /**
@@ -3329,6 +3330,8 @@ export interface User {
 export interface Voice {
   id: string;
   name: string;
+  /** ElevenLabs' text, else built from the labels */
+  description: string;
 }
 
 /**

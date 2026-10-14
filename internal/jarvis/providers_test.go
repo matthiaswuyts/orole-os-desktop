@@ -70,12 +70,48 @@ func TestElevenLabsErrorsNeverEchoKey(t *testing.T) {
 	}
 }
 
-func TestModelsMarksLatency(t *testing.T) {
-	srv, _ := fakeAPI(t, map[string]string{"GET /v1/models": `[{"model_id":"eleven_flash_v2_5","name":"Flash v2.5","can_do_text_to_speech":true},{"model_id":"eleven_multilingual_v2","name":"Multilingual v2","can_do_text_to_speech":true},{"model_id":"scribe_v1","name":"Scribe","can_do_text_to_speech":false}]`})
+func TestModelsAreCuratedFilteredAndOrdered(t *testing.T) {
+	srv, _ := fakeAPI(t, map[string]string{"GET /v1/models": `[{"model_id":"eleven_turbo_v2_5","name":"x","can_do_text_to_speech":true},{"model_id":"eleven_multilingual_v2","name":"Multilingual v2","can_do_text_to_speech":true},{"model_id":"eleven_flash_v2_5","name":"y","can_do_text_to_speech":true},{"model_id":"eleven_v3_conversational","name":"z","can_do_text_to_speech":false},{"model_id":"scribe_v1","name":"Scribe","can_do_text_to_speech":false}]`})
 	el := &ElevenLabs{Key: "k", BaseURL: srv.URL, HTTP: srv.Client()}
 	ms, err := el.Models(context.Background())
-	if err != nil || len(ms) != 2 || ms[0].Latency != "fast" || ms[1].Latency != "expressive" {
+	if err != nil || len(ms) != 2 {
 		t.Fatalf("models=%+v err=%v", ms, err)
+	}
+	if ms[0].ID != "eleven_flash_v2_5" || !ms[0].Recommended || ms[0].Name != "Flash v2.5 — recommended for calls" || ms[0].Description == "" {
+		t.Errorf("first=%+v", ms[0])
+	}
+	if ms[1].ID != "eleven_turbo_v2_5" || ms[1].Recommended || ms[1].Name != "Turbo v2.5 (older)" {
+		t.Errorf("second=%+v", ms[1])
+	}
+}
+
+func TestModelsHidesUnknownAccountModels(t *testing.T) {
+	srv, _ := fakeAPI(t, map[string]string{"GET /v1/models": `[{"model_id":"eleven_multilingual_v2","name":"Multilingual v2","can_do_text_to_speech":true}]`})
+	el := &ElevenLabs{Key: "k", BaseURL: srv.URL, HTTP: srv.Client()}
+	ms, err := el.Models(context.Background())
+	if err != nil || len(ms) != 0 || ms == nil {
+		t.Fatalf("models=%+v err=%v", ms, err)
+	}
+}
+
+func TestVoicesDescribeThemselves(t *testing.T) {
+	srv, _ := fakeAPI(t, map[string]string{"GET /v1/voices": `{"voices":[
+{"voice_id":"v1","name":"Rachel","description":"  Warm and clear.  ","labels":{"gender":"female"}},
+{"voice_id":"v2","name":"George","description":"","labels":{"use_case":"narration","accent":"British","gender":"male","descriptive":"calm","age":""}},
+{"voice_id":"v3","name":"Mystery","labels":{}}]}`})
+	el := &ElevenLabs{Key: "k", BaseURL: srv.URL, HTTP: srv.Client()}
+	vs, err := el.Voices(context.Background())
+	if err != nil || len(vs) != 3 {
+		t.Fatalf("voices=%+v err=%v", vs, err)
+	}
+	if vs[0].Description != "Warm and clear." {
+		t.Errorf("v1=%q", vs[0].Description)
+	}
+	if vs[1].Description != "Calm · male · British · narration" {
+		t.Errorf("v2=%q", vs[1].Description)
+	}
+	if vs[2].Description != "" {
+		t.Errorf("v3=%q", vs[2].Description)
 	}
 }
 
