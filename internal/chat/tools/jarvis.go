@@ -36,8 +36,8 @@ type Jarvis struct{ Runtime JarvisRuntime }
 func (Jarvis) ID() string { return "jarvis" }
 
 const ruleSchema = `{"type":"object","properties":{
-"trigger":{"type":"string","enum":["task_finished","task_failed","automation_finished","automation_failed","notification","at_time"]},
-"target":{"type":"string","description":"Task or automation id, \"any\" (for tasks: any task you started), a notification kind like \"failed\" or \"failed:github\", or HH:MM for at_time."},
+"trigger":{"type":"string","enum":["task_finished","task_failed","automation_finished","automation_failed","notification","at_time","bot_reported"]},
+"target":{"type":"string","description":"Task or automation id, \"any\" (for tasks: any task you started), a notification kind like \"failed\" or \"failed:github\", or HH:MM for at_time; for bot_reported: the name of the bot you handed the work to, or \"any\"."},
 "note":{"type":"string","maxLength":280,"description":"What to tell the owner when it fires."},
 "repeat":{"type":"boolean","description":"Keep the rule after it fires. Default: delete after the first call."},
 "urgent":{"type":"boolean","description":"Retry once after 5 minutes if unanswered."},
@@ -55,7 +55,7 @@ func (j Jarvis) Specs(bot chat.Bot, caps llm.Caps) []llm.ToolSpec {
 		{Name: "jarvis_rule_delete", Description: "Delete one of your call rules.", Schema: json.RawMessage(`{"type":"object","properties":{"id":{"type":"string"}},"required":["id"]}`)},
 		{Name: "call_owner", Description: "Phone the owner now because something matches their \"When to call me\" policy. The app may refuse (quiet hours, limits).", Schema: json.RawMessage(`{"type":"object","properties":{"reason":{"type":"string","maxLength":200},"urgent":{"type":"boolean"}},"required":["reason"]}`)},
 		{Name: "switch_bot", Description: "On a phone call only: hand the call to another bot by name when the owner asks for it.", Schema: json.RawMessage(`{"type":"object","properties":{"name":{"type":"string"}},"required":["name"]}`)},
-		{Name: "end_call", Description: "On a phone call only: hang up after this reply, when the owner is done (they say no, thanks or goodbye). Say a short, friendly goodbye in the same reply.", Schema: json.RawMessage(`{"type":"object","properties":{}}`)},
+		{Name: "end_call", Description: "On a phone call only: hang up after this reply. Only when the owner has clearly said they are done (no, that's all, thanks, bye). Say a short, friendly goodbye in the same reply.", Schema: json.RawMessage(`{"type":"object","properties":{}}`)},
 	}
 }
 

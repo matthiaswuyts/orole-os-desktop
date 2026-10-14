@@ -17,6 +17,8 @@ const (
 	callPrefix        = "call:"
 	composeMaxTokens  = 200
 	callConnected     = "(The phone call has connected.)"
+	// cueAuthor is the author of a user message that is a daemon cue rather than something the owner said.
+	cueAuthor = "cue"
 )
 
 // voiceReasoning picks the cheapest reasoning level the model offers; "" when it has none to choose.
@@ -46,8 +48,12 @@ type VoiceLine struct{ Role, Text string }
 // VoiceRequest is one spoken utterance to answer.
 type VoiceRequest struct {
 	BotID, CallID, Text string
-	Brief               string      // call context; untrusted parts already fenced by the caller
-	History             []VoiceLine // earlier turns of this call, oldest first
+	// Cue marks Text as an instruction from the daemon (say the call connected, answer a silence...), not the owner's
+	// words. It is stored as the user message with Author cueAuthor: the bot's history keeps it, the call transcript
+	// (CallMessages) leaves it out.
+	Cue     bool
+	Brief   string      // call context; untrusted parts already fenced by the caller
+	History []VoiceLine // earlier turns of this call, oldest first
 	// Language is the call language: "nl" (Dutch), "en" (English) or "auto" (the owner's language, Dutch by default);
 	// "" adds no language line to the voice prompt.
 	Language string
@@ -109,7 +115,11 @@ func (m *Manager) VoiceTurn(ctx context.Context, req VoiceRequest) (string, erro
 
 	bg := context.WithoutCancel(ctx)
 	now := m.nowMs()
-	user := Message{ID: newID(), BotID: bot.ID, Role: "user", Author: "user", Status: StatusComplete, CreatedAt: now, FinishedAt: now,
+	author := "user"
+	if req.Cue {
+		author = cueAuthor
+	}
+	user := Message{ID: newID(), BotID: bot.ID, Role: "user", Author: author, Status: StatusComplete, CreatedAt: now, FinishedAt: now,
 		CallID: req.CallID, Parts: []MsgPart{{Type: PartText, Text: req.Text}}}
 	if err := m.store.insertMessage(bg, &user); err != nil {
 		return "", err
@@ -144,8 +154,15 @@ func (m *Manager) VoiceTurn(ctx context.Context, req VoiceRequest) (string, erro
 		// The bot usually speaks first (the opener); historyMessages drops a leading assistant message, so give it a cue.
 		hist = slices.Insert(hist, 0, Message{Role: "user", Status: StatusComplete, Parts: []MsgPart{{Type: PartText, Text: callConnected}}})
 	}
+	// The bot sees the tasks it handed off that have not reported back, so it can answer "how is that going?".
+	var extra []string
+	for _, part := range []string{req.Brief, m.handoffsNote(bot.ID)} {
+		if part = strings.TrimSpace(part); part != "" {
+			extra = append(extra, part)
+		}
+	}
 	env, err := m.prepare(runCtx, prep{bot: bot, convo: bot.ID, rc: rc, sink: s, text: req.Text, history: historyMessages(hist),
-		memory: true, voice: true, language: req.Language, extra: req.Brief, onText: onText, onTool: req.OnTool})
+		memory: true, voice: true, language: req.Language, extra: strings.Join(extra, "\n\n"), onText: onText, onTool: req.OnTool})
 	if err != nil {
 		status, text := StatusError, describeError(err)
 		if runCtx.Err() != nil {

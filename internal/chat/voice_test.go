@@ -527,3 +527,178 @@ func TestRegenerateRefusesCallCardAndLiveCall(t *testing.T) {
 		t.Fatalf("card damaged: %v", err)
 	}
 }
+
+// A cue is an instruction from the daemon, not something the owner said: the call transcript leaves it out, the model
+// (this call's later turns and the bot's typed chat) still sees it.
+func TestCueTurnIsHiddenFromTheTranscriptButInModelHistory(t *testing.T) {
+	e := newEnv(t, textScript("Hi, Atlas here.", "Sure.", "typed reply"))
+	b := e.bot("Atlas")
+	const cue = "Greet the owner now and say why you are calling."
+	reply, err := e.m.VoiceTurn(context.Background(), VoiceRequest{BotID: b.ID, CallID: "c1", Text: cue, Cue: true})
+	if err != nil || reply != "Hi, Atlas here." {
+		t.Fatalf("cue turn: reply=%q err=%v", reply, err)
+	}
+	if _, err := e.m.VoiceTurn(context.Background(), VoiceRequest{BotID: b.ID, CallID: "c1", Text: "hello"}); err != nil {
+		t.Fatal(err)
+	}
+
+	tr := e.callMessages("c1")
+	want := []string{"Hi, Atlas here.", "hello", "Sure."}
+	if len(tr) != len(want) {
+		t.Fatalf("transcript has %d messages, want %d: %+v", len(tr), len(want), tr)
+	}
+	for i, w := range want {
+		if replyText(tr[i]) != w {
+			t.Errorf("transcript[%d] = %q, want %q", i, replyText(tr[i]), w)
+		}
+		if replyText(tr[i]) == cue || tr[i].Author == cueAuthor {
+			t.Errorf("transcript[%d] is the cue", i)
+		}
+	}
+	if h := e.history(b.ID); len(h) != 0 {
+		t.Fatalf("cue leaked into the chat page: %+v", h)
+	}
+
+	// The cue is stored like any call message: user role, author "cue", tagged with the call.
+	tail, err := e.m.store.tail(context.Background(), b.ID, 0, 1<<62, 0, 100)
+	if err != nil || len(tail.msgs) != 4 {
+		t.Fatalf("stored messages = %d (err %v), want 4", len(tail.msgs), err)
+	}
+	if first := tail.msgs[0]; first.Role != "user" || first.Author != cueAuthor || historyText(first) != cue {
+		t.Fatalf("stored cue = %+v", first)
+	}
+	if tail.msgs[2].Author != "user" {
+		t.Errorf("a normal utterance was stored with author %q", tail.msgs[2].Author)
+	}
+	cues := 0
+	for _, r := range e.rec.all() {
+		if m, ok := r.payload.(Message); ok && r.event == "chat.message" && m.CallID != "" {
+			t.Fatalf("cue published as chat.message: %+v", m)
+		}
+		if m, ok := r.payload.(Message); ok && r.event == "chat.call.message" && m.Author == cueAuthor {
+			cues++
+		}
+	}
+	if cues == 0 {
+		t.Error("the cue was not published as chat.call.message")
+	}
+
+	// The model still sees it.
+	e.send(b.ID, "what did we say?")
+	e.idle(b.ID)
+	var all strings.Builder
+	for _, m := range e.lastRequest().Messages {
+		for _, p := range m.Parts {
+			all.WriteString(p.Text + "|")
+		}
+	}
+	if !strings.Contains(all.String(), cue) {
+		t.Errorf("model history misses the cue: %s", all.String())
+	}
+}
+
+func TestVoicePromptNamesTheBotAndSetsTheCallRules(t *testing.T) {
+	e := newEnv(t, textScript("ok"))
+	b := e.bot("Atlas")
+	if _, err := e.m.VoiceTurn(context.Background(), VoiceRequest{BotID: b.ID, CallID: "c1", Text: "hi", Language: "en"}); err != nil {
+		t.Fatal(err)
+	}
+	sys := e.lastRequest().System
+	for _, want := range []string{
+		"Your name is Atlas. Use only that name for yourself.",
+		"say who is doing it and why in one sentence",
+		"then ask whether there is anything else you can do in the meantime.",
+		"When the owner asks how a handed-off or started task is going, check it with your tools before answering.",
+		"save a call rule for it with jarvis_rule_add (trigger bot_reported for work you handed to a bot, task_finished for a code task) and confirm it.",
+		"When you have done what the owner asked, ask briefly whether there is anything else.\n",
+		"Only end the call when the owner clearly says they are done (no, that's all, thanks, bye): say a short friendly goodbye and call end_call in the same reply. Never end the call for any other reason.",
+		// the lines that stay
+		"Answer in one to three short sentences.",
+		"No markdown, lists, code, links or emoji.",
+		"Never name the app you run in",
+		"say nothing about the reason",
+		"it is waiting in the app",
+		"Speak English",
+	} {
+		if !strings.Contains(sys, want) {
+			t.Errorf("voice prompt lacks %q", want)
+		}
+	}
+	for _, gone := range []string{"You may say your own name", "When the owner is done (no, that's all"} {
+		if strings.Contains(sys, gone) {
+			t.Errorf("voice prompt still has the replaced line %q", gone)
+		}
+	}
+}
+
+func TestBuildSystemVoiceName(t *testing.T) {
+	voice := buildSystem(systemInput{Bot: Bot{Name: "  Atlas \n Prime "}, Voice: true})
+	if !strings.Contains(voice, "- Your name is Atlas Prime. Use only that name for yourself.") {
+		t.Errorf("name line missing or not normalised: %q", voice)
+	}
+	if got := buildSystem(systemInput{Bot: Bot{}, Voice: true}); strings.Contains(got, "Your name is") {
+		t.Errorf("a bot without a name got a name line: %q", got)
+	}
+	if got := buildSystem(systemInput{Bot: Bot{Name: "Atlas"}}); strings.Contains(got, "Your name is") {
+		t.Errorf("the chat prompt got the voice name line")
+	}
+}
+
+// While a handoff is out, a voice turn's system prompt lists it after the brief, so the bot can answer "how is that
+// task going?"; once the task has reported back (or when there is none) the prompt ends with the brief alone.
+func TestVoiceTurnSeesTheHandoffsThatAreOut(t *testing.T) {
+	release := make(chan struct{})
+	var once sync.Once
+	unblock := func() { once.Do(func() { close(release) }) }
+	t.Cleanup(unblock)
+	e := newEnv(t, func(call int, req llm.Request) []llm.Delta {
+		if strings.Contains(req.System, "Be Callee.") {
+			<-release
+			return []llm.Delta{llmtest.Text("findings")}
+		}
+		return []llm.Delta{llmtest.Text("caller here")}
+	})
+	callee := e.bot("Callee")
+	caller := e.bot("Caller", executive)
+	const brief = "Reason: you asked me to call."
+
+	voiceSystem := func(callID string) string {
+		t.Helper()
+		if _, err := e.m.VoiceTurn(context.Background(), VoiceRequest{BotID: caller.ID, CallID: callID, Text: "how is it going?", Brief: brief}); err != nil {
+			t.Fatal(err)
+		}
+		return e.lastRequest().System
+	}
+
+	if sys := voiceSystem("c0"); !strings.HasSuffix(sys, brief) || strings.Contains(sys, "have not reported back") {
+		t.Fatalf("no handoff is out, yet the prompt is %q", sys)
+	}
+
+	if err := e.m.Handoff(context.Background(), fromBot(caller), callee.ID, "research the thing"); err != nil {
+		t.Fatal(err)
+	}
+	sys := voiceSystem("c1")
+	note := e.m.handoffsNote(caller.ID)
+	if note == "" || !strings.HasSuffix(sys, brief+"\n\n"+note) {
+		t.Fatalf("the brief and the handoffs note must close the prompt, joined by a blank line: %q", sys)
+	}
+	if !strings.Contains(sys, "have not reported back yet") || !strings.Contains(sys, `"Callee"`) || !strings.Contains(sys, "research the thing") {
+		t.Fatalf("the handoff is not in the voice prompt: %q", sys)
+	}
+
+	// Without a brief the note stands alone, with no stray blank lines in front of it.
+	if _, err := e.m.VoiceTurn(context.Background(), VoiceRequest{BotID: caller.ID, CallID: "c2", Text: "and now?"}); err != nil {
+		t.Fatal(err)
+	}
+	if sys := e.lastRequest().System; !strings.HasSuffix(sys, "\n\n"+note) || strings.Contains(sys, brief) {
+		t.Fatalf("note without a brief: %q", sys)
+	}
+
+	unblock()
+	e.until("the report to arrive", func() bool { return len(e.reports(caller.ID)) == 1 })
+	e.idle(caller.ID)
+	e.idle(callee.ID)
+	if sys := voiceSystem("c3"); !strings.HasSuffix(sys, brief) || strings.Contains(sys, "have not reported back") {
+		t.Fatalf("a finished task is still listed: %q", sys)
+	}
+}

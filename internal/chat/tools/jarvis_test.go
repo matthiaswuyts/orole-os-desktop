@@ -3,6 +3,8 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"slices"
 	"strings"
 	"testing"
 
@@ -15,6 +17,7 @@ type fakeJarvis struct {
 	called   []string
 	switched []string
 	ended    []string
+	endErr   error // EndCall refuses with this
 }
 
 func (f *fakeJarvis) AddRule(_ context.Context, botID string, r JarvisRule) (JarvisRule, error) {
@@ -35,7 +38,7 @@ func (f *fakeJarvis) SwitchBot(_ context.Context, callID, name string) (string, 
 
 func (f *fakeJarvis) EndCall(_ context.Context, callID string) error {
 	f.ended = append(f.ended, callID)
-	return nil
+	return f.endErr
 }
 
 func names(specs []llm.ToolSpec) []string {
@@ -119,5 +122,51 @@ func TestJarvisEndCallOnlyOnACall(t *testing.T) {
 	}
 	if len(f.ended) != 1 || f.ended[0] != "c1" {
 		t.Fatalf("ended %v", f.ended)
+	}
+}
+
+func TestJarvisEndCallRefusalIsAToolError(t *testing.T) {
+	f := &fakeJarvis{endErr: errors.New("The call is already over.")}
+	j := Jarvis{Runtime: f}
+	bot := chat.Bot{ID: "b1", Config: chat.BotConfig{Jarvis: chat.BotJarvis{Enabled: true}}}
+	res, err := j.Call(context.Background(), chat.RunContext{BotID: "b1", Bot: bot, CallID: "c1"}, "end_call", json.RawMessage(`{}`))
+	if err != nil || !res.IsError || !strings.Contains(res.Text, "already over") {
+		t.Fatalf("a refused end_call must be a tool error the model can read: res=%+v err=%v", res, err)
+	}
+	if strings.Contains(res.Text, "The call ends after this reply") {
+		t.Fatalf("a refused end_call reported success: %q", res.Text)
+	}
+}
+
+func TestJarvisSpecWording(t *testing.T) {
+	j := Jarvis{Runtime: &fakeJarvis{}}
+	on := chat.Bot{ID: "b1", Config: chat.BotConfig{Jarvis: chat.BotJarvis{Enabled: true}}}
+	specs := map[string]llm.ToolSpec{}
+	for _, s := range j.Specs(on, llm.Caps{Tools: true}) {
+		specs[s.Name] = s
+	}
+	const endCall = "On a phone call only: hang up after this reply. Only when the owner has clearly said they are done (no, that's all, thanks, bye). Say a short, friendly goodbye in the same reply."
+	if got := specs["end_call"].Description; got != endCall {
+		t.Errorf("end_call description = %q", got)
+	}
+
+	var schema struct {
+		Properties struct {
+			Trigger struct {
+				Enum []string `json:"enum"`
+			} `json:"trigger"`
+			Target struct {
+				Description string `json:"description"`
+			} `json:"target"`
+		} `json:"properties"`
+	}
+	if err := json.Unmarshal(specs["jarvis_rule_add"].Schema, &schema); err != nil {
+		t.Fatalf("rule schema is not valid JSON: %v", err)
+	}
+	if !slices.Contains(schema.Properties.Trigger.Enum, "bot_reported") {
+		t.Errorf("trigger enum lacks bot_reported: %v", schema.Properties.Trigger.Enum)
+	}
+	if !strings.Contains(schema.Properties.Target.Description, `for bot_reported: the name of the bot you handed the work to, or "any"`) {
+		t.Errorf("target description lacks the bot_reported hint: %q", schema.Properties.Target.Description)
 	}
 }

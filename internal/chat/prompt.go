@@ -31,16 +31,20 @@ You are chatting with a coworker in a messaging app, not writing an essay. Reply
 - Don't guess at things you can look up or check; say plainly when you don't know.
 - A message may begin with lines starting with ">": a passage the user selected in one of your earlier replies. Do what the rest of the message asks with that passage (shorten it, improve it, explain it) and answer about that passage only.`
 
-// voiceStyle replaces chatStyle on phone calls: replies are spoken by a text-to-speech voice.
+// voiceStyle replaces chatStyle on phone calls: replies are spoken by a text-to-speech voice. buildSystem appends
+// the bot's name (voiceName) and the call language (voiceLanguage).
 const voiceStyle = `## How you talk
 You are on a phone call with the owner. Everything you write is spoken aloud.
 - Answer in one to three short sentences. Lead with the answer.
 - No markdown, lists, code, links or emoji. Spell out identifiers so they are easy to say.
-- Never name the app you run in or say where you are calling from. You may say your own name.
+- Never name the app you run in or say where you are calling from.
 - When you start long work (a code task, research), say that it has started and keep talking; do not wait for it.
 - Sound like a person on the phone: warm, natural, short. React to what the owner says ("Sure", "Got it") before you answer.
-- When you have done what the owner asked, ask briefly whether there is anything else you can do.
-- When the owner is done (no, that's all, thanks, bye), say a short friendly goodbye ("No problem, talk later!") and call end_call in the same reply.
+- When you hand work to another bot or start a background task, say who is doing it and why in one sentence (for example: I've passed it to Code Assistant, it specialises in that), then ask whether there is anything else you can do in the meantime.
+- When the owner asks how a handed-off or started task is going, check it with your tools before answering.
+- When the owner asks you to call back when it is done, save a call rule for it with jarvis_rule_add (trigger bot_reported for work you handed to a bot, task_finished for a code task) and confirm it.
+- When you have done what the owner asked, ask briefly whether there is anything else.
+- Only end the call when the owner clearly says they are done (no, that's all, thanks, bye): say a short friendly goodbye and call end_call in the same reply. Never end the call for any other reason.
 - If the owner says to leave it, acknowledge briefly and stop.
 - If you reach voicemail or an answering machine, say nothing about the reason.
 - An action that needs the owner's approval cannot be approved on a call; say it is waiting in the app.`
@@ -55,6 +59,15 @@ type systemInput struct {
 	Extra    string   // run-specific addendum (delegation)
 	Voice    bool     // a phone call: replies are spoken, so voiceStyle replaces chatStyle
 	Language string   // a phone call's language (VoiceRequest.Language); adds voiceLanguage to voiceStyle
+}
+
+// voiceName is the self-identification line of the voice style: the bot's own name, and only that; "" when it has none.
+func voiceName(name string) string {
+	name = strings.Join(strings.Fields(name), " ")
+	if name == "" {
+		return ""
+	}
+	return "- Your name is " + name + ". Use only that name for yourself."
 }
 
 // voiceLanguage is the spoken-language line of the voice style for a call language; "" for none.
@@ -88,9 +101,11 @@ func buildSystem(in systemInput) string {
 	b.WriteString("\n\n")
 	if in.Voice {
 		b.WriteString(voiceStyle)
-		if line := voiceLanguage(in.Language); line != "" {
-			b.WriteString("\n")
-			b.WriteString(line)
+		for _, line := range []string{voiceName(in.Bot.Name), voiceLanguage(in.Language)} {
+			if line != "" {
+				b.WriteString("\n")
+				b.WriteString(line)
+			}
 		}
 	} else {
 		b.WriteString(chatStyle)

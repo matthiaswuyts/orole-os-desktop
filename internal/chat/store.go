@@ -655,9 +655,11 @@ func (s *store) pageMessages(ctx context.Context, req MessagesRequest) (MessageP
 	return page, nil
 }
 
-// callMessages returns the spoken turns of one call in order (at most maxCallMessages).
+// callMessages returns the spoken turns of one call in order (at most maxCallMessages). Daemon cues (user messages
+// with author cueAuthor) are instructions to the bot, not part of the conversation, so they are left out.
 func (s *store) callMessages(ctx context.Context, callID string) ([]Message, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT `+msgCols+` FROM messages WHERE call_id=? ORDER BY seq LIMIT ?`, callID, maxCallMessages)
+	rows, err := s.db.QueryContext(ctx, `SELECT `+msgCols+` FROM messages WHERE call_id=? AND NOT (role='user' AND author=?) ORDER BY seq LIMIT ?`,
+		callID, cueAuthor, maxCallMessages)
 	if err != nil {
 		return nil, err
 	}

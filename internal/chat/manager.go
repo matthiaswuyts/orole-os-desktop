@@ -525,7 +525,8 @@ func (m *Manager) Messages(ctx context.Context, req MessagesRequest) (MessagePag
 	return m.store.pageMessages(ctx, req)
 }
 
-// CallMessages returns the spoken turns of a phone call in order (see Message.CallID).
+// CallMessages returns the spoken turns of a phone call in order (see Message.CallID), without the daemon cues
+// (VoiceRequest.Cue) that only steered the bot.
 func (m *Manager) CallMessages(ctx context.Context, callID string) ([]Message, error) {
 	if callID == "" {
 		return []Message{}, nil
