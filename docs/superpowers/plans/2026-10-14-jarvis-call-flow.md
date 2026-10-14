@@ -33,7 +33,7 @@ after real calls failed. Branch: `jarvis-mode`.
   existing relay test command) clean when the relay changes.
 - Logs record timings, kinds and counts only, never spoken or transcribed text.
 - Another session is editing `CHANGELOG.md`, `docs/architecture/jarvis.md` and files under `frontend/` in this checkout.
-  Tasks 1-5 must not touch those files. Stage files explicitly by path (never `git add -A`/`.`), never commit build
+  Tasks 1-7 must not touch those files. Stage files explicitly by path (never `git add -A`/`.`), never commit build
   artefacts. Commits: conventional, lowercase, ending with `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`.
 - Timing constants are fields on `Calls` (or package constants copied into fields in `NewCalls`) so tests can shorten
   them; tests never sleep for real seconds.
@@ -102,16 +102,15 @@ Files: `relay/src/hub.ts`, `relay/test/*`, `relay/README.md`, `internal/jarvis/r
 6. README: document the frame and that the relay must be redeployed (`wrangler deploy`) for skip_turn to work; an old
    relay ignores `llm.tool`, so the request ends empty.
 
-## Task 3: chat side of calls (internal/chat, internal/chat/tools)
+## Task 3: voice prompt, cue turns and the end_call tool (internal/chat, internal/chat/tools)
 
-Files: `internal/chat/voice.go`, `internal/chat/prompt.go`, `internal/chat/delegate.go`, `internal/chat/api.go` (or
-wherever `Manager` options live), `internal/chat/tools/jarvis.go`, `internal/daemon/svc_jarvis.go` (transcript only),
-tests.
+Files: `internal/chat/voice.go`, `internal/chat/prompt.go`, `internal/chat/store.go` / `manager.go` (CallMessages
+filter only), `internal/chat/tools/jarvis.go`, tests.
 
 1. Cue turns: `VoiceRequest.Cue bool`. A cue turn's `Text` is an instruction from the daemon, not the owner's words: it
    is stored as the user message with `Author: "cue"` (still `CallID`-tagged and hidden from chat like other call
-   messages), and `CallMessages` / the call transcript (`jarvisTranscript`, `CallMessages`) leaves out user messages
-   whose author is `"cue"`. History given to the model keeps it.
+   messages), and `CallMessages` (the call transcript) leaves out user messages whose author is `"cue"`. History
+   given to the model keeps it.
 2. Voice turns see delegations: `VoiceTurn`'s `extra` is `req.Brief` plus `m.handoffsNote(bot.ID)` (joined with a
    blank line, empty parts skipped), so the bot can answer "how is that task going?".
 3. Voice style (`voiceStyle` / `buildSystem` voice branch), replacing the lines added in commit bc5811d where they
@@ -127,41 +126,78 @@ tests.
    - "Only end the call when the owner clearly says they are done (no, that's all, thanks, bye): say a short friendly
      goodbye and call end_call in the same reply. Never end the call for any other reason."
    - Keep the existing lines (short sentences, no markdown, never name the app, approvals, voicemail).
-4. Reports reach Jarvis: `Manager` gets an optional hook (option or setter) `OnReport func(callerBotID string, callee
-   Bot, status, text string)` called by `awaitReport` after the report is stored (status: "complete", "failed",
-   "stopped"; text: `reportText`, clipped to 2000 runes). Never blocks (call in a goroutine or document that the
-   hook must not block).
-5. `end_call` tool description: "On a phone call only: hang up after this reply. Only when the owner has clearly said
-   they are done (no, that's all, thanks, bye). Say a short, friendly goodbye in the same reply." Its result text
-   unchanged. If the runtime refuses (Task 5 adds the guard), return the refusal as a tool error.
-6. `jarvis_rule_add` schema: add `bot_reported` to the trigger enum; target description gains "for bot_reported: the
-   name of the bot you handed the work to, or \"any\"".
-7. Tests: cue messages hidden from CallMessages but present in model history; voice prompt contains the bot name and
-   the new lines; handoffsNote appears in a voice turn's system prompt while a handoff is out; OnReport fires once per
-   report with the right status.
+4. `end_call` tool description: "On a phone call only: hang up after this reply. Only when the owner has clearly said
+   they are done (no, that's all, thanks, bye). Say a short, friendly goodbye in the same reply." Result text
+   unchanged; a runtime refusal is returned as a tool error (already the case; keep a test).
+5. `jarvis_rule_add` schema: add `bot_reported` to the trigger enum; the target description gains "for bot_reported:
+   the name of the bot you handed the work to, or \"any\"".
+6. Tests: cue messages hidden from CallMessages but present in model history; voice prompt contains the bot name and
+   the new lines; handoffsNote appears in a voice turn's system prompt while a handoff is out.
 
-## Task 4: reports to calls and call-back rules (internal/jarvis, internal/daemon)
+## Task 4: follow-ups of a call stay in the call thread (internal/chat, internal/agents, internal/daemon)
+
+Owner requirement: nothing that comes out of a phone call may appear in the bot's main chat thread. Everything (the
+owner's words, the bot's replies, tool and delegation items, later reports from bots or code tasks started on the
+call, and the bot's answers to those reports) lives in the call's thread (messages with `call_id`), shown in the call
+pane. The call card itself stays in the chat. The callee bot's own thread (the task handed to it) is that bot's work
+and stays as it is.
+
+Files: `internal/chat/queue.go`, `internal/chat/engine.go`, `internal/chat/delegate.go`, `internal/chat/automation.go`,
+`internal/chat/api.go` (hook), `internal/chat/tools/tasks.go`, `internal/agents/*` (session call id),
+`internal/daemon/bot_tasks.go`, migrations if needed, tests.
+
+1. Call-tagged turns: `turn.callID string`. `submit` stores the user message with `CallID` = the turn's call id and
+   publishes it with `publishCallMessage` when set. `runTurn` gives the assistant message the same `CallID`, its sink
+   publishes with `publishCallMessage`/`publishCallDelta`, and the `chat.run` emission is skipped for call-tagged
+   turns (check `cancelQueued` and error paths publish through the call publishers too; reply notifications and
+   `bot.message` run on `chat.message` only, so they are skipped automatically). A call-tagged turn otherwise runs
+   exactly like a chat turn (the bot's queue, tools, memory).
+2. Delegation: `handoff` gets `callID` from `from.CallID`. `awaitReport` stores the report with `CallID = h.callID`
+   and queues the answering turn with `callID: h.callID`. Before queuing it calls the hook (3); when the hook returns
+   `true` (the report was handed to the live call to be spoken) the report message is still stored in the call thread
+   but no written answering turn is queued.
+3. Hook: `Manager.SetFollowUpHook(func(FollowUp) bool)`, `FollowUp{BotID, CallID, Kind ("report" | "task"), From
+   (callee bot name or task title), Status ("complete" | "failed" | "stopped" for reports; the task topic's status for
+   tasks), Text (clipped to 2000 runes)}`. Called for every report and task report, call-tagged or not, outside any
+   lock, before queuing; returns whether the follow-up was delivered into a live call. Nil hook = false.
+4. Code tasks: a task started by a bot during a call remembers the call: `agents.Session.CallID` (persisted the same way
+   as `Owner`; add a migration only if `Owner` is a column), set from the run context: `tools/tasks.go` passes
+   `rc.CallID` to `TaskRuntime.Start` (extend the signature or the input struct), the daemon's bot task runtime puts it
+   on the session (e.g. `agents.WithCall(ctx, callID)` next to `WithActor`). `reportToOwner` passes `s.CallID` to
+   `Chat.ReportTask(ctx, botID, taskID, text, callID)`, which stores the task report with that `CallID`, calls the hook
+   (Kind "task") and, unless delivered live, queues the answering turn with `callID`.
+5. Tests: a delegation started on a call (rc.CallID set) stores its report and answer with that call id and publishes
+   only call events, never `chat.message`/`chat.run`; with the hook returning true no answering turn runs; a
+   delegation from chat is unchanged; a code task started on a call reports into the call thread; the session keeps
+   its call id across a store round-trip.
+
+## Task 5: reports during and after calls (internal/jarvis, internal/daemon)
 
 Files: `internal/jarvis/types.go`, `internal/jarvis/rules.go`, `internal/jarvis/service.go`,
-`internal/jarvis/calls.go`, `internal/daemon/svc_jarvis.go` (+ wherever the chat manager hook is wired in the
-daemon), tests.
+`internal/jarvis/calls.go`, `internal/daemon/svc_jarvis.go` (and where the chat manager is wired), tests.
 
 1. Trigger `BotReported JarvisTrigger = "bot_reported"`: rule target is a bot name (case-insensitive) or `"any"`.
    `Event` gets the callee name in `Source` and the caller bot id in `OwnerBotID`; a rule matches only if
    `r.BotID == ev.OwnerBotID` and the target is `any` or equals the callee name. Rule validation accepts the new
    trigger (non-empty target).
-2. Daemon wires `chat.Manager.OnReport` to `Jarvis.OnReport(callerID, calleeName, status, text)`.
-3. `Service.OnReport`:
-   - If a call is live with `callerID` as its bot: fold the report into the call as news (`Calls.Inject(callID,
-     from, reason)`; reuse the `inject` slice/`injected` type: bot = callee name, reason = "finished: <text>" clipped
-     to `maxTitle`-style limit of 500 runes, fenced where it reaches a model as today). Do not also place a call.
-   - Otherwise build an `Event{Trigger: BotReported, OwnerBotID: callerID, Source: callee, Title: callee + " reported
-     back" (+ " (failed)" / " (stopped)"), Detail: text}` and pass it to `OnEvent` (rule matching, call placing,
-     quiet hours and caps all as for other events).
-4. Tests: rule matching by callee name and any; live-call report is injected and does not dial; no live call + rule ->
-   a call is placed with the report in the brief; no rule -> nothing.
+2. The daemon sets the chat follow-up hook to `Jarvis.OnFollowUp(f) bool`:
+   - If a call is live with `f.BotID`: fold it into the call as news (`Calls.Inject(callID, from, reason)`; reuse the
+     `inject` slice/`injected` type: bot = f.From, reason = "<status>: <text>" clipped to 500 runes, fenced where it
+     reaches a model as today). Return true only when `f.CallID` equals the live call's id (a chat-originated
+     follow-up is also told on the phone but still gets its written answer in chat).
+   - Otherwise, for Kind "report", build `Event{Trigger: BotReported, OwnerBotID: f.BotID, Source: f.From, Title:
+     f.From + " reported back" (+ " (failed)" / " (stopped)"), Detail: f.Text}` and pass it to `OnEvent` (rule
+     matching, call placing, quiet hours, caps as for other events). Task follow-ups already reach rules through task
+     events; do not fire them twice.
+   - When `f.CallID` is set and that call has ended, notify the owner: title "<From> reported back", body "From your
+     call with <bot>. Open the call to read it.", target `bot:<id>`, level "info" (the written answer lands in the
+     call thread, which raises no chat notification).
+   - Returns false in every other case.
+3. Tests: rule matching by callee name and any; a follow-up with the live call's id is injected, returns true and does
+   not dial; a chat-originated follow-up during a live call is injected and returns false; no live call + rule -> a
+   call is placed with the report in the brief; ended call -> notice; no rule -> no call.
 
-## Task 5: turn handling on calls (internal/jarvis/calls.go, lang.go)
+## Task 6: turn handling on calls (internal/jarvis/calls.go, lang.go)
 
 Files: `internal/jarvis/calls.go`, `internal/jarvis/lang.go`, `internal/jarvis/calls_test.go`.
 
@@ -209,7 +245,23 @@ id, kind, message count (no text): `opener`, `new`, `bargein` (cancels an in-fli
    ackAfter; still lines capped; deadline cancels and speaks tooLong; end_call refused without a closing and accepted
    with "nee, bedankt"; request kinds logged without text.
 
-## Task 6: documentation (controller)
+## Task 7: call pane shows follow-ups (frontend)
+
+Files: `frontend/src/features/jarvis/CallPane.tsx` (+ its test), `frontend/src/features/jarvis/describe.ts` if useful.
+Do not touch files another session is editing (`JarvisPage*`, `PhoneSettings.tsx`, `VoicePicker.tsx`,
+`components/ui/popover.tsx`, `notifications/NotificationCenter.tsx`); check `git status` before editing.
+
+1. User-role call messages are rendered by author: `"user"` (or empty) -> the owner's bubble as today;
+   `"report:<botId>"` -> a compact item "<bot name> reported back" with the text collapsed (expand on click), styled
+   like the main chat's report card (reuse `MessageBubble`'s report rendering if it is exported or small enough to
+   share; otherwise mirror its look); `"task:<taskId>"` -> a "Code task update" item with collapsed text and the task
+   button when the task id is known; `"cue"` -> nothing (the daemon already filters them; render nothing as a
+   guard); any other author -> a collapsed generic item with the author's label.
+2. Messages that arrive after the call ended (follow-ups) appear live through `chatCallMessage` as today; the header
+   status stays "Ended".
+3. `bun run --cwd frontend check` clean (tsc, lint, vitest); add tests for the renderings.
+
+## Task 8: documentation (controller)
 
 `docs/architecture/jarvis.md` (call turns, agent config, diagnostics, bot_reported, relay frame), `CHANGELOG.md`,
 `docs/development/jarvis-e2e.md` (relay redeploy step), `relay/README.md` (Task 2). Done by the controller after
