@@ -9,7 +9,10 @@ vi.mock("@/mygo", () => ({
 }));
 import { useDaemon } from "@/stores/daemon";
 import { useHarnessOptionsCache } from "@/stores/harnessOptions";
-import { AgentSafetySettings } from "./AgentSafetySettings";
+import { BotCodeTasksSettings, BotToolsSettings, TaskNamingSettings, TaskPermissionsSettings, useAgentsSetting } from "./AgentSafetySettings";
+
+/** Every page that edits the shared "agents" setting at once, so a save from one is checked against the others. */
+const AgentSafetySettings = () => <><TaskPermissionsSettings /><TaskNamingSettings /><BotToolsSettings /><BotCodeTasksSettings /></>;
 
 const codex: HarnessOption = {
   id: "codex", name: "Codex", available: true, executable: "codex", version: "1", reasoning: ["low", "high"], customModel: true, modes: ["structured"], structured: true,
@@ -23,6 +26,7 @@ beforeEach(() => {
   api.set.mockResolvedValue(undefined); api.rules.mockResolvedValue([]); api.deleteRule.mockResolvedValue(undefined); api.bots.mockResolvedValue([]); api.options.mockResolvedValue(options);
   useDaemon.setState({ link: "connected", connectEpoch: 0 });
   useHarnessOptionsCache.setState({ machines: {} });
+  useAgentsSetting.setState({ setting: null, error: null });
 });
 afterEach(cleanup);
 
@@ -60,7 +64,7 @@ it("shows a stored off setting and reports a failed save without flipping the sw
   await waitFor(() => expect(toggle).toBeEnabled());
   expect(toggle).not.toBeChecked();
   fireEvent.click(toggle);
-  expect(await screen.findByRole("alert")).toHaveTextContent("daemon offline");
+  expect((await screen.findAllByRole("alert"))[0]).toHaveTextContent("daemon offline");
   expect(toggle).not.toBeChecked();
 });
 
@@ -88,7 +92,7 @@ it("keeps the AI title setting when Yolo is switched, and reports a failed save"
   await waitFor(() => expect(api.set).toHaveBeenCalledWith("agents", { aiTitlesDisabled: true, yoloDisabled: true }));
   api.set.mockRejectedValue(new Error("daemon offline"));
   fireEvent.click(titles);
-  expect(await screen.findByRole("alert")).toHaveTextContent("daemon offline");
+  expect((await screen.findAllByRole("alert"))[0]).toHaveTextContent("daemon offline");
   expect(titles).not.toBeChecked();
 });
 
@@ -159,7 +163,7 @@ it("sets the code-task agent, then a model of that agent, keeping every other ke
 it("names the inherited default mode and keeps Yolo unavailable to bots until both Yolo switches allow it", async () => {
   api.all.mockResolvedValue({ agents: { defaultPermissionMode: "auto" } });
   render(<AgentSafetySettings />);
-  const mode = await screen.findByRole("combobox", { name: "Permission mode" });
+  const mode = await screen.findByRole("combobox", { name: "Bot permission mode" });
   await waitFor(() => expect(mode).toHaveTextContent("Same as my default (Auto)"));
   fireEvent.pointerDown(mode, { button: 0, pointerType: "mouse" });
   fireEvent.mouseDown(mode, { button: 0 });

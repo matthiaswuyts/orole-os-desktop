@@ -191,7 +191,7 @@ daemon restart leaves every title as it is).
    tried. Only a single-line `<title>` of at most 80 characters is accepted. Each request is audited as
    `agent.title` (vendor and model, no prompt text). A branch created for a new worktree keeps the heuristic name.
 
-Settings > System > Task permissions > "Name tasks with AI" stores `aiTitlesDisabled` in the `agents` setting (the
+Settings > System > Tasks > "Name tasks with AI" stores `aiTitlesDisabled` in the `agents` setting (the
 object shared with `yoloDisabled`; default on, an unreadable value fails closed). It disables only layer 3.
 
 ### Task branches and publishing
@@ -246,7 +246,7 @@ the adapter compares the mode in its `init` message with the requested one and r
 mismatch; Codex's reply to `thread/start` is checked the same way for the reviewer.
 
 **YOLO is enforced in Go.** Starting in or switching to YOLO is rejected unless the request carries
-`confirmYolo: true`, the `agents` daemon setting (`{"yoloDisabled": true}`; Settings > System > Task
+`confirmYolo: true`, the `agents` daemon setting (`{"yoloDisabled": true}`; Settings > Task
 permissions) has not turned it off, and the caller is not an automation. Rejections and grants are
 audited as `agent.yolo`. A disabled setting also marks YOLO unavailable in detection at once, and a
 YOLO session cannot be resumed until its mode is changed. YOLO removes the harness's prompts only: Orole's

@@ -66,7 +66,7 @@ export function permissionModeOf(value: unknown): PermissionMode | "" {
 
 /** Why a bot cannot start tasks in Yolo, or "" when it can. The daemon enforces the same two gates. */
 export function botYoloBlocked(setting: { yoloDisabled?: boolean; botYolo?: boolean } | null | undefined): string {
-  if (setting?.yoloDisabled) return "Yolo mode is turned off in Settings › System.";
-  if (!setting?.botYolo) return "Turn on “Bots may use Yolo” in Settings › System first.";
+  if (setting?.yoloDisabled) return "Yolo mode is turned off in Settings › Task permissions.";
+  if (!setting?.botYolo) return "Turn on “Bots may use Yolo” in Settings › Task permissions first.";
   return "";
 }

@@ -58,7 +58,7 @@ authenticated IPC. The global `PolicyApprovals` dialog subscribes before loading
 a bot's held request is decided inline in that bot's conversation (`features/chat/parts/JobApprovalCard.tsx`; Allow once,
 Always allow this bot = `agent.start` + `agent.prompt` allow rules for `bot:<id>` on `*` for task requests and an exact
 rule for any other rememberable request, Deny) and is also listed in Home › Needs you and counted on the bot in the rail.
-Remembered bot rules are listed and removable under Settings > System > Remembered approvals; `agents.botAutoApprove`
+Remembered bot rules are listed and removable under Settings > Task permissions > Remembered approvals; `agents.botAutoApprove`
 skips the task-start ask altogether and `agents.botYolo` lets bots start in YOLO while YOLO is allowed. The permission
 mode of a bot's task comes from the user's settings (`agents.botTasks`, per bot `BotConfig.tasks`), never from the bot.
 MCP invocation uses `InvokeChecked`; Mail/Drive operations pass through the daemon adapters and policy.

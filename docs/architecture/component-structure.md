@@ -374,10 +374,10 @@ muted "Starting…" (or "Failed") row. Several launches can be pending at once; 
   Auto reads "The agent decides which actions are safe"; where the harness has no such mode the option is badged
   Approximated with the daemon's explanation (`HarnessOption.permissionModes`). YOLO opens an AlertDialog explaining
   that no prompts will be shown and only then sends `confirmYolo`; the daemon enforces the confirmation, the
-  `agents` setting that can turn YOLO off (Settings > System > Task permissions) and everything else. In a running task the
+  `agents` setting that can turn YOLO off (Settings > Task permissions) and everything else. In a running task the
   choice calls `Agents.setPermissionMode`; the control is disabled with the daemon's reason (`followup.permissionModeReason`)
   for terminal, remote and read-only review sessions. Home reuses the control: the daemon's `agents.defaultPermissionMode`
-  (Settings > System > Task permissions) seeds the choice once it loads, YOLO as that default counting as confirmed;
+  (Settings > Task permissions) seeds the choice once it loads, YOLO as that default counting as confirmed;
   picking a mode in the Home launcher saves it back to `agents.defaultPermissionMode` (new tasks only; running tasks keep their mode, and bots follow it with YOLO falling back to Manual unless "Bots may use Yolo" is on). Auto is also kept in `localStorage` (`orole.task.permissionMode`) as a fallback while the daemon is unreachable; YOLO never is.
   Optional dictation (`ComposerVoice`) records the microphone with `getUserMedia` + `MediaRecorder` (the packaged
   WebView2 has no speech service, so the Web Speech API is not used) and sends the recording to the daemon

@@ -58,7 +58,7 @@ export function JobApprovalCard({ request, requester }: { request: Pending; requ
   />;
 }
 
-/** Every held request from this bot, above the composer. "Always" decisions are listed under Settings › System › Bot code tasks. */
+/** Every held request from this bot, above the composer. "Always" decisions are listed under Settings › Task permissions. */
 export function BotApprovals({ botId }: { botId: string }) {
   const { items } = usePolicyPending();
   const name = useChat((s) => s.bots.find((bot) => bot.id === botId)?.name) ?? "This bot";

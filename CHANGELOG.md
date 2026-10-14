@@ -8,6 +8,9 @@ notes. See `docs/development/updates.md`.
 
 ## Unreleased
 
+### Changed
+- Settings › System no longer holds bot and task settings. They now have pages of their own: Task permissions (Yolo, default and bot permission modes, remembered approvals), Bot tools and Bot code tasks. "Name tasks with AI" stays under System › Tasks. The bot permissions pane drops the descriptions under each tool access option, and shows agent and model logos in its code task selects (and in Settings › Bot code tasks).
+
 ### Added
 - A custom connector can now be added with an access token, for MCP servers that use a fixed bearer token instead of browser sign-in. The token is kept in Windows Credential Manager. On such a server's page, Sign in is replaced by a field to swap in a new token.
 - Bots can use integrations and tools without asking you first. Under Settings › Bot tools, choose Ask me first, Look things up without asking, Read and change without asking, or Everything without asking (deleting and sending included). Each bot can override this on its new Permissions page. If you set a tool to "Always ask" or "Block" on an integration's page, that still wins, and everything a bot does without asking is recorded in the audit log.
