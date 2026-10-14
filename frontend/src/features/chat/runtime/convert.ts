@@ -5,7 +5,7 @@ import type { Message, MsgPart } from "@/mygo";
 export const SOURCE_KEY = "message";
 
 /** Daemon part types that assistant-ui has no native part for; they travel as named `data` parts. */
-const DATA_PARTS: Record<string, true> = { report: true, delegation: true, memory: true, notice: true, attachment: true, task: true };
+const DATA_PARTS: Record<string, true> = { report: true, delegation: true, memory: true, notice: true, attachment: true, task: true, call: true };
 
 type Content = Exclude<ThreadMessageLike["content"], string>;
 type Part = Content[number];

@@ -47,7 +47,7 @@ export function ControlRow({ icon, label, htmlFor, children }: { icon: LucideIco
 }
 
 /** A row with a switch, for a yes/no setting that needs a sentence of explanation. */
-export function SwitchRow({ icon, label, hint, checked, onChange }: { icon: LucideIcon; label: string; hint?: string; checked: boolean; onChange: (on: boolean) => void }) {
+export function SwitchRow({ icon, label, hint, checked, disabled, onChange }: { icon: LucideIcon; label: string; hint?: string; checked: boolean; disabled?: boolean; onChange: (on: boolean) => void }) {
   const id = useId();
   const Icon = icon;
   return <div className={cn(rowClass, "py-2")}>
@@ -56,7 +56,7 @@ export function SwitchRow({ icon, label, hint, checked, onChange }: { icon: Luci
       <span id={`${id}-name`}>{label}</span>
       {hint && <span id={`${id}-hint`} className="text-muted-foreground text-xs">{hint}</span>}
     </div>
-    <Switch checked={checked} aria-labelledby={`${id}-name`} aria-describedby={hint ? `${id}-hint` : undefined} onCheckedChange={onChange} />
+    <Switch checked={checked} disabled={disabled} aria-labelledby={`${id}-name`} aria-describedby={hint ? `${id}-hint` : undefined} onCheckedChange={onChange} />
   </div>;
 }
 

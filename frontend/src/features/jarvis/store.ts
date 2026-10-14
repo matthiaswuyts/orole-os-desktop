@@ -27,7 +27,7 @@ export const useJarvis = create<JarvisStore>((set) => ({
   startSync: () => events.jarvisChanged.on((v) => set({ status: v })),
 }));
 
-/** True when calls can be placed: every setup step is done. */
+/** True when calls can be placed: every setup step is done. The post-call webhook secret is optional: the daemon polls call status without it. */
 export function phoneReady(s: StatusView | null): boolean {
   return !!s && s.hasTwilio && s.hasElevenLabs && s.hasRelaySecrets && s.relayConnected && !!s.settings.agentId && !!s.settings.ownerVerified;
 }

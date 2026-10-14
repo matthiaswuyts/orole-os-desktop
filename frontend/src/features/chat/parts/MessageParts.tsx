@@ -17,6 +17,7 @@ import { splitQuote } from "../quote";
 import { splitBubbles } from "./bubbles";
 import { Bubble } from "./Bubble";
 import { TaskChips } from "./TaskChip";
+import { CallCard } from "@/features/jarvis/CallCard";
 
 /** Whether a user message has anything to draw (the setup kickoff is text the user never sees). */
 export const hasVisibleParts = (parts: readonly MsgPart[]): boolean => parts.some((p) => p.type === "attachment" || (p.type === "text" && !p.hidden));
@@ -71,6 +72,9 @@ export function MessageParts({ message, onAnswer, botName = "This bot", botAvata
         break;
       case "notice":
         if (part.text) blocks.push(<NoticeLine key={i} text={part.text} />);
+        break;
+      case "call":
+        blocks.push(<CallCard key={i} part={part} />);
         break;
       case "task":
         if (part === tasks[0]) blocks.push(<TaskChips key="tasks" parts={tasks} />);

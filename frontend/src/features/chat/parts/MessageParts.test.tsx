@@ -27,6 +27,13 @@ describe("message parts", () => {
     expect(steps).toEqual(["Thinkingweighing options", "Searched the weboslo flights", "Writing the answer"]);
   });
 
+  it("draws a call part as a call card", () => {
+    view(message([{ type: "call", id: "c1", name: "outbound", status: "completed", title: "deploy failed", durationMs: 75_000, summary: "est. $0.15" }]));
+    expect(screen.getByText("Called you")).toBeInTheDocument();
+    expect(screen.getByText("1:15 · est. $0.15")).toBeInTheDocument();
+    expect(document.querySelector("[data-slot=thinking-panel]")).toBeNull();
+  });
+
   it("leaves no panel behind a reply that only answered", () => {
     view(message([{ type: "text", text: "Done." }]));
     expect(document.querySelector("[data-slot=thinking-panel]")).toBeNull();

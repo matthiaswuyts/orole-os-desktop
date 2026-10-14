@@ -36,6 +36,11 @@ describe("validate", () => {
     expect(validate(valid({ mcpServers: ids(LIMITS.mcpServers + 1) })).mcpServers).toBeDefined();
     expect(validate(valid({ skills: ids(LIMITS.skills + 1) })).skills).toBeDefined();
   });
+
+  it("limits the Jarvis call policy to 2000 characters", () => {
+    expect(validate(valid({ jarvisPolicy: "p".repeat(2000) })).jarvisPolicy).toBeUndefined();
+    expect(validate(valid({ jarvisPolicy: "p".repeat(2001) })).jarvisPolicy).toBe("Keep \"When to call me\" under 2000 characters.");
+  });
 });
 
 describe("toInput", () => {
@@ -84,6 +89,16 @@ describe("toInput", () => {
     const inherited = toInput({ ...form, toolAccess: "", taskHarness: "", taskModel: "", taskPermissionMode: "" }, "b1").config;
     expect(inherited).not.toHaveProperty("toolAccess");
     expect(inherited).not.toHaveProperty("tasks");
+  });
+
+  it("round-trips Jarvis settings and omits them when empty", () => {
+    const saved = bot("b1", { config: config({ jarvis: { enabled: true, policy: "Only failures", voiceId: "v1", ttsModel: "eleven_flash_v2_5" } }) });
+    const form = formFromBot(saved);
+    expect(form).toMatchObject({ jarvisEnabled: true, jarvisPolicy: "Only failures", jarvisVoice: "v1", jarvisModel: "eleven_flash_v2_5" });
+    expect(toInput(form, "b1").config.jarvis).toEqual({ enabled: true, policy: "Only failures", voiceId: "v1", ttsModel: "eleven_flash_v2_5" });
+    expect(toInput({ ...form, jarvisEnabled: false, jarvisVoice: "" }, "b1").config.jarvis).toEqual({ policy: "Only failures", ttsModel: "eleven_flash_v2_5" });
+    expect(toInput(initialForm(), "b1").config).not.toHaveProperty("jarvis");
+    expect(fingerprint(valid())).not.toBe(fingerprint(valid({ jarvisEnabled: true })));
   });
 });
 

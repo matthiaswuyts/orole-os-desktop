@@ -1,8 +1,9 @@
-import type { Bot, BotConfig, BotExport, BotInput, BotTaskDefaults, BotTool, ScopeAccess } from "@/mygo";
+import type { Bot, BotConfig, BotExport, BotInput, BotJarvis, BotTaskDefaults, BotTool, ScopeAccess } from "@/mygo";
 
 /** Limits mirrored from the daemon (internal/chat/api.go, store.go). The daemon validates again. */
 export const LIMITS = {
   name: 80,
+  jarvisPolicy: 2000,
   description: 500,
   instructions: 32 * 1024,
   steps: { min: 1, max: 30, default: 8 },
@@ -41,6 +42,14 @@ export interface FormState {
   taskModel: string;
   taskReasoning: string;
   taskPermissionMode: string;
+  /** Jarvis mode: the bot may phone the owner. Only valid with full permissions; the daemon checks on save. */
+  jarvisEnabled: boolean;
+  /** "When to call me", free text read by the bot. */
+  jarvisPolicy: string;
+  /** ElevenLabs voice id; "" uses the global default. */
+  jarvisVoice: string;
+  /** ElevenLabs TTS model id; "" uses the global default. */
+  jarvisModel: string;
 }
 
 /** A new bot starts with every built-in tool on; each can be switched off in its settings. */
@@ -48,6 +57,7 @@ export const initialForm = (): FormState => ({
   name: "", avatar: "", color: "", description: "", instructions: "", model: "", reasoning: "",
   tools: Object.values(TOOL_IDS), mcpServers: [], skills: [], memory: [], maxSteps: "", maxToolCalls: "", executive: false, codeTasks: false,
   toolAccess: "", taskHarness: "", taskModel: "", taskReasoning: "", taskPermissionMode: "",
+  jarvisEnabled: false, jarvisPolicy: "", jarvisVoice: "", jarvisModel: "",
 });
 
 export type Action =
@@ -94,6 +104,7 @@ export function formFromInput(bot: Pick<BotInput, "name" | "avatar" | "color" | 
     codeTasks: config.codeTasks ?? false,
     toolAccess: config.toolAccess ?? "",
     taskHarness: config.tasks?.harness ?? "", taskModel: config.tasks?.model ?? "", taskReasoning: config.tasks?.reasoning ?? "", taskPermissionMode: config.tasks?.permissionMode ?? "",
+    jarvisEnabled: config.jarvis?.enabled ?? false, jarvisPolicy: config.jarvis?.policy ?? "", jarvisVoice: config.jarvis?.voiceId ?? "", jarvisModel: config.jarvis?.ttsModel ?? "",
   };
 }
 
@@ -107,6 +118,12 @@ export function toInput(form: FormState, id: string): BotInput {
   // Empty fields inherit the global defaults, so only the overrides are sent.
   const overrides = Object.entries({ harness: form.taskHarness, model: form.taskModel, reasoning: form.taskReasoning, permissionMode: form.taskPermissionMode }).filter(([, value]) => value);
   const tasks: BotTaskDefaults | undefined = overrides.length > 0 ? Object.fromEntries(overrides) : undefined;
+  const jarvis: BotJarvis = {
+    ...(form.jarvisEnabled ? { enabled: true } : {}),
+    ...(form.jarvisPolicy ? { policy: form.jarvisPolicy } : {}),
+    ...(form.jarvisVoice ? { voiceId: form.jarvisVoice } : {}),
+    ...(form.jarvisModel ? { ttsModel: form.jarvisModel } : {}),
+  };
   return {
     id,
     name: form.name.trim(),
@@ -126,6 +143,7 @@ export function toInput(form: FormState, id: string): BotInput {
       ...(form.codeTasks ? { codeTasks: true } : {}),
       ...(form.toolAccess ? { toolAccess: form.toolAccess } : {}),
       ...(tasks ? { tasks } : {}),
+      ...(Object.keys(jarvis).length > 0 ? { jarvis } : {}),
     },
   };
 }
@@ -163,6 +181,7 @@ export function validate(form: FormState): Problems {
   else if (/[\u0000-\u001f\u007f]/.test(name)) problems.name = "The name contains invalid characters.";
   if (charCount(form.description.trim()) > LIMITS.description) problems.description = `The description is limited to ${LIMITS.description} characters.`;
   if (charCount(form.instructions) > LIMITS.instructions) problems.instructions = `Instructions are limited to ${LIMITS.instructions.toLocaleString("en-US")} characters.`;
+  if (charCount(form.jarvisPolicy) > LIMITS.jarvisPolicy) problems.jarvisPolicy = `Keep "When to call me" under ${LIMITS.jarvisPolicy} characters.`;
   const steps = limit(form.maxSteps, "Max steps", LIMITS.steps);
   if (steps) problems.maxSteps = steps;
   const calls = limit(form.maxToolCalls, "Max tool calls", LIMITS.toolCalls);
