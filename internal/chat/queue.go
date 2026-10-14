@@ -272,13 +272,16 @@ func (m *Manager) Regenerate(ctx context.Context, req RegenerateRequest) error {
 	unlock := m.lockBot(req.BotID)
 	defer unlock()
 	m.mu.Lock()
-	closed, running := m.closed, m.runs[req.BotID] != nil
+	closed, running, onCall := m.closed, m.runs[req.BotID] != nil, m.onCallLocked(req.BotID)
 	m.mu.Unlock()
 	if closed {
 		return ErrClosed
 	}
 	if running {
 		return busyf("The bot is still replying. Stop it first, then regenerate.")
+	}
+	if onCall {
+		return busyf("The bot is answering on a phone call. Try again after the call.")
 	}
 	if _, err := m.store.getBot(ctx, req.BotID, false); err != nil {
 		return err
@@ -289,6 +292,9 @@ func (m *Manager) Regenerate(ctx context.Context, req RegenerateRequest) error {
 	}
 	if last.Role != "assistant" || last.ID != req.MessageID {
 		return invalidf("Only the latest reply can be regenerated.")
+	}
+	if slices.ContainsFunc(last.Parts, func(p MsgPart) bool { return p.Type == PartCall }) {
+		return invalidf("A phone call card can't be regenerated.")
 	}
 	user, err := m.store.userMessageBefore(ctx, req.BotID, last.Seq)
 	if err != nil {
@@ -312,6 +318,16 @@ func (m *Manager) Regenerate(ctx context.Context, req RegenerateRequest) error {
 	m.cancelIdleLocked(req.BotID)
 	m.startLocked(req.BotID, turn{userMsgID: user.ID, mode: mode, asstID: last.ID, responder: responder})
 	return nil
+}
+
+// onCallLocked reports whether a phone call turn (run key call:<id>) is running for the bot. m.mu must be held.
+func (m *Manager) onCallLocked(botID string) bool {
+	for key, st := range m.runs {
+		if strings.HasPrefix(key, callPrefix) && st.botID == botID {
+			return true
+		}
+	}
+	return false
 }
 
 // Cancel stops the active run of a bot (or draft "draft:<id>") and drops messages still queued

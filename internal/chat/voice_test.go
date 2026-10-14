@@ -495,3 +495,35 @@ func TestVoiceTurnSpeaksTheCallLanguage(t *testing.T) {
 		}
 	}
 }
+
+// The call card is the newest visible message after a call; regenerating it would wipe the card.
+func TestRegenerateRefusesCallCardAndLiveCall(t *testing.T) {
+	e := newEnv(t, textScript("typed reply"))
+	b := e.bot("Atlas")
+	e.send(b.ID, "hi")
+	e.idle(b.ID)
+	reply := e.lastReply(b.ID)
+
+	e.m.mu.Lock()
+	e.m.runs[callPrefix+"c9"] = &runState{botID: b.ID, done: make(chan struct{})}
+	e.m.mu.Unlock()
+	err := e.m.Regenerate(context.Background(), RegenerateRequest{BotID: b.ID, MessageID: reply.ID})
+	if err == nil || !strings.Contains(err.Error(), "phone call") {
+		t.Fatalf("regenerate during a live call: %v", err)
+	}
+	e.m.mu.Lock()
+	delete(e.m.runs, callPrefix+"c9")
+	e.m.mu.Unlock()
+
+	id, err := e.m.PostCallCard(context.Background(), b.ID, MsgPart{ID: "c1", Name: "outbound", Status: "completed"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = e.m.Regenerate(context.Background(), RegenerateRequest{BotID: b.ID, MessageID: id})
+	if err == nil || !strings.Contains(err.Error(), "phone call card") {
+		t.Fatalf("regenerated the call card: %v", err)
+	}
+	if err := e.m.UpdateCallCard(context.Background(), id, MsgPart{ID: "c1", Status: "completed", DurationMs: 1000}); err != nil {
+		t.Fatalf("card damaged: %v", err)
+	}
+}

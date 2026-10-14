@@ -188,6 +188,14 @@ describe("message actions", () => {
     await waitFor(() => expect(bridge.regenerate).toHaveBeenCalledWith({ botId: "a", messageId: "m2" }));
   });
 
+  it("offers no actions on a phone call card, even as the last message", async () => {
+    await open([msg(1), msg(2), msg(4, { parts: [{ type: "call", id: "c1", name: "outbound", status: "completed" }] })]);
+    expect(await screen.findByRole("button", { name: /Called you/ })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Regenerate response" })).toBeNull();
+    // Only the typed reply before it can be copied.
+    expect(screen.getAllByRole("button", { name: "Copy response" })).toHaveLength(1);
+  });
+
   it("hides actions on a reply that is still streaming", async () => {
     await open([msg(1), msg(2, { status: "running", parts: [{ type: "text", text: "so far" }] })]);
     expect(screen.queryByRole("button", { name: "Copy response" })).toBeNull();

@@ -36,14 +36,16 @@ const Turn = memo(function Turn({ bot, bots, targets, running }: { bot: Bot; bot
   if (!isDaemonMessage(raw) || (raw.role === "user" && !hasVisibleParts(raw.parts)) || (raw.role === "user" && raw.author === "user" && raw.status === "pending") || (raw.role === "user" && raw.author.startsWith("task:"))) return null;
   const assistant = raw.role !== "user";
   const settled = raw.status !== "running" && raw.status !== "pending";
-  const canRegenerate = assistant && isLast && !running;
+  // A phone call card is not a reply: it cannot be regenerated, answered or copied (the daemon refuses regenerating it too).
+  const callCard = raw.parts.some((part) => part.type === "call");
+  const canRegenerate = assistant && isLast && !running && !callCard;
   return <MessagePair>
     <ChatMessageView message={raw} botName={bot.name} botAvatar={bot.avatar}
       bots={bots} handoffSettled={!isLast} mentionTargets={targets}
       onOpenBot={(botId) => useChat.getState().open(botId)}
       onRetry={canRegenerate ? () => void useChatMessages.getState().regenerate(bot.id, raw.id) : undefined}
       onAnswer={canRegenerate && raw.status === "complete" ? (text) => void useChatMessages.getState().send(bot.id, { text }) : undefined}
-      actions={assistant && settled && <MessageActions regenerate={canRegenerate}><CopyButton text={messageText(raw)} label="Copy response" /></MessageActions>} />
+      actions={assistant && settled && !callCard && <MessageActions regenerate={canRegenerate}><CopyButton text={messageText(raw)} label="Copy response" /></MessageActions>} />
   </MessagePair>;
 });
 
