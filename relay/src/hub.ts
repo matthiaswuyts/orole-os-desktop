@@ -66,6 +66,10 @@ function ms(v: string | undefined, d: number): number {
   return v && Number.isFinite(n) && n > 0 ? n : d;
 }
 
+// RELAY_VERSION is reported on /health. The daemon reads it once per connection and warns the owner when it is missing
+// or lower than it needs: 2 is the first relay that streams llm.tool (skip_turn) and speaks Dutch lines.
+export const RELAY_VERSION = 2;
+
 // Hub holds the one daemon socket and the in-flight request table. It persists nothing.
 export class Hub extends DurableObject<HubEnv> {
   private daemon: WebSocket | null = null;
@@ -73,7 +77,7 @@ export class Hub extends DurableObject<HubEnv> {
 
   async fetch(req: Request): Promise<Response> {
     const path = new URL(req.url).pathname;
-    if (path === "/health") return Response.json({ daemon: this.daemon !== null });
+    if (path === "/health") return Response.json({ daemon: this.daemon !== null, version: RELAY_VERSION });
     if (path === "/daemon") return req.headers.get("Upgrade") === "websocket" ? this.attach() : new Response("expected websocket", { status: 426 });
     let body: any;
     try { body = await req.json(); } catch { return new Response("bad json", { status: 400 }); }

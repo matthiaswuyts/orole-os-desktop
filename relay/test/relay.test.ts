@@ -72,10 +72,13 @@ describe("auth", () => {
 });
 
 describe("health", () => {
-  it("reports daemon presence without secrets", async () => {
+  it("reports daemon presence and the relay version without secrets", async () => {
     const res = await SELF.fetch("https://relay/health");
     expect(res.status).toBe(200);
-    expect(Object.keys((await res.json()) as object)).toEqual(["daemon"]);
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(Object.keys(body)).toEqual(["daemon", "version"]);
+    expect(typeof body.daemon).toBe("boolean");
+    expect(body.version).toBe(2);
   });
 });
 

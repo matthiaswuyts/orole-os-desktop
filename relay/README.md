@@ -13,7 +13,7 @@ The frame protocol lives in `internal/jarvis/relay.go`; JSON field names must ma
 | `POST /llm/chat/completions` (aliases `/llm`, `/llm/v1/chat/completions`) | header `x-orole-relay: <LLM_SECRET>` | ElevenLabs custom LLM; OpenAI-style SSE reply |
 | `POST /inbound` | header `x-orole-relay: <LLM_SECRET>` | Inbound personalization webhook; returns `conversation_initiation_client_data` (with `custom_llm_extra_body.call_id`, and `lang` when the daemon sends one), 403 when the daemon refuses the caller, 503 when the daemon is offline or does not answer |
 | `POST /status` | `ElevenLabs-Signature: t=<ts>,v0=<hmac_sha256(WEBHOOK_SECRET, "<ts>.<body>")>` | Post-call webhook |
-| `GET /health` | none | `{ "daemon": boolean }`, no secrets |
+| `GET /health` | none | `{ "daemon": boolean, "version": 2 }`, no secrets |
 
 ## Turn frames (daemon -> relay)
 
@@ -37,7 +37,9 @@ the call. `args` that is not a JSON object is replaced by `{}`, and a frame with
 The daemon follows every `llm.tool` with an `llm.done` for the same request. The relay has already finished the stream
 on the tool frame and ignores that done.
 
-**The relay must be redeployed (`wrangler deploy`) for this to work.** An old relay ignores `llm.tool` but ends the
+**The relay must be redeployed (`wrangler deploy`) for this to work.** `/health` reports `version` 2 from this relay on;
+the daemon reads it once each time it connects and, when it is missing or lower, logs a warning and shows "The call
+relay is out of date" in Settings > Phone. An old relay ignores `llm.tool` but ends the
 request at once on the `llm.done`, so the request ends empty (no text, `finish_reason: "stop"`). ElevenLabs treats an
 empty answer as a failure: it retries, and after a few attempts fails the call.
 
