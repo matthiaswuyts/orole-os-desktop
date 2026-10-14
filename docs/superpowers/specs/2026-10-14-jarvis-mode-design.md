@@ -151,7 +151,7 @@ A refused call becomes a notification stating the reason.
    (case-insensitive), ≤ 240 chars, single paragraph. Failing or not ready at pickup → a fallback from a varied template
    set, e.g. "{name} here, quick one: {reason}." / "Hey, it's {name}. {reason}." Templates never mention the app.
 5. On answer, ElevenLabs requests the first turn from `/llm`; the daemon streams the cached opener at once.
-6. Answering-machine detection: on machine or no answer the call is ended without speaking task details. The owner gets
+6. ElevenLabs voicemail detection (system tool `voicemail_detection`): on machine or no answer the call is ended without speaking task details. The owner gets
    a notification and a chat message ("Atlas tried to call: migration task failed."). An `urgent` rule retries once after
    5 minutes; nothing else retries.
 
@@ -160,10 +160,7 @@ A refused call becomes a notification stating the reason.
 1. ElevenLabs' inbound personalization webhook → relay `/inbound` → daemon `inbound.lookup`.
 2. Caller id must equal the verified owner number (E.164 compare). Otherwise `accept:false`: the call is rejected, nothing
    is spoken, an audit entry is written.
-3. Carrier verification: when Twilio supplies a STIR/SHAKEN verdict (`StirVerstat`) and it reports a failed
-   verification, the call is rejected like an unknown number. A missing verdict (common outside the US) is accepted.
-   Nothing is asked of the owner; there is no passphrase.
-4. The executive bot answers with a fresh greeting that contains its name, unless the owner names another bot; only
+3. The executive bot answers with a fresh greeting that contains its name, unless the owner names another bot; only
    bots passing the §4 gate are reachable. Switching bots mid-call swaps voice, model, tools, policy and brief; the new bot introduces itself by name.
 
 ### 6.3 A spoken turn
@@ -190,8 +187,7 @@ completion notifications and any matching rules apply.
 
 ### 6.4 Call record
 
-Each call is stored in the bot's chat thread as one assistant message with a new part `PartCall` (`"call"`): direction,
-status, started/ended, duration, estimated cost, and the transcript (turns as text). Tool, task and research parts produced
+Each call gets one assistant message with a `PartCall` card, created at call start and updated at call end; the spoken turns are stored between it as ordinary user/assistant messages. Tool, task and research parts produced
 during the call are attached to the same message so the chat shows them exactly as if typed. The bot sees the call in its
 later history (transcript summarised when long).
 
@@ -290,8 +286,7 @@ CREATE INDEX jarvis_calls_created ON jarvis_calls(created_at);
   relay token lets an attacker impersonate the daemon to the relay (receive calls' LLM traffic) but not reach the daemon.
   Rotate from Settings › Phone.
 - Full-permission bots on the phone mean whoever is on the call can direct the bot. Mitigations: outbound only to the
-  verified number, voicemail detection with no details spoken, inbound accepted only from the verified number and
-  rejected on a failed STIR/SHAKEN verdict.
+  verified number, voicemail detection with no details spoken. Inbound acceptance is caller-ID match only.
 - Accepted risk (owner decision, 2026-10-14): inbound has no second factor. Caller ID can be spoofed, and a spoofed call
   from the owner's number reaches a full-permission bot. Every inbound call is audited and shown in the bot's chat, and
   the owner gets a notification for each inbound call, so a call they did not make is visible immediately.
