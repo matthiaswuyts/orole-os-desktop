@@ -81,10 +81,12 @@ func TestCheckOpener(t *testing.T) {
 			t.Errorf("accepted %q", bad)
 		}
 	}
-	for i := 0; i < 6; i++ {
-		f := FallbackOpener("Atlas", i)
-		if _, ok := CheckOpener("Atlas", f); !ok {
-			t.Errorf("fallback %d fails its own check: %q", i, f)
+	for _, lang := range []string{LangEnglish, LangDutch, LangAuto, ""} {
+		for i := 0; i < 6; i++ {
+			f := FallbackOpener(lang, "Atlas", i)
+			if _, ok := CheckOpener("Atlas", f); !ok {
+				t.Errorf("%s fallback %d fails its own check: %q", lang, i, f)
+			}
 		}
 	}
 }
@@ -99,14 +101,28 @@ func TestCheckOpenerRejectsEmptyName(t *testing.T) {
 
 // The opener may reach voicemail, so it is a greeting with the bot's name and nothing about why it calls.
 func TestFallbackIsNameOnlyGreeting(t *testing.T) {
-	for seed := -1; seed < 8; seed++ {
-		f := FallbackOpener("Atlas", seed)
-		if !strings.Contains(f, "Atlas") || strings.Contains(strings.ToLower(f), "orole") {
-			t.Errorf("seed %d: %q", seed, f)
+	for _, lang := range []string{LangEnglish, LangDutch} {
+		for seed := -1; seed < 8; seed++ {
+			f := FallbackOpener(lang, "Atlas", seed)
+			if !strings.Contains(f, "Atlas") || strings.Contains(strings.ToLower(f), "orole") {
+				t.Errorf("%s seed %d: %q", lang, seed, f)
+			}
+		}
+		if openerInstruction(lang, "Atlas") == "" || strings.Contains(openerInstruction(lang, "Atlas"), "Context") {
+			t.Fatal("opener instruction carries context")
 		}
 	}
-	if openerInstruction("Atlas") == "" || strings.Contains(openerInstruction("Atlas"), "Context") {
-		t.Fatal("opener instruction carries context")
+	if !strings.Contains(openerInstruction(LangDutch, "Atlas"), "Dutch") || !strings.Contains(openerInstruction(LangAuto, "Atlas"), "Dutch") ||
+		!strings.Contains(openerInstruction(LangEnglish, "Atlas"), "English") {
+		t.Error("opener instruction does not name the call language")
+	}
+	if !strings.Contains(inboundInstruction(LangDutch, "Atlas"), "Dutch") {
+		t.Error("inbound greeting instruction does not ask for Dutch")
+	}
+	for _, lang := range []string{LangEnglish, LangDutch} {
+		if _, ok := CheckOpener("Atlas", phrasesFor(lang).inboundLine("Atlas")); !ok {
+			t.Errorf("%s inbound greeting fails CheckOpener", lang)
+		}
 	}
 }
 
@@ -116,8 +132,8 @@ func TestFallbackAlwaysPassesCheck(t *testing.T) {
 		strings.Repeat("A", 80), strings.Repeat("日", 80),
 	}
 	for _, name := range names {
-		for seed := 0; seed < 6; seed++ {
-			f := FallbackOpener(name, seed)
+		for seed := 0; seed < 12; seed++ {
+			f := FallbackOpener([]string{LangEnglish, LangDutch}[seed%2], name, seed/2)
 			if !utf8.ValidString(f) {
 				t.Errorf("name %q seed %d: invalid UTF-8", name, seed)
 			}
@@ -180,6 +196,10 @@ func TestBareGreeting(t *testing.T) {
 		{"Hello?", true}, {"hallo", true}, {"Yes?", true}, {"Hi", true}, {"Met Ray", true}, {"Hallo, met Ray", true},
 		{"Yes, Ray speaking.", true}, {"Hi, this is Ray.", true}, {"Hey, hiya", true}, {"Goedemorgen!", true},
 		{"Bonjour", true}, {"Yeah, speaking", true}, {"Good morning", true}, {"Ja, met Ray Orolé", true},
+		{"Goedemiddag", true}, {"Ja?", true}, {"Hallo, goedemiddag, met Ray", true}, {"Ja, hallo", true}, {"Goedenavond, met Ray", true},
+		{"wat is er?", false}, {"kun je de deploy starten?", false}, {"kan je even kijken?", false}, {"zeg het maar", false},
+		{"ga je gang", false}, {"vertel", false}, {"check mijn taken", false}, {"start de build", false}, {"waarom bel je?", false},
+		{"ja, zeg het maar", false}, {"hoi, vertel", false},
 		{"ok, what's running?", false},
 		{"who called me today?", false},
 		{"check my automations", false},

@@ -340,3 +340,79 @@ func TestTwilioRejectsBadCallSID(t *testing.T) {
 		t.Fatalf("%d requests sent", hits)
 	}
 }
+
+func TestAgentBodyLanguage(t *testing.T) {
+	type agent struct {
+		ConversationConfig struct {
+			Agent struct {
+				Language string `json:"language"`
+				Prompt   struct {
+					BuiltInTools map[string]json.RawMessage `json:"built_in_tools"`
+				} `json:"prompt"`
+			} `json:"agent"`
+			LanguagePresets map[string]json.RawMessage `json:"language_presets"`
+		} `json:"conversation_config"`
+	}
+	for _, c := range []struct {
+		lang, want string
+		detect     bool
+	}{{"", "nl", false}, {LangDutch, "nl", false}, {LangEnglish, "en", false}, {LangAuto, "nl", true}} {
+		raw, err := json.Marshal(agentBody(AgentConfig{RelayURL: "https://r", LLMSecret: "s", Language: c.lang}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var a agent
+		if err := json.Unmarshal(raw, &a); err != nil {
+			t.Fatal(err)
+		}
+		cc := a.ConversationConfig
+		if cc.Agent.Language != c.want {
+			t.Errorf("%q: language %q, want %q", c.lang, cc.Agent.Language, c.want)
+		}
+		tool := string(cc.Agent.Prompt.BuiltInTools["language_detection"])
+		if got := strings.Contains(tool, `"system_tool_type":"language_detection"`); got != c.detect {
+			t.Errorf("%q: language_detection tool = %s", c.lang, tool)
+		}
+		if !c.detect && tool != "null" {
+			t.Errorf("%q: language_detection must be cleared, got %s", c.lang, tool)
+		}
+		if _, ok := cc.LanguagePresets["en"]; ok != c.detect {
+			t.Errorf("%q: language presets %v", c.lang, cc.LanguagePresets)
+		}
+	}
+}
+
+func TestProvisionSendsCallLanguage(t *testing.T) {
+	if got := (PhoneSettings{}).callLanguage(); got != LangDutch {
+		t.Fatalf("default call language %q", got)
+	}
+	if _, err := validateSettings(PhoneSettings{CallLanguage: "fr"}); err == nil {
+		t.Fatal("accepted an unknown call language")
+	}
+	for _, l := range []string{"", LangDutch, LangEnglish, LangAuto} {
+		if _, err := validateSettings(PhoneSettings{CallLanguage: l}); err != nil {
+			t.Fatalf("%q: %v", l, err)
+		}
+	}
+}
+
+// Changing the call language re-provisions: Configure runs Provision, which updates the existing agent with it.
+func TestProvisionUpdatesAgentLanguage(t *testing.T) {
+	srv, reqs := provisionFake(t, map[string]string{"PATCH /v1/convai/agents/ag1": `{}`})
+	el := &ElevenLabs{Key: "k", BaseURL: srv.URL, HTTP: srv.Client()}
+	tw := &Twilio{SID: "AC1", Token: "t", BaseURL: srv.URL, HTTP: srv.Client()}
+	in := PhoneSettings{RelayURL: "https://relay.example", TwilioNumber: "+3220000000", AgentID: "ag1", PhoneNumberID: "pn1", PostCallWebhookID: "wh1", CallLanguage: LangEnglish}
+	if _, err := Provision(context.Background(), el, tw, in, ProvisionSecrets{LLMSecret: "ls"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range reqs() {
+		if r.Method+" "+r.Path == "PATCH /v1/convai/agents/ag1" {
+			b, _ := json.Marshal(r.Body)
+			if !strings.Contains(string(b), `"language":"en"`) {
+				t.Fatalf("agent update lacks the language: %s", b)
+			}
+			return
+		}
+	}
+	t.Fatal("agent not updated")
+}

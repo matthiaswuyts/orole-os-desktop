@@ -48,8 +48,11 @@ type VoiceRequest struct {
 	BotID, CallID, Text string
 	Brief               string      // call context; untrusted parts already fenced by the caller
 	History             []VoiceLine // earlier turns of this call, oldest first
-	OnText              func(string)
-	OnTool              func(name string)
+	// Language is the call language: "nl" (Dutch), "en" (English) or "auto" (the owner's language, Dutch by default);
+	// "" adds no language line to the voice prompt.
+	Language string
+	OnText   func(string)
+	OnTool   func(name string)
 }
 
 // VoiceTurn answers one spoken utterance with the bot's own model and tools. It runs under its own run key, so a
@@ -142,7 +145,7 @@ func (m *Manager) VoiceTurn(ctx context.Context, req VoiceRequest) (string, erro
 		hist = slices.Insert(hist, 0, Message{Role: "user", Status: StatusComplete, Parts: []MsgPart{{Type: PartText, Text: callConnected}}})
 	}
 	env, err := m.prepare(runCtx, prep{bot: bot, convo: bot.ID, rc: rc, sink: s, text: req.Text, history: historyMessages(hist),
-		memory: true, voice: true, extra: req.Brief, onText: onText, onTool: req.OnTool})
+		memory: true, voice: true, language: req.Language, extra: req.Brief, onText: onText, onTool: req.OnTool})
 	if err != nil {
 		status, text := StatusError, describeError(err)
 		if runCtx.Err() != nil {

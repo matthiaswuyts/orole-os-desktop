@@ -197,9 +197,11 @@ type prep struct {
 	draft   bool
 	extra   string // system prompt addendum
 	// voice makes this a phone-call turn: spoken style, cheapest reasoning, tight limits.
-	voice  bool
-	onText func(string)
-	onTool func(string)
+	voice bool
+	// language is the call language of a voice turn (VoiceRequest.Language).
+	language string
+	onText   func(string)
+	onTool   func(string)
 }
 
 // prepare resolves the model, gates attachments by capability, gathers memory and history and
@@ -236,7 +238,7 @@ func (m *Manager) prepare(ctx context.Context, p prep) (*turnEnv, error) {
 	}
 
 	fromUser := p.rc.Author == "user" && !p.draft && p.bot.ID != ""
-	in := systemInput{Bot: p.bot, Sections: m.promptSections(p.bot, fromUser), Snapshot: snapshot, Recall: recall, Extra: p.extra, Voice: p.voice}
+	in := systemInput{Bot: p.bot, Sections: m.promptSections(p.bot, fromUser), Snapshot: snapshot, Recall: recall, Extra: p.extra, Voice: p.voice, Language: p.language}
 	cur := llm.Message{Role: llm.RoleUser, Parts: userParts(p.text, atts)}
 	history := p.history
 	if p.userSeq > 0 {

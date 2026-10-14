@@ -109,7 +109,7 @@ header when the call's card changes. Calls made before this change keep their tu
    call SID it returns is kept for hang-up and polling.
 3. While the phone rings, `Compose` asks the bot's model for the **opener**: a **name-only greeting** ("Hey, it's
    Atlas. Got a minute?") that does not say why it is calling, because the call may reach voicemail. The instruction
-   carries no reason and no context. `CheckOpener` requires the bot's name, forbids "Orole", caps length at 240
+   carries no reason and no context, only the call language. `CheckOpener` requires the bot's name, forbids "Orole", caps length at 240
    characters and a single paragraph. A bad or late (3 s after the first request) opener is replaced by a varied
    name-only fallback that never names the app. The reason is given in the first model turn after the owner answers
    (the brief tells the bot so).
@@ -157,7 +157,7 @@ llm.delta -> SSE -> ElevenLabs TTS`.
 - `VoiceTurn` runs under its own run key (`call:<id>`), so a call never waits behind the bot's chat queue. It uses the
   voice prompt (`voiceStyle`), the cheapest reasoning level the model offers, no attachments or compaction, and limits
   of at most 6 steps and 10 tool calls (never above the bot's own limits).
-- **Fillers.** When the model starts a tool, a scripted line for that tool ("Checking your automations.") is streamed
+- **Fillers.** When the model starts a tool, a scripted line for that tool ("Checking your automations.", in Dutch "Ik kijk even naar je automatiseringen.") is streamed
   immediately, then the model's continuation.
 - **Barge-in.** A new request for the same call cancels the in-flight turn, waits for its run slot, and the cancelled turn
   speaks no more. It leaves only a one-line note in the call history naming the tools it already started, so the next
@@ -196,10 +196,30 @@ never logged.
 
 Plain settings (`PhoneSettings`, settings key `jarvis`, writable only through `jarvis.configure` and verification, not
 `settings.set`): relay URL (https, or loopback http), Jarvis number, verified owner number, quiet hours, daily cap,
-monthly cost cap, cents per minute, default voice and TTS model, and the provider ids provisioning created (agent, phone
-number, post-call webhook). Per bot (`BotConfig.Jarvis`): enabled, policy text (2000 characters), voice, TTS model.
+monthly cost cap, cents per minute, default voice and TTS model, call language, and the provider ids provisioning
+created (agent, phone number, post-call webhook).
+
+**Call language** (`callLanguage`: `nl`, the default when empty; `en`; `auto`), Settings > Phone > Calls. It is fixed
+when a call starts and sets:
+
+- the ElevenLabs agent `language` (`nl` or `en`; speech recognition and voice). `auto` keeps `nl` and adds the
+  `language_detection` system tool (`built_in_tools.language_detection`, `params.system_tool_type`
+  `language_detection`) with an `en` entry in `conversation_config.language_presets`, so the agent can switch when the
+  owner speaks English. Other languages need another preset. Without `auto` the tool is sent as `null` and the presets
+  empty, so switching away from Auto removes them. Saving the setting re-provisions (Connect always updates the agent);
+- the bot's spoken language: `chat.VoiceRequest.Language` adds one line to the voice prompt (`nl`: speak Dutch; `en`:
+  speak English; `auto`: answer in the owner's language, Dutch until known);
+- the opener and inbound greeting instructions ("Write it in Dutch"), and the daemon's fixed lines in
+  `internal/jarvis/lang.go`: the name-only fallback openers, the inbound fallback greeting, the verification-code line,
+  tool fillers, "I can't do that right now", the gate refusal prefix and the error prefix. `auto` uses the Dutch lines.
+  The gate's reason and a provider error text stay English. The relay's two lines ("Sorry, I can't reach your bots
+  right now..." and "Lost connection, I'll message you.") stay English: the relay does not know the call language.
+
+Greeting and request detection (step 4 above) knows Dutch: greetings such as "hallo", "ja", "met <name>",
+"goedemiddag", and request words and phrases such as "wat", "wie", "hoe", "waarom", "kun", "kan", "check", "start",
+"vertel", "zeg het maar", "ga je gang". Per bot (`BotConfig.Jarvis`): enabled, policy text (2000 characters), voice, TTS model.
 The voice model choices are a curated list in `internal/jarvis/elevenlabs.go` (`curatedModels`: Flash v2.5, recommended
-for calls; v3 Conversational; Turbo v2.5, older), filtered to what the account's `/v1/models` offers. Voices carry
+for calls; v3 Conversational; Turbo v2.5, older; the first two name Dutch support), filtered to what the account's `/v1/models` offers. Voices carry
 ElevenLabs' description, or one built from their labels. The UI picker is `frontend/src/features/jarvis/VoicePicker.tsx`.
 
 | Credential key (`internal/credentials`) | Holds | Set by |

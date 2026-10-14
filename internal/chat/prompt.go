@@ -51,6 +51,20 @@ type systemInput struct {
 	Summary  string   // rolling conversation summary
 	Extra    string   // run-specific addendum (delegation)
 	Voice    bool     // a phone call: replies are spoken, so voiceStyle replaces chatStyle
+	Language string   // a phone call's language (VoiceRequest.Language); adds voiceLanguage to voiceStyle
+}
+
+// voiceLanguage is the spoken-language line of the voice style for a call language; "" for none.
+func voiceLanguage(lang string) string {
+	switch lang {
+	case "nl":
+		return "- Speak Dutch (Nederlands) on this call, even though these instructions are in English. Switch only if the owner asks you to."
+	case "en":
+		return "- Speak English on this call. Switch only if the owner asks you to."
+	case "auto":
+		return "- Answer in the language the owner speaks to you. Until you know it, speak Dutch (Nederlands)."
+	}
+	return ""
 }
 
 // buildSystem renders the system prompt: bot instructions, standing rules, memory, recall, summary.
@@ -71,6 +85,10 @@ func buildSystem(in systemInput) string {
 	b.WriteString("\n\n")
 	if in.Voice {
 		b.WriteString(voiceStyle)
+		if line := voiceLanguage(in.Language); line != "" {
+			b.WriteString("\n")
+			b.WriteString(line)
+		}
 	} else {
 		b.WriteString(chatStyle)
 	}

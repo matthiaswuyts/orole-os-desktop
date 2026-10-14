@@ -2048,6 +2048,12 @@ export interface PhoneSettings {
   centsPerMinute: number;
   defaultVoiceId: string;
   defaultTtsModel: string;
+  /**
+   * CallLanguage is the language calls are held in: LangDutch (also when empty), LangEnglish or LangAuto (starts in
+   * Dutch and follows the owner's language). It sets the ElevenLabs agent language, the bot's spoken language and the
+   * daemon's fixed spoken lines.
+   */
+  callLanguage: string;
 }
 
 /** PinRequest pins or unpins a bot. */

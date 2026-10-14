@@ -95,6 +95,26 @@ type PhoneSettings struct {
 	CentsPerMinute    int    `json:"centsPerMinute"`    // 0 = default 12
 	DefaultVoiceID    string `json:"defaultVoiceId"`
 	DefaultTTSModel   string `json:"defaultTtsModel"`
+	// CallLanguage is the language calls are held in: LangDutch (also when empty), LangEnglish or LangAuto (starts in
+	// Dutch and follows the owner's language). It sets the ElevenLabs agent language, the bot's spoken language and the
+	// daemon's fixed spoken lines.
+	CallLanguage string `json:"callLanguage"`
+}
+
+// Call languages (PhoneSettings.CallLanguage).
+const (
+	LangDutch   = "nl"
+	LangEnglish = "en"
+	LangAuto    = "auto"
+)
+
+// callLanguage is the effective call language; empty means Dutch.
+func (s PhoneSettings) callLanguage() string {
+	switch s.CallLanguage {
+	case LangEnglish, LangAuto:
+		return s.CallLanguage
+	}
+	return LangDutch
 }
 
 // SettingsKey is the settings table key for Settings.

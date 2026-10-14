@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -27,6 +29,7 @@ type fakeHost struct {
 	holdFirst      bool          // the first VoiceTurn blocks until its context is canceled
 	started        chan struct{} // signaled when the held turn is running
 	botErr         error
+	instructions   []string // what Compose was asked
 }
 
 func newFakeHost() *fakeHost {
@@ -88,9 +91,10 @@ func (h *fakeHost) VoiceTurn(ctx context.Context, r chat.VoiceRequest) (string, 
 	r.OnText(reply)
 	return reply, nil
 }
-func (h *fakeHost) Compose(context.Context, string, string) (string, error) {
+func (h *fakeHost) Compose(_ context.Context, _ string, instruction string) (string, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	h.instructions = append(h.instructions, instruction)
 	return h.opener, nil
 }
 func (h *fakeHost) PostCallCard(_ context.Context, _ string, p chat.MsgPart) (string, error) {
@@ -274,6 +278,8 @@ type callEnv struct {
 	relay *fakeSender
 	store *Store
 	now   *time.Time
+	// settings are read on every call; tests change them (CallLanguage) before placing a call.
+	settings *PhoneSettings
 }
 
 func newCallEnv(t *testing.T) *callEnv {
@@ -281,8 +287,9 @@ func newCallEnv(t *testing.T) *callEnv {
 	st, now := testStore(t)
 	*now = time.Date(2026, 10, 14, 12, 0, 0, 0, time.UTC)
 	e := &callEnv{host: newFakeHost(), dial: &fakeDialer{}, phone: &fakePhone{}, relay: &fakeSender{}, store: st, now: now}
-	settings := PhoneSettings{OwnerNumber: "+32470000000", OwnerVerified: true, AgentID: "ag", PhoneNumberID: "pn"}
-	e.c = NewCalls(st, e.host, e.dial, e.phone, e.relay, func() PhoneSettings { return settings }, func() time.Time { return *e.now }, slog.Default())
+	// English unless a test says otherwise, so the scripted lines below read as written.
+	e.settings = &PhoneSettings{OwnerNumber: "+32470000000", OwnerVerified: true, AgentID: "ag", PhoneNumberID: "pn", CallLanguage: LangEnglish}
+	e.c = NewCalls(st, e.host, e.dial, e.phone, e.relay, func() PhoneSettings { return *e.settings }, func() time.Time { return *e.now }, slog.Default())
 	e.c.speechWait = func(string) time.Duration { return 0 }
 	t.Cleanup(e.c.Close) // registered after testStore's cleanup, so it runs first
 	return e
@@ -1328,5 +1335,56 @@ func TestInboundWithRelayFrameShapes(t *testing.T) {
 	}
 	if !e.relay.done("req-2") {
 		t.Fatal("no llm.done")
+	}
+}
+
+// A Dutch call (the default language) speaks Dutch fixed lines, asks for a Dutch opener and tells the bot to speak Dutch.
+func TestDutchCallSpeaksDutch(t *testing.T) {
+	for _, lang := range []string{"", LangDutch, LangAuto} {
+		t.Run("lang="+lang, func(t *testing.T) {
+			e := newCallEnv(t)
+			e.settings.CallLanguage = lang
+			e.host.opener = "not an opener" // fails CheckOpener: the Dutch fallback is used
+			e.host.toolDuringTurn = "list_tasks"
+			call, err := e.c.Place(context.Background(), PlaceRequest{BotID: "b1", Reason: "x"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			e.c.HandleFrame(context.Background(), Frame{Type: FrameLLMRequest, ID: "r0", CallID: call.ID})
+			opener := e.relay.text("r0")
+			if !slices.ContainsFunc(dutch.openers, func(f string) bool { return opener == fmt.Sprintf(f, "Atlas") }) {
+				t.Fatalf("opener %q is not a Dutch fallback", opener)
+			}
+			e.host.mu.Lock()
+			instr := strings.Join(e.host.instructions, "|")
+			e.host.mu.Unlock()
+			if !strings.Contains(instr, "Dutch") {
+				t.Errorf("opener instruction does not ask for Dutch: %q", instr)
+			}
+			e.c.HandleFrame(context.Background(), llmFrame("r1", call.ID, "wat draait er?"))
+			if got := e.relay.text("r1"); !strings.HasPrefix(got, "Ik kijk even naar je taken.") {
+				t.Fatalf("spoken %q", got)
+			}
+			want := LangDutch
+			if lang == LangAuto {
+				want = LangAuto
+			}
+			if turns := e.host.turnList(); len(turns) != 1 || turns[0].Language != want {
+				t.Fatalf("turn language = %+v, want %q", turns, want)
+			}
+		})
+	}
+}
+
+func TestDutchVerificationAndRefusalLines(t *testing.T) {
+	e := newCallEnv(t)
+	e.settings.CallLanguage = LangDutch
+	call, err := e.c.Place(context.Background(), PlaceRequest{Verify: "123456"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.c.HandleFrame(context.Background(), Frame{Type: FrameLLMRequest, ID: "r0", CallID: call.ID})
+	if got := e.relay.text("r0"); got != "Je verificatiecode is 1 2 3 4 5 6. Nog een keer: 1 2 3 4 5 6." {
+		t.Fatalf("verification line %q", got)
 	}
 }

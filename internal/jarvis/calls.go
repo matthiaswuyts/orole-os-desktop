@@ -70,6 +70,7 @@ type live struct {
 	call    CallRecord
 	botName string
 	brief   string
+	lang    string     // call language, fixed when the call starts (PhoneSettings.callLanguage)
 	inject  []injected // news folded into the call; inject[:delivered] reached the bot in a finished turn
 	history []chat.VoiceLine
 	// delivered counts inject lines a completed model turn has seen; the rest become a notification at the end.
@@ -208,7 +209,8 @@ func (c *Calls) Place(ctx context.Context, req PlaceRequest) (CallRecord, error)
 	if req.Verify == "" {
 		brief += "\n\n" + openedNote
 	}
-	l := &live{call: call, botName: bot.Name, brief: brief, opener: make(chan string, 1), done: make(chan struct{}),
+	lang := s.callLanguage()
+	l := &live{call: call, botName: bot.Name, brief: brief, lang: lang, opener: make(chan string, 1), done: make(chan struct{}),
 		verify: req.Verify, urgent: req.Urgent, quiet: req.QuietOverride}
 	c.cur = l
 	c.seed++
@@ -248,29 +250,29 @@ func (c *Calls) Place(ctx context.Context, req PlaceRequest) (CallRecord, error)
 	octx := context.WithoutCancel(ctx)
 	c.spawn(func() {
 		if req.Verify != "" {
-			l.opener <- "Your verification code is " + spaced(req.Verify) + ". Again, " + spaced(req.Verify) + "."
+			l.opener <- phrasesFor(lang).verifyLine(req.Verify)
 			return
 		}
 		cctx, cancel := context.WithTimeout(octx, 15*time.Second)
 		defer cancel()
-		text, err := c.host.Compose(cctx, bot.ID, openerInstruction(bot.Name))
+		text, err := c.host.Compose(cctx, bot.ID, openerInstruction(lang, bot.Name))
 		if err == nil {
 			if t, ok := CheckOpener(bot.Name, text); ok {
 				l.opener <- t
 				return
 			}
 		}
-		l.opener <- FallbackOpener(bot.Name, seed)
+		l.opener <- FallbackOpener(lang, bot.Name, seed)
 	})
 	return snap, nil
 }
 
-// openerInstruction asks for a name-only greeting. It carries no reason and no context: the call may reach
-// voicemail, and the opener is spoken before anyone has answered.
-func openerInstruction(name string) string {
+// openerInstruction asks for a name-only greeting in the call language. It carries no reason and no context: the call
+// may reach voicemail, and the opener is spoken before anyone has answered.
+func openerInstruction(lang, name string) string {
 	return fmt.Sprintf("You are phoning the owner right now. Write the very first sentence you will say when they pick up: "+
 		"a short, natural greeting with your name (%s) that asks whether they have a minute. Do not say why you are calling yet; "+
-		"the call may reach voicemail. One short sentence, never name the app.", name)
+		"the call may reach voicemail. One short sentence, never name the app.", name) + phrasesFor(lang).writeIn
 }
 
 // openedNote tells the bot, in its call brief, that the opener did not give the reason.
@@ -416,6 +418,7 @@ type speaker struct {
 	ctx        context.Context
 	quiet      context.Context // when done, this turn was superseded or aborted and must stay silent
 	id, callID string
+	lines      phrases // the call language's fixed lines
 
 	mu         sync.Mutex
 	san        *sanitizer
@@ -424,8 +427,8 @@ type speaker struct {
 	tools      []string // tools this turn started, for the note a superseded turn leaves
 }
 
-func (c *Calls) newSpeaker(ctx context.Context, id, callID, botName string) *speaker {
-	return &speaker{c: c, ctx: ctx, id: id, callID: callID, san: newSanitizer(botName)}
+func (c *Calls) newSpeaker(ctx context.Context, id, callID, botName, lang string) *speaker {
+	return &speaker{c: c, ctx: ctx, id: id, callID: callID, lines: phrasesFor(lang), san: newSanitizer(botName)}
 }
 
 func (s *speaker) emit(out string) {
@@ -450,7 +453,7 @@ func (s *speaker) filler(tool string) {
 	if !slices.Contains(s.tools, tool) {
 		s.tools = append(s.tools, tool)
 	}
-	f := filler(tool)
+	f := s.lines.fillerLine(tool)
 	if f == s.lastFiller {
 		return
 	}
@@ -577,7 +580,7 @@ func (c *Calls) turn(ctx context.Context, f Frame) {
 	}
 	first := !l.spoken
 	l.spoken = true
-	botName := l.botName
+	botName, lang := l.botName, l.lang
 	c.mu.Unlock()
 	if answered && c.afterAnswer != nil {
 		c.afterAnswer()
@@ -586,11 +589,11 @@ func (c *Calls) turn(ctx context.Context, f Frame) {
 		c.persist(ctx, l, true)
 		c.changed()
 	}
-	sp := c.newSpeaker(ctx, f.ID, f.CallID, botName)
+	sp := c.newSpeaker(ctx, f.ID, f.CallID, botName, lang)
 
 	if first {
 		// The first turn always speaks the opener, whatever the owner already said.
-		text, ok := c.awaitOpener(ctx, l, botName)
+		text, ok := c.awaitOpener(ctx, l, botName, lang)
 		if !ok {
 			return
 		}
@@ -636,7 +639,7 @@ func (c *Calls) turn(ctx context.Context, f Frame) {
 }
 
 // awaitOpener returns the opener written while the phone rang, or a fallback if it is late.
-func (c *Calls) awaitOpener(ctx context.Context, l *live, botName string) (string, bool) {
+func (c *Calls) awaitOpener(ctx context.Context, l *live, botName, lang string) (string, bool) {
 	select {
 	case text := <-l.opener:
 		return text, true
@@ -646,7 +649,7 @@ func (c *Calls) awaitOpener(ctx context.Context, l *live, botName string) (strin
 	case text := <-l.opener:
 		return text, true
 	case <-time.After(3 * time.Second):
-		return FallbackOpener(botName, 0), true
+		return FallbackOpener(lang, botName, 0), true
 	case <-ctx.Done():
 		return "", false
 	}
@@ -696,13 +699,13 @@ func (c *Calls) modelTurn(ctx context.Context, l *live, f Frame, sp *speaker, ut
 		var ge *GateError
 		if errors.As(err, &ge) {
 			c.host.DisableJarvis(ctx, botID, ge.Reason)
-			line := "I can't act on that: " + ge.Reason
+			line := sp.lines.refused + ge.Reason
 			sp.say(line)
 			sp.finish()
 			c.hangupAfter(sid, line)
 			return
 		}
-		sp.say("I can't do that right now.")
+		sp.say(sp.lines.cannot)
 		sp.finish()
 		return
 	}
@@ -717,9 +720,10 @@ func (c *Calls) modelTurn(ctx context.Context, l *live, f Frame, sp *speaker, ut
 		brief += "\n\nNews since the call started:\n- " + strings.Join(lines, "\n- ")
 	}
 	history := append([]chat.VoiceLine(nil), l.history...)
+	lang := l.lang
 	c.mu.Unlock()
 	reply, err := c.host.VoiceTurn(tctx, chat.VoiceRequest{BotID: bot.ID, CallID: f.CallID, Text: utter, Brief: brief, History: history,
-		OnText: sp.say, OnTool: sp.filler})
+		Language: lang, OnText: sp.say, OnTool: sp.filler})
 	if tctx.Err() != nil {
 		// Superseded or aborted: no more speech. Keep a note of tools that already ran so the next turn knows.
 		if ran := sp.toolsRan(); len(ran) > 0 {
@@ -731,7 +735,7 @@ func (c *Calls) modelTurn(ctx context.Context, l *live, f Frame, sp *speaker, ut
 		return
 	}
 	if err != nil {
-		sp.say(" That failed: " + firstSentence(err.Error()))
+		sp.say(sp.lines.failed + firstSentence(err.Error()))
 	}
 	c.mu.Lock()
 	if err == nil {
@@ -753,19 +757,33 @@ func (c *Calls) modelTurn(ctx context.Context, l *live, f Frame, sp *speaker, ut
 var greetingWords = map[string]bool{
 	"hello": true, "hallo": true, "hi": true, "hey": true, "hiya": true, "hoi": true, "yes": true, "yeah": true, "yep": true,
 	"ja": true, "oui": true, "allo": true, "allô": true, "bonjour": true, "salut": true, "speaking": true, "morning": true,
-	"goedemorgen": true, "goedemiddag": true, "goedenavond": true, "moin": true,
+	"goedemorgen": true, "goedemiddag": true, "goedenavond": true, "goeiemorgen": true, "goeiemiddag": true, "goeienavond": true,
+	"hallootjes": true, "moin": true, "dag": true, "hé": true, "he": true,
 }
 
 // requestWords make an utterance a question or a request, never a bare greeting.
 var requestWords = map[string]bool{
 	"what": true, "who": true, "why": true, "how": true, "when": true, "where": true, "which": true, "can": true, "could": true,
-	"check": true, "start": true, "tell": true, "wat": true, "wie": true, "hoe": true, "waarom": true,
+	"check": true, "start": true, "tell": true,
+	// Dutch
+	"wat": true, "wie": true, "hoe": true, "waarom": true, "wanneer": true, "waar": true, "welke": true, "welk": true,
+	"kun": true, "kunt": true, "kan": true, "zou": true, "vertel": true, "zeg": true, "stop": true, "starten": true,
 }
 
-// asksSomething reports whether an utterance contains a question word or a request verb.
+// requestPhrases are requests that are not a single request word ("ga je gang": go ahead).
+var requestPhrases = []string{"ga je gang", "ga uw gang", "go ahead"}
+
+// asksSomething reports whether an utterance contains a question word, a request verb or a request phrase.
 func asksSomething(utter string) bool {
-	for _, w := range strings.FieldsFunc(strings.ToLower(utter), func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsDigit(r) }) {
+	words := strings.FieldsFunc(strings.ToLower(utter), func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsDigit(r) })
+	for _, w := range words {
 		if requestWords[w] {
+			return true
+		}
+	}
+	joined := " " + strings.Join(words, " ") + " "
+	for _, p := range requestPhrases {
+		if strings.Contains(joined, " "+p+" ") {
 			return true
 		}
 	}
@@ -848,20 +866,6 @@ func firstSentence(s string) string {
 	return s
 }
 
-var fillers = map[string]string{
-	"list_tasks": "Checking your tasks.", "task_status": "Looking at that task.", "start_task": "Starting that coding task now.",
-	"message_task": "Passing that on.", "stop_task": "Stopping it.", "list_automations": "Checking your automations.",
-	"automation_runs": "Checking the runs.", "research": "Starting the research.", "web_search": "Looking that up.",
-	"web_fetch": "Reading that.", "switch_bot": "One moment.",
-}
-
-func filler(tool string) string {
-	if f, ok := fillers[tool]; ok {
-		return f
-	}
-	return "One moment."
-}
-
 // ---- inbound ----
 
 func (c *Calls) inbound(ctx context.Context, f Frame) {
@@ -881,7 +885,8 @@ func (c *Calls) inbound(ctx context.Context, f Frame) {
 	}
 	call := CallRecord{ID: uuid.NewString(), BotID: bot.ID, Direction: Inbound, Reason: "You called", Status: StatusInProgress,
 		StartedAt: c.now().UnixMilli(), AnsweredAt: c.now().UnixMilli(), ProviderCallID: f.CallSID, ConversationID: f.ConversationID}
-	l := &live{call: call, botName: bot.Name, opener: make(chan string, 1), done: make(chan struct{})}
+	lang := s.callLanguage()
+	l := &live{call: call, botName: bot.Name, lang: lang, opener: make(chan string, 1), done: make(chan struct{})}
 	c.mu.Lock()
 	if c.cur != nil || c.closed {
 		c.mu.Unlock()
@@ -906,12 +911,12 @@ func (c *Calls) inbound(ctx context.Context, f Frame) {
 	c.spawn(func() {
 		cctx, cancel := context.WithTimeout(octx, 3*time.Second)
 		defer cancel()
-		text, err := c.host.Compose(cctx, bot.ID, fmt.Sprintf("The owner just phoned you. Write your greeting: say your name (%s) naturally and ask what they need. One short sentence, never name the app.", bot.Name))
+		text, err := c.host.Compose(cctx, bot.ID, inboundInstruction(lang, bot.Name))
 		if t, ok := CheckOpener(bot.Name, text); err == nil && ok {
 			l.opener <- t
 			return
 		}
-		l.opener <- "Hey, " + bot.Name + " here. What do you need?"
+		l.opener <- phrasesFor(lang).inboundLine(bot.Name)
 	})
 	tts := map[string]string{}
 	if v := or2(bot.Config.Jarvis.VoiceID, s.DefaultVoiceID); v != "" {

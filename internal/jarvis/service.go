@@ -801,6 +801,11 @@ func validateSettings(in PhoneSettings) (PhoneSettings, error) {
 	if len(in.DefaultVoiceID) > 100 || len(in.DefaultTTSModel) > 100 {
 		return in, &Refusal{"The voice or model id is too long."}
 	}
+	switch in.CallLanguage {
+	case "", LangDutch, LangEnglish, LangAuto:
+	default:
+		return in, &Refusal{"The call language must be Dutch, English or Auto."}
+	}
 	return in, nil
 }
 

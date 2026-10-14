@@ -478,3 +478,20 @@ func TestCallTurnsHiddenFromChatButInHistory(t *testing.T) {
 		t.Fatalf("history tail = %d messages (err %v), want all 9", len(tail.msgs), err)
 	}
 }
+
+func TestVoiceTurnSpeaksTheCallLanguage(t *testing.T) {
+	for _, c := range []struct{ lang, want string }{{"nl", "Speak Dutch"}, {"en", "Speak English"}, {"auto", "language the owner speaks"}, {"", ""}} {
+		e := newEnv(t, textScript("ok"))
+		b := e.bot("Atlas")
+		if _, err := e.m.VoiceTurn(context.Background(), VoiceRequest{BotID: b.ID, CallID: "c1", Text: "hoi", Language: c.lang}); err != nil {
+			t.Fatal(err)
+		}
+		sys := e.lastRequest().System
+		if c.want != "" && !strings.Contains(sys, c.want) {
+			t.Errorf("%q: voice prompt lacks %q", c.lang, c.want)
+		}
+		if c.want == "" && strings.Contains(sys, "Speak ") {
+			t.Errorf("no language set, but the prompt names one")
+		}
+	}
+}

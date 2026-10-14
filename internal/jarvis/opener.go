@@ -1,7 +1,6 @@
 package jarvis
 
 import (
-	"fmt"
 	"strings"
 	"unicode"
 )
@@ -85,21 +84,8 @@ func CheckOpener(name, text string) (string, bool) {
 	return text, true
 }
 
-// fallbacks are name-only greetings: an opener never says why the bot is calling, because the call may have
-// reached voicemail. The reason comes in the first model turn after the owner answers.
-var fallbacks = []string{
-	"Hey, it's %s. Got a minute?",
-	"Hi, %s here. Do you have a moment?",
-	"%s here. Got a minute?",
-	"Hey, %s calling. Is now a good time?",
-	"It's %s. Have you got a second?",
-	"Hey, %s here. Quick one, got a minute?",
-}
-
-// FallbackOpener is used when the model's opener is late or fails CheckOpener. It names the bot and nothing else.
-// For any name CheckOpener accepts (1 to maxName runes), the result passes CheckOpener with that name.
-func FallbackOpener(name string, seed int) string {
-	name = runesCut(normalize(name), maxName)
-	f := fallbacks[((seed%len(fallbacks))+len(fallbacks))%len(fallbacks)]
-	return fmt.Sprintf(f, name)
-}
+// FallbackOpener is used when the model's opener is late or fails CheckOpener: a name-only greeting in the call
+// language (lang, see PhoneSettings.CallLanguage). An opener never says why the bot is calling, because the call may
+// have reached voicemail; the reason comes in the first model turn after the owner answers. For any name CheckOpener
+// accepts (1 to maxName runes), the result passes CheckOpener with that name.
+func FallbackOpener(lang, name string, seed int) string { return fallbackOpener(lang, name, seed) }

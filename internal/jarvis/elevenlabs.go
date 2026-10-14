@@ -39,14 +39,15 @@ type TTSModel struct {
 // curatedModels is the single source for the voice model choices, in display order. Models() offers only the ones
 // the account's /v1/models actually lists.
 var curatedModels = []TTSModel{
-	{ID: "eleven_flash_v2_5", Name: "Flash v2.5",Description: "Fastest and cheapest (~75 ms), 32 languages.", Recommended: true},
-	{ID: "eleven_v3_conversational", Name: "v3 Conversational", Description: "Most natural and expressive, built for agents, 70+ languages. A bit slower and pricier."},
+	{ID: "eleven_flash_v2_5", Name: "Flash v2.5", Description: "Fastest and cheapest (~75 ms), 32 languages including Dutch.", Recommended: true},
+	{ID: "eleven_v3_conversational", Name: "v3 Conversational", Description: "Most natural and expressive, built for agents, 70+ languages including Dutch. A bit slower and pricier."},
 	{ID: "eleven_turbo_v2_5", Name: "Turbo v2.5 (older)", Description: "Slightly richer than Flash but slower; ElevenLabs now recommends Flash for new projects."},
 }
 
-// AgentConfig describes the shared agent. Empty VoiceID/TTSModel are omitted from the request.
+// AgentConfig describes the shared agent. Empty VoiceID/TTSModel are omitted from the request. Language is a call
+// language (LangDutch, LangEnglish, LangAuto); empty means Dutch.
 type AgentConfig struct {
-	RelayURL, LLMSecret, VoiceID, TTSModel string
+	RelayURL, LLMSecret, VoiceID, TTSModel, Language string
 }
 
 type OutboundCall struct {
@@ -173,11 +174,33 @@ func (e *ElevenLabs) Models(ctx context.Context) ([]TTSModel, error) {
 // agentBody configures the shared agent: the brain is our relay (custom LLM) and the first turn comes from the LLM
 // (first_message empty) so the daemon's cached opener is spoken. The end_call and voicemail_detection tools stay
 // configured, but nothing relies on them: the daemon detects voicemail itself and hangs up through Twilio.
+//
+// The agent language follows the call language (speech recognition and voice): "nl" or "en". Auto starts in Dutch and
+// adds ElevenLabs' language_detection system tool with an English preset, so the agent can switch when the owner
+// speaks English (field names checked against the ElevenLabs language-detection docs on 2026-10-14).
 func agentBody(c AgentConfig) map[string]any {
+	lang := LangDutch
+	if c.Language == LangEnglish {
+		lang = LangEnglish
+	}
+	tools := map[string]any{
+		"end_call": map[string]any{"name": "end_call", "params": map[string]any{"system_tool_type": "end_call"}},
+		"voicemail_detection": map[string]any{
+			"name":   "voicemail_detection",
+			"params": map[string]any{"system_tool_type": "voicemail_detection", "voicemail_message": ""},
+		},
+	}
+	// Without Auto the tool is sent as null (and the presets empty), so an update after switching away from Auto
+	// removes them instead of leaving the old values merged in.
+	tools["language_detection"] = nil
+	if c.Language == LangAuto {
+		tools["language_detection"] = map[string]any{"type": "system", "name": "language_detection", "description": "",
+			"params": map[string]any{"system_tool_type": "language_detection"}}
+	}
 	conv := map[string]any{
 		"agent": map[string]any{
 			"first_message": "",
-			"language":      "en",
+			"language":      lang,
 			"prompt": map[string]any{
 				"prompt": "You relay a phone call. Speak the assistant's replies exactly.",
 				"llm":    "custom-llm",
@@ -186,16 +209,15 @@ func agentBody(c AgentConfig) map[string]any {
 					"model_id":        "bot",
 					"request_headers": map[string]string{"x-orole-relay": c.LLMSecret},
 				},
-				"built_in_tools": map[string]any{
-					"end_call": map[string]any{"name": "end_call", "params": map[string]any{"system_tool_type": "end_call"}},
-					"voicemail_detection": map[string]any{
-						"name":   "voicemail_detection",
-						"params": map[string]any{"system_tool_type": "voicemail_detection", "voicemail_message": ""},
-					},
-				},
+				"built_in_tools": tools,
 			},
 		},
 		"turn": map[string]any{"turn_eagerness": "eager"},
+	}
+	conv["language_presets"] = map[string]any{}
+	if c.Language == LangAuto {
+		// The detection tool switches to the languages listed here; the first message stays empty in each.
+		conv["language_presets"] = map[string]any{LangEnglish: map[string]any{"overrides": map[string]any{"agent": map[string]any{"first_message": ""}}}}
 	}
 	tts := map[string]any{}
 	if c.VoiceID != "" {

@@ -32,7 +32,7 @@ func Provision(ctx context.Context, el *ElevenLabs, tw *Twilio, s PhoneSettings,
 		el = &e2
 	}
 	base := strings.TrimRight(s.RelayURL, "/")
-	cfg := AgentConfig{RelayURL: base, LLMSecret: sec.LLMSecret, VoiceID: s.DefaultVoiceID, TTSModel: s.DefaultTTSModel}
+	cfg := AgentConfig{RelayURL: base, LLMSecret: sec.LLMSecret, VoiceID: s.DefaultVoiceID, TTSModel: s.DefaultTTSModel, Language: s.callLanguage()}
 	if s.AgentID == "" {
 		if s.AgentID, err = el.CreateAgent(ctx, cfg); err != nil {
 			return s, err
