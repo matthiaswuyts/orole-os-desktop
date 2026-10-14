@@ -722,6 +722,9 @@ func (s *Service) SwitchBot(ctx context.Context, callID, name string) (string, e
 	return s.calls.SwitchBot(ctx, callID, name)
 }
 
+// EndCall ends the call once the bot's current reply has been spoken (the end_call tool).
+func (s *Service) EndCall(callID string) error { return s.calls.EndAfterReply(callID) }
+
 func (s *Service) has(key string) bool {
 	v, err := s.cfg.Creds.Get(key)
 	return err == nil && len(v) > 0

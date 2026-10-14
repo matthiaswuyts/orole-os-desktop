@@ -90,6 +90,13 @@ type live struct {
 
 	turnCancel context.CancelFunc // in-flight model turn, if any
 	turnDone   chan struct{}
+	// The in-flight turn's speaker, utterance and request size: a request that repeats them is ElevenLabs retrying
+	// the same turn (it re-sends when no text arrived in time), not the owner barging in; see Calls.adopt.
+	turnSp    *speaker
+	turnUtter string
+	turnMsgs  int
+	// hangAfter is set by the end_call tool: the call ends once the current reply has been spoken.
+	hangAfter bool
 
 	// persistMu serializes writes of this call's row and card; see Calls.persist.
 	persistMu sync.Mutex
@@ -108,6 +115,8 @@ type Calls struct {
 	now      func() time.Time
 	log      *slog.Logger
 	after    func(time.Duration) <-chan time.Time // injectable for tests
+	// ackAfter and stillAfter time the keep-alive lines of a slow turn (see speaker.keepAlive; tests shorten them).
+	ackAfter, stillAfter time.Duration
 	// speechWait is how long to let the voice finish a line before hanging up at the carrier (tests use 0).
 	speechWait func(text string) time.Duration
 	// Retry places the second attempt after an unanswered urgent call. The daemon points it at the policy-checked path
@@ -131,7 +140,7 @@ type Calls struct {
 func NewCalls(store *Store, host Host, dial Dialer, phone Phone, relay Sender, settings func() PhoneSettings, now func() time.Time, log *slog.Logger) *Calls {
 	ctx, cancel := context.WithCancel(context.Background())
 	c := &Calls{store: store, host: host, dial: dial, phone: phone, relay: relay, settings: settings, now: now, log: log,
-		after: time.After, speechWait: speechTime, baseCtx: ctx, stop: cancel}
+		after: time.After, speechWait: speechTime, ackAfter: ackAfter, stillAfter: stillAfter, baseCtx: ctx, stop: cancel}
 	c.Retry = func(ctx context.Context, req PlaceRequest) { _, _ = c.Place(ctx, req) }
 	return c
 }
@@ -423,8 +432,14 @@ type speaker struct {
 	mu         sync.Mutex
 	san        *sanitizer
 	first      time.Time
+	lastReal   time.Time // wall-clock time text last left; the keep-alive speaks after a silence
 	lastFiller string
 	tools      []string // tools this turn started, for the note a superseded turn leaves
+	said       strings.Builder
+	closed     bool // done was sent: nothing more may go out
+	acked      bool // the "one moment" line was spoken
+	scripted   bool // the last text out was a scripted line (acknowledgement or filler), not the model's
+	nudges     int  // "still working" lines spoken
 }
 
 func (c *Calls) newSpeaker(ctx context.Context, id, callID, botName, lang string) *speaker {
@@ -432,19 +447,91 @@ func (c *Calls) newSpeaker(ctx context.Context, id, callID, botName, lang string
 }
 
 func (s *speaker) emit(out string) {
-	if out == "" || (s.quiet != nil && s.quiet.Err() != nil) {
+	if out == "" || s.closed || (s.quiet != nil && s.quiet.Err() != nil) {
 		return
 	}
+	now := s.c.now()
 	if s.first.IsZero() {
-		s.first = s.c.now()
+		s.first = now
 	}
+	s.lastReal = time.Now()
+	s.said.WriteString(out)
 	_ = s.c.relay.Send(s.ctx, Frame{Type: FrameLLMDelta, ID: s.id, CallID: s.callID, Text: out})
 }
 
 func (s *speaker) say(text string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.emit(s.san.Write(text))
+	out := s.san.Write(text)
+	if strings.TrimSpace(out) != "" {
+		s.scripted = false
+	}
+	s.emit(out)
+}
+
+// line speaks a scripted line (acknowledgement, filler) as its own sentence. The caller holds s.mu.
+func (s *speaker) line(text string) {
+	s.emit(s.san.Write(text + " "))
+	s.scripted = true
+}
+
+// spoken returns everything this turn has said so far.
+func (s *speaker) spoken() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.said.String()
+}
+
+// retarget sends the rest of this turn to a newer request for the same turn. ElevenLabs re-sends a request when no
+// text arrived quickly enough and stops reading the old one, which is closed here.
+func (s *speaker) retarget(id string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed || s.id == id {
+		return
+	}
+	_ = s.c.relay.Send(s.ctx, Frame{Type: FrameLLMDone, ID: s.id, CallID: s.callID})
+	s.id = id
+}
+
+// ackAfter is how long a turn may stay silent before the bot says it is on it; stillAfter is the silence before a
+// "still working" line while a tool runs; maxNudges caps those per turn. Speaking early also keeps ElevenLabs from
+// re-sending the request.
+const (
+	ackAfter   = 1500 * time.Millisecond
+	stillAfter = 12 * time.Second
+	maxNudges  = 3
+)
+
+// keepAlive fills silences of a running turn: "one moment" when nothing was said yet, and now and then a "still
+// working" line during a long tool run. It stops when ctx ends or the turn is closed.
+func (s *speaker) keepAlive(ctx context.Context) {
+	wait := s.c.ackAfter
+	for {
+		t := time.NewTimer(wait)
+		select {
+		case <-ctx.Done():
+			t.Stop()
+			return
+		case <-t.C:
+		}
+		s.mu.Lock()
+		if s.closed || s.nudges >= maxNudges {
+			s.mu.Unlock()
+			return
+		}
+		switch {
+		case s.first.IsZero():
+			s.acked = true
+			s.lastFiller = s.lines.ackLine(s.c.now().Nanosecond())
+			s.line(s.lastFiller)
+		case time.Since(s.lastReal) >= s.c.stillAfter:
+			s.nudges++
+			s.line(s.lines.stillLine(s.nudges))
+		}
+		wait = max(s.c.stillAfter-time.Since(s.lastReal), s.c.stillAfter/10)
+		s.mu.Unlock()
+	}
 }
 
 func (s *speaker) filler(tool string) {
@@ -454,11 +541,12 @@ func (s *speaker) filler(tool string) {
 		s.tools = append(s.tools, tool)
 	}
 	f := s.lines.fillerLine(tool)
-	if f == s.lastFiller {
+	if f == s.lastFiller || (s.acked && s.scripted) {
+		// Already said, or the acknowledgement was the last thing said: one scripted line in a row is enough.
 		return
 	}
 	s.lastFiller = f
-	s.emit(s.san.Write(f + " "))
+	s.line(f)
 }
 
 func (s *speaker) toolsRan() []string {
@@ -472,9 +560,10 @@ func (s *speaker) finish() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.emit(s.san.Flush())
-	if s.quiet != nil && s.quiet.Err() != nil {
+	if s.closed || (s.quiet != nil && s.quiet.Err() != nil) {
 		return
 	}
+	s.closed = true
 	_ = s.c.relay.Send(s.ctx, Frame{Type: FrameLLMDone, ID: s.id, CallID: s.callID})
 }
 
@@ -543,6 +632,10 @@ func (c *Calls) endUnknown(ctx context.Context, f Frame) {
 func (c *Calls) turn(ctx context.Context, f Frame) {
 	start := c.now()
 	utter := lastUser(f.Messages)
+	if isSilence(utter) {
+		// ElevenLabs sends "..." when the owner has been quiet for a while: that is a pause, not something to answer.
+		utter = ""
+	}
 	c.mu.Lock()
 	l := c.cur
 	if l == nil || f.CallID == "" || l.call.ID != f.CallID || l.ended {
@@ -634,8 +727,43 @@ func (c *Calls) turn(ctx context.Context, f Frame) {
 		sp.finish()
 		return
 	}
+	if c.adopt(l, f, utter) {
+		return
+	}
 	c.modelTurn(ctx, l, f, sp, utter, sid)
 	c.logTurn(sp, start, first)
+}
+
+// isSilence reports whether an utterance has no words at all ("...", "", punctuation): ElevenLabs' silence prompt.
+func isSilence(utter string) bool {
+	return !strings.ContainsFunc(utter, func(r rune) bool { return unicode.IsLetter(r) || unicode.IsDigit(r) })
+}
+
+// adopt hands a repeated request to the turn already answering it. ElevenLabs re-sends the same request (same last
+// utterance, same number of messages) when the first text is slow; restarting the turn would cancel the work and
+// make the next retry slower still. A request with anything new is a real barge-in and is not adopted.
+func (c *Calls) adopt(l *live, f Frame, utter string) bool {
+	c.mu.Lock()
+	sp := l.turnSp
+	same := sp != nil && l.turnUtter == utter && l.turnMsgs == len(f.Messages)
+	c.mu.Unlock()
+	if !same {
+		return false
+	}
+	sp.retarget(f.ID)
+	c.log.Info("jarvis: retried turn adopted", "call", f.CallID)
+	return true
+}
+
+// EndAfterReply marks the call to end once the current reply has been spoken (the end_call tool).
+func (c *Calls) EndAfterReply(callID string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.cur == nil || c.cur.call.ID != callID || c.cur.ended {
+		return errors.New("this call has ended")
+	}
+	c.cur.hangAfter = true
+	return nil
 }
 
 // awaitOpener returns the opener written while the phone rang, or a fallback if it is late.
@@ -666,6 +794,7 @@ func (c *Calls) modelTurn(ctx context.Context, l *live, f Frame, sp *speaker, ut
 	c.mu.Lock()
 	prevCancel, prevDone := l.turnCancel, l.turnDone
 	l.turnCancel, l.turnDone = tcancel, myDone
+	l.turnSp, l.turnUtter, l.turnMsgs = sp, utter, len(f.Messages)
 	botID := l.call.BotID
 	if l.silenced {
 		tcancel() // voicemail: this turn must not start
@@ -677,6 +806,7 @@ func (c *Calls) modelTurn(ctx context.Context, l *live, f Frame, sp *speaker, ut
 		c.mu.Lock()
 		if l.turnDone == myDone {
 			l.turnCancel, l.turnDone = nil, nil
+			l.turnSp, l.turnUtter, l.turnMsgs = nil, "", 0
 		}
 		c.mu.Unlock()
 	}()
@@ -691,6 +821,7 @@ func (c *Calls) modelTurn(ctx context.Context, l *live, f Frame, sp *speaker, ut
 	if tctx.Err() != nil {
 		return
 	}
+	go sp.keepAlive(tctx)
 	bot, err := c.host.Bot(tctx, botID)
 	if err == nil {
 		err = c.host.Gate(tctx, bot)
@@ -749,8 +880,16 @@ func (c *Calls) modelTurn(ctx context.Context, l *live, f Frame, sp *speaker, ut
 	if len(l.history) > maxHistory {
 		l.history = l.history[len(l.history)-maxHistory:]
 	}
+	hang := l.hangAfter && !l.ended
 	c.mu.Unlock()
+	if hang && strings.TrimSpace(reply) == "" {
+		sp.say(sp.lines.bye)
+	}
 	sp.finish()
+	if hang {
+		// end_call: hang up once the goodbye has been spoken.
+		c.hangupAfter(sid, sp.spoken())
+	}
 }
 
 // greetingWords only answer the phone; an utterance made of nothing else is a bare greeting.

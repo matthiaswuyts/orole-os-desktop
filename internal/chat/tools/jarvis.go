@@ -27,6 +27,7 @@ type JarvisRuntime interface {
 	DeleteRule(ctx context.Context, botID, id string) error
 	CallOwner(ctx context.Context, botID, reason string, urgent bool) (string, error)
 	SwitchBot(ctx context.Context, callID, name string) (string, error)
+	EndCall(ctx context.Context, callID string) error
 }
 
 // Jarvis offers phone tools to bots with Jarvis mode on. The daemon re-checks permissions on every call.
@@ -54,6 +55,7 @@ func (j Jarvis) Specs(bot chat.Bot, caps llm.Caps) []llm.ToolSpec {
 		{Name: "jarvis_rule_delete", Description: "Delete one of your call rules.", Schema: json.RawMessage(`{"type":"object","properties":{"id":{"type":"string"}},"required":["id"]}`)},
 		{Name: "call_owner", Description: "Phone the owner now because something matches their \"When to call me\" policy. The app may refuse (quiet hours, limits).", Schema: json.RawMessage(`{"type":"object","properties":{"reason":{"type":"string","maxLength":200},"urgent":{"type":"boolean"}},"required":["reason"]}`)},
 		{Name: "switch_bot", Description: "On a phone call only: hand the call to another bot by name when the owner asks for it.", Schema: json.RawMessage(`{"type":"object","properties":{"name":{"type":"string"}},"required":["name"]}`)},
+		{Name: "end_call", Description: "On a phone call only: hang up after this reply, when the owner is done (they say no, thanks or goodbye). Say a short, friendly goodbye in the same reply.", Schema: json.RawMessage(`{"type":"object","properties":{}}`)},
 	}
 }
 
@@ -127,6 +129,14 @@ func (j Jarvis) Call(ctx context.Context, rc chat.RunContext, name string, args 
 			return errResult("%s", err)
 		}
 		return chat.ToolResult{Text: msg}, nil
+	case "end_call":
+		if rc.CallID == "" {
+			return errResult("end_call only works on a phone call.")
+		}
+		if err := j.Runtime.EndCall(ctx, rc.CallID); err != nil {
+			return errResult("%s", err)
+		}
+		return chat.ToolResult{Text: "The call ends after this reply. Say goodbye now if you have not; do not ask anything else."}, nil
 	}
 	return errResult("Unknown tool %s.", name)
 }

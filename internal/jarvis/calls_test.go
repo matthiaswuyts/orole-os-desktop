@@ -29,7 +29,9 @@ type fakeHost struct {
 	holdFirst      bool          // the first VoiceTurn blocks until its context is canceled
 	started        chan struct{} // signaled when the held turn is running
 	botErr         error
-	instructions   []string // what Compose was asked
+	instructions   []string                  // what Compose was asked
+	release        chan struct{}             // if set, every VoiceTurn waits for it before answering
+	onTurn         func(r chat.VoiceRequest) // runs inside VoiceTurn, before the reply
 }
 
 func newFakeHost() *fakeHost {
@@ -74,8 +76,21 @@ func (h *fakeHost) VoiceTurn(ctx context.Context, r chat.VoiceRequest) (string, 
 	h.mu.Lock()
 	h.turns = append(h.turns, r)
 	hold := h.holdFirst && len(h.turns) == 1
-	tool, reply := h.toolDuringTurn, h.reply
+	tool, reply, release, onTurn := h.toolDuringTurn, h.reply, h.release, h.onTurn
 	h.mu.Unlock()
+	if onTurn != nil {
+		onTurn(r)
+	}
+	if release != nil {
+		if h.started != nil {
+			h.started <- struct{}{}
+		}
+		select {
+		case <-release:
+		case <-ctx.Done():
+			return "", ctx.Err()
+		}
+	}
 	if hold {
 		if tool != "" && r.OnTool != nil {
 			r.OnTool(tool)
@@ -1421,5 +1436,100 @@ func TestDutchCallOverridesModelWhenNoneChosen(t *testing.T) {
 	}
 	if d := e.dial.dialed(); len(d) != 1 || d[0].TTSModel != multilingualModel {
 		t.Fatalf("dialed %+v", d)
+	}
+}
+
+func TestSilencePromptIsNotAnswered(t *testing.T) {
+	e := newCallEnv(t)
+	call, _ := e.c.Place(context.Background(), PlaceRequest{BotID: "b1", Reason: "x"})
+	e.c.HandleFrame(context.Background(), Frame{Type: FrameLLMRequest, ID: "r0", CallID: call.ID})
+	e.c.HandleFrame(context.Background(), llmFrame("r1", call.ID, "..."))
+	if n := len(e.host.turnList()); n != 0 {
+		t.Fatalf("model answered a silence: %d turns", n)
+	}
+	if got := e.relay.text("r1"); got != "" || !e.relay.done("r1") {
+		t.Fatalf("silence got %q, done %v", got, e.relay.done("r1"))
+	}
+}
+
+func TestRetriedRequestIsAdoptedNotRestarted(t *testing.T) {
+	e := newCallEnv(t)
+	e.c.ackAfter = time.Hour
+	e.host.release = make(chan struct{})
+	e.host.started = make(chan struct{}, 1)
+	call, _ := e.c.Place(context.Background(), PlaceRequest{BotID: "b1", Reason: "x"})
+	e.c.HandleFrame(context.Background(), Frame{Type: FrameLLMRequest, ID: "r0", CallID: call.ID})
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		e.c.HandleFrame(context.Background(), llmFrame("r1", call.ID, "which bots are running?"))
+	}()
+	<-e.host.started
+	e.c.HandleFrame(context.Background(), llmFrame("r2", call.ID, "which bots are running?"))
+	close(e.host.release)
+	wg.Wait()
+	if n := len(e.host.turnList()); n != 1 {
+		t.Fatalf("retry restarted the turn: %d model turns", n)
+	}
+	if !e.relay.done("r1") {
+		t.Fatal("abandoned request left open")
+	}
+	if got := e.relay.text("r2"); got != "Two tasks are running." {
+		t.Fatalf("retry heard %q", got)
+	}
+}
+
+func TestSlowTurnSaysItIsOnIt(t *testing.T) {
+	e := newCallEnv(t)
+	e.c.ackAfter = 5 * time.Millisecond
+	e.c.stillAfter = time.Hour
+	e.host.release = make(chan struct{})
+	e.host.started = make(chan struct{}, 1)
+	call, _ := e.c.Place(context.Background(), PlaceRequest{BotID: "b1", Reason: "x"})
+	e.c.HandleFrame(context.Background(), Frame{Type: FrameLLMRequest, ID: "r0", CallID: call.ID})
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		e.c.HandleFrame(context.Background(), llmFrame("r1", call.ID, "check my tasks"))
+	}()
+	<-e.host.started
+	deadline := time.Now().Add(2 * time.Second)
+	for e.relay.text("r1") == "" && time.Now().Before(deadline) {
+		time.Sleep(2 * time.Millisecond)
+	}
+	close(e.host.release)
+	wg.Wait()
+	got := e.relay.text("r1")
+	if !slices.ContainsFunc(english.acks, func(a string) bool { return strings.HasPrefix(got, a+" ") }) || !strings.HasSuffix(got, "Two tasks are running.") {
+		t.Fatalf("owner heard %q", got)
+	}
+}
+
+func TestEndCallHangsUpAfterTheReply(t *testing.T) {
+	e := newCallEnv(t)
+	e.host.reply = "No problem, talk later!"
+	call, _ := e.c.Place(context.Background(), PlaceRequest{BotID: "b1", Reason: "x"})
+	e.host.onTurn = func(chat.VoiceRequest) { _ = e.c.EndAfterReply(call.ID) }
+	e.c.HandleFrame(context.Background(), Frame{Type: FrameLLMRequest, ID: "r0", CallID: call.ID})
+	e.c.HandleFrame(context.Background(), llmFrame("r1", call.ID, "no thanks, that's all"))
+	if got := e.relay.text("r1"); got != "No problem, talk later!" || !e.relay.done("r1") {
+		t.Fatalf("owner heard %q", got)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for !e.phone.hungUp(testSID) && time.Now().Before(deadline) {
+		time.Sleep(2 * time.Millisecond)
+	}
+	if !e.phone.hungUp(testSID) {
+		t.Fatal("call not hung up after the goodbye")
+	}
+}
+
+func TestIsSilence(t *testing.T) {
+	for in, want := range map[string]bool{"": true, "...": true, " … ": true, "?": true, "ja": false, "ok...": false, "5": false} {
+		if got := isSilence(in); got != want {
+			t.Errorf("isSilence(%q) = %v", in, got)
+		}
 	}
 }

@@ -16,8 +16,11 @@ type phrases struct {
 	refused string   // prefix of the gate refusal; the gate's reason follows
 	failed  string   // prefix of a model or tool error; its first sentence follows
 	fillers map[string]string
-	filler  string // default filler
-	writeIn string // appended to the opener and inbound greeting instructions
+	filler  string   // default filler
+	acks    []string // said when a turn is still silent after a moment ("one moment, I'm on it")
+	still   []string // said now and then during a long silence while a tool runs
+	bye     string   // goodbye when end_call ended the call without the bot saying one
+	writeIn string   // appended to the opener and inbound greeting instructions
 }
 
 var english = phrases{
@@ -41,6 +44,9 @@ var english = phrases{
 		"web_fetch": "Reading that.", "switch_bot": "One moment.",
 	},
 	filler:  "One moment.",
+	acks:    []string{"One moment, I'm on it.", "Let me check.", "Sure, one sec."},
+	still:   []string{"Still on it.", "Almost there, bear with me.", "Still working on it."},
+	bye:     "Okay, talk later!",
 	writeIn: " Write it in English.",
 }
 
@@ -65,6 +71,9 @@ var dutch = phrases{
 		"web_fetch": "Ik lees het even.", "switch_bot": "Momentje.",
 	},
 	filler:  "Momentje.",
+	acks:    []string{"Momentje, ik ben ermee bezig.", "Even kijken.", "Oké, momentje."},
+	still:   []string{"Nog even geduld.", "Ik ben er nog mee bezig.", "Bijna klaar."},
+	bye:     "Oké, tot later!",
 	writeIn: " Write it in Dutch (Nederlands), as a native speaker would say it on the phone.",
 }
 
@@ -83,6 +92,12 @@ func (p phrases) fillerLine(tool string) string {
 	}
 	return p.filler
 }
+
+// ackLine picks the acknowledgement for a turn that is taking a moment.
+func (p phrases) ackLine(seed int) string { return p.acks[seed%len(p.acks)] }
+
+// stillLine is the nth "still working" line (n from 1).
+func (p phrases) stillLine(n int) string { return p.still[(n-1)%len(p.still)] }
 
 // verifyLine reads a verification code twice, digit by digit.
 func (p phrases) verifyLine(digits string) string { return fmt.Sprintf(p.verify, spaced(digits)) }

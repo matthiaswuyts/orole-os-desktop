@@ -228,6 +228,14 @@ func (t jarvisTools) SwitchBot(ctx context.Context, callID, name string) (string
 	return s.SwitchBot(ctx, callID, name)
 }
 
+func (t jarvisTools) EndCall(ctx context.Context, callID string) error {
+	s, err := t.svc()
+	if err != nil {
+		return err
+	}
+	return s.EndCall(callID)
+}
+
 func toToolRule(r jarvis.JarvisRule) tools.JarvisRule {
 	return tools.JarvisRule{ID: r.ID, Trigger: string(r.Trigger), Target: r.Target, Note: r.Note, Repeat: r.Repeat, Urgent: r.Urgent,
 		QuietOverride: r.QuietOverride, ExpiresAt: r.ExpiresAt}

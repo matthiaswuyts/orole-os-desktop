@@ -20,7 +20,7 @@ call does not survive a daemon restart.**
 | Relay | `relay/` (TypeScript Worker + one Durable Object `Hub`) | Authenticates provider requests, turns them into frames for the daemon's one WebSocket, writes the daemon's reply as OpenAI-style SSE. Stores nothing. |
 | `internal/jarvis` | daemon | Gate, rules, policy, call state machine, relay client, Twilio and ElevenLabs clients, provisioning, openers, inbound check, call records. |
 | `internal/chat/voice.go` | daemon | `VoiceTurn`, `Compose`, `PostCallCard`, `UpdateCallCard` (and `Manager.CallMessages`). |
-| `internal/chat/tools/jarvis.go` | daemon | Bot tools `jarvis_rule_add`, `jarvis_rule_list`, `jarvis_rule_delete`, `call_owner`, `switch_bot`. |
+| `internal/chat/tools/jarvis.go` | daemon | Bot tools `jarvis_rule_add`, `jarvis_rule_list`, `jarvis_rule_delete`, `call_owner`, `switch_bot`, `end_call`. |
 | `internal/daemon/svc_jarvis.go` | daemon | IPC methods, event hooks, the save check, audit and notifications. |
 | `internal/app/jarvis.go` | desktop | Stateless MyGo service forwarding to the daemon. |
 | `frontend/src/features/jarvis/` | UI | Settings > Phone, the bot's Phone calls page, the call card and the call pane. |
@@ -164,6 +164,17 @@ llm.delta -> SSE -> ElevenLabs TTS`.
   of at most 6 steps and 10 tool calls (never above the bot's own limits).
 - **Fillers.** When the model starts a tool, a scripted line for that tool ("Checking your automations.", in Dutch "Ik kijk even naar je automatiseringen.") is streamed
   immediately, then the model's continuation.
+- **Keep-alive.** A turn that has said nothing after 1.5 s says it is on it ("One moment, I'm on it.", in Dutch
+  "Momentje, ik ben ermee bezig."); the tool filler right after it is skipped. During a long tool run with 12 s of
+  silence it says a "still working" line, at most 3 times per turn. Speaking early also matters for ElevenLabs: it
+  re-sends a request when no text arrives in about 4 s.
+- **Retries and silences.** A request that repeats the in-flight turn's utterance with the same number of messages is
+  ElevenLabs retrying, not a barge-in: the running turn adopts it (the rest of the reply goes to the new request; the
+  old one is closed) instead of restarting. A user message with no words ("...", ElevenLabs' prompt after a silence)
+  is a pause: nothing is said and the model is not asked.
+- **Ending.** The voice style asks the bot to check whether there is anything else once it is done, and when the owner
+  is done to say a short goodbye and call `end_call`. The call is hung up through Twilio once that reply has been
+  spoken (the bot's own goodbye, or "Okay, talk later!" if it said none).
 - **Barge-in.** A new request for the same call cancels the in-flight turn, waits for its run slot, and the cancelled turn
   speaks no more. It leaves only a one-line note in the call history naming the tools it already started, so the next
   turn knows a task may already be running.
