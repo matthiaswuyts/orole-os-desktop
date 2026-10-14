@@ -72,7 +72,7 @@ func (m *Manager) DraftSend(ctx context.Context, req DraftRequest) (Message, err
 	m.mu.Unlock()
 
 	now := m.nowMs()
-	user := Message{ID: newID(), BotID: key, Role: "user", Author: "user", Status: StatusComplete, CreatedAt: now,
+	user := Message{ID: newID(), BotID: key, Role: "user", Author: "user", Status: StatusComplete, CreatedAt: now, FinishedAt: now,
 		Parts: []MsgPart{{Type: PartText, Text: req.Text}}}
 	m.publishMessage(user)
 	go func() {
@@ -87,6 +87,7 @@ func (m *Manager) DraftSend(ctx context.Context, req DraftRequest) (Message, err
 		}()
 		asst := Message{ID: newID(), BotID: key, Role: "assistant", Author: "bot:draft", Status: StatusRunning, CreatedAt: m.nowMs(), Parts: []MsgPart{}}
 		s := newSink(asst, nil, m.publishMessage, m.publishDelta)
+		s.clock = m.cfg.Clock
 		m.emit("chat.run", RunState{BotID: key, Running: true, MessageID: asst.ID})
 		s.checkpoint()
 		rc := RunContext{Bot: bot, MessageID: asst.ID, Actor: "bot:draft", Emit: s.upsertTool}

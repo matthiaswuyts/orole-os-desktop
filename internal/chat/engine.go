@@ -101,7 +101,7 @@ func (m *Manager) runTurn(ctx context.Context, botID string, t turn) {
 		return
 	}
 	if user.Status != StatusComplete {
-		_ = m.store.setStatus(bg, user.ID, StatusComplete, "")
+		user.FinishedAt, _ = m.store.setStatusAt(bg, user.ID, StatusComplete, "", m.nowMs())
 		user.Status = StatusComplete
 		user.Error = ""
 		m.publishMessage(user)
@@ -126,6 +126,7 @@ func (m *Manager) runTurn(ctx context.Context, botID string, t turn) {
 	}
 	asst.Automations = slices.Clone(t.automations)
 	s := newSink(asst, persist, m.publishMessage, m.publishDelta)
+	s.clock = m.cfg.Clock
 	m.emit("chat.run", RunState{BotID: botID, Running: true, MessageID: asst.ID})
 	s.checkpoint()
 
@@ -168,7 +169,7 @@ func (m *Manager) executeTurn(ctx context.Context, bot, convo Bot, rc RunContext
 			atts = append(atts, p)
 		}
 	}
-	env, err := m.prepare(ctx, prep{bot: bot, convo: convo.ID, rc: rc, sink: s, text: text, attachments: atts, userSeq: user.Seq, memory: true, extra: strings.TrimSpace(answerExtra(t, bot, convo, m.builtinSkills()) + "\n\n" + m.handoffsNote(convo.ID))})
+	env, err := m.prepare(ctx, prep{bot: bot, convo: convo.ID, rc: rc, sink: s, text: text, attachments: atts, userSeq: user.Seq, memory: true, extra: strings.TrimSpace(answerExtra(t, bot, convo, m.builtinSkills(), m.integrationNames(ctx, t.integrations)) + "\n\n" + m.handoffsNote(convo.ID))})
 	if err != nil {
 		if ctx.Err() != nil {
 			return StatusCanceled, ""

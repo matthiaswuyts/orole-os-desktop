@@ -12,13 +12,27 @@ import (
 // Exactly one summable source per harness emits it, so nothing is counted twice:
 //   - Claude Code: the per-model deltas of result.modelUsage, which Claude Code keeps cumulative
 //     per process (falling back to result.usage, the per-turn total, when modelUsage carries no
-//     token counts). Assistant-message usage is a context reading and is never summed.
+//     token counts). Assistant-message usage is a context reading and is never billed; it only
+//     feeds the live EvTokenEstimate.
 //   - Codex: thread/tokenUsage/updated "last" (one model request), once per change of the
 //     thread's cumulative total, since Codex repeats the notification with unchanged totals.
 //   - Oh My Pi: message_end usage of each assistant message. get_state usage is occupancy only.
 //
 // Terminal and process sessions report no usage.
 const EvTokens = "tokens"
+
+// EvTokenEstimate is a provisional reading of one model request a harness reports before billing
+// it (Claude Code bills a turn only when the turn ends); Data = TokenEstimate. It moves
+// Session.Tokens while the turn runs, never the ledger, and the turn's EvTokens replace it.
+// Like EvTokens it is neither recorded nor published as an event.
+const EvTokenEstimate = "token_estimate"
+
+// TokenEstimate is Event.Data for EvTokenEstimate: request ID's tokens so far. Repeated
+// readings of one request are not added up; the largest counts.
+type TokenEstimate struct {
+	ID     string `json:"id"`
+	Tokens int64  `json:"tokens"`
+}
 
 // TokenUsage is Event.Data for EvTokens: one increment of billed tokens. Input excludes cache
 // reads and writes; Output includes Reasoning. CostUSD is the harness's own cost for exactly
@@ -140,6 +154,24 @@ func (m *Manager) recordTokens(ls *liveSess, e Event) {
 		amount.reportedCost = *u.CostUSD
 	}
 	m.st.QueueUsage(usageKey{session: ls.id, provider: provider, model: u.Model, start: at.UTC().Truncate(usageBucket).Unix()}, amount)
+	// Billing settles the turn's estimates: the billed count replaces them.
+	billed, estimated := u.total(), ls.estimated
+	ls.estimates, ls.estimated = nil, 0
+	m.mutateHot(ls.id, func(s *Session) { s.Tokens = max(s.Tokens+billed-estimated, 0) })
+}
+
+// estimateTokens folds an EvTokenEstimate into Session.Tokens. The caller holds ls.controlMu.
+func (m *Manager) estimateTokens(ls *liveSess, e Event) {
+	var t TokenEstimate
+	if json.Unmarshal(e.Data, &t) != nil || t.ID == "" || t.Tokens <= ls.estimates[t.ID] {
+		return
+	}
+	if ls.estimates == nil {
+		ls.estimates = map[string]int64{}
+	}
+	grew := t.Tokens - ls.estimates[t.ID]
+	ls.estimates[t.ID], ls.estimated = t.Tokens, ls.estimated+grew
+	m.mutateHot(ls.id, func(s *Session) { s.Tokens += grew })
 }
 
 // QueueUsage adds amount to a ledger bucket. Like events, buckets are written in batches within
@@ -201,6 +233,26 @@ func (st *Store) usageRows() ([]usageRow, error) {
 			return nil, err
 		}
 		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// sessionTokens returns each session's billed tokens from the ledger, for sessions saved before
+// Session.Tokens existed.
+func (st *Store) sessionTokens() (map[string]int64, error) {
+	rows, err := st.db.Query(`SELECT session_id, SUM(input + output + cache_read + cache_write) FROM agent_usage GROUP BY session_id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]int64{}
+	for rows.Next() {
+		var id string
+		var n int64
+		if err := rows.Scan(&id, &n); err != nil {
+			return nil, err
+		}
+		out[id] = n
 	}
 	return out, rows.Err()
 }

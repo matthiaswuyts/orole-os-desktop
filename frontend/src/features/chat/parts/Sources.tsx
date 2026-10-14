@@ -1,25 +1,41 @@
 import { CheckIcon, CopyIcon, ExternalLinkIcon, FileIcon, FileImageIcon, FileTextIcon, LinkIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { bubble } from "@/components/assistant-ui/elements/surfaces";
 import { Markdown } from "@/components/Markdown";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverPopup, PopoverTrigger } from "@/components/ui/popover";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "@/components/ui/tooltip";
 import { isWebURL, openExternal } from "@/lib/openExternal";
 import { cn } from "@/lib/utils";
 import { formatSize, hostOf, type Source } from "./format";
 
-/** Copies text to the clipboard and says so; it never claims success when the write failed. */
-export function CopyButton({ text, label, className }: { text: string; label: string; className?: string }) {
+/**
+ * Copies text to the clipboard and says so; it never claims success when the write failed. With `html` the clipboard
+ * also gets a rich version (a real table when pasted into a document), and plain-text targets still get `text`.
+ */
+export function CopyButton({ text, html, label, className }: { text: string; html?: string; label: string; className?: string }) {
   const [state, setState] = useState<"idle" | "copied" | "failed">("idle");
   const timer = useRef<number | undefined>(undefined);
   useEffect(() => () => window.clearTimeout(timer.current), []);
   const copy = async () => {
-    try { await navigator.clipboard.writeText(text); setState("copied"); } catch { setState("failed"); }
+    try {
+      if (html && typeof ClipboardItem !== "undefined") {
+        await navigator.clipboard.write([new ClipboardItem({ "text/plain": new Blob([text], { type: "text/plain" }), "text/html": new Blob([html], { type: "text/html" }) })]);
+      } else {
+        await navigator.clipboard.writeText(text);
+      }
+      setState("copied");
+    } catch { setState("failed"); }
     window.clearTimeout(timer.current);
     timer.current = window.setTimeout(() => setState("idle"), 1800);
   };
-  return <Button type="button" variant="ghost" size="icon-xs" className={className} aria-label={state === "copied" ? "Copied" : state === "failed" ? "Copy failed" : label} disabled={!text} onClick={() => void copy()}>
-    {state === "copied" ? <CheckIcon aria-hidden /> : <CopyIcon aria-hidden />}
-  </Button>;
+  const name = state === "copied" ? "Copied" : state === "failed" ? "Copy failed" : label;
+  return <Tooltip>
+    <TooltipTrigger render={<Button type="button" variant="ghost" size="icon-xs" className={className} aria-label={name} disabled={!text} onClick={() => void copy()} />}>
+      {state === "copied" ? <CheckIcon aria-hidden /> : <CopyIcon aria-hidden />}
+    </TooltipTrigger>
+    <TooltipPopup>{name}</TooltipPopup>
+  </Tooltip>;
 }
 
 /** "3 sources": opens the list of citations; only http(s) links are clickable. */
@@ -58,7 +74,7 @@ function SourceBody({ index, source, link }: { index: number; source: Source; li
 
 /** A research report artifact: titled markdown with its sources and a copy action. */
 export function ReportCard({ title, text, sources }: { title?: string; text: string; sources: readonly Source[] }) {
-  return <section data-slot="chat-report" aria-label={title || "Research report"} className="flex min-w-0 flex-col gap-2 rounded-xl border bg-card p-3 text-card-foreground">
+  return <section data-slot="chat-report" aria-label={title || "Research report"} className={cn(bubble, "flex min-w-0 flex-col gap-2 p-3")}>
     <header className="flex items-center gap-2">
       <FileTextIcon aria-hidden className="size-4 shrink-0 text-muted-foreground" />
       <h3 className="min-w-0 flex-1 truncate text-sm font-semibold">{title || "Research report"}</h3>

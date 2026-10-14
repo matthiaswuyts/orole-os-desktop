@@ -43,6 +43,7 @@ type TaskInfo struct {
 	Turns          int    `json:"turns"`               // completed turns; a task can take several before it is finished
 	Subagents      int    `json:"subagents,omitempty"` // background agents still running: the task is not finished while > 0
 	Model          string `json:"model,omitempty"`     // "" = the harness's default
+	ModelName      string `json:"modelName,omitempty"` // the harness's name for Model, which can be an alias ("opus"): the model it runs
 	Reasoning      string `json:"reasoning,omitempty"` // "" = the harness's default
 	PermissionMode string `json:"permissionMode,omitempty"`
 	Waiting        string `json:"waitingFor,omitempty"` // what the task asks the user, when it needs them
@@ -91,8 +92,11 @@ type TaskChoices struct {
 // TaskHarness is one installed coding harness as a bot may choose it. Empty Models or Reasoning
 // means the harness lists none; CustomModel means it also takes model ids it does not list.
 type TaskHarness struct {
-	ID          string
-	Models      []string
+	ID     string
+	Models []string
+	// ModelNames are the harness's names for listed models where they say more than the id; an
+	// alias's name says which model it runs now (Claude: "Opus (claude-opus-5-5)").
+	ModelNames  map[string]string
 	Reasoning   []string
 	CustomModel bool
 }
@@ -203,7 +207,17 @@ func startTaskSchema(projectHelp string, c TaskChoices) json.RawMessage {
 		required = append(required, "harness")
 	}
 	if c.Model == chat.TaskChoiceAuto {
-		props["model"] = prop{"type": "string", "description": "Model id (optional; omit for the harness's default)." + perHarness(c.Harnesses, func(h TaskHarness) ([]string, bool) { return h.Models, h.CustomModel })}
+		props["model"] = prop{"type": "string", "description": "Model id (optional; omit for the harness's default). Send only the id: where a listed id is an alias, the text after \" = \" is the model it runs now." +
+			perHarness(c.Harnesses, func(h TaskHarness) ([]string, bool) {
+				labels := make([]string, 0, len(h.Models))
+				for _, id := range h.Models {
+					if name := h.ModelNames[id]; name != "" {
+						id += " = " + name
+					}
+					labels = append(labels, id)
+				}
+				return labels, h.CustomModel
+			})}
 	}
 	if c.Reasoning == chat.TaskChoiceAuto {
 		props["reasoning"] = prop{"type": "string", "description": "Reasoning effort (optional; omit for the harness's default)." + perHarness(c.Harnesses, func(h TaskHarness) ([]string, bool) { return h.Reasoning, false })}
@@ -265,6 +279,9 @@ func (t Tasks) Call(ctx context.Context, rc chat.RunContext, name string, args j
 			return errResult("the task did not start: %s", err)
 		}
 		model, effort := cmp.Or(info.Model, "the harness's default"), cmp.Or(info.Reasoning, "the harness's default")
+		if info.ModelName != "" {
+			model += " (" + info.ModelName + ")"
+		}
 		note := fmt.Sprintf("Started with harness %s, model %s, reasoning effort %s and permission mode %s (the user's setting). ", info.Harness, model, effort, cmp.Or(info.PermissionMode, "manual")) +
 			"You will get a report with the full result when it is finished (turn ended, no background agents running), and sooner only if it fails or needs the user. Do not call it done before that report; task_status shows status, turns and subagents meanwhile."
 		res, err := taskResult(note, info, nil)

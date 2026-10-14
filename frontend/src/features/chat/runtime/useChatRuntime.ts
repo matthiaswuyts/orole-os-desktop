@@ -37,10 +37,10 @@ export function useChatRuntime(bot: Pick<Bot, "id" | "provider" | "model">, runn
     const { drafts, setDraft } = useChatDrafts.getState();
     const { text, attachmentIds } = sendInputOf(message);
     const mode = drafts[botId]?.research ? "research" : "";
-    const { bots, skills } = mentionsOf(text, targetsFor(useChat.getState().bots, botId));
+    const { bots, skills, integrations } = mentionsOf(text, targetsFor(useChat.getState().bots, botId));
     // The composer has already cleared itself; the draft follows so a bot switch does not bring the text back.
     setDraft(botId, { text: "", research: false });
-    await send(botId, { text, attachmentIds, mode, mentions: mode ? [] : bots, skills: mode ? [] : skills });
+    await send(botId, { text, attachmentIds, mode, ...(mode ? {} : { mentions: bots, skills, integrations }) });
   }, [botId]);
   const onCancel = useCallback(() => useChatMessages.getState().cancel(botId), [botId]);
   const onReload = useCallback(async () => {

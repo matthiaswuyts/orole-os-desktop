@@ -258,6 +258,80 @@ func TestShutdownStoresRunAsIncomplete(t *testing.T) {
 	}
 }
 
+func TestRepliesRecordWhenTheyFinished(t *testing.T) {
+	bp := &blockingProvider{started: make(chan struct{}, 1), release: make(chan struct{}), text: "thinking"}
+	e := newEnv(t, nil)
+	e.llm.prov = bp
+	b := e.bot("Timer")
+	// stored reads the row back through a fresh store, as a reload after a restart would.
+	stored := func(id string) Message {
+		t.Helper()
+		m, err := (&store{db: e.db.DB, now: time.Now}).getMessage(context.Background(), id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return m
+	}
+	published := func(id string) Message {
+		t.Helper()
+		var last Message
+		for _, m := range e.rec.messages(b.ID) {
+			if m.ID == id {
+				last = m
+			}
+		}
+		return last
+	}
+
+	e.send(b.ID, "one")
+	<-bp.started
+	running := e.lastReply(b.ID)
+	if running.Status != StatusRunning || running.FinishedAt != 0 || stored(running.ID).FinishedAt != 0 {
+		t.Fatalf("a running reply has no finish time: %+v", running)
+	}
+	e.advance(7 * time.Second)
+	finished := e.clock().UnixMilli()
+	close(bp.release)
+	e.idle(b.ID)
+	done := stored(running.ID)
+	if done.Status != StatusComplete || done.FinishedAt != finished || done.FinishedAt-done.CreatedAt != 7000 {
+		t.Fatalf("completed reply: %+v", done)
+	}
+	if p := published(running.ID); p.Status != StatusComplete || p.FinishedAt != finished {
+		t.Fatalf("the final chat.message must carry the finish time: %+v", p)
+	}
+
+	bp2 := &blockingProvider{started: make(chan struct{}, 1), release: make(chan struct{}), text: "partial"}
+	e.llm.prov = bp2
+	e.send(b.ID, "two")
+	<-bp2.started
+	e.advance(3 * time.Second)
+	queued := e.send(b.ID, "queued")
+	if queued.FinishedAt != 0 {
+		t.Fatalf("a queued message has not finished: %+v", queued)
+	}
+	canceledAt := e.clock().UnixMilli()
+	if err := e.m.Cancel(context.Background(), b.ID); err != nil {
+		t.Fatal(err)
+	}
+	e.idle(b.ID)
+	e.advance(time.Minute) // later writes must not move a recorded finish time
+	h := e.history(b.ID)
+	reply, unsent := h[3], h[4]
+	if reply.Status != StatusCanceled || reply.FinishedAt != canceledAt || stored(reply.ID).FinishedAt != canceledAt {
+		t.Fatalf("canceled reply: %+v", reply)
+	}
+	if unsent.ID != queued.ID || unsent.Status != StatusCanceled || unsent.FinishedAt != canceledAt {
+		t.Fatalf("canceled queued message: %+v", unsent)
+	}
+	if p := published(reply.ID); p.FinishedAt != canceledAt {
+		t.Fatalf("the canceled chat.message must carry the finish time: %+v", p)
+	}
+	if stored(done.ID).FinishedAt != finished {
+		t.Fatal("an earlier reply's finish time changed")
+	}
+}
+
 func TestToolLoopFencesUntrustedResults(t *testing.T) {
 	var gotRC RunContext
 	lookup := &fakeTool{id: "lookup", call: func(ctx context.Context, rc RunContext, name string, args json.RawMessage) (ToolResult, error) {

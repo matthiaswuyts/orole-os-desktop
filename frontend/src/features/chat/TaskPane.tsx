@@ -5,8 +5,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "@/components/ui/tooltip";
 import { sessionTitle } from "@/features/agents/format";
 import { openTask } from "@/features/projects/tasks";
 import { TaskView } from "@/features/tasks/TaskView";
-import { TaskStatusGlyph } from "./parts/TaskChip";
-import { TASK_STATUS_LABEL, useTaskSession } from "./taskSession";
+import { useTaskSession } from "./taskSession";
 
 /**
  * A code task beside the bot's conversation: the agent's live feed and the task composer, so the user can talk to the
@@ -27,9 +26,6 @@ export function TaskPane({ taskId, ready, onClose }: { taskId: string; ready: bo
         <TooltipPopup>Open task page</TooltipPopup>
       </Tooltip>
     </header>
-    {session && <p data-slot="task-pane-status" className="flex shrink-0 items-center gap-1.5 border-b px-3 py-1.5 text-xs text-muted-foreground">
-      <TaskStatusGlyph status={session.status} />{TASK_STATUS_LABEL[session.status]}
-    </p>}
     <div className="flex min-h-0 flex-1 flex-col">
       {session && ready
         ? <TaskView session={session} />

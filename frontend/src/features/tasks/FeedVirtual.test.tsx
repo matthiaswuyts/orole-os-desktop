@@ -98,7 +98,7 @@ describe("virtualized feed", () => {
     layout();
     const match = log().querySelector("[data-search-active]");
     expect(match).toHaveTextContent("interim note 3");
-    expect(match?.closest('[data-slot="run-activity"]')?.querySelector('[data-slot="collapsible-trigger"]')).toHaveAttribute("aria-expanded", "true");
+    expect(match?.closest('[data-slot="agent-run-tree"]')?.querySelector('[data-slot="collapsible-trigger"]')).toHaveAttribute("aria-expanded", "true");
   });
 
   it("keeps the reader's place when older history is prepended and the row they read is no longer in the rendered window", () => {

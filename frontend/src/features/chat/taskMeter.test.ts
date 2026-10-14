@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Session } from "@/mygo";
-import { formatTokens, taskElapsedSeconds, taskTokens } from "./taskMeter";
+import { formatTokens, taskElapsedSeconds } from "./taskMeter";
 
 const session = (patch: Partial<Session>): Session => ({ status: "working", startedAt: "2026-10-12T10:00:00Z", updatedAt: "2026-10-12T10:00:30Z", ...patch }) as Session;
 const at = (iso: string) => Date.parse(iso);
@@ -19,19 +19,6 @@ describe("taskElapsedSeconds", () => {
     expect(taskElapsedSeconds(session({ startedAt: "" }), Date.now())).toBeUndefined();
     expect(taskElapsedSeconds(session({ startedAt: "garbage" }), Date.now())).toBeUndefined();
     expect(taskElapsedSeconds(session({}), at("2026-10-12T09:59:00Z"))).toBe(0);
-  });
-});
-
-describe("taskTokens", () => {
-  it("adds input and output tokens", () => {
-    expect(taskTokens(session({ usage: { source: "sdk", inputTokens: 1200, outputTokens: 300, at: "" } }))).toBe(1500);
-  });
-  it("uses whichever side was reported", () => {
-    expect(taskTokens(session({ usage: { source: "sdk", outputTokens: 7, at: "" } }))).toBe(7);
-  });
-  it("is unknown when nothing was reported", () => {
-    expect(taskTokens(session({}))).toBeUndefined();
-    expect(taskTokens(session({ usage: { source: "sdk", contextTokens: 5000, at: "" } }))).toBeUndefined();
   });
 });
 

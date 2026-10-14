@@ -18,7 +18,7 @@ import { useChatRuntime } from "./runtime/useChatRuntime";
 import { ThreadSearch } from "./ThreadSearch";
 import { QueuePanel } from "./QueuePanel";
 import { SelectionMenu } from "./SelectionMenu";
-import { targetsFor, useBotInfos, useRegistrySkills, type BotInfo, type MentionTarget } from "./mentions";
+import { targetsFor, useBotInfos, useIntegrations, useRegistrySkills, type BotInfo, type MentionTarget } from "./mentions";
 
 /** How close to the top (px) the reader gets before the next older page is fetched. */
 const LOAD_OLDER_AT = 160;
@@ -71,8 +71,9 @@ function Thread({ bot, running }: { bot: Bot; running: boolean }) {
   const conversation = useChatMessages(selectConversation(bot.id));
   // Read once for the whole thread: each turn gets them as props, so a streaming reply never makes every turn re-subscribe.
   const bots = useBotInfos();
-  const builtin = useRegistrySkills((s) => s.builtin);
-  const targets = useMemo(() => targetsFor(bots, bot.id, builtin), [bots, bot.id, builtin]);
+  const registry = useRegistrySkills();
+  const servers = useIntegrations((s) => s.servers);
+  const targets = useMemo(() => targetsFor(bots, bot.id, registry, servers), [bots, bot.id, registry, servers]);
   const renderTurn = useCallback(() => <Turn bot={bot} bots={bots} targets={targets} running={running} />, [bot, bots, targets, running]);
   const problem = useChatMessages((s) => s.problems[bot.id]);
   const viewport = useRef<HTMLDivElement>(null);

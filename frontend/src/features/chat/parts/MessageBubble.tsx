@@ -5,7 +5,7 @@ import type { Message } from "@/mygo";
 import { cn } from "@/lib/utils";
 import type { MentionTarget } from "../mentions";
 import { MessageParts, MessageStatusNote, UserParts } from "./MessageParts";
-import type { BotRef } from "./WorkTimeline";
+import type { BotRef } from "./ThinkingPanel";
 
 export interface ChatMessageViewProps {
   message: Message;

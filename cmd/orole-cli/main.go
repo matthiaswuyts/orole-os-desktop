@@ -15,6 +15,7 @@ import (
 	"text/tabwriter"
 	"time"
 
+	oroleos "github.com/rayorole/orole-os-desktop"
 	"github.com/rayorole/orole-os-desktop/internal/daemon/control"
 	"github.com/rayorole/orole-os-desktop/internal/diagnostics"
 	"github.com/rayorole/orole-os-desktop/internal/ipc"
@@ -22,9 +23,6 @@ import (
 	"github.com/rayorole/orole-os-desktop/internal/platform"
 	"github.com/rayorole/orole-os-desktop/internal/terminals"
 )
-
-// version is set at build time via -ldflags "-X main.version=...".
-var version = "0.1.0-dev"
 
 const usage = `orole - control the Orole OS daemon
 
@@ -68,7 +66,7 @@ func run(ctx context.Context, args []string, out, errw io.Writer) int {
 	var e error
 	switch args[0] {
 	case "version":
-		fmt.Fprintln(out, "orole", version)
+		fmt.Fprintln(out, "orole", oroleos.Version)
 	case "daemon":
 		e = c.daemon(args[1:])
 	case "terminal":
@@ -233,7 +231,7 @@ func (c *cli) diagnostics(args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return usageError(err.Error())
 	}
-	r := diagnostics.Collect(c.ctx, version, c.dir, c.daemonExe(), 20, nil)
+	r := diagnostics.Collect(c.ctx, oroleos.Version, c.dir, c.daemonExe(), 20, nil)
 	if *asJSON {
 		enc := json.NewEncoder(c.out)
 		enc.SetIndent("", "  ")

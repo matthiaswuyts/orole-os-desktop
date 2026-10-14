@@ -3,6 +3,7 @@ import { ChevronRight, CircleX, Info, TriangleAlert, FileText, ExternalLink, Shi
 import type { Session } from "@/mygo";
 import type { FileData, GuardrailData, SourceReference } from "@/lib/taskChatTypes";
 import { Markdown } from "@/components/Markdown";
+import { RunResult } from "@/components/assistant-ui/elements/agent-run-tree";
 import { Badge } from "@/components/ui/badge";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Dialog, DialogDescription, DialogHeader, DialogPanel, DialogPopup, DialogTitle } from "@/components/ui/dialog";
@@ -33,23 +34,31 @@ export function AssistantMessage({ item }: { item: Item<"assistant"> }) {
   </div>;
 }
 
+/** A turn's closing message as a result card: a long one shows its first lines under a fade, the rest behind Show all. */
+export function AnswerCard({ item }: { item: Item<"assistant"> }) {
+  return <RunResult foldable={item.text.length > 600 || item.text.split("\n").length > 12}>
+    <p className="sr-only">Agent said</p>
+    <Markdown>{item.text}</Markdown>
+  </RunResult>;
+}
+
 const triggerClass = "group flex w-full min-w-0 items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring";
 const chevron = <ChevronRight aria-hidden className="size-3.5 shrink-0 text-muted-foreground transition-transform group-data-[panel-open]:rotate-90 motion-reduce:transition-none" />;
 
 const statusLabel: Record<ToolStatus, string> = { running: "Running", ok: "Completed", error: "Failed", unknown: "No result recorded" };
 
 /**
- * What a tool step opens into: the raw tool name, its complete input and output. This is the technical record; the row above it
- * already says in plain words what the tool did.
+ * What a tool call opens into: the raw tool name, its complete arguments and output. This is the technical record; the row above
+ * it already says in plain words what the tool did.
  */
 export function ToolDetails({ call }: { call: ToolCall }) {
   const input = toolInputJSON(call);
-  return <div className="flex min-w-0 flex-col gap-2 text-xs" data-testid="tool-details" data-status={call.status}>
+  return <div className="flex min-w-0 flex-col gap-1.5 text-xs" data-testid="tool-details" data-status={call.status}>
     <p className="text-muted-foreground">
-      <span className="font-medium">Details</span> · <span className="font-mono">{call.name}</span>{call.server ? ` · MCP server ${call.server}` : ""} · {statusLabel[call.status]}
+      <span className="font-mono">{call.name}</span>{call.server ? ` · MCP server ${call.server}` : ""} · {statusLabel[call.status]}
     </p>
-    {input && <section aria-label="Tool input"><p className="mb-1 font-medium text-muted-foreground">Input</p><SyntaxHighlighter code={input} language="json" /></section>}
-    {call.output ? <section aria-label="Tool output"><p className="mb-1 font-medium text-muted-foreground">Output</p><SyntaxHighlighter code={call.output} /></section>
+    {input && <section aria-label="Tool input"><SyntaxHighlighter code={input} language="json" title="Arguments" className="my-0" /></section>}
+    {call.output ? <section aria-label="Tool output"><SyntaxHighlighter code={call.output} title="Output" className="my-0" /></section>
       : call.status !== "running" && <p className="text-muted-foreground">No output was recorded.</p>}
   </div>;
 }

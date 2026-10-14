@@ -22,12 +22,6 @@ export function taskElapsedSeconds(session: Session, now: number): number | unde
   return Math.max(0, Math.floor((end - start) / 1000));
 }
 
-/** Input plus output tokens the harness reported; undefined when it reported neither. */
-export function taskTokens(session: Session): number | undefined {
-  const counts = [session.usage?.inputTokens, session.usage?.outputTokens].filter((n): n is number => typeof n === "number" && Number.isFinite(n) && n >= 0);
-  return counts.length ? counts.reduce((a, b) => a + b, 0) : undefined;
-}
-
 const COMPACT = new Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 1 });
 
 /** "842", "12.4K", "1.3M". */

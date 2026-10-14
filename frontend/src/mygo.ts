@@ -575,6 +575,38 @@ export interface ContentBlock {
 }
 
 /**
+ * ContextBreakdown is a harness-reported split of the context window (Claude Code's
+ * get_context_usage). It is immutable once emitted; a newer report replaces it whole.
+ */
+export interface ContextBreakdown {
+  model?: string;
+  usedTokens: number;
+  windowTokens: number;
+  /** AutoCompactTokens is the occupancy at which the harness compacts; nil when auto-compact is off or unreported. */
+  autoCompactTokens?: number;
+  categories: ContextCategory[];
+  at: string;
+}
+
+/**
+ * ContextCategory is one row of a breakdown. Kind is "used" (occupies the window), "free"
+ * (remaining), "buffer" (compaction reserve) or "deferred" (listed, but outside the window).
+ */
+export interface ContextCategory {
+  name: string;
+  tokens: number;
+  kind: string;
+  items?: ContextItem[];
+}
+
+/** ContextItem is one contributor inside a category (a memory file, an MCP server, a skill...). */
+export interface ContextItem {
+  name: string;
+  detail?: string;
+  tokens: number;
+}
+
+/**
  * ContextUsage contains provider observations, never a guessed model capacity.
  * ContextTokens is current occupancy, not the cumulative billed token count.
  */
@@ -586,6 +618,11 @@ export interface ContextUsage {
   contextTokens?: number;
   contextWindow?: number;
   at: string;
+  /**
+   * Breakdown is the harness's own per-category accounting of the window. It is nil when the
+   * harness reports totals only; Orole never derives one.
+   */
+  breakdown?: ContextBreakdown;
 }
 
 /** DaemonLink is the link status shown in the status bar. */
@@ -1622,6 +1659,11 @@ export interface Message {
   error?: string;
   model?: string;
   createdAt: number;
+  /**
+   * FinishedAt is the Unix ms when the message reached a final status (complete, incomplete,
+   * error, canceled); 0 while it is pending or running, or for messages from before it was recorded.
+   */
+  finishedAt?: number;
 }
 
 /**
@@ -2492,6 +2534,11 @@ export interface SendRequest {
   mentions?: string[];
   /** Skills are skill names the user asked the answering bot to use. */
   skills?: string[];
+  /**
+   * Integrations are MCP server ids the user @mentioned: the answering bot is asked to use their
+   * tools for this message. Only servers the answering bot was given are named to it.
+   */
+  integrations?: string[];
   /** idempotency key; a retried nonce returns the stored message */
   clientNonce: string;
 }
@@ -2605,6 +2652,11 @@ export interface Session {
    * working until the last one reports and the harness's follow-up turn ends.
    */
   subagents?: number;
+  /**
+   * Tokens is what the session's model requests used: input, output, cache reads and cache
+   * writes. Billed reports settle it; while a turn runs it includes the harness's live estimates.
+   */
+  tokens?: number;
   /** Pending are the permission requests awaiting a decision (runtime state). */
   pending: PermissionRequest[];
   usage?: ContextUsage;
@@ -2641,6 +2693,7 @@ export interface SessionDelta {
   deletions?: number;
   toolCalls?: number;
   failedTools?: number;
+  tokens?: number;
   usage?: ContextUsage;
 }
 

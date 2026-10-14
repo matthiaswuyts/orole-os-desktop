@@ -4,11 +4,11 @@
  * step with its status mark and timing, and the work behind each step one disclosure away. Nothing is copied.
  */
 import { ChevronDownIcon } from "lucide-react";
-import { useEffect, useState, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "@/components/ui/collapsible";
 import type { AgentTodo, AgentTodoStatus } from "@/lib/agentTodos";
 import { cn } from "@/lib/utils";
-import { formatElapsed } from "./working-status";
+import { formatElapsed, useNow } from "./working-status";
 
 export interface AgentTodoRow extends AgentTodo {
   /** When the step went in progress and when it settled (Unix ms). */
@@ -51,18 +51,6 @@ export function TodoMark({ status, spinning = false, className }: { status: Agen
     </svg>;
     default: return <svg aria-hidden viewBox="0 0 16 16" className={cn(base, "text-muted-foreground")}>{ring}</svg>;
   }
-}
-
-/** Date.now(), ticking once a second while `live`. */
-function useNow(live: boolean): number {
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    if (!live) return;
-    setNow(Date.now());
-    const timer = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(timer);
-  }, [live]);
-  return now;
 }
 
 function elapsed(todo: AgentTodoRow, now: number, running: boolean): string | null {

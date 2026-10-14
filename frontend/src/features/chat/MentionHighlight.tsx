@@ -1,5 +1,6 @@
 import type { ReactNode, Ref } from "react";
 import { BotAvatar } from "@/components/shell/BotAvatar";
+import { ServerLogo } from "@/features/integrations/ServerLogo";
 import { mentionSpans, type MentionTarget } from "./mentions";
 
 /**
@@ -32,19 +33,17 @@ export function MentionHighlight({
         // Right after another chip only a space separates them, so this one gives up its left padding to leave a gap.
         className={`${start - prevEnd <= 1 && prevEnd > 0 ? "" : "-ml-1 pl-1 "}-mr-0.5 rounded-sm bg-secondary py-px pr-0.5 text-foreground [box-decoration-break:clone]`}
       >
-        {target.type === "bot" ? (
+        {target.type === "skill" ? (
+          <span className="text-muted-foreground">{text[start]}</span>
+        ) : (
           <span className="relative inline-block text-transparent">
             <span className="absolute inset-0 flex items-center justify-center">
-              <BotAvatar
-                name={target.label}
-                avatar={target.avatar}
-                className="size-3.5 text-[8px]"
-              />
+              {target.server
+                ? <ServerLogo server={target.server} className="size-3.5" />
+                : <BotAvatar name={target.label} avatar={target.avatar} className="size-3.5 text-[8px]" />}
             </span>
             {text[start]}
           </span>
-        ) : (
-          <span className="text-muted-foreground">{text[start]}</span>
         )}
         {text.slice(start + 1, end)}
       </mark>,
@@ -58,7 +57,7 @@ export function MentionHighlight({
       ref={mirrorRef}
       aria-hidden
       data-slot="mention-highlight"
-      className="pointer-events-none absolute inset-0 overflow-hidden px-1 py-2 text-sm break-words whitespace-pre-wrap text-foreground"
+      className="pointer-events-none absolute inset-0 overflow-hidden px-1.5 pt-1 pb-0.5 text-sm leading-[22px] break-words whitespace-pre-wrap text-foreground"
     >
       {parts}
     </div>

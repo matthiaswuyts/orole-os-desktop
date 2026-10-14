@@ -2,22 +2,27 @@ import type { DirectiveFormatter, DirectiveSegment, TriggerItem } from "@assista
 import { useEffect, useMemo } from "react";
 import { create } from "zustand";
 import { useStoreWithEqualityFn } from "zustand/traditional";
-import { Skills, type Bot, type BotConfig } from "@/mygo";
+import { MCP, Skills, type Bot, type BotConfig, type ServerState } from "@/mygo";
 import { useChat } from "@/stores/chat";
 
-/** What the user can @mention in a bot's composer: another bot, or one of this bot's own skills. */
+/** What the user can mention in a bot's composer: another bot, one of the bot's integrations, or one of its skills. */
 export interface MentionTarget {
   id: string;
-  type: "bot" | "skill";
+  type: "bot" | "skill" | "integration";
   label: string;
   avatar: string;
+  /** The one line the picker shows after the name: what the bot or skill is for, or how many tools an integration has. */
+  detail: string;
+  /** An integration's server, for its logo. */
+  server?: ServerState;
 }
 
-/** What a thread draws of a bot: its name, avatar and skills. Everything else (preview, run flag, model) is none of its business. */
-export type BotInfo = Pick<Bot, "id" | "name" | "avatar"> & { config: Pick<BotConfig, "skills"> };
+/** What a thread draws of a bot: its name, avatar, description, skills and integrations. Everything else (preview, run flag, model) is none of its business. */
+export type BotInfo = Pick<Bot, "id" | "name" | "avatar" | "description"> & { config: Pick<BotConfig, "skills" | "mcpServers"> };
 
+const sameList = (a: readonly string[], b: readonly string[]) => a.length === b.length && a.every((item, i) => item === b[i]);
 const sameInfo = (a: BotInfo, b: BotInfo) =>
-  a.id === b.id && a.name === b.name && a.avatar === b.avatar && a.config.skills.length === b.config.skills.length && a.config.skills.every((skill, i) => skill === b.config.skills[i]);
+  a.id === b.id && a.name === b.name && a.avatar === b.avatar && a.description === b.description && sameList(a.config.skills, b.config.skills) && sameList(a.config.mcpServers, b.config.mcpServers);
 
 /** Every bot, as the same array until one is added, removed or renamed, so a rail preview update or run flag does not wake the thread. */
 export function useBotInfos(): readonly BotInfo[] {
@@ -27,27 +32,27 @@ export function useBotInfos(): readonly BotInfo[] {
 /** Most mentions the daemon accepts per message (internal/chat/mention.go). */
 export const MAX_BOT_MENTIONS = 3;
 export const MAX_SKILL_MENTIONS = 5;
+export const MAX_INTEGRATION_MENTIONS = 5;
 
 const WORD = /[\p{L}\p{N}_-]/u;
 
-/** The character that opens each kind's picker and prefixes it in the text: `@Bot`, `/skill`. */
-export const TRIGGER = { bot: "@", skill: "/" } as const;
+/** The character that opens each kind's picker and prefixes it in the text: `@Bot`, `@Integration`, `/skill`. */
+export const TRIGGER = { bot: "@", integration: "@", skill: "/" } as const;
 
 /** One mention found in composer text: `text.slice(start, end)` is `@Name` or `/name`. */
 export interface MentionSpan { start: number; end: number; target: MentionTarget }
 
-/** Where the known bots and skills are mentioned in `text`: a trigger at the start or after whitespace, then the exact name. */
+/** Where the known bots, integrations and skills are mentioned in `text`: a trigger at the start or after whitespace, then the exact name. */
 export function mentionSpans(text: string, targets: readonly MentionTarget[]): MentionSpan[] {
   // Longest names first so "@Research Bot" is not read as the shorter bot "Research".
   const known = targets.toSorted((a, b) => b.label.length - a.label.length);
   const spans: MentionSpan[] = [];
   for (let i = 0; i < text.length; i++) {
     const trigger = text[i];
-    if ((trigger !== TRIGGER.bot && trigger !== TRIGGER.skill) || (i > 0 && !/\s/.test(text[i - 1]!))) continue;
-    const kind = trigger === TRIGGER.skill ? "skill" : "bot";
+    if ((trigger !== "@" && trigger !== "/") || (i > 0 && !/\s/.test(text[i - 1]!))) continue;
     const hit = known.find((t) => {
       const end = i + 1 + t.label.length;
-      return t.type === kind && text.startsWith(t.label, i + 1) && (end >= text.length || !WORD.test(text[end]!));
+      return TRIGGER[t.type] === trigger && text.startsWith(t.label, i + 1) && (end >= text.length || !WORD.test(text[end]!));
     });
     if (hit) {
       spans.push({ start: i, end: i + 1 + hit.label.length, target: hit });
@@ -72,8 +77,9 @@ export function mentionDeletion(text: string, targets: readonly MentionTarget[],
 }
 
 /**
- * The text a mention takes in the composer: `@Name` for a bot, `/name` for a skill. Plain text keeps the textarea readable
- * and means a hand-typed mention counts the same as one picked from the popover; the daemon never parses it, it receives ids.
+ * The text a mention takes in the composer: `@Name` for a bot or an integration, `/name` for a skill. Plain text keeps the
+ * textarea readable and means a hand-typed mention counts the same as one picked from the menu; the daemon never parses
+ * it, it receives ids.
  */
 export function createMentionFormatter(targets: () => readonly MentionTarget[]): DirectiveFormatter {
   return {
@@ -92,28 +98,32 @@ export function createMentionFormatter(targets: () => readonly MentionTarget[]):
   };
 }
 
-/** The bots and skills a message names, deduplicated, in the order they appear. */
-export function mentionsOf(text: string, targets: readonly MentionTarget[]): { bots: string[]; skills: string[] } {
-  const formatter = createMentionFormatter(() => targets);
-  const bots = new Set<string>();
-  const skills = new Set<string>();
-  for (const segment of formatter.parse(text)) {
-    if (segment.kind !== "mention") continue;
-    (segment.type === "skill" ? skills : bots).add(segment.id);
-  }
-  return { bots: [...bots].slice(0, MAX_BOT_MENTIONS), skills: [...skills].slice(0, MAX_SKILL_MENTIONS) };
+/** The bots, integrations and skills a message names, deduplicated, in the order they appear. */
+export function mentionsOf(text: string, targets: readonly MentionTarget[]): { bots: string[]; skills: string[]; integrations: string[] } {
+  const found: Record<MentionTarget["type"], Set<string>> = { bot: new Set(), skill: new Set(), integration: new Set() };
+  for (const { target } of mentionSpans(text, targets)) found[target.type].add(target.id);
+  return {
+    bots: [...found.bot].slice(0, MAX_BOT_MENTIONS),
+    skills: [...found.skill].slice(0, MAX_SKILL_MENTIONS),
+    integrations: [...found.integration].slice(0, MAX_INTEGRATION_MENTIONS),
+  };
 }
 
-function buildTargets(bots: readonly BotInfo[], botId: string, skills: readonly string[]): readonly MentionTarget[] {
+function buildTargets(bots: readonly BotInfo[], botId: string, skills: readonly string[], registry: RegistrySkills, servers: readonly ServerState[]): readonly MentionTarget[] {
+  const own = bots.find((b) => b.id === botId)?.config.mcpServers ?? [];
   return [
-    ...bots.filter((b) => b.id !== botId).map((b): MentionTarget => ({ id: b.id, type: "bot", label: b.name, avatar: b.avatar })),
-    ...skills.map((name): MentionTarget => ({ id: name, type: "skill", label: name, avatar: "" })),
+    ...bots.filter((b) => b.id !== botId).map((b): MentionTarget => ({ id: b.id, type: "bot", label: b.name, avatar: b.avatar, detail: b.description.trim().split("\n", 1)[0] ?? "" })),
+    ...servers.filter((s) => s.enabled && own.includes(s.id)).map((s): MentionTarget => ({
+      id: s.id, type: "integration", label: s.name, avatar: "", server: s,
+      detail: s.status !== "connected" ? "Not connected" : s.toolCount === 1 ? "1 tool" : `${s.toolCount} tools`,
+    })),
+    ...skills.map((name): MentionTarget => ({ id: name, type: "skill", label: name, avatar: "", detail: (registry.descriptions[name] ?? "").trim().split("\n", 1)[0] ?? "" })),
   ];
 }
 
-/** What the registry says about skills: which are switched off and which are built in (every bot has those). */
-interface RegistrySkills { disabled: ReadonlySet<string>; builtin: readonly string[] }
-const NO_REGISTRY: RegistrySkills = { disabled: new Set(), builtin: [] };
+/** What the registry says about skills: which are switched off, which are built in (every bot has those) and what each is for. */
+interface RegistrySkills { disabled: ReadonlySet<string>; builtin: readonly string[]; descriptions: Readonly<Record<string, string>> }
+const NO_REGISTRY: RegistrySkills = { disabled: new Set(), builtin: [], descriptions: {} };
 
 /** Shared by the picker, the send path and the message chips so all three agree. Empty outside the desktop or when the registry cannot be read. */
 export const useRegistrySkills = create<RegistrySkills>(() => NO_REGISTRY);
@@ -123,26 +133,34 @@ function refreshRegistrySkills(): void {
     (list) => useRegistrySkills.setState({
       disabled: new Set(list.filter((s) => !s.enabled).map((s) => s.name)),
       builtin: list.filter((s) => s.enabled && s.source === "builtin").map((s) => s.name),
+      descriptions: Object.fromEntries(list.map((s) => [s.name, s.description])),
     }),
     () => {},
   );
 }
 
-/** Every name a send can mention, without asking the registry again: other bots, the skills this bot was given and the built-in ones (the daemon checks all three). */
-export function targetsFor(bots: readonly BotInfo[], botId: string, builtin: readonly string[] = useRegistrySkills.getState().builtin): readonly MentionTarget[] {
-  const own = bots.find((b) => b.id === botId)?.config.skills ?? [];
-  return buildTargets(bots, botId, [...new Set([...own, ...builtin])]);
+/** The registered integrations (MCP servers), shared like the registry skills. Empty outside the desktop or when they cannot be listed. */
+export const useIntegrations = create<{ servers: readonly ServerState[] }>(() => ({ servers: [] }));
+
+function refreshIntegrations(): void {
+  MCP.list().then((servers) => useIntegrations.setState({ servers: servers ?? [] }), () => {});
 }
 
-/** Mentionable bots (every other bot) and skills (the enabled ones this bot has been given, plus the built-in ones). */
+/** Every name a send can mention, without asking again: other bots, this bot's integrations, the skills it was given and the built-in ones (the daemon checks all). */
+export function targetsFor(bots: readonly BotInfo[], botId: string, registry: RegistrySkills = useRegistrySkills.getState(), servers: readonly ServerState[] = useIntegrations.getState().servers): readonly MentionTarget[] {
+  const own = bots.find((b) => b.id === botId)?.config.skills ?? [];
+  return buildTargets(bots, botId, [...new Set([...own, ...registry.builtin])], registry, servers);
+}
+
+/** Mentionable bots (every other bot), integrations (this bot's) and skills (the enabled ones this bot has been given, plus the built-in ones). */
 export function useMentionTargets(bot: Pick<Bot, "id" | "config">): readonly MentionTarget[] {
   const bots = useBotInfos();
-  const disabled = useRegistrySkills((s) => s.disabled);
-  const builtin = useRegistrySkills((s) => s.builtin);
-  useEffect(refreshRegistrySkills, []);
+  const registry = useRegistrySkills();
+  const servers = useIntegrations((s) => s.servers);
+  useEffect(() => { refreshRegistrySkills(); refreshIntegrations(); }, []);
   const skills = bot.config.skills;
   return useMemo(
-    () => buildTargets(bots, bot.id, [...new Set([...skills.filter((name) => !disabled.has(name)), ...builtin])]),
-    [bots, bot.id, skills, disabled, builtin],
+    () => buildTargets(bots, bot.id, [...new Set([...skills.filter((name) => !registry.disabled.has(name)), ...registry.builtin])], registry, servers),
+    [bots, bot.id, skills, registry, servers],
   );
 }

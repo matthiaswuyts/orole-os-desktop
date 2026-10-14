@@ -7,7 +7,7 @@
 
 import type { ComponentProps } from "react";
 import { cn } from "@/lib/utils";
-import { mono, paper } from "./surfaces";
+import { bubble, mono } from "./surfaces";
 import { clamp, take } from "../utils/range";
 
 export type ChartVariant = "area" | "line" | "bars";
@@ -87,8 +87,8 @@ export function Chart({
     <div
       data-slot="chart"
       className={cn(
-        paper,
-        "flex w-full max-w-sm flex-col gap-3 rounded-2xl p-4",
+        bubble,
+        "flex w-full max-w-sm flex-col gap-3 p-4",
         className,
       )}
 

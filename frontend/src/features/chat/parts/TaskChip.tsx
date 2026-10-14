@@ -4,10 +4,13 @@ import { formatElapsed } from "@/components/assistant-ui/elements/working-status
 import type { AgentsStatus, MsgPart, Session } from "@/mygo";
 import { ProviderLogo } from "@/features/agents/ProviderLogo";
 import { kindLabel, sessionTitle } from "@/features/agents/format";
+import { useHarnessOptions } from "@/features/agents/useHarnessOptions";
 import { cn } from "@/lib/utils";
 import { useChat } from "@/stores/chat";
 import { TASK_STATUS_LABEL, useTaskSessions } from "../taskSession";
-import { formatTokens, isTaskLive, NO_VALUE, taskElapsedSeconds, taskTokens } from "../taskMeter";
+import { modelLogo } from "../botLogos";
+import { modelLabel } from "@/features/home/model-options";
+import { formatTokens, isTaskLive, NO_VALUE, taskElapsedSeconds } from "../taskMeter";
 import { Bubble } from "./Bubble";
 
 /** Spinner while the agent works, a check when its turn is done, a warning when it needs you, a cross when it failed. */
@@ -54,17 +57,21 @@ function useNow(live: boolean): number {
 function TaskMeter({ session }: { session: Session }) {
   const now = useNow(isTaskLive(session));
   const seconds = taskElapsedSeconds(session, now);
-  const tokens = taskTokens(session);
+  const tokens = session.tokens;
+  // The harness's catalog names an alias ("opus") after the model it runs, so the label is right before the agent reports its model id.
+  const { options } = useHarnessOptions(session.machine || "local");
+  const model = options?.harnesses.find((h) => h.id === session.kind)?.models.find((m) => m.id === session.model) ?? { id: session.model, name: "" };
   const item = "inline-flex min-w-0 items-center gap-1";
   return <div data-slot="task-meter" className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-0.5 pl-5.5 text-[11px] leading-4 text-muted-foreground tabular-nums">
-    <span data-slot="task-model" className={cn(item, "font-mono")}>
-      <CpuIcon aria-hidden className="size-3 shrink-0" /><span className="sr-only">Model: </span><span className="truncate">{session.model || NO_VALUE}</span>
+    <span data-slot="task-model" className={item}>
+      {(session.model && modelLogo(session.kind, model, "size-3")) || <CpuIcon aria-hidden className="size-3 shrink-0" />}
+      <span className="sr-only">Model: </span><span className="truncate">{session.model ? modelLabel(model) : NO_VALUE}</span>
     </span>
     <span data-slot="task-elapsed" className={item}>
       <TimerIcon aria-hidden className="size-3 shrink-0" /><span className="sr-only">Elapsed: </span>{seconds === undefined ? NO_VALUE : formatElapsed(seconds)}
     </span>
     <span data-slot="task-tokens" className={item}>
-      <CoinsIcon aria-hidden className="size-3 shrink-0" /><span className="sr-only">Tokens: </span>{tokens === undefined ? NO_VALUE : formatTokens(tokens)}
+      <CoinsIcon aria-hidden className="size-3 shrink-0" /><span className="sr-only">Tokens: </span>{tokens ? formatTokens(tokens) : NO_VALUE}
     </span>
   </div>;
 }

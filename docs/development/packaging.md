@@ -6,7 +6,9 @@
 
 Steps (`scripts/build.ps1`):
 
-1. `go build -trimpath -ldflags "-s -w -X ...daemon.Version=<mygo.json version>" -o build\orole-daemon.exe ./cmd/daemon`
+1. `go build -trimpath -ldflags "-s -w -X github.com/rayorole/orole-os-desktop.Version=<version>" -o build\orole-daemon.exe ./cmd/daemon`
+   (all three binaries read their version from `mygo.json`, embedded by the root `version.go`; the
+   `-X` override only matters when `build.ps1 -Version` differs from it)
 2. `go build ... -o build\orole.exe ./cmd/orole-cli` (the CLI; not part of the installer today)
 3. `go tool mygo build`: runs `buildCommand` (`bun run --cwd frontend build`), compiles `cmd/desktop` for
    windows/amd64 with the icon from `resources/icon.png`, copies `resources` from `mygo.json`

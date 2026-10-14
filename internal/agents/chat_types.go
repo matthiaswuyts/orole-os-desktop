@@ -29,6 +29,37 @@ type ContextUsage struct {
 	ContextTokens *int64    `json:"contextTokens,omitempty"`
 	ContextWindow *int64    `json:"contextWindow,omitempty"`
 	At            time.Time `json:"at"`
+	// Breakdown is the harness's own per-category accounting of the window. It is nil when the
+	// harness reports totals only; Orole never derives one.
+	Breakdown *ContextBreakdown `json:"breakdown,omitempty"`
+}
+
+// ContextBreakdown is a harness-reported split of the context window (Claude Code's
+// get_context_usage). It is immutable once emitted; a newer report replaces it whole.
+type ContextBreakdown struct {
+	Model        string `json:"model,omitempty"`
+	UsedTokens   int64  `json:"usedTokens"`
+	WindowTokens int64  `json:"windowTokens"`
+	// AutoCompactTokens is the occupancy at which the harness compacts; nil when auto-compact is off or unreported.
+	AutoCompactTokens *int64            `json:"autoCompactTokens,omitempty"`
+	Categories        []ContextCategory `json:"categories"`
+	At                time.Time         `json:"at"`
+}
+
+// ContextCategory is one row of a breakdown. Kind is "used" (occupies the window), "free"
+// (remaining), "buffer" (compaction reserve) or "deferred" (listed, but outside the window).
+type ContextCategory struct {
+	Name   string        `json:"name"`
+	Tokens int64         `json:"tokens"`
+	Kind   string        `json:"kind"`
+	Items  []ContextItem `json:"items,omitempty"`
+}
+
+// ContextItem is one contributor inside a category (a memory file, an MCP server, a skill...).
+type ContextItem struct {
+	Name   string `json:"name"`
+	Detail string `json:"detail,omitempty"`
+	Tokens int64  `json:"tokens"`
 }
 
 type QuestionOption struct {
@@ -193,7 +224,7 @@ func observedTokens(v *int64) *int64 {
 func usageEvent(u ContextUsage) []Event {
 	u.InputTokens, u.OutputTokens, u.CachedTokens = observedTokens(u.InputTokens), observedTokens(u.OutputTokens), observedTokens(u.CachedTokens)
 	u.ContextTokens, u.ContextWindow = observedTokens(u.ContextTokens), observedTokens(u.ContextWindow)
-	if u.InputTokens == nil && u.OutputTokens == nil && u.CachedTokens == nil && u.ContextTokens == nil && u.ContextWindow == nil {
+	if u.InputTokens == nil && u.OutputTokens == nil && u.CachedTokens == nil && u.ContextTokens == nil && u.ContextWindow == nil && u.Breakdown == nil {
 		return nil
 	}
 	u.At = time.Now().UTC()

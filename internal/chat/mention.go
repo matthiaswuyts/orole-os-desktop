@@ -11,45 +11,59 @@ import (
 )
 
 const (
-	maxMentions     = 3
-	maxMentionSkill = 5
-	maxSkillNameLen = 64
+	maxMentions            = 3
+	maxMentionSkill        = 5
+	maxSkillNameLen        = 64
+	maxMentionIntegrations = 5
+	maxIntegrationIDLen    = 128
 )
 
 // checkMentions validates the @mentions of a send: each id must name an active bot other than the
-// conversation's own, and skill names must be plausible. The returned lists are deduplicated.
-func (m *Manager) checkMentions(ctx context.Context, req SendRequest) (mentions, skills []string, err error) {
+// conversation's own, and skill names and integration ids must be plausible. The returned lists are
+// deduplicated.
+func (m *Manager) checkMentions(ctx context.Context, req SendRequest) (mentions, skills, integrations []string, err error) {
 	for _, id := range dedupe(req.Mentions) {
 		if id == req.BotID {
 			continue
 		}
 		if _, err := m.store.getBot(ctx, id, false); err != nil {
-			return nil, nil, notFoundf("A mentioned bot no longer exists.")
+			return nil, nil, nil, notFoundf("A mentioned bot no longer exists.")
 		}
 		mentions = append(mentions, id)
 	}
 	if len(mentions) > maxMentions {
-		return nil, nil, invalidf("Mention at most %d bots in one message.", maxMentions)
+		return nil, nil, nil, invalidf("Mention at most %d bots in one message.", maxMentions)
 	}
-	if len(mentions) > 0 && req.Mode != ModeChat {
-		return nil, nil, invalidf("Research cannot be combined with an @mention.")
+	integrations = dedupe(req.Integrations)
+	if (len(mentions) > 0 || len(integrations) > 0) && req.Mode != ModeChat {
+		return nil, nil, nil, invalidf("Research cannot be combined with an @mention.")
+	}
+	if len(integrations) > maxMentionIntegrations {
+		return nil, nil, nil, invalidf("Mention at most %d integrations in one message.", maxMentionIntegrations)
+	}
+	for _, id := range integrations {
+		if id == "" || len(id) > maxIntegrationIDLen || !utf8.ValidString(id) {
+			return nil, nil, nil, invalidf("A mentioned integration is not valid.")
+		}
 	}
 	skills = dedupe(req.Skills)
 	if len(skills) > maxMentionSkill {
-		return nil, nil, invalidf("Mention at most %d skills in one message.", maxMentionSkill)
+		return nil, nil, nil, invalidf("Mention at most %d skills in one message.", maxMentionSkill)
 	}
 	for _, s := range skills {
 		if s == "" || len(s) > maxSkillNameLen || !utf8.ValidString(s) {
-			return nil, nil, invalidf("A mentioned skill name is not valid.")
+			return nil, nil, nil, invalidf("A mentioned skill name is not valid.")
 		}
 	}
-	return mentions, skills, nil
+	return mentions, skills, integrations, nil
 }
 
 // answerExtra is the system prompt addendum of a turn: why this bot is answering in someone else's
-// conversation, and which skills the user asked for. Only skills the answering bot owns, or that are
-// built in (every bot has those), are named, so a request can never widen what the bot may read.
-func answerExtra(t turn, answering, convo Bot, builtin []string) string {
+// conversation, and which skills and integrations the user asked for. Only skills the answering bot
+// owns, or that are built in (every bot has those), and only integrations it was given are named, so a
+// request can never widen what the bot may use. names maps integration ids to display names; an id
+// without a name is shown as is.
+func answerExtra(t turn, answering, convo Bot, builtin []string, names map[string]string) string {
 	var b strings.Builder
 	if answering.ID != convo.ID {
 		fmt.Fprintf(&b, "The user @mentioned you in their conversation with %s. The conversation so far is your context: "+
@@ -67,6 +81,29 @@ func answerExtra(t turn, answering, convo Bot, builtin []string) string {
 			b.WriteString("\n\n")
 		}
 		fmt.Fprintf(&b, "The user asked you to use these skills for this message: %s. Read each one with orole_get_skill before you answer and follow it.", strings.Join(use, ", "))
+	}
+	var servers []string
+	for _, id := range t.integrations {
+		if !slices.Contains(answering.Config.MCPServers, id) {
+			continue
+		}
+		name := names[id]
+		if name == "" {
+			name = id
+		}
+		// Same length as the "[<name> MCP]" prefix of the tool descriptions (tools.mcpDescription).
+		servers = append(servers, untrusted.Line(name, 60))
+	}
+	if len(servers) > 0 {
+		if b.Len() > 0 {
+			b.WriteString("\n\n")
+		}
+		hints := make([]string, len(servers))
+		for i, s := range servers {
+			hints[i] = `"[` + s + ` MCP]"`
+		}
+		fmt.Fprintf(&b, "The user asked you to use these integrations for this message: %s. Their tools are the ones whose description starts with %s; use them for this request.",
+			strings.Join(servers, ", "), strings.Join(hints, " or "))
 	}
 	if t.extra != "" {
 		if b.Len() > 0 {

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { CheckIcon, TriangleAlertIcon, WorkflowIcon } from "lucide-react";
-import { paper } from "@/components/assistant-ui/elements/surfaces";
+import { bubble } from "@/components/assistant-ui/elements/surfaces";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { blockSummary, flatten, triggerSummary } from "@/features/automations/flow";
@@ -77,7 +77,7 @@ export function AutomationProposalCard({ spec }: { spec: AutomationProposalSpec 
 
   return (
     <div role="group" aria-label={`Automation ${name}`} data-slot="automation-card" data-status={phase === "ready" ? status : phase}
-      className={cn(paper, "flex w-full max-w-lg min-w-0 flex-col gap-3 rounded-2xl p-4")}>
+      className={cn(bubble, "flex w-full max-w-lg min-w-0 flex-col gap-3 p-4")}>
       <div className="flex items-start gap-3">
         <span aria-hidden="true" className="flex size-9 shrink-0 items-center justify-center rounded-lg border bg-muted/40 text-muted-foreground">
           <WorkflowIcon className="size-4.5" />

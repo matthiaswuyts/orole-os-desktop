@@ -8,7 +8,7 @@
 import type { ComponentProps } from "react";
 import { CheckIcon, MinusIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { mono, paper } from "./surfaces";
+import { bubble, mono } from "./surfaces";
 
 export interface ComparisonOption {
   id: string;
@@ -37,8 +37,8 @@ export function ComparisonCard({
     <div
       data-slot="comparison-card"
       className={cn(
-        paper,
-        "flex w-full max-w-md flex-col gap-3 rounded-2xl p-4",
+        bubble,
+        "flex w-full max-w-md flex-col gap-3 p-4",
         className,
       )}
 

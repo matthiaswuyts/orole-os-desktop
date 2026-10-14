@@ -1,10 +1,6 @@
 import { useState } from "react";
-import { BotIcon } from "lucide-react";
 import { Agents, type PermissionRequest } from "@/mygo";
-import type { SubagentData } from "@/lib/taskChatTypes";
 import { useAgents } from "@/stores/agents";
-import { Badge } from "@/components/ui/badge";
-import { Card, CardHeader, CardTitle, CardDescription, CardPanel } from "@/components/ui/card";
 import { PermissionGrant, type GrantScope } from "@/components/assistant-ui/elements/permission-grant";
 import { useAction } from "@/features/agents/format";
 import { describePermission } from "@/lib/permissionLabels";
@@ -82,18 +78,3 @@ function ApprovalRequest({ sessionId, request, requester = "The agent", resolved
   />;
 }
 
-/** IDs, task text and status come only from provider events; they are not Orole session links. */
-export function SubagentCard({ agent }: { agent: SubagentData }) {
-  return <Card className="min-w-0">
-    <CardHeader>
-      <CardTitle className="flex min-w-0 items-start gap-2"><BotIcon aria-hidden className="size-4 shrink-0" /><span className="min-w-0 break-words">{agent.name || agent.id}</span></CardTitle>
-      <CardDescription>Provider-reported agent</CardDescription>
-    </CardHeader>
-    <CardPanel className="flex flex-col gap-3 text-sm">
-      <div className="flex flex-wrap items-center gap-2"><Badge variant="secondary">{agent.status || "Status not reported"}</Badge><span className="selectable break-all font-mono text-xs">{agent.id}</span></div>
-      {agent.task && <p className="whitespace-pre-wrap break-words">{agent.task}</p>}
-      {agent.message && <p className="whitespace-pre-wrap break-words text-muted-foreground">{agent.message}</p>}
-      {agent.toolCallId && <p className="break-all text-xs text-muted-foreground">Tool call: <span className="font-mono">{agent.toolCallId}</span></p>}
-    </CardPanel>
-  </Card>;
-}

@@ -498,6 +498,9 @@ func (m *Manager) applyChatEvent(id string, e Event) bool {
 				if usage.ContextWindow != nil {
 					merged.ContextWindow = usage.ContextWindow
 				}
+				if usage.Breakdown != nil {
+					merged.Breakdown = usage.Breakdown // immutable; replaced whole, so sharing is safe
+				}
 				merged.At = usage.At
 				s.Usage = merged
 			})

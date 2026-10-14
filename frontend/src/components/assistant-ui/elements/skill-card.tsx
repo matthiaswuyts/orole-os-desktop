@@ -6,7 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { cn } from "@/lib/utils";
-import { mono, paper } from "./surfaces";
+import { bubble, mono } from "./surfaces";
 
 /** Where a skill proposal stands. `loading` is the first look at the live state; `failed` means that look did not work. */
 export type SkillCardStatus = "loading" | "pending" | "approved" | "rejected" | "replaced" | "failed";
@@ -48,7 +48,7 @@ export function SkillCard({
 }) {
   const locked = disabled || busy !== null;
   return (
-    <div role="group" aria-label={`Skill ${name}`} data-slot="skill-card" data-status={status} className={cn(paper, "flex w-full max-w-lg min-w-0 flex-col gap-3 rounded-2xl p-4", className)} {...props}>
+    <div role="group" aria-label={`Skill ${name}`} data-slot="skill-card" data-status={status} className={cn(bubble, "flex w-full max-w-lg min-w-0 flex-col gap-3 p-4", className)} {...props}>
       <div className="flex items-start gap-3">
         <span aria-hidden="true" className="flex size-9 shrink-0 items-center justify-center rounded-lg border bg-muted/40 text-muted-foreground">
           <ScrollTextIcon className="size-4.5" />

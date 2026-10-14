@@ -1,12 +1,14 @@
 import { useLayoutEffect, useRef, useState, type KeyboardEvent } from "react";
 import { ArrowUpIcon, FolderIcon, GitBranchIcon } from "lucide-react";
 import { Agents, type Session } from "@/mygo";
+import { composerFrame } from "@/components/assistant-ui/elements/surfaces";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "@/components/ui/tooltip";
 import { ErrorNote } from "@/features/agents/shared";
 import { useAction } from "@/features/agents/format";
 import { useAgents } from "@/stores/agents";
 import { useTaskDrafts } from "@/stores/taskDrafts";
+import { cn } from "@/lib/utils";
 import { composerState } from "./composerState";
 import { ComposerContext } from "./ComposerContext";
 import { ComposerVoice } from "./ComposerVoice";
@@ -80,38 +82,36 @@ function SessionComposer({ session }: { session: Session }) {
     <div className="mx-auto flex max-w-4xl flex-col gap-1">
       <MessageQueue session={session} />
       {!state.canSend ? <>
-        <div className="rounded-lg border bg-card px-4 py-3 text-muted-foreground text-sm"><textarea aria-label="Message the agent" disabled rows={1} placeholder="Messages are unavailable" className="w-full resize-none bg-transparent outline-none placeholder:text-muted-foreground" /></div>
+        <div className={cn(composerFrame, "px-3.5 py-3 text-muted-foreground text-sm")}><textarea aria-label="Message the agent" disabled rows={1} placeholder="Messages are unavailable" className="w-full resize-none bg-transparent outline-none placeholder:text-muted-foreground" /></div>
         <p role="status" className="text-xs text-muted-foreground">{state.reason}</p>
-      </> : <form className="flex flex-col gap-1" onSubmit={(e) => { e.preventDefault(); send(); }}>
+      </> : <form className="flex flex-col gap-1.5" onSubmit={(e) => { e.preventDefault(); send(); }}>
         {state.note && <p className="px-2 text-xs text-muted-foreground">{state.note}</p>}
-        <div className="flex flex-col gap-2 rounded-lg border bg-card px-3 py-2.5 focus-within:border-ring/60 motion-reduce:transition-none">
+        <div className={cn(composerFrame, "flex flex-col gap-1.5 p-2")}>
           {message.attachments.files.length > 0 && <TaskAttachmentPreviews message={message} disabled={inactive} />}
-          <div className="flex items-end gap-2">
-            <textarea ref={input} aria-label="Message the agent" aria-description="Enter to send. Shift+Enter for a new line." placeholder="Reply…" value={text} disabled={inactive} rows={1}
-              onChange={(e) => setText(e.target.value)} onKeyDown={onKeyDown}
-              className="min-h-6 min-w-0 flex-1 resize-none bg-transparent py-0.5 text-sm leading-6 outline-none placeholder:text-muted-foreground disabled:opacity-70" />
-            {hasContent && !voiceActive
-              ? <Tooltip>
-                <TooltipTrigger render={<Button type="submit" aria-label={state.label} className="shrink-0 rounded-md" size="icon-sm" loading={action.busy} disabled={inactive || !message.attachments.ready}><ArrowUpIcon /></Button>} />
-                <TooltipPopup>{state.label}</TooltipPopup>
-              </Tooltip>
-              : <ComposerVoice compact quiet disabled={action.busy} onActiveChange={setVoiceActive} onTranscript={insertText} />}
-          </div>
-        </div>
-        <div className="flex min-w-0 items-center gap-1 px-1">
-          <TaskAddMenu message={message} disabled={inactive} onInsert={insertText} />
-          {(session.dir || session.branch) && <span className="ml-1 flex min-w-0 items-center gap-3 text-xs text-muted-foreground">
-            {session.dir && <Tooltip><TooltipTrigger render={<span className="flex min-w-0 items-center gap-1" />}><FolderIcon aria-hidden className="size-3.5 shrink-0" /><span className="max-w-32 truncate">{where}</span></TooltipTrigger><TooltipPopup className="max-w-sm break-all">{session.dir}</TooltipPopup></Tooltip>}
-            {session.branch && <Tooltip><TooltipTrigger render={<span className="flex min-w-0 items-center gap-1" />}><GitBranchIcon aria-hidden className="size-3.5 shrink-0" /><span className="max-w-32 truncate">{session.branch}</span></TooltipTrigger><TooltipPopup className="max-w-sm break-all">{session.branch}</TooltipPopup></Tooltip>}
-          </span>}
-          <div className="ml-auto flex min-w-0 shrink-0 items-center gap-0.5">
+          <textarea ref={input} aria-label="Message the agent" aria-description="Enter to send. Shift+Enter for a new line." placeholder="Reply to the agent…" value={text} disabled={inactive} rows={1}
+            onChange={(e) => setText(e.target.value)} onKeyDown={onKeyDown}
+            className="min-h-[44px] w-full min-w-0 resize-none bg-transparent px-1.5 pt-1 text-sm leading-[22px] outline-none placeholder:text-muted-foreground disabled:opacity-70" />
+          <div className="flex h-7 min-w-0 items-center gap-1">
+            <TaskAddMenu message={message} disabled={inactive} onInsert={insertText} />
             <TaskModelPicker message={message} disabled={inactive} />
             <PermissionModeSelect value={session.permissionMode} onChange={changeMode} support={message.harness?.permissionModes}
               disabled={inactive || !modeControl?.permissionMode}
               disabledReason={modeControl?.permissionMode ? "" : modeControl?.permissionModeReason || "This task cannot change permission mode."} />
-            <ComposerContext usage={session.usage} />
+            <div className="ms-auto flex min-w-0 shrink-0 items-center gap-1">
+              <ComposerContext usage={session.usage} />
+              {hasContent && !voiceActive
+                ? <Tooltip>
+                  <TooltipTrigger render={<Button type="submit" aria-label={state.label} className="size-7 shrink-0 rounded-full sm:size-7" size="icon-sm" loading={action.busy} disabled={inactive || !message.attachments.ready}><ArrowUpIcon /></Button>} />
+                  <TooltipPopup>{state.label}</TooltipPopup>
+                </Tooltip>
+                : <ComposerVoice compact quiet disabled={action.busy} onActiveChange={setVoiceActive} onTranscript={insertText} />}
+            </div>
           </div>
         </div>
+        {(session.dir || session.branch) && <div className="flex min-w-0 items-center gap-3 px-2 text-xs text-muted-foreground">
+          {session.dir && <Tooltip><TooltipTrigger render={<span className="flex min-w-0 items-center gap-1" />}><FolderIcon aria-hidden className="size-3.5 shrink-0" /><span className="max-w-40 truncate">{where}</span></TooltipTrigger><TooltipPopup className="max-w-sm break-all">{session.dir}</TooltipPopup></Tooltip>}
+          {session.branch && <Tooltip><TooltipTrigger render={<span className="flex min-w-0 items-center gap-1" />}><GitBranchIcon aria-hidden className="size-3.5 shrink-0" /><span className="max-w-40 truncate">{session.branch}</span></TooltipTrigger><TooltipPopup className="max-w-sm break-all">{session.branch}</TooltipPopup></Tooltip>}
+        </div>}
         <ErrorNote error={action.error} />
       </form>}
     </div>

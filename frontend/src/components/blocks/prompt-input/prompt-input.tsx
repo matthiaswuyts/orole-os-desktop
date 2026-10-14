@@ -5,6 +5,7 @@
  */
 import { useImperativeHandle, useRef, useState, useSyncExternalStore, type ComponentProps, type ReactNode } from "react";
 import { ArrowUpIcon, PaperclipIcon, PlusIcon } from "lucide-react";
+import { composerFrame } from "@/components/assistant-ui/elements/surfaces";
 import { Button } from "@/components/ui/button";
 import { Kbd } from "@/components/ui/kbd";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "@/components/ui/tooltip";
@@ -91,7 +92,7 @@ export function PromptInputInset({ className, ...props }: ComponentProps<"div">)
 export function PromptInputBody({ className, children, onMouseDown, ...props }: ComponentProps<"div">) {
   const context = usePromptInput("PromptInputBody");
   return <div data-slot="prompt-input-body" data-disabled={context.disabled ? "" : undefined} data-dragging={context.dragging ? "" : undefined}
-    className={cn("group/composer relative flex min-w-0 cursor-text flex-wrap items-center gap-1 rounded-(--composer-radius) bg-card p-2 shadow-xs/5 inset-ring inset-ring-input transition-shadow duration-150 ease-out motion-reduce:transition-none data-shake:motion-safe:animate-toast-error-odd data-disabled:cursor-not-allowed forced-colors:border", className)}
+    className={cn(composerFrame, "group/composer relative flex min-w-0 cursor-text flex-wrap items-center gap-1 rounded-(--composer-radius) p-2 data-shake:motion-safe:animate-toast-error-odd data-disabled:cursor-not-allowed forced-colors:border", className)}
     onMouseDown={(event) => {
       onMouseDown?.(event);
       const target = event.target as HTMLElement;
@@ -120,7 +121,7 @@ export function PromptInputTextarea({ ref, className, onKeyDown, onPaste, ...pro
   useImperativeHandle(ref, () => textareaRef.current!, [textareaRef]);
   return <textarea ref={textareaRef} data-slot="prompt-input-textarea" value={context.value} disabled={context.disabled} dir="auto" rows={1}
     enterKeyHint={coarse ? "enter" : "send"} autoComplete="off" spellCheck
-    className={cn("order-1 field-sizing-content max-h-64 min-h-9 min-w-0 basis-full resize-none bg-transparent px-2 pt-1.5 pb-1 text-base leading-relaxed text-foreground outline-none placeholder:text-muted-foreground disabled:cursor-not-allowed", className)}
+    className={cn("order-1 field-sizing-content max-h-64 min-h-11 min-w-0 basis-full resize-none bg-transparent px-1.5 pt-1 pb-1 text-[15px] leading-relaxed text-foreground outline-none placeholder:text-muted-foreground disabled:cursor-not-allowed", className)}
     onChange={(event) => context.setValue(event.currentTarget.value)}
     onKeyDown={(event) => {
       onKeyDown?.(event);

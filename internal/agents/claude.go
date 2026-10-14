@@ -457,6 +457,8 @@ type claudeDecoder struct {
 	wantMode string
 	// billed is the last modelUsage reading per model; results report its growth as EvTokens.
 	billed map[string]claudeBilled
+	// contextSent numbers get_context_usage requests; contextSeen is the newest reply applied.
+	contextSent, contextSeen uint64
 }
 
 // billedTokens turns a result into EvTokens. modelUsage is cumulative for this process and
@@ -511,6 +513,9 @@ func (d *claudeDecoder) billedTokens(m claudeMsg) []Event {
 }
 
 func (d *claudeDecoder) decode(p *pipeProc, line []byte) []Event {
+	if events, ok := d.contextResponse(line); ok {
+		return events
+	}
 	if p != nil && p.acceptControlResponse(line, true) {
 		return nil
 	}
@@ -549,6 +554,11 @@ func (d *claudeDecoder) decode(p *pipeProc, line []byte) []Event {
 		canceled = append(canceled, d.billedTokens(m)...)
 	}
 	events := append(canceled, decodeClaudeMessage(p, m)...)
+	// Refresh the breakdown when the session starts (system prompt, tools, memory) and after
+	// every turn, which is when messages, tool results and compaction change it.
+	if m.Type == "result" || m.Type == "system" && m.Subtype == "init" {
+		d.requestContext(p)
+	}
 	if m.Type == "system" && m.Subtype == "init" && m.PermissionMode != "" && d.wantMode != "" && m.PermissionMode != d.wantMode {
 		// Claude Code starts in Manual when auto mode is unavailable to the session.
 		events = append(events, Event{Kind: EvSystem, Text: fmt.Sprintf("Claude Code started in %s mode instead of the requested %s.", m.PermissionMode, d.wantMode)})
@@ -654,6 +664,14 @@ func decodeClaudeMessage(p *pipeProc, m claudeMsg) []Event {
 				}
 				out = append(out, Event{Kind: EvTool, Text: label + ": " + summarizeTool(name, b.Input),
 					Data: jraw(ToolData{ID: b.ID, Name: name, Server: server, Status: "running", Input: b.Input})})
+			}
+		}
+		// Billing waits for the turn's result; meanwhile each request's usage (subagents' too,
+		// which modelUsage bills as well) keeps the session's token count live.
+		if u := m.Message.Usage; u != nil && m.Message.ID != "" {
+			n := max(valueOr0(u.Input), 0) + max(valueOr0(u.Cached), 0) + max(valueOr0(u.CacheCreation), 0) + max(valueOr0(u.Output), 0)
+			if n > 0 {
+				out = append(out, Event{Kind: EvTokenEstimate, Data: jraw(TokenEstimate{ID: m.Message.ID, Tokens: n})})
 			}
 		}
 		if m.ParentToolUseID == nil {

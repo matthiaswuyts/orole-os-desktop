@@ -422,12 +422,21 @@ func (s *store) archiveBot(ctx context.Context, id string) error {
 
 // ---- messages ----
 
-const msgCols = `id, bot_id, seq, role, author, parts, status, usage, error, model, created_at`
+const msgCols = `id, bot_id, seq, role, author, parts, status, usage, error, model, created_at, finished_at`
+
+// finalStatus reports whether a message in this status will not change any more.
+func finalStatus(status string) bool {
+	switch status {
+	case StatusComplete, StatusIncomplete, StatusError, StatusCanceled:
+		return true
+	}
+	return false
+}
 
 func scanMessage(r scanner) (Message, error) {
 	var m Message
 	var parts, usage string
-	if err := r.Scan(&m.ID, &m.BotID, &m.Seq, &m.Role, &m.Author, &parts, &m.Status, &usage, &m.Error, &m.Model, &m.CreatedAt); err != nil {
+	if err := r.Scan(&m.ID, &m.BotID, &m.Seq, &m.Role, &m.Author, &parts, &m.Status, &usage, &m.Error, &m.Model, &m.CreatedAt, &m.FinishedAt); err != nil {
 		return Message{}, err
 	}
 	m.Parts = RawParts(parts)
@@ -483,7 +492,7 @@ func encodeUsage(u *MessageUsage) string {
 const insertMessageSQL = `INSERT INTO messages(` + msgCols + `, text)
 	SELECT ?, ?, max(COALESCE((SELECT MAX(seq) FROM messages WHERE bot_id = ?), 0),
 	                 COALESCE((SELECT upto_seq FROM memory_consolidation WHERE bot_id = ?), 0)) + 1,
-	       ?, ?, ?, ?, ?, ?, ?, ?, ?
+	       ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
 	RETURNING seq`
 
 type execer interface {
@@ -492,11 +501,15 @@ type execer interface {
 }
 
 // insertMessage stores m with the next sequence number of its bot (monotonic, assigned atomically
-// by the statement; it also stays above the consolidation watermark after a clear).
+// by the statement; it also stays above the consolidation watermark after a clear). A message
+// stored already final finished when it was created.
 func insertMessage(ctx context.Context, q execer, m *Message) error {
+	if m.FinishedAt == 0 && finalStatus(m.Status) {
+		m.FinishedAt = m.CreatedAt
+	}
 	return q.QueryRowContext(ctx, insertMessageSQL,
 		m.ID, m.BotID, m.BotID, m.BotID,
-		m.Role, m.Author, encodeParts(m.Parts), m.Status, encodeUsage(m.Usage), m.Error, m.Model, m.CreatedAt,
+		m.Role, m.Author, encodeParts(m.Parts), m.Status, encodeUsage(m.Usage), m.Error, m.Model, m.CreatedAt, m.FinishedAt,
 		textProjection(m.Parts),
 	).Scan(&m.Seq)
 }
@@ -537,15 +550,34 @@ func (s *store) insertUserMessage(ctx context.Context, m *Message, text string, 
 	return tx.Commit()
 }
 
+// updateMessage stores m's content and status. finished_at is written only while it is still 0, so
+// the first final snapshot wins.
 func (s *store) updateMessage(ctx context.Context, m Message) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE messages SET parts=?, text=?, status=?, usage=?, error=?, model=? WHERE id=?`,
-		encodeParts(m.Parts), textProjection(m.Parts), m.Status, encodeUsage(m.Usage), m.Error, m.Model, m.ID)
+	_, err := s.db.ExecContext(ctx, `UPDATE messages SET parts=?, text=?, status=?, usage=?, error=?, model=?,
+		finished_at = CASE WHEN finished_at = 0 THEN ? ELSE finished_at END WHERE id=?`,
+		encodeParts(m.Parts), textProjection(m.Parts), m.Status, encodeUsage(m.Usage), m.Error, m.Model, m.FinishedAt, m.ID)
 	return err
 }
 
 func (s *store) setStatus(ctx context.Context, id, status, errText string) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE messages SET status=?, error=? WHERE id=?`, status, errText, id)
+	_, err := s.setStatusAt(ctx, id, status, errText, s.now().UnixMilli())
 	return err
+}
+
+// setStatusAt moves a message to status. A final status records at as its finish time unless it
+// already has one; any other status clears it. It returns the stored finish time.
+func (s *store) setStatusAt(ctx context.Context, id, status, errText string, at int64) (int64, error) {
+	if !finalStatus(status) {
+		at = 0
+	}
+	var finished int64
+	err := s.db.QueryRowContext(ctx, `UPDATE messages SET status=?, error=?,
+		finished_at = CASE WHEN ? = 0 OR finished_at = 0 THEN ? ELSE finished_at END WHERE id=? RETURNING finished_at`,
+		status, errText, at, at, id).Scan(&finished)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, nil
+	}
+	return finished, err
 }
 
 func (s *store) getMessage(ctx context.Context, id string) (Message, error) {
@@ -576,7 +608,7 @@ func (s *store) userMessageBefore(ctx context.Context, botID string, seq int64) 
 // resetMessage empties an assistant message so it can be regenerated in place (same id and seq,
 // so the UI's upsert replaces the old reply).
 func (s *store) resetMessage(ctx context.Context, id string) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE messages SET parts='[]', text='', status=?, usage='', error='', model='' WHERE id=?`, StatusRunning, id)
+	_, err := s.db.ExecContext(ctx, `UPDATE messages SET parts='[]', text='', status=?, usage='', error='', model='', finished_at=0 WHERE id=?`, StatusRunning, id)
 	return err
 }
 
@@ -655,13 +687,14 @@ func (s *store) putSummary(ctx context.Context, botID string, sm summary) error 
 }
 
 // markInterrupted runs at startup: replies that were streaming when the daemon stopped become
-// incomplete; queued user messages that will never run become canceled.
+// incomplete; queued user messages that will never run become canceled. Both finish now.
 func (s *store) markInterrupted(ctx context.Context) error {
-	if _, err := s.db.ExecContext(ctx, `UPDATE messages SET status=? WHERE status=?`, StatusIncomplete, StatusRunning); err != nil {
+	now := s.now().UnixMilli()
+	if _, err := s.db.ExecContext(ctx, `UPDATE messages SET status=?, finished_at=? WHERE status=?`, StatusIncomplete, now, StatusRunning); err != nil {
 		return err
 	}
-	_, err := s.db.ExecContext(ctx, `UPDATE messages SET status=?, error=? WHERE status=?`,
-		StatusCanceled, "Not sent: Orole was closed before this message was processed.", StatusPending)
+	_, err := s.db.ExecContext(ctx, `UPDATE messages SET status=?, error=?, finished_at=? WHERE status=?`,
+		StatusCanceled, "Not sent: Orole was closed before this message was processed.", now, StatusPending)
 	return err
 }
 

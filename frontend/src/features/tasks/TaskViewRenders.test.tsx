@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Event as AgentEvent, Session } from "@/mygo";
 import type * as TaskEventsModule from "@/lib/taskEvents";
 import type * as FeedItemsModule from "./FeedItems";
-import type * as RunActivityModule from "@/components/assistant-ui/elements/run-activity";
+import type * as RunTreeModule from "@/components/assistant-ui/elements/agent-run-tree";
 
 const api = vi.hoisted(() => ({
   transcript: vi.fn(),
@@ -31,9 +31,9 @@ vi.mock("./FeedItems", async (original) => {
     AssistantMessage: (props: Parameters<typeof actual.AssistantMessage>[0]) => { api.renders.assistant++; return actual.AssistantMessage(props); },
   };
 });
-vi.mock("@/components/assistant-ui/elements/run-activity", async (original) => {
-  const actual = await original<typeof RunActivityModule>();
-  return { ...actual, RunActivity: (props: Parameters<typeof actual.RunActivity>[0]) => { api.renders.run++; return actual.RunActivity(props); } };
+vi.mock("@/components/assistant-ui/elements/agent-run-tree", async (original) => {
+  const actual = await original<typeof RunTreeModule>();
+  return { ...actual, AgentRunTree: (props: Parameters<typeof actual.AgentRunTree>[0]) => { api.renders.run++; return actual.AgentRunTree(props); } };
 });
 import { TaskView } from "./TaskView";
 

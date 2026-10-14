@@ -132,11 +132,11 @@ func TestStartTaskSchemaOffersOnlyWhatTheSettingsLeaveToTheBot(t *testing.T) {
 	}
 	models := []string{"m1", "m2", "m3", "m4", "m5", "m6", "m7", "m8", "m9", "m10"}
 	desc, props, required := schema(TaskChoices{Harness: chat.TaskChoiceAuto, Model: chat.TaskChoiceAuto, Reasoning: chat.TaskChoiceAuto, PermissionMode: "auto",
-		Harnesses: []TaskHarness{{ID: "claude", Models: models, Reasoning: []string{"low", "high"}, CustomModel: true}, {ID: "codex"}}})
+		Harnesses: []TaskHarness{{ID: "claude", Models: models, ModelNames: map[string]string{"m2": "Opus (claude-opus-5-5)"}, Reasoning: []string{"low", "high"}, CustomModel: true}, {ID: "codex"}}})
 	if props["harness"] == nil || props["model"] == nil || props["reasoning"] == nil || props["permissionMode"] != nil || !slices.Contains(required, "harness") {
 		t.Fatalf("all auto: %v required %v", props, required)
 	}
-	if m := string(props["model"]); !strings.Contains(m, "claude: m1, m2") || strings.Contains(m, "m9") || !strings.Contains(m, "+2 more") || !strings.Contains(m, "another id") {
+	if m := string(props["model"]); !strings.Contains(m, "claude: m1, m2 = Opus (claude-opus-5-5), m3") || strings.Contains(m, "m9") || !strings.Contains(m, "+2 more") || !strings.Contains(m, "another id") {
 		t.Fatalf("model help not bounded per harness: %s", m)
 	}
 	if !strings.Contains(string(props["reasoning"]), "claude: low, high") || !strings.Contains(desc, "permission mode auto") || strings.Contains(desc, "permissionMode") {

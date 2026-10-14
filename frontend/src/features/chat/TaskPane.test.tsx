@@ -32,7 +32,7 @@ vi.mock("@/features/chat/Conversation", async () => {
 import { ChatView } from "./ChatView";
 import { useChat } from "@/stores/chat";
 import { useChatMessages } from "@/stores/chatMessages";
-import { useAgents } from "@/stores/agents";
+import { applySessionDelta, useAgents } from "@/stores/agents";
 import { useHarnessOptionsCache } from "@/stores/harnessOptions";
 
 const bot = (id: string): Bot => ({
@@ -87,15 +87,18 @@ describe("task rows in a bot reply", () => {
     vi.useFakeTimers();
     try {
       vi.setSystemTime(new Date("2026-10-12T10:00:10Z"));
-      useAgents.setState((s) => ({ sessions: { ...s.sessions, t1: { ...s.sessions.t1!, model: "claude-opus-5-5", startedAt: "2026-10-12T10:00:00Z", usage: { source: "sdk", inputTokens: 900, outputTokens: 350, at: "2026-10-12T10:00:09Z" } } } }));
+      useAgents.setState((s) => ({ sessions: { ...s.sessions, t1: { ...s.sessions.t1!, model: "claude-opus-5-5", startedAt: "2026-10-12T10:00:00Z", tokens: 1250 } } }));
       render(<ChatView />);
       const meter = () => within(chips()[0]!).getByText((_, el) => el?.getAttribute("data-slot") === "task-meter");
-      expect(meter()).toHaveTextContent("claude-opus-5-5");
+      expect(meter()).toHaveTextContent("Claude Opus 5.5");
       expect(meter()).toHaveTextContent("10s");
       expect(meter()).toHaveTextContent("1.3K");
       act(() => { vi.advanceTimersByTime(5000); });
       expect(meter()).toHaveTextContent("15s");
-      act(() => useAgents.setState((s) => ({ sessions: { ...s.sessions, t1: { ...s.sessions.t1!, status: "done", endedAt: "2026-10-12T10:00:20Z", usage: { source: "sdk", inputTokens: 2000, outputTokens: 500, at: "2026-10-12T10:00:20Z" } } } })));
+      // A token reading arrives as a hot-path delta while the task works.
+      act(() => useAgents.setState((s) => ({ sessions: applySessionDelta(s.sessions, { id: "t1", updatedAt: "2026-10-12T10:00:16Z", tokens: 1800 }) })));
+      expect(meter()).toHaveTextContent("1.8K");
+      act(() => useAgents.setState((s) => ({ sessions: { ...s.sessions, t1: { ...s.sessions.t1!, status: "done", endedAt: "2026-10-12T10:00:20Z", tokens: 2500 } } })));
       act(() => { vi.advanceTimersByTime(60_000); });
       expect(meter()).toHaveTextContent("20s");
       expect(meter()).toHaveTextContent("2.5K");
@@ -106,6 +109,15 @@ describe("task rows in a bot reply", () => {
     render(<ChatView />);
     const meter = within(chips()[1]!).getByText((_, el) => el?.getAttribute("data-slot") === "task-meter");
     expect(meter.textContent?.match(/—/g)).toHaveLength(3);
+  });
+
+  it("names a model alias after the model the harness's catalog says it runs, before the agent reports its id", async () => {
+    api.options.mockResolvedValue({ harnesses: [{ id: "claude", models: [{ id: "opus", name: "Opus (claude-opus-5-5)" }] }] });
+    useAgents.setState((s) => ({ sessions: { ...s.sessions, t1: { ...s.sessions.t1!, model: "opus" } } }));
+    render(<ChatView />);
+    const meter = () => within(chips()[0]!).getByText((_, el) => el?.getAttribute("data-slot") === "task-meter");
+    await waitFor(() => expect(meter()).toHaveTextContent("Claude Opus 5.5"));
+    expect(meter()).not.toHaveTextContent("opus");
   });
 
   it("opens the task beside the conversation with a composer that talks to that task, and closes back to the chat", async () => {
@@ -128,7 +140,6 @@ describe("task rows in a bot reply", () => {
     expect(within(region).queryByText("Open in Tasks")).toBeNull();
     expect(region.querySelector("[data-slot=harness-badge]")).toBeNull();
     expect(within(region).getByRole("button", { name: "Open task page" })).toBeInTheDocument();
-    expect(region.querySelector("[data-slot=task-pane-status]")).toHaveTextContent("Working");
 
     fireEvent.click(within(region).getByRole("button", { name: "Close task pane" }));
     expect(pane()).toBeNull();

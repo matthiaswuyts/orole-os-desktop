@@ -142,6 +142,43 @@ func ledger(t *testing.T, m *Manager) map[usageKey]usageAmount {
 	return out
 }
 
+// The session's token count moves with each request's estimate while a Claude turn runs, a
+// repeated reading of one request is not added again, and the turn's billing replaces the
+// estimates rather than adding to them.
+func TestSessionTokensLiveThenSettledByBilling(t *testing.T) {
+	m, _, _ := chatFixture(t, StatusWorking)
+	d := &claudeDecoder{tools: make(map[string]ToolData)}
+	tokens := func() int64 {
+		s, err := m.Get("chat")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return s.Tokens
+	}
+	feed := func(line string) {
+		for _, e := range d.decode(nil, []byte(line)) {
+			m.apply("chat", e)
+		}
+	}
+	feed(`{"type":"assistant","parent_tool_use_id":null,"message":{"id":"m1","usage":{"input_tokens":2,"cache_read_input_tokens":900,"cache_creation_input_tokens":100,"output_tokens":8},"content":[{"type":"text","text":"a"}]}}`)
+	if got := tokens(); got != 1010 {
+		t.Fatalf("after first request: %d", got)
+	}
+	feed(`{"type":"assistant","parent_tool_use_id":null,"message":{"id":"m1","usage":{"input_tokens":2,"cache_read_input_tokens":900,"cache_creation_input_tokens":100,"output_tokens":50},"content":[{"type":"text","text":"b"}]}}`)
+	feed(`{"type":"assistant","parent_tool_use_id":"call","message":{"id":"sub1","usage":{"input_tokens":500},"content":[{"type":"text","text":"c"}]}}`)
+	if got := tokens(); got != 1552 {
+		t.Fatalf("repeated reading and subagent request: %d", got)
+	}
+	feed(`{"type":"result","subtype":"success","model":"claude-sonnet-5-5","result":"done","modelUsage":{"claude-sonnet-5-5":{"inputTokens":600,"outputTokens":60,"cacheReadInputTokens":900,"cacheCreationInputTokens":100}}}`)
+	if got := tokens(); got != 1660 {
+		t.Fatalf("billed turn: %d", got)
+	}
+	feed(`{"type":"assistant","parent_tool_use_id":null,"message":{"id":"m2","usage":{"input_tokens":40},"content":[{"type":"text","text":"d"}]}}`)
+	if got := tokens(); got != 1700 {
+		t.Fatalf("next turn adds to the billed total: %d", got)
+	}
+}
+
 func TestManagerLedgerAccumulatesAndDeletesWithSession(t *testing.T) {
 	m, ls, _ := chatFixture(t, StatusWorking)
 	m.mu.Lock()

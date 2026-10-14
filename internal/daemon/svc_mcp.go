@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	oroleos "github.com/rayorole/orole-os-desktop"
 	"github.com/rayorole/orole-os-desktop/internal/credentials"
 	"github.com/rayorole/orole-os-desktop/internal/mcp"
 	"github.com/rayorole/orole-os-desktop/internal/policy"
@@ -22,7 +23,7 @@ type mcpCall struct {
 
 func (d *Daemon) registerMCP() {
 	d.Policy = policy.New(d.DB.DB, d.IPC, d.Log)
-	d.MCP = mcp.New(mcp.Options{DB: d.DB.DB, Creds: credentials.New(), Pub: d.IPC, Policy: d.Policy, Events: d.Events, Log: d.Log, Version: Version})
+	d.MCP = mcp.New(mcp.Options{DB: d.DB.DB, Creds: credentials.New(), Pub: d.IPC, Policy: d.Policy, Events: d.Events, Log: d.Log, Version: oroleos.Version})
 	if d.Automations != nil {
 		d.Automations.SetToolInvoker(automationMCP{d})
 		d.Automations.SetWatchSource("mcp", mcpWatch{d: d})

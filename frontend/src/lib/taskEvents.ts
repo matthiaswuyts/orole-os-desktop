@@ -27,6 +27,9 @@ export interface ToolCall {
   output: string;
   /** Adapter-provided one-line summary (Event.Text of the call). */
   summary: string;
+  /** When the call was announced and when its result arrived (Unix ms); absent when the history does not say. */
+  startedAt?: number;
+  endedAt?: number;
 }
 
 export interface ImageInfo { id: string; path: string; mime: string; prompt: string }
@@ -51,6 +54,8 @@ export type FeedItem =
 
 export const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 const str = (v: unknown): string => typeof v === "string" ? v : "";
+/** An event timestamp as Unix ms; undefined when it does not parse. */
+const msOf = (iso: string): number | undefined => { const t = Date.parse(iso); return Number.isFinite(t) ? t : undefined; };
 
 /** Event.data as an object; null, arrays and scalars (or a JSON string from an old build) become `{}`. */
 export function dataOf(ev: Pick<AgentEvent, "data">): Record<string, unknown> {
@@ -74,7 +79,7 @@ export function parseToolCall(ev: AgentEvent): ToolCall {
   const id = str(d.id);
   const legacy = splitLegacyTool(ev.text);
   const name = str(d.name) || str(d.tool) || legacy.name || "tool";
-  return { id: id || `event-${ev.id}`, linked: id !== "", name, server: str(d.server), status: toolStatus(d.status), input: d.input, output: str(d.output), summary: legacy.summary };
+  return { id: id || `event-${ev.id}`, linked: id !== "", name, server: str(d.server), status: toolStatus(d.status), input: d.input, output: str(d.output), summary: legacy.summary, startedAt: msOf(ev.at) };
 }
 
 /** A tool result as a partial update to its call. `linked` is false for results without ToolData. */
@@ -84,7 +89,7 @@ function parseToolResult(ev: AgentEvent): { id: string; linked: boolean; status:
   // Legacy results carried only {error: bool}; the summary text was the output.
   const status: ToolStatus = d.status === "error" || d.error === true ? "error" : "ok";
   const output = str(d.output) || ev.text;
-  const call: ToolCall = { id: id || `event-${ev.id}`, linked: id !== "", name: str(d.name) || "tool", server: str(d.server), status, input: d.input, output, summary: "" };
+  const call: ToolCall = { id: id || `event-${ev.id}`, linked: id !== "", name: str(d.name) || "tool", server: str(d.server), status, input: d.input, output, summary: "", endedAt: msOf(ev.at) };
   return { id, linked: id !== "", status, output, call };
 }
 
@@ -218,7 +223,9 @@ export function groupEvents(events: AgentEvent[], options: GroupOptions = { live
         const prior = call.linked ? toolAt.get(call.id) : undefined;
         if (prior !== undefined) { // the adapter re-announced a call (e.g. input completed)
           const old = items[prior] as Extract<FeedItem, { type: "tool" }>;
-          items[prior] = { ...old, call: { ...old.call, ...call, status: old.call.status === "running" ? call.status : old.call.status, output: old.call.output || call.output } };
+          const status = old.call.status === "running" ? call.status : old.call.status;
+          const endedAt = old.call.endedAt ?? (old.call.status === "running" && status !== "running" ? call.startedAt : undefined);
+          items[prior] = { ...old, call: { ...old.call, ...call, status, output: old.call.output || call.output, startedAt: old.call.startedAt ?? call.startedAt, endedAt } };
           break;
         }
         if (call.linked) toolAt.set(call.id, items.length);
@@ -232,7 +239,7 @@ export function groupEvents(events: AgentEvent[], options: GroupOptions = { live
         const index = res.linked ? toolAt.get(res.id) : legacyOpen.shift();
         const existing = index === undefined ? undefined : items[index];
         if (index !== undefined && existing?.type === "tool") {
-          items[index] = { ...existing, call: { ...existing.call, status: res.status, output: res.output || existing.call.output } };
+          items[index] = { ...existing, call: { ...existing.call, status: res.status, output: res.output || existing.call.output, endedAt: res.call.endedAt } };
         } else {
           if (res.linked) toolAt.set(res.id, items.length);
           items.push({ type: "tool", key, at: ev.at, call: res.call });
@@ -418,15 +425,18 @@ export function reasoningTitle(text: string, fallback = "Thinking"): string {
 export type RunState = "running" | "requires-action" | "complete" | "cancelled" | "error" | "incomplete";
 
 /**
- * One assistant turn, from a user message to the next: `steps` (reasoning, tool calls, interim messages...) fold into a single
- * collapsed disclosure; `attention` (pending approvals and questions, errors, notices) and `answer` (the closing message and any
- * files or images) always stay visible, each in original order.
+ * One assistant turn, from a user message to the next: `steps` (reasoning, tool calls, messages written while working...) form
+ * the run's tree, open while the turn is in flight and folded once it settles; `attention` (pending approvals and questions,
+ * errors, notices) and `answer` (the closing message of a settled turn and any files or images) always stay visible, each in
+ * original order.
  */
 export interface TurnRun {
   type: "run";
   key: string;
   at: string;
   status: RunState;
+  /** When the turn began (its user message, else its first event) in Unix ms; null when the timestamp does not parse. */
+  startedAt: number | null;
   /** First to last event of the turn in ms; null when unknown or under a second. */
   durationMs: number | null;
   steps: FeedItem[];
@@ -449,7 +459,7 @@ const CANCELLED = /\b(cancel+ed|interrupted|aborted|stopped)\b/i;
 function closeTurn(entries: TurnEntry[], user: Extract<FeedItem, { type: "user" }> | null, buffer: FeedItem[], last: boolean, ctx: RunContext) {
   if (!buffer.length) {
     // A prompt the agent has not answered yet still shows that it is working.
-    if (user && last && ctx.running) entries.push({ type: "run", key: `run:${user.key}`, at: user.at, status: "running", durationMs: null, steps: [], attention: [], answer: [] });
+    if (user && last && ctx.running) entries.push({ type: "run", key: `run:${user.key}`, at: user.at, status: "running", startedAt: msOf(user.at) ?? null, durationMs: null, steps: [], attention: [], answer: [] });
     return;
   }
   const steps: FeedItem[] = [], attention: FeedItem[] = [], media: FeedItem[] = [];
@@ -476,14 +486,6 @@ function closeTurn(entries: TurnEntry[], user: Extract<FeedItem, { type: "user" 
       case "user": break;
     }
   }
-  const answer: FeedItem[] = [...media];
-  for (const message of messages) {
-    if (message.at > lastStep) answer.push(message.item); else steps.push(message.item);
-  }
-  const order = new Map(buffer.map((item, index) => [item, index]));
-  const byOrder = (a: FeedItem, b: FeedItem) => order.get(a)! - order.get(b)!;
-  steps.sort(byOrder); answer.sort(byOrder);
-
   let status: RunState;
   if (pending) status = "requires-action";
   else if (turn) status = turn.ok ? "complete" : CANCELLED.test(turn.result) ? "cancelled" : "error";
@@ -493,6 +495,17 @@ function closeTurn(entries: TurnEntry[], user: Extract<FeedItem, { type: "user" 
   else status = "complete";
   if (turn && !turn.ok && status !== "requires-action") attention.push(turn);
 
+  // While the turn is in flight every message is work in progress, shown live inside the run; once it settles, the messages
+  // after its last activity become the answer.
+  const inFlight = status === "running" || status === "requires-action";
+  const answer: FeedItem[] = [...media];
+  for (const message of messages) {
+    if (!inFlight && message.at > lastStep) answer.push(message.item); else steps.push(message.item);
+  }
+  const order = new Map(buffer.map((item, index) => [item, index]));
+  const byOrder = (a: FeedItem, b: FeedItem) => order.get(a)! - order.get(b)!;
+  steps.sort(byOrder); answer.sort(byOrder);
+
   const first = Date.parse((user ?? buffer[0]!).at), end = Date.parse(buffer[buffer.length - 1]!.at);
   const span = end - first;
   const durationMs = status !== "running" && Number.isFinite(span) && span >= 1000 ? span : null;
@@ -501,12 +514,12 @@ function closeTurn(entries: TurnEntry[], user: Extract<FeedItem, { type: "user" 
     for (const item of answer) entries.push({ type: "item", key: item.key, at: item.at, item });
     return;
   }
-  entries.push({ type: "run", key: `run:${user?.key ?? buffer[0]!.key}`, at, status, durationMs, steps, attention, answer });
+  entries.push({ type: "run", key: `run:${user?.key ?? buffer[0]!.key}`, at, status, startedAt: Number.isFinite(first) ? first : null, durationMs, steps, attention, answer });
 }
 
 /**
- * Groups feed items into one entry per user message and one run per assistant turn. The closing assistant message(s) of a turn,
- * meaning those after its last piece of activity, are its answer; earlier interim messages are commentary inside the run.
+ * Groups feed items into one entry per user message and one run per assistant turn. Once a turn settles, its closing assistant
+ * message(s), meaning those after its last piece of activity, are its answer; every other message is a step inside the run.
  */
 export function groupRuns(items: readonly FeedItem[], ctx: RunContext): TurnEntry[] {
   const entries: TurnEntry[] = [];

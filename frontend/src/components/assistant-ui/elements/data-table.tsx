@@ -5,12 +5,12 @@
  */
 "use client";
 
-import { useEffect, useState, type ComponentProps } from "react";
+import { useEffect, useState, type ComponentProps, type ReactNode } from "react";
 import { cn } from "@/lib/utils";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "@/components/ui/tooltip";
 import { safeHref } from "../utils/href";
 import { clamp } from "../utils/range";
-import { field, mono, paper } from "./surfaces";
+import { bubble, field, mono } from "./surfaces";
 
 export type DataTableValue =
   | string
@@ -91,6 +91,8 @@ export interface DataTableProps extends Omit<
   locale?: string | undefined;
   emptyMessage?: string | undefined;
   relativeTo?: number | undefined;
+  /** controls drawn above the table, such as a copy button */
+  actions?: ReactNode | undefined;
 }
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}(?:T.*)?$/;
@@ -101,6 +103,33 @@ const isEmpty = (value: DataTableValue) =>
 
 const textValue = (value: Exclude<DataTableValue, null | undefined>) =>
   Array.isArray(value) ? value.join(", ") : String(value);
+
+/** A cell as plain text, for copying: raw values (better for spreadsheets than display formatting), yes/no labels kept. */
+const cellText = (column: DataTableColumn, row: DataTableRow) => {
+  const value = row[column.key];
+  if (isEmpty(value)) return "";
+  if (column.format?.kind === "boolean" && typeof value === "boolean") {
+    return value ? (column.format.trueLabel ?? "Yes") : (column.format.falseLabel ?? "No");
+  }
+  return textValue(value);
+};
+
+const HTML_ESCAPES: Record<string, string> = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" };
+
+/** The table for the clipboard: tab-separated text (spreadsheets, editors) and an HTML table (documents, mail). */
+export function tableClipboard(columns: readonly DataTableColumn[], rows: readonly DataTableRow[]): { text: string; html: string } {
+  const lines = [columns.map((column) => column.label), ...rows.map((row) => columns.map((column) => cellText(column, row)))];
+  return {
+    text: lines.map((cells) => cells.map((cell) => cell.replace(/[\t\r\n]+/g, " ")).join("\t")).join("\n"),
+    html: `<table>${lines.map((cells, index) => `<tr>${cells.map((cell) => {
+      const tag = index === 0 ? "th" : "td";
+      return `<${tag}>${cell.replace(/[&<>"]/g, (c) => HTML_ESCAPES[c]!)}</${tag}>`;
+    }).join("")}</tr>`).join("")}</table>`,
+  };
+}
+
+/** Up to this many characters (header included) a column stays on one line; longer prose gets a readable minimum width instead of being squeezed. */
+const SHORT_COLUMN = 18;
 
 const isCalendarDate = (value: string) => {
   const [year, month, day] = value.slice(0, 10).split("-").map(Number);
@@ -480,6 +509,7 @@ export function DataTable({
   emptyMessage = "No rows",
   relativeTo,
   className,
+  actions,
   ...props
 }: DataTableProps) {
   const [internalSort, setInternalSort] = useState<DataTableSort | null>(
@@ -547,9 +577,11 @@ export function DataTable({
     onSortChange?.(next);
   };
 
+  const longest = new Map(columns.map((column) => [column.key, rows.reduce((n, row) => Math.max(n, cellText(column, row).length), column.label.length)]));
   const cellClass = (column: DataTableColumn) =>
     cn(
-      "text-foreground/80 px-4 py-2.5 align-top text-[13px] leading-5",
+      "text-foreground/85 px-3 py-2.5 align-top text-[13px] leading-5",
+      (longest.get(column.key) ?? 0) <= SHORT_COLUMN && "whitespace-nowrap",
       (column.align ?? (isNumeric(column.format) ? "end" : "start")) ===
         "end" && "text-end tabular-nums",
     );
@@ -558,13 +590,20 @@ export function DataTable({
     <div
       data-slot="data-table"
       className={cn(
-        paper,
-        "@container w-full overflow-hidden rounded-2xl",
+        bubble,
+        "selectable @container w-full min-w-0 overflow-hidden",
         className,
       )}
       {...props}
     >
-      <table className="hidden w-full border-collapse @md:table">
+      {actions || caption ? (
+        <div className="flex items-center gap-2 px-3 pt-2">
+          {caption ? <span className={cn(mono, "min-w-0 flex-1 truncate")}>{caption}</span> : <span className="flex-1" />}
+          {actions}
+        </div>
+      ) : null}
+      <div className="hidden overflow-x-auto @md:block">
+      <table className="w-full border-collapse">
         {caption ? <caption className="sr-only">{caption}</caption> : null}
         <thead className="border-foreground/10 border-b">
           <tr>
@@ -584,10 +623,10 @@ export function DataTable({
                           direction === "asc" ? "ascending" : "descending",
                       }
                     : {})}
-                  style={column.width ? { width: column.width } : undefined}
+                  style={column.width ? { width: column.width } : (longest.get(column.key) ?? 0) <= SHORT_COLUMN ? undefined : { minWidth: `${Math.min(20, Math.max(9, (longest.get(column.key) ?? 0) * 0.22))}rem` }}
                   className={cn(
                     mono,
-                    "text-muted-foreground px-4 py-3 font-medium",
+                    "text-muted-foreground px-3 py-2.5 font-medium whitespace-nowrap",
                     (column.align ??
                       (isNumeric(column.format) ? "end" : "start")) === "end"
                       ? "text-end"
@@ -630,7 +669,7 @@ export function DataTable({
             sortedRows.map(({ row, index }) => (
               <tr
                 key={rowIdentifier(row, rowKey, index)}
-                className="hover:bg-foreground/[0.025] transition-colors motion-reduce:transition-none"
+                className="border-foreground/[0.06] border-t transition-colors first:border-t-0 hover:bg-foreground/[0.03] motion-reduce:transition-none"
               >
                 {columns.map((column) => (
                   <td key={column.key} className={cellClass(column)}>
@@ -650,6 +689,7 @@ export function DataTable({
           )}
         </tbody>
       </table>
+      </div>
       <div role="list" className="space-y-2 p-2.5 @md:hidden">
         {sortedRows.length === 0 ? (
           <div
@@ -688,7 +728,7 @@ export function DataTable({
                         <dt className="text-muted-foreground truncate">
                           {column.label}
                         </dt>
-                        <dd className="text-foreground/75 shrink-0 text-end tabular-nums">
+                        <dd className="text-foreground/80 min-w-0 text-end break-words tabular-nums">
                           <Value
                             column={column}
                             row={row}

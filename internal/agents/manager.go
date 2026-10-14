@@ -132,6 +132,10 @@ type liveSess struct {
 	// finishes when the last one reports. Both guarded by controlMu.
 	subagents map[string]bool
 	turnDone  bool
+	// estimates are the provisional token readings (EvTokenEstimate) of requests not billed yet,
+	// by request, and estimated their sum, which Session.Tokens includes. Guarded by controlMu.
+	estimates map[string]int64
+	estimated int64
 }
 
 // NewManager creates a manager. Call Recover once at startup.
@@ -186,12 +190,20 @@ func (m *Manager) Recover() (lost int, err error) {
 	if err != nil {
 		return 0, err
 	}
+	billed, err := m.st.sessionTokens()
+	if err != nil {
+		return 0, err
+	}
 	for _, s := range sessions {
 		// Queues survive, authority to dispatch does not. Even a completed session
 		// may have a persisted sending entry from the previous daemon.
 		s.Pending, s.Questions = nil, nil
 		pauseQueue(&s, "The daemon restarted. Resume this queue explicitly.")
-		if len(s.Queue) > 0 {
+		backfill := s.Tokens == 0 && billed[s.ID] > 0
+		if backfill {
+			s.Tokens = billed[s.ID]
+		}
+		if len(s.Queue) > 0 || backfill {
 			if err := m.st.SaveSession(s, ""); err != nil {
 				return lost, err
 			}
@@ -1355,8 +1367,12 @@ func (m *Manager) apply(id string, e Event) {
 		m.applyTitle(id, e.Text, true) // a name, not history: neither recorded nor published as an event
 		return
 	}
-	if e.Kind == EvTokens {
+	switch e.Kind {
+	case EvTokens:
 		m.recordTokens(ls, e) // billed usage feeds the ledger; it is not history
+		return
+	case EvTokenEstimate:
+		m.estimateTokens(ls, e)
 		return
 	}
 	e = m.record(id, e)

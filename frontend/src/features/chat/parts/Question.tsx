@@ -1,5 +1,7 @@
 import { useState } from "react";
 import type { Choice } from "@/mygo";
+import { bubble } from "@/components/assistant-ui/elements/surfaces";
+import { cn } from "@/lib/utils";
 
 /**
  * A question from the bot: lettered suggestions (label and optional one-line description) plus a field for the
@@ -12,7 +14,7 @@ export function QuestionCard({ text, choices, onAnswer }: { text: string; choice
     const trimmed = value.trim();
     if (trimmed && onAnswer) onAnswer(trimmed);
   };
-  return <fieldset data-slot="chat-question" disabled={!onAnswer} className="flex min-w-0 flex-col gap-3 rounded-2xl border bg-card p-3 disabled:opacity-60">
+  return <fieldset data-slot="chat-question" disabled={!onAnswer} className={cn(bubble, "flex min-w-0 flex-col gap-3 p-3 disabled:opacity-60")}>
     <legend className="sr-only">Question from the bot</legend>
     <div className="flex flex-col gap-0.5 px-1">
       <p className="selectable font-medium text-sm">{text}</p>

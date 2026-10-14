@@ -259,16 +259,23 @@ func TestStartupMarksInterruptedRuns(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	m2, err := New(Config{DB: e.db.DB, DataDir: e.dir, LLM: e.llm})
+	m2, err := New(Config{DB: e.db.DB, DataDir: e.dir, LLM: e.llm, Clock: e.clock})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer m2.Close()
 	got := map[string]string{}
+	finished := map[string]int64{}
 	for _, m := range e.history(b.ID) {
 		got[m.ID] = m.Status
+		finished[m.ID] = m.FinishedAt
 	}
 	if got["m0"] != StatusIncomplete || got["m1"] != StatusCanceled || got["m2"] != StatusComplete {
 		t.Fatalf("statuses after restart: %v", got)
+	}
+	// Interrupted messages finish at startup; one that finished before finish times were recorded keeps 0.
+	now := e.clock().UnixMilli()
+	if finished["m0"] != now || finished["m1"] != now || finished["m2"] != 0 {
+		t.Fatalf("finish times after restart: %v", finished)
 	}
 }

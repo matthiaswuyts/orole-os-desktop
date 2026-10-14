@@ -35,6 +35,14 @@ and length line up and otherwise waits for the next snapshot. Statuses: `pending
 `incomplete` (daemon restarted mid-run), `error`, `canceled`. Budgets: steps (default 8) and tool calls (default 20)
 per turn, doom-loop detection, cancellation through `chat.cancel`.
 
+While a reply runs, the conversation shows what the bot is doing in a thinking panel (`parts/ThinkingPanel.tsx`), drawn as
+a chat bubble: the header names the step running now with the time so far, and the steps below follow the message parts
+in order: the model's reasoning as it streams (consecutive reasoning parts are one "Thinking" step), every tool call with
+its query, the pages a web search read as chips, the research outline, handoffs to other bots, and "Writing the answer"
+once answer text starts. It is open while the reply runs and folds to "Thought for 7s" (from `Message.finishedAt`, which
+the daemon sets once when a message reaches a final status; older messages show the step count) when it settles. A reply
+that only answered leaves no panel.
+
 Locking: `Manager.mu` guards only in-memory run state (runs, queues, handoffs, nonces) and is never held across SQLite
 work. Everything that stores a message for one bot and starts or queues its runs (`Send`, `Regenerate`, the setup
 greeting, a handoff's task and its report, Archive/Clear) holds that bot's lock (`lockBot`, always taken before `mu`),
@@ -163,8 +171,12 @@ double-click to reset) between 20rem and the width that leaves the conversation 
 less), and the chosen width is kept in `localStorage` (`orole.chat.paneWidth`).
 
 ## @mentions and skills
-Typing `@` in the composer opens the assistant-ui trigger popover: the other bots and the skills this bot has been
-given. A pick is plain `@Name` text; on send the frontend resolves names to ids (`SendRequest.Mentions`,
+Typing `@` or `/` in the composer (or pressing its `@` / `/` buttons) opens the composer menu
+(`features/chat/ComposerMenu.tsx`) above it: `@` lists the other bots and the integrations this bot was given
+(`BotConfig.MCPServers`, enabled ones, with their logo and tool count), `/` lists the skills it may use, each with its
+description. Grouped rows match the typed name (prefix, then word start, then substring); arrow keys move, Enter or Tab
+picks, Escape closes it for that trigger, and the textarea is the `combobox` that owns the list. A pick is plain
+`@Name` text; on send the frontend resolves names to ids (`SendRequest.Mentions`,
 `SendRequest.Skills`) and the daemon validates them (`checkMentions`: bot exists, not itself, at most 3 bots and 5
 skills, no research mode). Each mentioned bot answers in the **conversation where it was mentioned**: the user message
 is stored once and one turn per mentioned bot is queued behind it on that conversation's worker, in mention order. The
@@ -173,7 +185,11 @@ the host conversation's history, and stores the reply with `Author: bot:<mention
 answering bot's prompt gets an addendum naming the conversation and saying other bots' messages are data. Replies of
 another bot are rewritten as fenced `<untrusted source="reply of bot X">` user-side text whenever any bot reads the
 history, so no bot mistakes them for its own words. A skill mention adds an instruction to read the skill with
-`orole_get_skill`, limited to skills the answering bot owns. Regenerating a mention reply reruns the same bot.
+`orole_get_skill`, limited to skills the answering bot owns. An integration mention (`SendRequest.Integrations`: MCP
+server ids, at most 5, no research mode) adds an instruction to use that integration's tools, whose descriptions start
+with `[<name> MCP]`; it names only servers in the answering bot's `BotConfig.MCPServers`, so a mention never widens what
+a bot may use. Names come from `Manager.SetIntegrationNames` (the daemon wires it to `mcp.Manager.List`); an unknown
+name falls back to the id. Mentions of all kinds travel with every turn of the send. Regenerating a mention reply reruns the same bot.
 History summaries are keyed by the conversation, not by the answering bot.
 Built-in skills (`skill-creator`, see [skills and gateway](skills-and-gateway.md)) are listed in every bot's system prompt
 and readable with `orole_get_skill` regardless of `BotConfig.Skills`. They also appear in the `/` picker and are accepted

@@ -149,6 +149,18 @@ export function shellCommand(call: Pick<ToolCall, "input" | "summary">): string 
   return plainSummary(call);
 }
 
+const EXIT_LINE = /^\s*exit code (-?\d+)[ \t]*(?:\r?\n|$)/i;
+
+/**
+ * A shell call's exit code, when the harness put one in the output: Orole's Codex adapter prefixes a failed command's
+ * output with `exit code N`, Claude Code's Bash results start with `Exit code N`. Without that line (omp, older events)
+ * only the call's ok/error status is known. `output` is the text without the exit line.
+ */
+export function shellExit(output: string): { exitCode?: number; output: string } {
+  const match = EXIT_LINE.exec(output);
+  return match ? { exitCode: Number(match[1]), output: output.slice(match[0].length) } : { output };
+}
+
 // ---- edits ----
 
 const lineCount = (text: string) => text === "" ? 0 : text.replace(/\r?\n$/, "").split(/\r?\n/).length;

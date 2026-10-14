@@ -325,20 +325,34 @@ muted "Starting…" (or "Failed") row. Several launches can be pending at once; 
   Day boundaries use local calendar time and are the only dates in the feed; a row's exact time is only its
   hover `title`. Follow-scroll pauses when the reader leaves the end, retains the anchor when older pages
   prepend, and offers a return-to-latest control.
-- **Runs** (`groupRuns` in `lib/taskEvents.ts`, `elements/run-activity.tsx`): the feed shows one entry per user
-  message and one collapsed `RunActivity` per assistant turn (the events between two user messages). Reasoning,
-  tool calls, sources, sub-agents, interim assistant messages, system notes and already-decided approvals fold into
-  the run in recorded order; the closing assistant message(s) (those after the turn's last activity), reported
-  files and images stay outside it. Pending approvals and questions, errors, policy notices and a failed turn's
-  result go in the always-visible `attention` slot. The status row reads the live activity (`Working`), `Needs your input`,
-  or `Worked for 2m 13s` (first to last event of the turn, omitted when under a second or unknown), with
-  failed/stopped/incomplete variants. Open state is per run key, collapsed by default and preserved across updates;
-  a search hit inside a collapsed run opens it. A turn with only a plain answer renders no run row.
-- **Tool rows** (`lib/toolLabels.ts`, `elements/tool-timeline.tsx`): each step is `{verb, chip, icon}` in plain words:
-  `Ran` + the real command with a PowerShell/cmd/bash wrapper stripped, `Searched the web` + the query (no chip when
-  empty), `Read` + file name, `Edited` + files with +/- counts, `Searched files`, `Used <server> · <tool>`, otherwise a
-  humanized name. A failed tool shows an explicit `Failed` state. The raw tool name, complete input and output sit behind
-  the row's own disclosure (`ToolDetails`), never as primary text.
+- **Runs** (`groupRuns` in `lib/taskEvents.ts`, `RunEntries.tsx`, `elements/agent-run-tree.tsx`): the feed shows one entry
+  per user message and one agent run tree per assistant turn (the events between two user messages). The header says what
+  is happening now (the call in flight, else the harness's activity line, else the latest step) with a ticking elapsed
+  time while the turn runs, `Needs your input` while it waits, or `Worked for 2m 13s` (first to last event of the turn,
+  omitted when under a second or unknown) with failed/stopped/incomplete variants; the last run also shows the session's
+  token count (per-turn and per-agent tokens are not recorded, so no node shows any). Under it, the main agent's node holds
+  every step in recorded order: thoughts (title, body on expand), the messages it writes while working (live, compact,
+  long ones folded), tool call cards, terminal results, sources, decided approvals and answered questions, and the plan
+  (`AgentTodos`) where it was first written, with each plan step's work nested in it. Subagents (`subagent` events) hang
+  under the tool call whose id matches their `toolCallId`, else under the main agent; they show only the provider's
+  name, status, task, message and id. A run in flight (running or waiting on the user) is open, a settled one folds to its
+  header; the reader's toggle wins and is kept per run key across updates; a search hit inside a folded run opens it.
+  Pending approvals and questions, errors, policy notices and a failed turn's result stay visible below the tree, then the
+  answer: once the turn settles, its closing assistant message(s) (those after its last activity) become a result card
+  (`RunResult`: long text shows its first lines under a fade with Show all) and files and images follow unchanged. While
+  the turn runs every message stays inside the tree. A turn with only a plain answer renders no run row.
+- **Tool calls** (`lib/toolLabels.ts`, `elements/tool-call-card.tsx`, `elements/terminal-result.tsx`): consecutive calls
+  share one card of rows; with two or more, a header row says what is waiting (`Waiting for approval` + the call) or
+  running now, else how many calls ran and failed. A row is a status badge (check, alert, shield while a permission holds
+  the call, spinner), the plain-language `{verb, chip}` (`Ran` + the real command with a PowerShell/cmd/bash wrapper
+  stripped, `Searched the web` + the query, `Read` + file name, `Edited` + files with +/- counts, `Used <server> · <tool>`,
+  otherwise a humanized name), the error line in red when it failed, and its time (announcement to result; ticking while
+  in flight). The raw tool name, the arguments and the output sit behind the row's disclosure (`ToolDetails`). Shell
+  calls render as a terminal result instead: `$ command`, `Exit N` (or `Failed`) only when it failed, the time and a Copy
+  action; the output, ANSI escapes removed, folds to its last 12 lines behind an "N earlier lines" toggle. Failed commands
+  open by default, others stay closed. `ToolData` carries no exit code: it is read from a leading `exit code N` line of the
+  output (Orole's Codex adapter writes one for a nonzero exit; Claude Code's Bash results start with `Exit code N`);
+  without that line (omp, older events) only failed/ok is shown. There is no retry control: no harness offers one.
 - **Activity/artifacts**: correlated tool call/results, policy decisions, questions/answers, provider
   child-agent state, real sources, files and image-generation stages appear only where the harness reports
   them. A running image generation shows the `ImageGeneration` element (dot grid, shimmering `Generating`,
@@ -389,6 +403,13 @@ muted "Starting…" (or "Failed") row. Several launches can be pending at once; 
   Claude contributes only fields its stream actually reports. Sources are structured harness output,
   not URLs guessed from prose. Child-agent status and image-generation stages are provider-specific.
   Terminal/process sessions do not advertise these structured capabilities.
+- **Context window** (`ComposerContext`): occupancy and window size come from `Session.usage`. A per-category split is
+  shown only from `usage.breakdown`, which Claude Code fills: the daemon sends the stream-json control request
+  `get_context_usage` (`detail: "summary"`, no token-count API calls) on `system/init` and after every `result`, and maps
+  the reply's categories (kind used/free/buffer/deferred) and contributors (memory files, MCP servers, skills, agents,
+  message types; at most 12 per category, the rest folded into "N more") in `claude_context.go`. Codex and OMP RPC
+  expose totals only, so their popover is a plain meter that says so. Live occupancy keeps moving with each model
+  request; when it differs from the breakdown's total the popover says the breakdown is from the last finished turn.
 - **Publish** (Changes sheet, `PublishPanel`): commit message, Commit, Push branch, Open pull request (title, base, body,
   draft). Push and PR show a confirmation listing the branch, remote and PR title/base, then call `Agents.publish` with
   `confirmed: true`. The panel calls the daemon once per step (commit, push, PR) so progress and a failure are attributed

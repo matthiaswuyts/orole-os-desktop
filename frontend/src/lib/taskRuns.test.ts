@@ -113,6 +113,29 @@ describe("groupRuns", () => {
     const after = run(group([...base, ev("message", "more")], ctx({ running: true }))).key;
     expect(after).toBe(before);
   });
+
+  it("keeps every message of an in-flight turn inside the run and makes the closing one the answer once it settles", () => {
+    const base = [ev("prompt", "go", null, 0), ev("tool", "", { id: "t", name: "Read", status: "ok", input: {} }, 1), ev("message", "Reading the config next.", null, 2)];
+    const live = run(group(base, ctx({ running: true })));
+    expect(live.steps.map((step) => step.type)).toEqual(["tool", "assistant"]);
+    expect(live.answer).toEqual([]);
+    const settled = run(group([...base, ev("turn_done", "", { ok: true }, 3)]));
+    expect(settled.steps.map((step) => step.type)).toEqual(["tool"]);
+    expect(settled.answer).toMatchObject([{ type: "assistant", text: "Reading the config next." }]);
+  });
+
+  it("times each tool call from its first announcement to its result", () => {
+    const calls = groupEvents([
+      ev("prompt", "go", null, 0),
+      ev("tool", "", { id: "a", name: "Bash", status: "running", input: {} }, 1),
+      ev("tool", "", { id: "a", name: "Bash", status: "running", input: { command: "ls" } }, 2),
+      ev("tool_result", "", { id: "a", status: "ok" }, 9),
+      ev("tool", "", { id: "b", name: "Read", status: "running", input: {} }, 10),
+    ]).flatMap((item) => item.type === "tool" ? [item.call] : []);
+    expect(calls[0]!.endedAt! - calls[0]!.startedAt!).toBe(8000);
+    expect(calls[1]!.startedAt).toBe(Date.parse(at(10)));
+    expect(calls[1]!.endedAt).toBeUndefined();
+  });
 });
 
 describe("reasoningTitle", () => {

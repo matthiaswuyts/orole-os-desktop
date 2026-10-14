@@ -30,6 +30,17 @@ func (d *Daemon) registerChatTools() {
 	}
 	if d.MCP != nil {
 		list = append(list, &tools.MCPTools{Client: d.MCP})
+		m.SetIntegrationNames(func(ctx context.Context) map[string]string {
+			servers, err := d.MCP.List(ctx)
+			if err != nil {
+				return nil
+			}
+			names := make(map[string]string, len(servers))
+			for _, s := range servers {
+				names[s.ID] = s.Name
+			}
+			return names
+		})
 	}
 	if d.Skills != nil {
 		list = append(list, &tools.SkillsTool{Store: d.Skills})

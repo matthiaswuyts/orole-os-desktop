@@ -2,6 +2,7 @@ package chat
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -153,11 +154,69 @@ func TestSkillMentionOnlyNamesSkillsTheAnsweringBotOwns(t *testing.T) {
 func TestAnswerExtraNamesBuiltinSkillsButNotOthers(t *testing.T) {
 	bot := Bot{ID: "b1", Config: BotConfig{Skills: []string{"pdf"}}}
 	tn := turn{skills: []string{"pdf", "skill-creator", "secret"}}
-	got := answerExtra(tn, bot, bot, []string{"skill-creator"})
+	got := answerExtra(tn, bot, bot, []string{"skill-creator"}, nil)
 	if !strings.Contains(got, "pdf, skill-creator") || strings.Contains(got, "secret") {
 		t.Fatalf("addendum = %q", got)
 	}
-	if got := answerExtra(turn{skills: []string{"skill-creator"}}, bot, bot, nil); got != "" {
+	if got := answerExtra(turn{skills: []string{"skill-creator"}}, bot, bot, nil, nil); got != "" {
 		t.Fatalf("without a built-in list the skill must not be named: %q", got)
+	}
+}
+
+func TestIntegrationMentionsAreValidated(t *testing.T) {
+	e := newEnv(t, func(int, llm.Request) []llm.Delta { return []llm.Delta{llmtest.Text("ok")} })
+	b := e.bot("Host")
+	ctx := context.Background()
+
+	_, _, got, err := e.m.checkMentions(ctx, SendRequest{BotID: b.ID, Integrations: []string{"a", "b", "a", "c", "d", "e", "e"}})
+	if err != nil || !slices.Equal(got, []string{"a", "b", "c", "d", "e"}) {
+		t.Fatalf("five distinct integrations (with repeats): %v, %v", got, err)
+	}
+	for name, req := range map[string]SendRequest{
+		"six integrations": {BotID: b.ID, Text: "x", Integrations: []string{"a", "b", "c", "d", "e", "f"}},
+		"empty id":         {BotID: b.ID, Text: "x", Integrations: []string{""}},
+		"long id":          {BotID: b.ID, Text: "x", Integrations: []string{strings.Repeat("x", 129)}},
+		"invalid utf-8":    {BotID: b.ID, Text: "x", Integrations: []string{"\xff"}},
+		"research":         {BotID: b.ID, Text: "x", Integrations: []string{"a"}, Mode: ModeResearch},
+	} {
+		if _, err := e.m.Send(ctx, req); err == nil {
+			t.Errorf("%s: want an error", name)
+		}
+	}
+}
+
+func TestIntegrationMentionOnlyNamesServersTheAnsweringBotHas(t *testing.T) {
+	var mu sync.Mutex
+	var system string
+	e := newEnv(t, func(_ int, req llm.Request) []llm.Delta {
+		mu.Lock()
+		system = req.System
+		mu.Unlock()
+		return []llm.Delta{llmtest.Text("ok")}
+	})
+	e.m.SetIntegrationNames(func(context.Context) map[string]string {
+		return map[string]string{"srv-mail": "Orole Mail", "srv-secret": "Secret"}
+	})
+	b := e.bot("Wired", func(in *BotInput) { in.Config.MCPServers = []string{"srv-mail", "srv-drive"} })
+	if _, err := e.m.Send(context.Background(), SendRequest{BotID: b.ID, Text: "go", Integrations: []string{"srv-mail", "srv-secret", "srv-drive"}}); err != nil {
+		t.Fatal(err)
+	}
+	e.idle(b.ID)
+	mu.Lock()
+	defer mu.Unlock()
+	if !strings.Contains(system, "these integrations for this message: Orole Mail, srv-drive.") ||
+		!strings.Contains(system, `"[Orole Mail MCP]" or "[srv-drive MCP]"`) || strings.Contains(system, "Secret") {
+		t.Fatalf("system: %s", system)
+	}
+}
+
+func TestAnswerExtraLeavesOutIntegrationsTheBotLacks(t *testing.T) {
+	bot := Bot{ID: "b1", Config: BotConfig{MCPServers: []string{"srv"}}}
+	if got := answerExtra(turn{integrations: []string{"other"}}, bot, bot, nil, map[string]string{"other": "Other"}); got != "" {
+		t.Fatalf("an integration the bot was not given must not be named: %q", got)
+	}
+	got := answerExtra(turn{integrations: []string{"srv"}}, bot, bot, nil, map[string]string{"srv": "Canvas LMS"})
+	if !strings.Contains(got, "these integrations for this message: Canvas LMS.") || !strings.Contains(got, `"[Canvas LMS MCP]"`) {
+		t.Fatalf("addendum = %q", got)
 	}
 }

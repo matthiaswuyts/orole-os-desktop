@@ -29,6 +29,7 @@ type sink struct {
 	publish      func(Message)       // nil: silent; must not call back into the sink
 	publishDelta func(MessageDelta)  // nil: stream text as full snapshots
 	now          func() time.Time    // test seam; time.Now
+	clock        func() time.Time    // stamps FinishedAt; the manager's clock, time.Now by default
 
 	lastPub  time.Time
 	lastFull time.Time
@@ -54,7 +55,7 @@ func newSink(msg Message, persist func(Message) error, publish func(Message), pu
 	if msg.Parts == nil {
 		msg.Parts = []MsgPart{}
 	}
-	return &sink{msg: msg, persist: persist, publish: publish, publishDelta: publishDelta, now: time.Now, bufPart: -1, dirty: true}
+	return &sink{msg: msg, persist: persist, publish: publish, publishDelta: publishDelta, now: time.Now, clock: time.Now, bufPart: -1, dirty: true}
 }
 
 // snapshotLocked deep-copies the message (parts and usage are mutated in place by the sink).
@@ -276,13 +277,17 @@ func (s *sink) checkpoint() error {
 	return err
 }
 
-// finish stores the terminal state and publishes the final snapshot.
+// finish stores the terminal state and publishes the final snapshot. A final status records the
+// finish time once.
 func (s *sink) finish(status, errText string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.stopTimerLocked()
 	s.msg.Status = status
 	s.msg.Error = errText
+	if finalStatus(status) && s.msg.FinishedAt == 0 {
+		s.msg.FinishedAt = s.clock().UnixMilli()
+	}
 	var err error
 	if s.persist != nil {
 		err = s.persist(s.snapshotLocked())

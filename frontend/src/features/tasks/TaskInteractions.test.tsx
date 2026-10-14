@@ -5,7 +5,7 @@ import type { PermissionRequest, Question, QuestionRequest, Session } from "@/my
 const api = vi.hoisted(() => ({ approve: vi.fn(), get: vi.fn(), answerInput: vi.fn(), upsert: vi.fn() }));
 vi.mock("@/mygo", () => ({ Agents: api }));
 vi.mock("@/stores/agents", () => ({ useAgents: { getState: () => ({ upsert: api.upsert }) } }));
-import { QuestionCard, SubagentCard, TaskApprovalCard } from "./TaskInteractions";
+import { QuestionCard, TaskApprovalCard } from "./TaskInteractions";
 import { questionAnswers, questionRequestKey, validateQuestionAnswer } from "./questionState";
 
 const question: Question = { id: "scope", header: "Scope", prompt: "Which scope?", multiple: false, allowText: false, secret: false, options: [{ id: "small", label: "Small", description: "" }, { id: "large", label: "Large", description: "" }] };
@@ -188,13 +188,4 @@ describe("tool permission decisions", () => {
     render(<TaskApprovalCard sessionId="session" request={shell("ls")} />);
     expect(screen.queryByRole("button", { name: /session|always/i })).not.toBeInTheDocument();
   });
-});
-
-it("shows only provider-reported subagent IDs/status without guessed progress or task links", () => {
-  const view = render(<SubagentCard agent={{ id: "provider-agent-42", name: "Research", status: "waiting-on-provider", task: "Read the spec", message: "", toolCallId: "call-4" }} />);
-  expect(screen.getByText("provider-agent-42")).toBeInTheDocument();
-  expect(screen.getByText("waiting-on-provider")).toBeInTheDocument();
-  expect(screen.queryByRole("link")).not.toBeInTheDocument();
-  expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
-  expect(view.container.querySelector("a")).toBeNull();
 });

@@ -14,7 +14,7 @@ import {
   XIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { ghostButton, mono, paper } from "./surfaces";
+import { bubble, ghostButton, mono } from "./surfaces";
 import { announced, clamp, pct, progressOf, take } from "../utils/range";
 
 export interface JobStage {
@@ -124,8 +124,8 @@ export function JobProgress({
       data-slot="job-progress"
       data-state={state}
       className={cn(
-        paper,
-        "flex w-full max-w-sm flex-col gap-3 rounded-2xl p-4",
+        bubble,
+        "flex w-full max-w-sm flex-col gap-3 p-4",
         className,
       )}
       {...props}

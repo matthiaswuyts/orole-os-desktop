@@ -6,14 +6,12 @@ import (
 	"os"
 	"path/filepath"
 
+	oroleos "github.com/rayorole/orole-os-desktop"
 	"github.com/rayorole/orole-os-desktop/internal/database"
 	"github.com/rayorole/orole-os-desktop/internal/diagnostics"
 	"github.com/rayorole/orole-os-desktop/internal/platform"
 	"github.com/rayorole/orole-os-desktop/internal/systemmetrics"
 )
-
-// AppVersion is the desktop build version, set via -ldflags "-X .../internal/app.AppVersion=...".
-var AppVersion = "0.1.0-dev"
 
 // System binds desktop OS integration and stateless access to daemon host metrics.
 // Autostart and diagnostics remain desktop concerns; metrics come from the daemon.
@@ -55,7 +53,7 @@ func (s System) DisableAutostart(ctx context.Context) (platform.AutostartStatus,
 
 // Diagnostics returns the support snapshot (versions, paths, daemon, credential store, WebView2, log tail).
 func (s System) Diagnostics(ctx context.Context) (diagnostics.Report, error) {
-	return diagnostics.Collect(ctx, AppVersion, s.L.DataDir, s.L.DaemonExe, 30, database.ReadSchemaVersion), nil
+	return diagnostics.Collect(ctx, oroleos.Version, s.L.DataDir, s.L.DaemonExe, 30, database.ReadSchemaVersion), nil
 }
 
 // Metrics returns a real host observation sampled and cached by the daemon.

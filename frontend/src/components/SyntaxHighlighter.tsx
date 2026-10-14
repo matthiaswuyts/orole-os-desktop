@@ -34,7 +34,8 @@ export async function highlightCode(code: string, language: string): Promise<Rea
   return result;
 }
 
-export const SyntaxHighlighter = memo(function SyntaxHighlighter({ code, language = "", className }: { code: string; language?: string; className?: string }) {
+/** `title` replaces the language name in the header strip (e.g. "Arguments"). */
+export const SyntaxHighlighter = memo(function SyntaxHighlighter({ code, language = "", title, className }: { code: string; language?: string; title?: string; className?: string }) {
   const [highlighted, setHighlighted] = useState<{ code: string; language: string; nodes: ReactNode[] } | null>(null);
   const [copy, setCopy] = useState<{ code: string; state: "copied" | "failed" } | null>(null);
   useEffect(() => {
@@ -45,7 +46,7 @@ export const SyntaxHighlighter = memo(function SyntaxHighlighter({ code, languag
   const copied = copy?.code === code && copy.state === "copied";
   return <div className={cn("my-2 min-w-0 overflow-hidden rounded-md border bg-muted/30", className)} data-slot="syntax-highlighter">
     <div className="flex items-center justify-between gap-2 border-b px-2 py-1 text-xs text-muted-foreground">
-      <span className="truncate">{language || "Plain text"}</span>
+      <span className="truncate">{title ?? (language || "Plain text")}</span>
       <Button size="xs" variant="ghost" aria-label="Copy code" onClick={async () => {
         try { await navigator.clipboard.writeText(code); setCopy({ code, state: "copied" }); }
         catch { setCopy({ code, state: "failed" }); }

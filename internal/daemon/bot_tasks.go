@@ -52,7 +52,8 @@ func (b botTasks) Start(ctx context.Context, actor string, bot chat.Bot, spec to
 	if err != nil {
 		return tools.TaskInfo{}, fmt.Errorf("unknown project %q", spec.ProjectID)
 	}
-	plan, err := planBotTask(b.d.botTaskDefaults(bot.Config.Tasks), b.harnesses(ctx, true), spec)
+	installed := b.harnesses(ctx, true)
+	plan, err := planBotTask(b.d.botTaskDefaults(bot.Config.Tasks), installed, spec)
 	if err != nil {
 		return tools.TaskInfo{}, err
 	}
@@ -67,7 +68,13 @@ func (b botTasks) Start(ctx context.Context, actor string, bot chat.Bot, spec to
 	if err != nil {
 		return tools.TaskInfo{}, err
 	}
-	return taskInfo(s, false), nil
+	info := taskInfo(s, false)
+	if h := slices.IndexFunc(installed, func(h agents.HarnessOption) bool { return h.ID == plan.Harness }); h >= 0 {
+		if m := slices.IndexFunc(installed[h].Models, func(m agents.ModelOption) bool { return m.ID == s.Model }); m >= 0 && installed[h].Models[m].Name != s.Model {
+			info.ModelName = installed[h].Models[m].Name
+		}
+	}
+	return info, nil
 }
 
 // taskChoices is what d leaves a bot to choose, over the installed harnesses.
@@ -78,10 +85,14 @@ func taskChoices(d chat.BotTaskDefaults, installed []agents.HarnessOption) tools
 			continue
 		}
 		models := make([]string, 0, len(h.Models))
+		names := map[string]string{}
 		for _, m := range h.Models {
 			models = append(models, m.ID)
+			if m.Name != "" && m.Name != m.ID {
+				names[m.ID] = m.Name
+			}
 		}
-		out.Harnesses = append(out.Harnesses, tools.TaskHarness{ID: h.ID, Models: models, Reasoning: h.Reasoning, CustomModel: h.CustomModel})
+		out.Harnesses = append(out.Harnesses, tools.TaskHarness{ID: h.ID, Models: models, ModelNames: names, Reasoning: h.Reasoning, CustomModel: h.CustomModel})
 	}
 	return out
 }

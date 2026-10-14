@@ -135,6 +135,9 @@ type Session struct {
 	// reported as running. A turn that ends while they run is not finished: the session stays
 	// working until the last one reports and the harness's follow-up turn ends.
 	Subagents int `json:"subagents,omitempty"`
+	// Tokens is what the session's model requests used: input, output, cache reads and cache
+	// writes. Billed reports settle it; while a turn runs it includes the harness's live estimates.
+	Tokens int64 `json:"tokens,omitempty"`
 	// Pending are the permission requests awaiting a decision (runtime state).
 	Pending   []PermissionRequest `json:"pending"`
 	Usage     *ContextUsage       `json:"usage,omitempty"`
@@ -167,6 +170,7 @@ type SessionDelta struct {
 	Deletions      *int          `json:"deletions,omitempty"`
 	ToolCalls      *int          `json:"toolCalls,omitempty"`
 	FailedTools    *int          `json:"failedTools,omitempty"`
+	Tokens         *int64        `json:"tokens,omitempty"`
 	Usage          *ContextUsage `json:"usage,omitempty"`
 }
 

@@ -3,19 +3,20 @@ import { LoaderCircle } from "lucide-react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import type { Event as AgentEvent, Session } from "@/mygo";
 import { Button } from "@/components/ui/button";
-import { RunActivity, timelineSteps } from "@/components/assistant-ui/elements/run-activity";
+import { AgentNode, AgentRunTree } from "@/components/assistant-ui/elements/agent-run-tree";
 import { AgentTodos } from "@/components/assistant-ui/elements/agent-todos";
-import { TimelineStepRow, TimelineSteps } from "@/components/assistant-ui/elements/tool-timeline";
-import { planRun } from "@/lib/agentTodos";
+import { Elapsed } from "@/components/assistant-ui/elements/working-status";
+import { isPlanCall, planRun } from "@/lib/agentTodos";
 import { ConversationMap } from "@/components/assistant-ui/elements/conversation-map";
 import { mapTurns } from "@/lib/conversationMap";
 import { ErrorNote } from "@/features/agents/shared";
-import { liveActivity, type FeedItem, type LiveActivity, type TurnEntry, type TurnRun } from "@/lib/taskEvents";
-import { AssistantMessage, ErrorRow, FileCard, GuardrailNotice, ImageCard, ImageGenerationCard, NoteRow, PermissionItem, SourcesCard, TurnFailure, UserMessage } from "./FeedItems";
-import { QuestionCard, SubagentCard } from "./TaskInteractions";
+import { kindLabel } from "@/features/agents/format";
+import { liveActivity, reasoningTitle, type FeedItem, type LiveActivity, type TurnEntry, type TurnRun } from "@/lib/taskEvents";
+import { AnswerCard, AssistantMessage, ErrorRow, FileCard, GuardrailNotice, ImageCard, ImageGenerationCard, NoteRow, PermissionItem, SourcesCard, TurnFailure, UserMessage } from "./FeedItems";
+import { QuestionCard } from "./TaskInteractions";
 import { ConversationSearch, conversationHits, SearchMatches, SearchTrack, stepSearchHit, type SearchHit } from "./ConversationSearch";
 import { conversationDay, DaySeparator } from "./ConversationTimeline";
-import { runEntry, runStatusText } from "./RunEntries";
+import { currentStep, LatestStep, nestSubagents, RUN_STATE, RunSteps, runStatusText, type StepContext } from "./RunEntries";
 import { ScrollAnchor, useScrollAnchor } from "./ScrollAnchor";
 import { useFeedItems, useTurnEntries } from "./useFeedItems";
 import { useVisibleTurns } from "./useVisibleTurns";
@@ -35,7 +36,7 @@ const anchored = (key: string, node: ReactNode, search: Search) => <div key={key
   <SearchMatches hits={search.matches.get(key) ?? []} activeId={search.activeId} />
 </div>;
 
-/** An item that lives outside any run's disclosure: a message, a pending request, a file, an image. */
+/** An item that lives outside any run's tree: a message, a pending request, a file, an image. */
 function FeedEntry({ item, session }: { item: FeedItem; session: Session }) {
   switch (item.type) {
     case "user": return <UserMessage item={item} />;
@@ -47,12 +48,12 @@ function FeedEntry({ item, session }: { item: FeedItem; session: Session }) {
     case "generation": return <ImageGenerationCard generation={item.generation} image={item.image} sessionId={session.id} />;
     case "guardrail": return <GuardrailNotice notice={item.notice} />;
     case "question": return <QuestionCard session={session} request={item.request} answers={item.answers} cancelled={item.cancelled} />;
-    case "subagent": return <SubagentCard agent={item.agent} />;
     case "note": return <NoteRow item={item} />;
     case "error": return <ErrorRow item={item} />;
     case "turn": return <TurnFailure item={item} />;
+    case "subagent":
     case "reasoning":
-    case "tool": return null; // always folded into a run
+    case "tool": return null; // always part of a run's tree
   }
 }
 
@@ -66,55 +67,74 @@ interface RowProps {
   separator: boolean;
   session: Session;
   search: Search;
-  /** Run rows: the disclosure is open. */
+  /** Run rows: the tree is open. */
   open: boolean;
   /** Run rows: what the agent is doing, for the running one only. */
   activity: LiveActivity | null;
+  /** The last run: the session's token count so far. */
+  tokens?: number;
   onOpenChange: (key: string, open: boolean) => void;
 }
 
-function RunView({ run, session, search, open, activity, onOpenChange }: Omit<RowProps, "entry" | "separator"> & { run: TurnRun }) {
-  const entriesOf = (items: readonly FeedItem[]) => items.flatMap((item) => runEntry(item, session, (key) => search.matches.has(key) ? anchored(key, null, search) : null) ?? []);
-  const { plan, loose, work, timing } = planRun(run.steps);
+/**
+ * One assistant turn as an agent run tree: the header says what is happening now (or how the turn ended) with the elapsed time
+ * and, on the last run, the session's tokens; the main agent's node holds every step in order (with the plan and its work), and
+ * subagents hang under the call that started them. Pending approvals, questions and errors, then the answer card, stay below.
+ */
+function RunView({ run, session, search, open, activity, tokens, onOpenChange }: Omit<RowProps, "entry" | "separator"> & { run: TurnRun }) {
   const running = run.status === "running";
+  const { steps, spawned } = nestSubagents(run.steps);
+  // Stable per search state, so memoized steps of a live run skip rendering.
+  const anchor = useCallback((key: string, node: ReactNode) => anchored(key, node, search), [search]);
+  const ctx: StepContext = { session, approval: run.attention.some((item) => item.type === "permission"), spawned, anchor };
+  const { plan, loose, work, timing } = planRun(steps);
+  // The plan sits where the agent first wrote it: loose steps before that come first.
+  const planAt = steps.findIndex((step) => step.type === "tool" && isPlanCall(step.call));
+  const order = new Map(steps.map((step, index) => [step, index]));
+  const beforePlan = loose.filter((step) => planAt < 0 || order.get(step)! < planAt), afterPlan = planAt < 0 ? [] : loose.filter((step) => order.get(step)! > planAt);
   const todos = plan?.todos.map((todo) => {
-    const steps = timelineSteps(entriesOf(work.get(todo.id) ?? []));
+    const items = work.get(todo.id) ?? [];
     const at = timing.get(todo.id);
     return {
       ...todo, startedAt: at?.start, endedAt: at?.end,
-      details: steps.length ? <TimelineSteps steps={steps} streaming={running && todo.status === "in_progress"} label={`Work for ${todo.content}`} /> : undefined,
-      latest: steps.length ? <TimelineStepRow step={steps[steps.length - 1]!} shimmer={running} className="list-none" /> : undefined,
+      details: items.length ? <RunSteps items={items} ctx={ctx} /> : undefined,
+      latest: items.length ? <LatestStep item={items[items.length - 1]!} live={running} /> : undefined,
     };
   });
+  const now = running ? currentStep(run.steps, activity) : "";
   const { label, duration } = runStatusText(run.status, run.durationMs, activity);
-  const itemView = (item: FeedItem) => anchored(item.key, <FeedEntry item={item} session={session} />, search);
-  return <div data-scroll-anchor={run.key} className="min-w-0"><RunActivity
-    data-testid={run.status === "running" ? "live-activity" : undefined}
-    status={run.status}
-    statusLabel={label}
-    durationLabel={duration}
-    open={open}
-    onOpenChange={(next) => onOpenChange(run.key, next)}
-    entries={entriesOf(loose)}
-    plan={todos && <AgentTodos todos={todos} explanation={plan!.explanation} running={running} className="my-1" />}
-    attention={run.attention.length ? <div className="flex flex-col gap-3">{run.attention.map(itemView)}</div> : undefined}
-  >
+  const settled = duration ? `${label} ${duration}` : label;
+  const answer = run.answer.find((item) => item.type === "assistant");
+  const summary = running ? now : run.status === "complete" && answer ? reasoningTitle(answer.text, label) : label;
+  const end = run.startedAt !== null && run.durationMs !== null ? run.startedAt + run.durationMs : null;
+  const itemView = (item: FeedItem) => anchored(item.key, item.type === "assistant" ? <AnswerCard item={item} /> : <FeedEntry item={item} session={session} />, search);
+  return <div data-scroll-anchor={run.key} className="flex min-w-0 flex-col gap-3">
+    <AgentRunTree data-testid={running ? "live-activity" : undefined} state={RUN_STATE[run.status]} title={running ? now : settled} status={running ? now : settled}
+      elapsed={running && run.startedAt !== null ? <Elapsed start={run.startedAt} live /> : undefined} tokens={tokens}
+      open={open} onOpenChange={(next) => onOpenChange(run.key, next)}>
+      <AgentNode name={session.kind ? kindLabel(session.kind) : "Agent"} state={RUN_STATE[run.status]} summary={summary} start={run.startedAt} end={end} collapsible={false}>
+        {beforePlan.length > 0 && <RunSteps items={beforePlan} ctx={ctx} />}
+        {todos && <AgentTodos todos={todos} explanation={plan!.explanation} running={running} />}
+        {afterPlan.length > 0 && <RunSteps items={afterPlan} ctx={ctx} />}
+      </AgentNode>
+    </AgentRunTree>
+    {run.attention.length > 0 && <div className="flex flex-col gap-3">{run.attention.map(itemView)}</div>}
     {run.answer.length > 0 && <div className="flex flex-col gap-3">{run.answer.map(itemView)}</div>}
-  </RunActivity></div>;
+  </div>;
 }
 
 /**
  * `useTurnEntries` keeps the identity of an entry no update touched, so a row renders again only when its own entry, disclosure, search state or (for permission and question rows) session changed,
  * not on every event of the conversation.
  */
-const FeedRow = memo(function FeedRow({ entry, separator, session, search, open, activity, onOpenChange }: RowProps) {
+const FeedRow = memo(function FeedRow({ entry, separator, session, search, open, activity, tokens, onOpenChange }: RowProps) {
   return <>
     {separator && <DaySeparator at={entry.at} />}
     {entry.type === "run"
-      ? <RunView run={entry} session={session} search={search} open={open} activity={activity} onOpenChange={onOpenChange} />
+      ? <RunView run={entry} session={session} search={search} open={open} activity={activity} tokens={tokens} onOpenChange={onOpenChange} />
       : anchored(entry.item.key, <FeedEntry item={entry.item} session={session} />, search)}
   </>;
-}, (a, b) => a.separator === b.separator && a.search === b.search && a.open === b.open && a.activity?.label === b.activity?.label && a.onOpenChange === b.onOpenChange
+}, (a, b) => a.separator === b.separator && a.search === b.search && a.open === b.open && a.activity?.label === b.activity?.label && a.tokens === b.tokens && a.onOpenChange === b.onOpenChange
   && a.session.id === b.session.id && (a.session === b.session || !needsSession(b.entry)) && a.entry === b.entry);
 
 export interface FeedProps {
@@ -148,8 +168,10 @@ function ConversationFeed({ session, events, loading, loadingMore, error, hasMor
   const activity = liveActivity(session);
   const running = activity !== null;
   const entries = useTurnEntries(items, running, session.live, session.pending, session.questions);
-  // Run-disclosure state per run key: collapsed by default, and kept through new activity, completion and scrolling a run out of the window.
+  // Run-tree state per run key: a run in flight is open and a settled one folds, unless the reader toggled it; their choice is
+  // kept through new activity, completion and scrolling a run out of the window.
   const [openRuns, setOpenRuns] = useState<Record<string, boolean>>({});
+  const runOpen = (entry: TurnEntry | undefined) => entry?.type === "run" && (openRuns[entry.key] ?? (entry.status === "running" || entry.status === "requires-action"));
   const days = useMemo(() => entries.map((entry) => conversationDay(entry.at)), [entries]);
   /** Where each item sits: the index of its entry, and for a message folded into a run, that run's key. */
   const { indexOfKey, runOfMessage } = useMemo(() => {
@@ -236,9 +258,10 @@ function ConversationFeed({ session, events, loading, loadingMore, error, hasMor
 
   // A hit inside a collapsed run opens that run first; the reveal below then scrolls to the mounted match.
   const hitRun = active ? runOfMessage.get(active.key) : undefined;
-  const hitVisible = !hitRun || openRuns[hitRun] === true;
+  const hitRunEntry = hitRun ? entries[indexOfKey.get(hitRun) ?? -1] : undefined;
+  const hitVisible = !hitRun || runOpen(hitRunEntry);
   useLayoutEffect(() => {
-    if (hitRun && !openRuns[hitRun]) setOpenRuns((open) => ({ ...open, [hitRun]: true }));
+    if (hitRun && !hitVisible) setOpenRuns((open) => ({ ...open, [hitRun]: true }));
   }, [hitRun, active?.id, revealTick]);
   useLayoutEffect(() => {
     if (!active || !hitVisible) return;
@@ -266,7 +289,8 @@ function ConversationFeed({ session, events, loading, loadingMore, error, hasMor
   const row = (index: number) => {
     const entry = entries[index]!;
     return <FeedRow entry={entry} separator={days[index] !== (index ? days[index - 1] : null)} session={session} search={search}
-      open={entry.type === "run" && openRuns[entry.key] === true} activity={entry.type === "run" && entry.status === "running" ? activity : null} onOpenChange={toggleRun} />;
+      open={runOpen(entry)} activity={entry.type === "run" && entry.status === "running" ? activity : null}
+      tokens={entry.type === "run" && index === entries.length - 1 ? session.tokens : undefined} onOpenChange={toggleRun} />;
   };
 
   return <div className="relative flex min-h-0 flex-1 flex-col" onKeyDown={(event) => {

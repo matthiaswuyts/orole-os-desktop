@@ -85,9 +85,10 @@ type Manager struct {
 	// automation messages, reports or hand-offs).
 	userSections []func(Bot) string
 	observer     ToolObserver
-	builtin      func() []string       // enabled built-in skill names every bot may use; nil when there is no registry
-	runs         map[string]*runState  // active runs by bot id or "draft:<id>"
-	handoffs     map[string][]*handoff // bot id -> tasks it handed to other bots that have not reported back
+	builtin      func() []string                         // enabled built-in skill names every bot may use; nil when there is no registry
+	mcpNames     func(context.Context) map[string]string // MCP server id -> display name; nil when there are no integrations
+	runs         map[string]*runState                    // active runs by bot id or "draft:<id>"
+	handoffs     map[string][]*handoff                   // bot id -> tasks it handed to other bots that have not reported back
 	idle         map[string]*idleJob
 	nonces       nonceCache
 	closed       bool
@@ -221,6 +222,29 @@ func (m *Manager) builtinSkills() []string {
 		return nil
 	}
 	return fn()
+}
+
+// SetIntegrationNames registers the source of MCP server display names by id. It is used to name the
+// integrations the user @mentions in the answering bot's prompt, the way its MCP tools are labelled.
+func (m *Manager) SetIntegrationNames(fn func(context.Context) map[string]string) {
+	m.mu.Lock()
+	m.mcpNames = fn
+	m.mu.Unlock()
+}
+
+// integrationNames returns the display names of MCP servers by id, or nil when ids is empty or no
+// source is registered (callers then fall back to the id).
+func (m *Manager) integrationNames(ctx context.Context, ids []string) map[string]string {
+	if len(ids) == 0 {
+		return nil
+	}
+	m.mu.Lock()
+	fn := m.mcpNames
+	m.mu.Unlock()
+	if fn == nil {
+		return nil
+	}
+	return fn(ctx)
 }
 
 // promptSections renders the registered sections for a run; user sections only when the run answers

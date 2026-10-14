@@ -19,6 +19,7 @@ vi.mock("@/mygo", () => ({
   },
   LLM: { models: vi.fn() },
   Skills: { list: () => Promise.resolve([{ name: "pdf", description: "Read PDFs", enabled: true }, { name: "skill-creator", description: "Make skills", enabled: true, source: "builtin" }]) },
+  MCP: { list: () => Promise.resolve([{ id: "srv-canvas", name: "Canvas LMS", url: "https://canvas.test/mcp", enabled: true, status: "connected", toolCount: 12 }, { id: "srv-other", name: "Other", url: "https://other.test", enabled: true, status: "connected", toolCount: 1 }]) },
   Daemon: { health: vi.fn() },
   Policy: { pending: () => Promise.resolve([]), resolve: vi.fn(), addRule: vi.fn() },
   Shell: { openExternal: vi.fn() },
@@ -62,6 +63,7 @@ beforeEach(() => {
   useChatMessages.setState({ byBot: {}, runs: {}, paused: {}, problems: {} });
   useChatDrafts.setState({ drafts: {} });
   Element.prototype.scrollTo = () => {};
+  Element.prototype.scrollIntoView = () => {};
   useLLM.setState({
     providers: [{ id: "openrouter", name: "OpenRouter", kind: "builtin", connected: true }], ready: true, defaults: { chatModel: "openrouter/claude", memoryModel: "" },
     models: { openrouter: { models: [{ id: "claude", name: "Claude Sonnet", caps, reasoning: [] }], loading: false, error: null } },
@@ -79,7 +81,7 @@ const open = async (messages: Message[] = [], b: Bot = bot(), hasMore = false) =
   else await screen.findByText(/Say hello/);
   return view;
 };
-const box = () => screen.getByRole("textbox", { name: "Message Atlas" }) as HTMLTextAreaElement;
+const box = () => screen.getByRole("combobox", { name: "Message Atlas" }) as HTMLTextAreaElement;
 const type = (text: string) => fireEvent.change(box(), { target: { value: text } });
 
 describe("conversation rendering", () => {
@@ -261,7 +263,7 @@ describe("composer", () => {
     bridge.messages.mockResolvedValue({ messages: [], hasMore: false });
     const other = render(<Conversation key="b" bot={bot({ id: "b", name: "Beta" })} />);
     await screen.findByText(/Say hello/);
-    expect(screen.getByRole("textbox", { name: "Message Beta" })).toHaveValue("");
+    expect(screen.getByRole("combobox", { name: "Message Beta" })).toHaveValue("");
     other.unmount();
     render(<Conversation key="a" bot={bot()} />);
     await waitFor(() => expect(box()).toHaveValue("half-written"));
@@ -419,6 +421,48 @@ describe("mentions, structured output and search", () => {
     expect(screen.queryByRole("option", { name: /Coach/ })).toBeNull();
     fireEvent.click(await screen.findByRole("option", { name: /pdf/ }));
     await waitFor(() => expect(box().value).toContain("/pdf"));
+  });
+
+  it("moves through the menu with the arrow keys, picks with Enter without sending, and closes on Escape", async () => {
+    withCoach();
+    await open([], skilled());
+    box().focus();
+    fireEvent.change(box(), { target: { value: "/", selectionStart: 1, selectionEnd: 1 } });
+    fireEvent.select(box(), { target: { selectionStart: 1, selectionEnd: 1 } });
+    await screen.findByRole("option", { name: /skill-creator/ });
+    const selected = () => screen.getAllByRole("option").map((o) => o.getAttribute("aria-selected"));
+    expect(selected()).toEqual(["true", "false"]);
+    fireEvent.keyDown(box(), { key: "ArrowDown" });
+    expect(selected()).toEqual(["false", "true"]);
+    expect(box()).toHaveAttribute("aria-activedescendant", screen.getAllByRole("option")[1]!.id);
+    fireEvent.keyDown(box(), { key: "Enter" });
+    await waitFor(() => expect(box().value).toBe("/skill-creator "));
+    expect(bridge.send).not.toHaveBeenCalled();
+    fireEvent.change(box(), { target: { value: "/skill-creator /", selectionStart: 16, selectionEnd: 16 } });
+    fireEvent.select(box(), { target: { selectionStart: 16, selectionEnd: 16 } });
+    await screen.findByRole("listbox");
+    fireEvent.keyDown(box(), { key: "Escape" });
+    expect(screen.queryByRole("listbox")).toBeNull();
+    expect(box().value).toBe("/skill-creator /");
+  });
+
+  it("offers this bot's integrations after @ and sends the mentioned integration's id", async () => {
+    const canvas = bot({ config: { ...bot().config, mcpServers: ["srv-canvas"] } });
+    useChat.setState({ bots: [canvas] });
+    bridge.send.mockResolvedValue(msg(3));
+    await open([], canvas);
+    box().focus();
+    fireEvent.change(box(), { target: { value: "use @can", selectionStart: 8, selectionEnd: 8 } });
+    fireEvent.select(box(), { target: { selectionStart: 8, selectionEnd: 8 } });
+    const option = await screen.findByRole("option", { name: /Canvas LMS/ });
+    expect(option).toHaveTextContent("12 tools");
+    expect(screen.queryByRole("option", { name: /Other/ })).toBeNull();
+    fireEvent.click(option);
+    await waitFor(() => expect(box().value).toBe("use @Canvas LMS "));
+    type(`${box().value}for my deadlines`);
+    fireEvent.keyDown(box(), { key: "Enter" });
+    await waitFor(() => expect(bridge.send).toHaveBeenCalledTimes(1));
+    expect(bridge.send.mock.calls[0]![0]).toMatchObject({ text: "use @Canvas LMS for my deadlines", integrations: ["srv-canvas"] });
   });
 
   it("keeps a picked mention in the draft after leaving the conversation", async () => {

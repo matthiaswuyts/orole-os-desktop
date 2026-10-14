@@ -7,7 +7,7 @@
 
 import type { ComponentProps } from "react";
 import { cn } from "@/lib/utils";
-import { mono, paper } from "./surfaces";
+import { bubble, mono } from "./surfaces";
 import { take } from "../utils/range";
 
 export type FlowNodeState = "done" | "active" | "pending";
@@ -60,8 +60,8 @@ export function FlowGraph({
     <div
       data-slot="flow-graph"
       className={cn(
-        paper,
-        "w-full max-w-md overflow-x-auto rounded-2xl p-4",
+        bubble,
+        "w-full max-w-md overflow-x-auto p-4",
         className,
       )}
 

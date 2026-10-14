@@ -7,7 +7,7 @@
 
 import type { ComponentProps } from "react";
 import { cn } from "@/lib/utils";
-import { mono, paper } from "./surfaces";
+import { bubble, mono } from "./surfaces";
 import { take } from "../utils/range";
 
 export interface MathStep {
@@ -33,8 +33,8 @@ export function MathBlock({
     <div
       data-slot="math-block"
       className={cn(
-        paper,
-        "flex w-full max-w-sm flex-col gap-2.5 rounded-2xl p-4",
+        bubble,
+        "flex w-full max-w-sm flex-col gap-2.5 p-4",
         className,
       )}
 

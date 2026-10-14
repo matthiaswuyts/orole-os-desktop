@@ -7,6 +7,40 @@ export function formatElapsed(seconds: number): string {
   return `${Math.floor(seconds / 60)}m ${String(seconds % 60).padStart(2, "0")}s`;
 }
 
+/** A step's length: tenths of a second under ten seconds ("0.4s", "5.2s"), then "12s", "2m 05s", "1h 05m". */
+export function formatSpan(ms: number): string {
+  if (ms < 10_000) return `${(Math.max(0, ms) / 1000).toFixed(1)}s`;
+  const seconds = Math.floor(ms / 1000);
+  if (seconds < 3600) return formatElapsed(seconds);
+  return `${Math.floor(seconds / 3600)}h ${String(Math.floor((seconds % 3600) / 60)).padStart(2, "0")}m`;
+}
+
+/** Date.now(), ticking once a second while `live`; a component that is not live keeps the time of its last render. */
+export function useNow(live: boolean): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!live) return;
+    setNow(Date.now());
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [live]);
+  return now;
+}
+
+/**
+ * How long something took (`start` to `end`, Unix ms), or, while `live` and unfinished, how long it has been going, ticking in
+ * whole seconds. Renders nothing when the timestamps do not say. Only this leaf re-renders on a tick.
+ */
+export function Elapsed({ start, end, live = false, className }: { start?: number | null; end?: number | null; live?: boolean; className?: string }) {
+  const ticking = live && end == null && start != null;
+  const now = useNow(ticking);
+  if (start == null) return null;
+  const stop = end ?? (ticking ? now : null);
+  if (stop == null) return null;
+  const ms = Math.max(0, stop - start);
+  return <span data-slot="elapsed" className={cn("shrink-0 tabular-nums", className)}>{ticking ? formatElapsed(Math.floor(ms / 1000)) : formatSpan(ms)}</span>;
+}
+
 /** Whole seconds since `since` (Unix ms), ticking once a second. 0 when there is no start time. */
 function useElapsedSeconds(since: number | undefined): number {
   const [now, setNow] = useState(() => Date.now());

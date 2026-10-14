@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"time"
 
+	oroleos "github.com/rayorole/orole-os-desktop"
 	"github.com/rayorole/orole-os-desktop/internal/daemon/api"
 	"github.com/rayorole/orole-os-desktop/internal/ipc"
 	"github.com/rayorole/orole-os-desktop/internal/terminals"
@@ -48,7 +49,7 @@ func (d *Daemon) registerCore() {
 		if err != nil {
 			return api.Health{}, err
 		}
-		return api.Health{Version: Version, PID: os.Getpid(), StartedAt: d.started, UptimeSec: int64(time.Since(d.started).Seconds()),
+		return api.Health{Version: oroleos.Version, PID: os.Getpid(), StartedAt: d.started, UptimeSec: int64(time.Since(d.started).Seconds()),
 			DBVersion: v, Platform: runtime.GOOS + "/" + runtime.GOARCH, GoVersion: runtime.Version(), Goroutines: runtime.NumGoroutine(),
 			MemAllocMB: float64(ms.Alloc) / (1 << 20), Terminals: len(d.Terminals.List()), ProtocolVer: ipc.ProtocolVersion}, nil
 	})

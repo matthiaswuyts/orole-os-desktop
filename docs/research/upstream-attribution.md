@@ -8,7 +8,7 @@ Source: https://github.com/cosscom/shipyard @ c809c5eccfc31a386be6bb82b8b0839eaf
 | app/src/index.css (tokens, density, base layer) | frontend/src/index.css | removed plugin @source, Tauri/sidebar-resize/worktree-tone rules; Orole additions appended |
 | app/src/themes/builtin.ts (colours) | frontend/src/themes/builtin.ts | renamed Orole Midnight/Obsidian/Light; expanded to a shared UI/terminal registry with Solarized and Catppuccin palettes |
 | shadcn/ui registry `message`, `bubble` (base-mira, installed with `shadcn@latest add`, MIT, Copyright (c) shadcn) | frontend/src/components/ui/message.tsx, bubble.tsx | `cn` import rewritten to `@/lib/utils` (the registry emitted a bare `cn` specifier) |
-| HextaUI Prompt Input block, `https://hextaui.com/r/pro/prompt-input.json` (fetched 2026-10-12; `prompt-input.tsx`, `prompt-controls.tsx`, `effort-fill.tsx`), HextaUI Pro License (https://hextaui.com/legal/license), Copyright (c) Preet Suthar | frontend/src/components/blocks/prompt-input/{prompt-input.tsx,prompt-controls.tsx,effort-fill.tsx,context.ts,effort.ts} | agent-harness subset only (inset, body, textarea, tools, actions, submit, footer, select, effort slider with WebGL fill, rolling label); controlled by the caller instead of owning text/files/queue; ported to local Base UI Menu/Popover/Tooltip and lucide icons; dropped dictation, @ and / menus, queue, drafts, context ring, haptics, size morphing and the Sessions menu; effort thumb easing and shake use local tokens |
+| HextaUI Prompt Input block, `https://hextaui.com/r/pro/prompt-input.json` (fetched 2026-10-12; `prompt-input.tsx`, `prompt-controls.tsx`, `effort-fill.tsx`), HextaUI Pro License (https://hextaui.com/legal/license), Copyright (c) Preet Suthar | frontend/src/components/blocks/prompt-input/{prompt-input.tsx,prompt-controls.tsx,effort-fill.tsx,context.ts,effort.ts} | agent-harness subset only (inset, body, textarea, tools, actions, submit, footer, select, effort slider with WebGL fill, rolling label); controlled by the caller instead of owning text/files/queue; ported to local Base UI Menu/Popover/Tooltip and lucide icons; dropped dictation, @ and / menus, queue, drafts, context ring, haptics, size morphing and the Sessions menu; effort thumb easing and shake use local tokens; the body uses Orole's shared composer frame (`composerFrame` in `assistant-ui/elements/surfaces.ts`) instead of its inset ring |
 | `@lobehub/icons-static-svg` 1.x `icons/github.svg`, `icons/apple.svg` (MIT) | frontend/src/assets/logos/github.svg, apple.svg | removed fixed `width`/`height`/`<title>` so CSS sizes them |
 | `@ant-design/icons-svg` 4.6.0 `inline-svg/filled/windows.svg`, `inline-svg/outlined/linux.svg` (MIT) | frontend/src/assets/logos/windows.svg, linux.svg | added `fill="currentColor"`. Used for the New task page's repository and host badges; GitHub, Apple, Windows and Linux are trademarks of their owners and appear only to identify them |
 
@@ -130,28 +130,27 @@ commit `9201447608271c64a8a9ca66c69e81d27a1d9fab`, `packages/ui/src/components/r
 
 | Upstream path (`elements/` unless noted) | Orole path (`frontend/src/components/assistant-ui/`) | Modification |
 |---|---|---|
-| `composer-trigger-popover.aui.tsx` | `elements/composer-trigger-popover.tsx` | `process.env.NODE_ENV` check replaced by `import.meta.env.DEV`; item rows show only the label with an icon (or the bot's avatar when `metadata.avatar` is set), the description line is removed |
 | `directive-text.tsx` | `elements/directive-text.tsx` | added `renderIcon` (a chip's leading visual from the segment, used for bot avatars) and `chipClassName` options |
 | `conversation-search.tsx` | `elements/conversation-search.tsx` | none |
-| `data-table.tsx`, `chart.tsx`, `diagram.tsx`, `flow-graph.tsx`, `math-block.tsx`, `spec-sheet.tsx`, `comparison-card.tsx`, `timeline.tsx`, `job-progress.tsx` | `elements/<same name>.tsx` | none |
+| `data-table.tsx` | `elements/data-table.tsx` | chat-bubble surface; selectable; header strip for the caption and an `actions` slot; horizontal scroll instead of clipping; short columns stay on one line and prose columns get a minimum width; row separators and tighter padding; exported `tableClipboard` (tab-separated text + HTML table) |
+| `chart.tsx`, `diagram.tsx`, `flow-graph.tsx`, `math-block.tsx`, `spec-sheet.tsx`, `comparison-card.tsx`, `timeline.tsx`, `job-progress.tsx` | `elements/<same name>.tsx` | chat-bubble surface (`bubble`) instead of the bordered card (`paper`) |
 | `../utils/range.ts`, `../utils/href.ts` | `utils/range.ts`, `utils/href.ts` | none |
 
-Only a source header was added to each element; `surfaces.ts` gained named re-exports (`paper`, `field`, `mono`,
-`ghostButton`) so the copied files import them unchanged. The full MIT notice, copyright (c) 2026 AgentbaseAI Inc.,
+A source header was added to each element; `surfaces.ts` gained named re-exports (`paper`, `bubble`, `field`, `mono`,
+`ghostButton`) and the borderless `bubble` surface that everything a bot shows in chat uses. The full MIT notice, copyright (c) 2026 AgentbaseAI Inc.,
 is retained in each source header.
 
 The chat view also depends on the MIT-licensed [`@assistant-ui/react`](https://github.com/assistant-ui/assistant-ui)
 package (`useExternalStoreRuntime`, thread, composer, message and action bar primitives) as an
 unmodified npm dependency; nothing from it is copied.
 
-`elements/run-activity.tsx`, `elements/permission-grant.tsx`, `elements/image-generation.tsx`, `elements/todo-list.tsx`,
+`elements/permission-grant.tsx`, `elements/image-generation.tsx`, `elements/todo-list.tsx`,
 `elements/subagent-list.tsx` and `elements/canvas-split.tsx` are not copied: they are
 written in Orole's own code from the published element documentation (props, anatomy, lifecycle table) at
-`https://www.assistant-ui.com/elements/{run-activity,permission-grant,image-generation,todo-list,subagent-list,canvas-split}.md`,
-with `tool-timeline.tsx`
-extended by step rows that can open into details. Orole deviations: `PermissionGrant` is adapted to a single daemon request
+`https://www.assistant-ui.com/elements/{permission-grant,image-generation,todo-list,subagent-list,canvas-split}.md`.
+Orole deviations: `PermissionGrant` is adapted to a single daemon request
 (`once`/`denied` only unless the request carries more, a `blocked` reason, a details disclosure), `ImageGeneration` omits the
-fixed "1024 × 1024" label, and `RunActivity` rows reuse the timeline step row. `TodoList` keeps the documented counting
+fixed "1024 × 1024" label. `TodoList` keeps the documented counting
 rules (failed counts toward the denominator only, cancelled toward neither) and the `maxVisible` fold, with the entrance
 animation done in CSS (`tw-animate-css`). `SubagentList` replaces the documented `completedCount`/`progress` pair by a
 per-row `status` (`running`/`needs-you`/`done`/`failed`) with an indeterminate shimmer bar while running, adds an `activity`
@@ -250,3 +249,13 @@ SOFTWARE.
 
 ## Original work
 `resources/icon.png` and `cmd/desktop/window-icon.png` are drawn programmatically by `scripts/genicon` (original mark, no upstream artwork).
+
+`frontend/src/features/chat/ComposerMenu.tsx` (the composer's `@`/`/` menu), the composer frame tokens in
+`elements/surfaces.ts` and `frontend/src/features/chat/parts/ThinkingPanel.tsx` are Orole's own code. Their layout follows
+the public demos of the AI SDK Agents "Mention menu", "Slash command menu" and "Thinking state" components
+(https://www.aisdkagents.com/ai-components/); none of that (paid) source was copied.
+
+`elements/agent-run-tree.tsx`, `elements/tool-call-card.tsx` and `elements/terminal-result.tsx` (the task feed's run tree,
+tool call rows and shell command card) are Orole's own code. Their layout follows the public demos of the AI SDK Agents
+"Agent run tree", "Tool call card" and "Terminal result" components (https://www.aisdkagents.com/ai-components/); none of
+that (paid) source was copied.

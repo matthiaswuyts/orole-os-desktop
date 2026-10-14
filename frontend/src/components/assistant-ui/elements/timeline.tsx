@@ -7,7 +7,7 @@
 
 import type { ComponentProps } from "react";
 import { cn } from "@/lib/utils";
-import { mono, paper } from "./surfaces";
+import { bubble, mono } from "./surfaces";
 import { take } from "../utils/range";
 
 export type TimelineWhen = "past" | "now" | "future";
@@ -33,8 +33,8 @@ export function Timeline({
     <div
       data-slot="timeline"
       className={cn(
-        paper,
-        "flex w-full max-w-sm flex-col rounded-2xl p-4",
+        bubble,
+        "flex w-full max-w-sm flex-col p-4",
         className,
       )}
 

@@ -18,7 +18,7 @@ import (
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/rayorole/orole-os-desktop/internal/daemon"
+	oroleos "github.com/rayorole/orole-os-desktop"
 	"github.com/rayorole/orole-os-desktop/internal/daemon/control"
 	"github.com/rayorole/orole-os-desktop/internal/gateway"
 	"github.com/rayorole/orole-os-desktop/internal/paths"
@@ -39,7 +39,7 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	defer stop()
 	refresh := gateway.WatchEvents(ctx, c)
 
-	srv := gateway.NewServer(gateway.NewIPCBackend(c, os.Getenv(gateway.EnvSession)), daemon.Version, log)
+	srv := gateway.NewServer(gateway.NewIPCBackend(c, os.Getenv(gateway.EnvSession)), oroleos.Version, log)
 	t := &sdk.IOTransport{Reader: io.NopCloser(stdin), Writer: nopWriteCloser{stdout}}
 	if err := srv.Run(ctx, t, refresh); err != nil && ctx.Err() == nil {
 		fmt.Fprintln(stderr, "orole-daemon mcp-gateway:", err)

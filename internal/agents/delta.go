@@ -29,6 +29,10 @@ func sessionDelta(prev, cur *Session) (d SessionDelta, changed bool) {
 	num(prev.Deletions, cur.Deletions, &d.Deletions)
 	num(prev.ToolCalls, cur.ToolCalls, &d.ToolCalls)
 	num(prev.FailedTools, cur.FailedTools, &d.FailedTools)
+	if prev.Tokens != cur.Tokens {
+		v := cur.Tokens
+		d.Tokens, changed = &v, true
+	}
 	if prev.Usage != cur.Usage {
 		d.Usage, changed = cloneUsage(cur.Usage), true
 	}
@@ -42,7 +46,7 @@ func onlyDeltaFieldsChanged(prev, cur Session) bool {
 	cur.Activity, cur.Tail, cur.LastMessage = prev.Activity, prev.Tail, prev.LastMessage
 	cur.AgentSessionID, cur.Model, cur.TranscriptRef = prev.AgentSessionID, prev.Model, prev.TranscriptRef
 	cur.Files, cur.Additions, cur.Deletions = prev.Files, prev.Additions, prev.Deletions
-	cur.ToolCalls, cur.FailedTools = prev.ToolCalls, prev.FailedTools
+	cur.ToolCalls, cur.FailedTools, cur.Tokens = prev.ToolCalls, prev.FailedTools, prev.Tokens
 	cur.Usage, cur.UpdatedAt = prev.Usage, prev.UpdatedAt
 	return reflect.DeepEqual(prev, cur)
 }

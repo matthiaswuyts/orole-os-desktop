@@ -301,6 +301,9 @@ type Message struct {
 	Error     string        `json:"error,omitempty"`
 	Model     string        `json:"model,omitempty"`
 	CreatedAt int64         `json:"createdAt"`
+	// FinishedAt is the Unix ms when the message reached a final status (complete, incomplete,
+	// error, canceled); 0 while it is pending or running, or for messages from before it was recorded.
+	FinishedAt int64 `json:"finishedAt,omitempty"`
 	// Automations is the automation chain of the turn this reply answers (automations.Run.Chain:
 	// the flows that led to it, outermost first); empty for turns the user started. It exists only
 	// in the process, on the published snapshots of a reply, so bot.message events stay chain-bounded.
@@ -340,8 +343,11 @@ type SendRequest struct {
 	// with this conversation as context; the conversation's own bot then stays silent.
 	Mentions []string `json:"mentions,omitempty"`
 	// Skills are skill names the user asked the answering bot to use.
-	Skills      []string `json:"skills,omitempty"`
-	ClientNonce string   `json:"clientNonce"` // idempotency key; a retried nonce returns the stored message
+	Skills []string `json:"skills,omitempty"`
+	// Integrations are MCP server ids the user @mentioned: the answering bot is asked to use their
+	// tools for this message. Only servers the answering bot was given are named to it.
+	Integrations []string `json:"integrations,omitempty"`
+	ClientNonce  string   `json:"clientNonce"` // idempotency key; a retried nonce returns the stored message
 }
 
 // RegenerateRequest replaces the assistant reply to the last user message.

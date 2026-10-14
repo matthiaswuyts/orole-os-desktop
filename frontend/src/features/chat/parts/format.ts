@@ -40,23 +40,6 @@ export function toolLabel(name: string | undefined, state: StepState): string {
   }
 }
 
-/**
- * What the assistant is doing right now, for the working line of a reply still in progress: the tool or handoff that is
- * running, else "Writing the reply" once answer text has started, else "Thinking" (including the gaps between tool calls,
- * when nothing else on screen moves). "Starting" while the reply is still queued.
- */
-export function currentPhase(parts: readonly MsgPart[], status: string | undefined): string {
-  if (status === "pending") return "Starting";
-  for (let i = parts.length - 1; i >= 0; i--) {
-    const part = parts[i]!;
-    if (part.type === "delegation" && stepState(part, true) === "running") return `Waiting for ${part.name?.trim() || "another bot"}`;
-    if (part.type === "tool" && stepState(part, true) === "running") return toolLabel(part.name, "running");
-    if (part.type === "text" && !part.hidden && part.text) return "Writing the reply";
-    if (part.type === "tool" || part.type === "delegation") break; // the latest step has finished: the model is working on what comes next
-  }
-  return "Thinking";
-}
-
 /** Whether the message can still change (queued, streaming) as opposed to settled. */
 export const isActive = (status: string | undefined): boolean => status === "running" || status === "pending";
 

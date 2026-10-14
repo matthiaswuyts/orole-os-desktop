@@ -19,6 +19,8 @@ type turn struct {
 	responder string
 	// skills are skill names the user asked the answering bot to use.
 	skills []string
+	// integrations are MCP server ids the user asked the answering bot to use.
+	integrations []string
 
 	// Delegation (ask_bot). All zero for turns the user started.
 	depth  int                  // ask_bot depth of the run
@@ -99,7 +101,7 @@ func (m *Manager) Send(ctx context.Context, req SendRequest) (Message, error) {
 		return Message{}, invalidf("Unknown mode %q.", req.Mode)
 	}
 	ids := dedupe(req.AttachmentIDs)
-	mentions, skills, err := m.checkMentions(ctx, req)
+	mentions, skills, integrations, err := m.checkMentions(ctx, req)
 	if err != nil {
 		return Message{}, err
 	}
@@ -123,11 +125,11 @@ func (m *Manager) Send(ctx context.Context, req SendRequest) (Message, error) {
 		return Message{}, err
 	}
 	// One turn per answering bot: the first mention (or the conversation's own bot) and one for each further mention.
-	turns := []turn{{mode: req.Mode, skills: skills}}
+	turns := []turn{{mode: req.Mode, skills: skills, integrations: integrations}}
 	if len(mentions) > 0 {
 		turns[0].responder = mentions[0]
 		for _, id := range mentions[1:] {
-			turns = append(turns, turn{responder: id, skills: skills})
+			turns = append(turns, turn{responder: id, skills: skills, integrations: integrations})
 		}
 	}
 	msg, err := m.submit(ctx, Message{BotID: req.BotID, Role: "user", Author: "user"}, text, ids, turns...)

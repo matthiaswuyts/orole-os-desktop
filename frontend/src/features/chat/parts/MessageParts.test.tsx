@@ -14,19 +14,22 @@ const view = (m: Message, onRetry?: () => void) => render(<ChatMessageView messa
 afterEach(cleanup);
 
 describe("message parts", () => {
-  it("renders markdown and hides the work behind a collapsed timeline, without the model's reasoning", () => {
+  it("folds a finished reply's work into 'Thought for …' that opens to its thinking and every step in order", () => {
     view(message([
       { type: "reasoning", text: "weighing options", durationMs: 4200 },
       { type: "tool", id: "t", name: "web_search", status: "done", durationMs: 1200, summary: "oslo flights" },
       { type: "text", text: "**Bold** answer" },
-    ]));
-    expect(screen.queryByText(/Thought|Thinking/)).toBeNull();
-    expect(screen.queryByText("weighing options")).toBeNull();
+    ], { createdAt: 10_000, finishedAt: 17_000 }));
     expect(screen.getByText("Bold").tagName).toBe("STRONG");
-    expect(screen.queryByText("Searched the web")).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "1 step" }));
-    expect(screen.getByText("Searched the web")).toBeInTheDocument();
-    expect(screen.getAllByText("oslo flights").length).toBeGreaterThan(0);
+    expect(screen.queryByText("weighing options")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Thought for 7s" }));
+    const steps = [...document.querySelectorAll("[data-slot=thinking-step]")].map((step) => step.textContent);
+    expect(steps).toEqual(["Thinkingweighing options", "Searched the weboslo flights", "Writing the answer"]);
+  });
+
+  it("leaves no panel behind a reply that only answered", () => {
+    view(message([{ type: "text", text: "Done." }]));
+    expect(document.querySelector("[data-slot=thinking-panel]")).toBeNull();
   });
 
   it("gathers citations into one sources popover and lists only http(s) links as links", () => {
@@ -49,7 +52,7 @@ describe("message parts", () => {
     expect(within(report).getByRole("button", { name: "Copy report" })).toBeEnabled();
   });
 
-  it("shows memory as chips and notices inline, and a delegation behind the timeline", () => {
+  it("shows memory as chips and notices inline, and a delegation in the thinking panel", () => {
     view(message([
       { type: "delegation", name: "Coder", status: "done" },
       { type: "memory", text: "likes tea" },
@@ -81,7 +84,7 @@ describe("message parts", () => {
       { type: "citation", url: "https://a.test/x", title: "A page" },
     ]));
     expect(screen.queryByText("What is X?")).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Researched 3 sources" }));
+    fireEvent.click(screen.getByRole("button", { name: "1 step" }));
     const outline = screen.getByText("Research").closest("[data-slot=research-report]") as HTMLElement;
     expect(within(outline).getByText("What is X?")).toBeInTheDocument();
     expect(within(outline).getByText("3 src")).toBeInTheDocument();
@@ -118,9 +121,15 @@ describe("message parts", () => {
     expect(card).not.toHaveAttribute("data-settled");
   });
 
-  it("shows a running timeline with a shimmering label while work is in progress", () => {
-    view(message([{ type: "tool", id: "t", name: "web_search", status: "running", summary: "oslo" }], { status: "running" }));
-    expect(screen.getByRole("button", { name: "Working" })).toBeInTheDocument();
+  it("keeps the panel open while the reply runs, showing the running step and the pages read so far", () => {
+    view(message([
+      { type: "tool", id: "t", name: "web_search", status: "running", summary: "csp frame-src" },
+      { type: "citation", url: "https://a.test/csp", title: "CSP: frame-src" },
+    ], { status: "running" }));
+    expect(screen.getByRole("button", { name: /^Searching the web/ })).toHaveAttribute("aria-expanded", "true");
+    const step = document.querySelector("[data-slot=thinking-step][data-state=running]") as HTMLElement;
+    expect(step).toHaveTextContent("csp frame-src");
+    expect(within(step).getByRole("button", { name: "CSP: frame-src (a.test)" })).toBeInTheDocument();
   });
 
   it("shows an error with Retry, and a stopped reply", () => {
@@ -141,50 +150,48 @@ describe("message parts", () => {
     expect(screen.getByText("2 KB")).toBeInTheDocument();
   });
 
-  describe("working line", () => {
-    const working = () => document.querySelector("[data-slot=working-status]");
+  describe("while a reply runs", () => {
+    const status = () => document.querySelector("[data-slot=thinking-panel] [role=status]");
 
-    it("says what a running reply is doing, from the first moment to the last", () => {
+    it("says what it is doing, from the first moment to the last", () => {
       const { unmount } = view(message([], { status: "running" }));
-      expect(working()).toHaveTextContent("Thinking…");
+      expect(status()).toHaveTextContent("Thinking");
       unmount();
       view(message([{ type: "tool", id: "t1", name: "web_search", status: "running", summary: "q" }], { status: "running" }));
-      expect(working()).toHaveTextContent("Searching the web…");
+      expect(status()).toHaveTextContent("Searching the web");
     });
 
-    it("keeps saying it is thinking between tool calls, then that it is writing", () => {
-      const done = { type: "tool", id: "t1", name: "orole_get_skill", status: "done", summary: "grill-me" } as const;
-      const { unmount } = view(message([done], { status: "running" }));
-      expect(working()).toHaveTextContent("Thinking…");
+    it("shows the model's thinking as it streams, then that it is writing", () => {
+      const { unmount } = view(message([{ type: "reasoning", text: "Check the deploy log first." }], { status: "running" }));
+      expect(status()).toHaveTextContent("Thinking");
+      expect(screen.getByText("Check the deploy log first.")).toBeInTheDocument();
       unmount();
-      view(message([done, { type: "text", text: "Here is" }], { status: "running" }));
-      expect(working()).toHaveTextContent("Writing the reply…");
+      view(message([{ type: "reasoning", text: "Check the deploy log first." }, { type: "text", text: "Here is" }], { status: "running" }));
+      expect(status()).toHaveTextContent("Writing the answer");
+      expect(document.querySelectorAll("[data-slot=thinking-step][data-state=running]")).toHaveLength(1);
     });
 
-    it("names the bot a reply is waiting for, and a queued reply as starting", () => {
+    it("keeps saying it is thinking between tool calls", () => {
+      view(message([{ type: "tool", id: "t1", name: "orole_get_skill", status: "done", summary: "grill-me" }], { status: "running" }));
+      expect(status()).toHaveTextContent("Thinking");
+    });
+
+    it("names the bot it is asking, and a queued reply as starting", () => {
       const { unmount } = view(message([{ type: "delegation", id: "d1", name: "Coder", status: "running" }], { status: "running" }));
-      expect(working()).toHaveTextContent("Waiting for Coder…");
+      expect(status()).toHaveTextContent("Asking Coder");
       unmount();
       view(message([], { status: "pending" }));
-      expect(working()).toHaveTextContent("Starting…");
+      expect(status()).toHaveTextContent("Starting");
     });
 
-    it("adds the elapsed time once the work has gone on for a few seconds", () => {
-      const { unmount } = view(message([], { status: "running", createdAt: Date.now() - 1000 }));
-      expect(document.querySelector("[data-slot=working-elapsed]")).toBeNull();
-      unmount();
+    it("counts the time it has been working", () => {
       view(message([], { status: "running", createdAt: Date.now() - 75_000 }));
-      expect(document.querySelector("[data-slot=working-elapsed]")).toHaveTextContent("1m 15s");
-    });
-
-    it("is gone once the reply has settled", () => {
-      view(message([{ type: "text", text: "Done." }], { status: "complete" }));
-      expect(working()).toBeNull();
+      expect(document.querySelector("[data-slot=thinking-elapsed]")).toHaveTextContent("1m 15s");
     });
 
     it("labels skill and visual tools in plain words", () => {
       view(message([{ type: "tool", id: "t1", name: "orole_get_skill", status: "done", summary: "x" }, { type: "tool", id: "t2", name: "show_table", status: "running" }], { status: "running" }));
-      expect(working()).toHaveTextContent("Preparing a visual…");
+      expect(status()).toHaveTextContent("Preparing a visual");
     });
   });
 });

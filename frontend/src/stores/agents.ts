@@ -37,8 +37,8 @@ function foldFull(cur: Session | undefined, next: Session): Session | undefined 
   fullAt.set(next.id, at);
   if (ts(cur) <= at) return next;
   // The fields `SessionDelta` carries keep the newer values the deltas already merged.
-  const { updatedAt, activity, tail, lastMessage, agentSessionId, model, transcriptRef, files, additions, deletions, usage, toolCalls, failedTools } = cur;
-  return { ...next, updatedAt, activity, tail, lastMessage, agentSessionId, model, transcriptRef, files, additions, deletions, usage, toolCalls, failedTools };
+  const { updatedAt, activity, tail, lastMessage, agentSessionId, model, transcriptRef, files, additions, deletions, usage, toolCalls, failedTools, tokens } = cur;
+  return { ...next, updatedAt, activity, tail, lastMessage, agentSessionId, model, transcriptRef, files, additions, deletions, usage, toolCalls, failedTools, tokens };
 }
 
 /** Upserts a session; an update older than what is held is dropped (events can arrive out of order). */

@@ -83,6 +83,14 @@ once, by tool id within the turn; a result whose call never arrived counts the c
 `PreToolUse` hooks count too) and `failedTools` the results with status `error`; both travel in
 `agents.delta`.
 
+`Session.tokens` is the session's running total (input, output, cache reads and writes) and travels in
+`agents.delta`. Each `EvTokens` adds to it. Claude Code bills a turn only when it ends, so while a turn
+runs its decoder also emits `EvTokenEstimate` (`agents.TokenEstimate`: request id and that request's
+input + cache + output so far, from assistant-message usage, subagents included): the largest reading per
+request is added to `Session.tokens`, and the turn's billing replaces the estimates. Estimates never
+reach the ledger. On start, `Recover` fills `tokens` for sessions saved before the field existed from
+their `agent_usage` rows.
+
 `agents.usage` (`Agents.usage(query)`) answers 24-hour and 7-day windows from the quarter-hour buckets (a
 bucket counts when it starts inside the window's first quarter hour or later), all time, per agent kind for
 the requested range, 365 local days (a bucket belongs to the local day it starts in; quarter hours make that

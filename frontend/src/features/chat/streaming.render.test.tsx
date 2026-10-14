@@ -1,7 +1,7 @@
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { createElement } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type * as Trigger from "@/features/chat/MentionTrigger";
+import type * as Highlight from "@/features/chat/MentionHighlight";
 import type * as Bubble from "@/features/chat/parts/MessageBubble";
 import type { Bot, BotChange, Message, RunState } from "@/mygo";
 
@@ -20,6 +20,7 @@ vi.mock("@/mygo", () => ({
   Chat: { bots: bridge.bots, messages: bridge.messages, send: vi.fn(), cancel: vi.fn(), regenerate: vi.fn(), clear: vi.fn() },
   LLM: { models: vi.fn() },
   Skills: { list: () => Promise.resolve([]) },
+  MCP: { list: () => Promise.resolve([]) },
   Daemon: { health: vi.fn() },
   Policy: { pending: () => Promise.resolve([]) },
   Shell: { openExternal: vi.fn() },
@@ -32,7 +33,7 @@ vi.mock("@/mygo", () => ({
     daemonState: { on: () => () => {} },
   },
 }));
-// One ChatMessageView renders per message turn render; one MentionTrigger per Composer render. Counting them counts those renders.
+// One ChatMessageView renders per message turn render; one MentionHighlight per Composer render. Counting them counts those renders.
 vi.mock("@/features/chat/parts/MessageBubble", async (original) => {
   const actual = await original<typeof Bubble>();
   const Counted = (props: Bubble.ChatMessageViewProps) => {
@@ -41,13 +42,13 @@ vi.mock("@/features/chat/parts/MessageBubble", async (original) => {
   };
   return { ...actual, ChatMessageView: Counted };
 });
-vi.mock("@/features/chat/MentionTrigger", async (original) => {
-  const actual = await original<typeof Trigger>();
-  const Counted = (props: Parameters<typeof actual.MentionTrigger>[0]) => {
+vi.mock("@/features/chat/MentionHighlight", async (original) => {
+  const actual = await original<typeof Highlight>();
+  const Counted = (props: Parameters<typeof actual.MentionHighlight>[0]) => {
     bridge.composer.renders++;
-    return createElement(actual.MentionTrigger, props);
+    return createElement(actual.MentionHighlight, props);
   };
-  return { ...actual, MentionTrigger: Counted };
+  return { ...actual, MentionHighlight: Counted };
 });
 
 import { Conversation } from "@/features/chat/Conversation";
@@ -138,7 +139,7 @@ describe("chat streaming render counts", () => {
     await act(async () => { await settle(); });
     bridge.views.clear();
     bridge.composer.renders = 0;
-    const box = screen.getByRole("textbox", { name: "Message Atlas" });
+    const box = screen.getByRole("combobox", { name: "Message Atlas" });
     for (let i = 1; i <= 30; i++) fireEvent.change(box, { target: { value: "x".repeat(i) } });
     const turns = [...bridge.views.values()].reduce((sum, n) => sum + n, 0);
     console.log(`RENDER-COUNTS typing (30 keystrokes, ${HISTORY} settled turns): turn renders=${turns} composer renders=${bridge.composer.renders}`);

@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	oroleos "github.com/rayorole/orole-os-desktop"
 	"github.com/rayorole/orole-os-desktop/internal/agents"
 	"github.com/rayorole/orole-os-desktop/internal/automations"
 	"github.com/rayorole/orole-os-desktop/internal/chat"
@@ -36,9 +37,6 @@ import (
 	"github.com/rayorole/orole-os-desktop/internal/terminals"
 	"github.com/rayorole/orole-os-desktop/migrations"
 )
-
-// Version is set at build time via -ldflags.
-var Version = "0.1.0-dev"
 
 // Daemon is the long-lived background controller.
 type Daemon struct {
@@ -96,7 +94,7 @@ func New(dataDir string, log *slog.Logger) (*Daemon, error) {
 	}
 	d := &Daemon{DataDir: dataDir, Log: log, DB: db, Token: hex.EncodeToString(buf), started: time.Now(), stop: make(chan struct{})}
 	d.Endpoint = ipc.Endpoint(dataDir)
-	d.IPC = ipc.NewServer(d.Token, Version, os.Getpid(), log)
+	d.IPC = ipc.NewServer(d.Token, oroleos.Version, os.Getpid(), log)
 	d.Terminals = terminals.NewManager(terminals.NewBackend(), termSink{d})
 	d.Events = events.NewBus()
 	d.registerServices()
@@ -137,7 +135,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 			return fmt.Errorf("automations: %w", err)
 		}
 	}
-	d.Log.Info("daemon listening", "endpoint", d.Endpoint, "version", Version, "pid", os.Getpid(), "go", runtime.Version())
+	d.Log.Info("daemon listening", "endpoint", d.Endpoint, "version", oroleos.Version, "pid", os.Getpid(), "go", runtime.Version())
 	errc := make(chan error, 1)
 	go func() { errc <- d.IPC.Serve(ln) }()
 	select {

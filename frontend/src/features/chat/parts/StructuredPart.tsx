@@ -1,7 +1,7 @@
 import { Component, useState, type ErrorInfo, type ReactNode } from "react";
 import { Chart } from "@/components/assistant-ui/elements/chart";
 import { ComparisonCard, type ComparisonOption } from "@/components/assistant-ui/elements/comparison-card";
-import { DataTable, type DataTableColumn, type DataTableRow } from "@/components/assistant-ui/elements/data-table";
+import { DataTable, tableClipboard, type DataTableColumn, type DataTableRow } from "@/components/assistant-ui/elements/data-table";
 import { Diagram } from "@/components/assistant-ui/elements/diagram";
 import { FlowGraph, type FlowEdge, type FlowNode } from "@/components/assistant-ui/elements/flow-graph";
 import { JobProgress, type JobStage } from "@/components/assistant-ui/elements/job-progress";
@@ -14,6 +14,7 @@ import { useChat } from "@/stores/chat";
 import { AutomationProposalCard, type AutomationProposalSpec } from "./AutomationProposalCard";
 import { DocumentCard, type DocumentSpec } from "./DocumentCard";
 import { SkillProposalCard, type SkillProposalSpec } from "./SkillProposalCard";
+import { CopyButton } from "./Sources";
 
 /**
  * The component kinds the daemon's show_* tools emit (internal/chat/tools/show.go) plus the proposal cards: `skill` (propose_skill) and
@@ -97,7 +98,10 @@ function View({ kind, spec, at }: { kind: string; spec: Record<string, any>; at?
   switch (kind) {
     case "table": {
       const columns = spec.columns as DataTableColumn[];
-      return <DataTable columns={columns} rows={spec.rows as DataTableRow[]} caption={spec.caption as string | undefined} className="max-w-full" />;
+      const rows = spec.rows as DataTableRow[];
+      const clip = tableClipboard(columns, rows);
+      return <DataTable columns={columns} rows={rows} caption={spec.caption as string | undefined} className="max-w-full"
+        actions={<CopyButton text={clip.text} html={clip.html} label="Copy table" />} />;
     }
     case "chart": {
       const points = spec.points as number[];

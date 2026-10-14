@@ -8,7 +8,7 @@
 import type { ComponentProps } from "react";
 import { MaximizeIcon, MinusIcon, PlusIcon, RotateCcwIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { ghostButton, mono, paper } from "./surfaces";
+import { bubble, ghostButton, mono } from "./surfaces";
 
 export function Diagram({
   title,
@@ -42,8 +42,8 @@ export function Diagram({
     <div
       data-slot="diagram"
       className={cn(
-        paper,
-        "flex w-full max-w-md flex-col overflow-hidden rounded-2xl",
+        bubble,
+        "flex w-full max-w-md flex-col overflow-hidden",
         className,
       )}
 

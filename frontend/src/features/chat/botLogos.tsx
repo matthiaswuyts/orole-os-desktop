@@ -13,9 +13,9 @@ export function harnessLogo(id: string): ReactNode {
 }
 
 /** The mark of the AI company behind a model, or nothing when it is unknown. */
-export function modelLogo(harness: string, model: Pick<ModelOption, "id" | "name">): ReactNode {
+export function modelLogo(harness: string, model: Pick<ModelOption, "id" | "name">, className = "size-4"): ReactNode {
   const company = HARNESS_COMPANY[harness] ?? companyOf(model);
-  return hasCompanyLogo(company) ? <CompanyLogo company={company} className="size-4" /> : undefined;
+  return hasCompanyLogo(company) ? <CompanyLogo company={company} className={className} /> : undefined;
 }
 
 /** A select label with its logo in front, for the closed value and the options alike. */

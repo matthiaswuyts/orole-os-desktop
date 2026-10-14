@@ -193,7 +193,7 @@
     --chart-2: var(--color-teal-600);
     --chart-3: var(--color-cyan-900);
     --chart-4: var(--color-amber-400);
-    --chart-5: var(--color-amber-500);
+    --chart-5: var(--color-violet-500);
     --code: var(--color-white);
     --code-foreground: var(--foreground);
     --code-highlight: --alpha(var(--color-black) / 4%);
