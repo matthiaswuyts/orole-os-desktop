@@ -234,3 +234,73 @@ func TestProvisionScrubsLLMSecretFromErrors(t *testing.T) {
 		t.Fatalf("err=%v", err)
 	}
 }
+
+func TestTwilioHangupPostsCompleted(t *testing.T) {
+	var got struct {
+		method, path, ctype, status, user, pass string
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		got.method, got.path, got.ctype, got.status = r.Method, r.URL.Path, r.Header.Get("Content-Type"), r.PostForm.Get("Status")
+		got.user, got.pass, _ = r.BasicAuth()
+		_, _ = io.WriteString(w, `{"status":"completed"}`)
+	}))
+	defer srv.Close()
+	tw := &Twilio{SID: "AC1", Token: "tok-secret", BaseURL: srv.URL, HTTP: srv.Client()}
+	if err := tw.Hangup(context.Background(), testSID); err != nil {
+		t.Fatal(err)
+	}
+	if got.method != "POST" || got.path != "/2010-04-01/Accounts/AC1/Calls/"+testSID+".json" || got.status != "completed" ||
+		got.ctype != "application/x-www-form-urlencoded" || got.user != "AC1" || got.pass != "tok-secret" {
+		t.Fatalf("request %+v", got)
+	}
+}
+
+func TestTwilioCallStatus(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "GET" || r.URL.Path != "/2010-04-01/Accounts/AC1/Calls/"+testSID+".json" {
+			w.WriteHeader(404)
+			return
+		}
+		_, _ = io.WriteString(w, `{"sid":"`+testSID+`","status":"no-answer"}`)
+	}))
+	defer srv.Close()
+	tw := &Twilio{SID: "AC1", Token: "tok", BaseURL: srv.URL, HTTP: srv.Client()}
+	st, err := tw.CallStatus(context.Background(), testSID)
+	if err != nil || st != "no-answer" {
+		t.Fatalf("status=%q err=%v", st, err)
+	}
+}
+
+func TestTwilioCallErrorsNeverEchoToken(t *testing.T) {
+	for _, code := range []int{401, 404, 500} {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(code)
+			_, _ = io.WriteString(w, `{"message":"bad tok-secret"}`)
+		}))
+		tw := &Twilio{SID: "AC1", Token: "tok-secret", BaseURL: srv.URL, HTTP: srv.Client()}
+		err1 := tw.Hangup(context.Background(), testSID)
+		_, err2 := tw.CallStatus(context.Background(), testSID)
+		srv.Close()
+		for _, err := range []error{err1, err2} {
+			if err == nil || strings.Contains(err.Error(), "tok-secret") || strings.Contains(err.Error(), srv.URL) {
+				t.Fatalf("code %d: err=%v", code, err)
+			}
+		}
+	}
+}
+
+func TestTwilioRejectsBadCallSID(t *testing.T) {
+	var hits int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { hits++ }))
+	defer srv.Close()
+	tw := &Twilio{SID: "AC1", Token: "tok", BaseURL: srv.URL, HTTP: srv.Client()}
+	for _, sid := range []string{"", "CA1", "../IncomingPhoneNumbers", "CA0123456789abcdef0123456789abcdef/x"} {
+		if err := tw.Hangup(context.Background(), sid); err == nil {
+			t.Errorf("accepted %q", sid)
+		}
+	}
+	if hits != 0 {
+		t.Fatalf("%d requests sent", hits)
+	}
+}

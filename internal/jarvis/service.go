@@ -53,6 +53,7 @@ type ServiceConfig struct {
 
 	dialer Dialer // test seam; nil = ElevenLabs with the stored key
 	sender Sender // test seam; nil = the relay WebSocket
+	phone  Phone  // test seam; nil = Twilio with the stored credentials
 }
 
 // State is runtime state the daemon persists for the service; it is not user-editable.
@@ -115,6 +116,8 @@ type Service struct {
 	attempts    int
 	dialTo      string // set only while a verification call is being placed
 	lastTick    time.Time
+	startedAt   time.Time
+	relayUpOnce bool          // the relay has connected at least once since Start
 	changedCh   chan struct{} // coalesced Changed notifications
 	baseCtx     context.Context
 	cancel      context.CancelFunc
@@ -154,7 +157,11 @@ func NewService(cfg ServiceConfig) *Service {
 		s.holder = &relayHolder{}
 		s.sender = s.holder
 	}
-	s.calls = NewCalls(s.store, cfg.Host, dial, s.sender, s.callSettings, cfg.Now, s.log)
+	phone := cfg.phone
+	if phone == nil {
+		phone = twilioPhone{s}
+	}
+	s.calls = NewCalls(s.store, cfg.Host, dial, phone, s.sender, s.callSettings, cfg.Now, s.log)
 	s.calls.Retry = func(ctx context.Context, req PlaceRequest) { s.fire(ctx, req, Ask{QuietOverride: req.QuietOverride}) }
 	s.calls.Changed = s.notifyChanged
 	return s
@@ -218,6 +225,34 @@ func (d elDialer) ConversationStatus(ctx context.Context, id string) (string, in
 	return el.ConversationStatus(ctx, id)
 }
 
+// twilioPhone reads the Twilio credentials from Credential Manager on every use.
+type twilioPhone struct{ s *Service }
+
+func (p twilioPhone) client() (*Twilio, error) {
+	sid, err1 := p.s.cfg.Creds.Get(KeyTwilioSID)
+	tok, err2 := p.s.cfg.Creds.Get(KeyTwilioToken)
+	if err1 != nil || err2 != nil || len(sid) == 0 || len(tok) == 0 {
+		return nil, &Refusal{"The Twilio credentials are not set."}
+	}
+	return &Twilio{SID: string(sid), Token: string(tok), BaseURL: p.s.cfg.TwilioURL, HTTP: p.s.cfg.HTTP}, nil
+}
+
+func (p twilioPhone) Hangup(ctx context.Context, callSID string) error {
+	tw, err := p.client()
+	if err != nil {
+		return err
+	}
+	return tw.Hangup(ctx, callSID)
+}
+
+func (p twilioPhone) CallStatus(ctx context.Context, callSID string) (string, error) {
+	tw, err := p.client()
+	if err != nil {
+		return "", err
+	}
+	return tw.CallStatus(ctx, callSID)
+}
+
 func (s *Service) elevenLabs() (*ElevenLabs, error) {
 	key, err := s.cfg.Creds.Get(KeyElevenLabs)
 	if err != nil || len(key) == 0 {
@@ -261,6 +296,7 @@ func (s *Service) Start(ctx context.Context) {
 	// Resume from the last persisted tick, so a time that fell due while the daemon was down is reported.
 	now := s.now()
 	s.lastTick = now
+	s.startedAt = now
 	if s.cfg.LoadState != nil {
 		if st, err := s.cfg.LoadState(); err != nil {
 			s.log.Warn("jarvis: cannot read state", "err", err)
@@ -410,7 +446,12 @@ func (s *Service) restartRelay() {
 		return
 	}
 	rc := NewRelayClient(relaySocketURL(relayURL), string(tok), s.handleFrame, s.log)
-	rc.OnState = func(bool) { s.notifyChanged() }
+	rc.OnState = func(up bool) {
+		if up {
+			s.relayUp()
+		}
+		s.notifyChanged()
+	}
 	s.holder.set(rc)
 	ctx, cancel := context.WithCancel(base)
 	done := make(chan struct{})
@@ -510,14 +551,15 @@ func (s *Service) OnEvent(ev Event) {
 			if !r.Repeat && errors.Is(s.store.DeleteRule(ctx, r.ID), ErrNotFound) {
 				continue // another event already used this once-rule
 			}
-			brief := "Why you are calling: " + ev.Title
+			title := clipRunes(ev.Title, maxTitle)
+			brief := "Why you are calling: " + chat.Fence("event title", title)
 			if r.Note != "" {
 				brief += "\nThe owner's note for this rule: " + chat.Fence("rule note", r.Note)
 			}
 			if d := clipRunes(ev.Detail, maxEventDetail); d != "" {
 				brief += "\nDetails:\n" + chat.Fence("event detail", d)
 			}
-			s.fire(ctx, PlaceRequest{BotID: r.BotID, Reason: ev.Title, Brief: brief, RuleID: r.ID, Urgent: r.Urgent, QuietOverride: r.QuietOverride},
+			s.fire(ctx, PlaceRequest{BotID: r.BotID, Reason: title, Brief: brief, RuleID: r.ID, Urgent: r.Urgent, QuietOverride: r.QuietOverride},
 				Ask{QuietOverride: r.QuietOverride})
 		}
 	}()
@@ -531,10 +573,40 @@ func clipRunes(s string, n int) string {
 	return string(r[:n]) + "…"
 }
 
+// relayUp runs when the relay connects. The first time after Start it re-runs the at_time tick, so a time that fell
+// due while the relay was still connecting is called now (or, past missedGrace, reported) instead of refused.
+func (s *Service) relayUp() {
+	s.mu.Lock()
+	first := !s.relayUpOnce
+	s.relayUpOnce = true
+	ctx := s.baseCtx
+	s.mu.Unlock()
+	if !first || !s.track() {
+		return
+	}
+	go func() {
+		defer s.wg.Done()
+		s.tick(ctx)
+	}()
+}
+
+// holdTick reports whether the at_time tick should wait for the relay: it is configured but has not connected
+// since Start, and Start was less than missedGrace ago.
+func (s *Service) holdTick(now time.Time) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.settings.RelayURL != "" && !s.relayUpOnce && !s.startedAt.IsZero() && now.Sub(s.startedAt) < missedGrace &&
+		!s.sender.Connected()
+}
+
 // tick fires at_time rules whose time passed since the last tick. Times missed by more than missedGrace
-// (the PC was asleep) become a notification instead of a late call.
+// (the PC was asleep) become a notification instead of a late call. Right after Start, while the relay is still
+// connecting, the window is kept open until it connects (see relayUp).
 func (s *Service) tick(ctx context.Context) {
 	now := s.now()
+	if s.holdTick(now) {
+		return
+	}
 	s.mu.Lock()
 	prev := s.lastTick
 	s.lastTick = now
@@ -593,7 +665,9 @@ func (s *Service) tick(ctx context.Context) {
 
 // CallOwner is the call_owner tool: a bot's own judgement, so the cool-down applies.
 func (s *Service) CallOwner(ctx context.Context, botID, reason string, urgent bool) (string, error) {
-	_, err := s.place(ctx, PlaceRequest{BotID: botID, Reason: reason, Brief: "Why you are calling: " + reason, Urgent: urgent}, Ask{Judgement: true})
+	reason = clipRunes(reason, maxTitle)
+	_, err := s.place(ctx, PlaceRequest{BotID: botID, Reason: reason, Brief: "Why you are calling: " + chat.Fence("call reason", reason), Urgent: urgent},
+		Ask{Judgement: true})
 	if errors.Is(err, ErrInjected) {
 		return "You are already on a call; the owner will hear this there.", nil
 	}

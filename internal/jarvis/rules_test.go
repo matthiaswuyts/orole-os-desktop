@@ -22,6 +22,10 @@ func TestMatches(t *testing.T) {
 		{"notification kind", JarvisRule{BotID: "b1", Trigger: NotificationTrigger, Target: "failed"}, Event{Trigger: NotificationTrigger, TargetID: "failed", Source: "github.ci"}, true},
 		{"notification kind+source", JarvisRule{BotID: "b1", Trigger: NotificationTrigger, Target: "failed:github"}, Event{Trigger: NotificationTrigger, TargetID: "failed", Source: "github.ci"}, true},
 		{"notification wrong source", JarvisRule{BotID: "b1", Trigger: NotificationTrigger, Target: "failed:mail"}, Event{Trigger: NotificationTrigger, TargetID: "failed", Source: "github.ci"}, false},
+		{"notification exact source", JarvisRule{BotID: "b1", Trigger: NotificationTrigger, Target: "failed:github"}, Event{Trigger: NotificationTrigger, TargetID: "failed", Source: "github"}, true},
+		{"notification nested source", JarvisRule{BotID: "b1", Trigger: NotificationTrigger, Target: "failed:github"}, Event{Trigger: NotificationTrigger, TargetID: "failed", Source: "github/ci"}, true},
+		{"notification prefix is not a source", JarvisRule{BotID: "b1", Trigger: NotificationTrigger, Target: "failed:git"}, Event{Trigger: NotificationTrigger, TargetID: "failed", Source: "github.ci"}, false},
+		{"notification lookalike source", JarvisRule{BotID: "b1", Trigger: NotificationTrigger, Target: "failed:github"}, Event{Trigger: NotificationTrigger, TargetID: "failed", Source: "githubber"}, false},
 		{"expired", JarvisRule{BotID: "b1", Trigger: TaskFinished, Target: "t1", ExpiresAt: 4_000}, Event{Trigger: TaskFinished, TargetID: "t1"}, false},
 		{"at_time never matches events", JarvisRule{BotID: "b1", Trigger: AtTime, Target: "08:00"}, Event{Trigger: AtTime}, false},
 	}

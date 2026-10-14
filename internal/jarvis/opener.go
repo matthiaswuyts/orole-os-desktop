@@ -2,20 +2,15 @@ package jarvis
 
 import (
 	"fmt"
-	"regexp"
 	"strings"
 	"unicode"
-	"unicode/utf8"
 )
 
 // All limits are in runes (characters), not bytes.
 const (
 	maxOpener = 240
 	maxName   = 80
-	maxReason = 160
 )
-
-var appName = regexp.MustCompile(`(?i)orole`)
 
 // normalize trims and collapses every whitespace run to a single space.
 func normalize(s string) string { return strings.Join(strings.Fields(s), " ") }
@@ -90,45 +85,21 @@ func CheckOpener(name, text string) (string, bool) {
 	return text, true
 }
 
+// fallbacks are name-only greetings: an opener never says why the bot is calling, because the call may have
+// reached voicemail. The reason comes in the first model turn after the owner answers.
 var fallbacks = []string{
-	"%s here, quick one: %s.",
-	"Hey, it's %s. %s.",
-	"Hi, %s calling. %s.",
-	"%s here. Heads up: %s.",
-	"It's %s. %s.",
-	"Hey, %s here. %s.",
+	"Hey, it's %s. Got a minute?",
+	"Hi, %s here. Do you have a moment?",
+	"%s here. Got a minute?",
+	"Hey, %s calling. Is now a good time?",
+	"It's %s. Have you got a second?",
+	"Hey, %s here. Quick one, got a minute?",
 }
 
-func upperFirst(s string) string {
-	r, size := utf8.DecodeRuneInString(s)
-	if size == 0 {
-		return s
-	}
-	return string(unicode.ToUpper(r)) + s[size:]
-}
-
-// FallbackOpener is used when the model's opener is late or fails CheckOpener. For any name
-// CheckOpener accepts (1 to maxName runes), the result passes CheckOpener with that name.
-func FallbackOpener(name, reason string, seed int) string {
+// FallbackOpener is used when the model's opener is late or fails CheckOpener. It names the bot and nothing else.
+// For any name CheckOpener accepts (1 to maxName runes), the result passes CheckOpener with that name.
+func FallbackOpener(name string, seed int) string {
 	name = runesCut(normalize(name), maxName)
-	reason = strings.TrimSuffix(normalize(reason), ".")
-	reason = appName.ReplaceAllString(reason, "the app")
-	if reason == "" {
-		reason = "I have an update for you"
-	}
 	f := fallbacks[((seed%len(fallbacks))+len(fallbacks))%len(fallbacks)]
-	// Budget the reason so the whole line fits maxOpener runes.
-	overhead := utf8.RuneCountInString(fmt.Sprintf(f, name, ""))
-	budget := min(maxReason, maxOpener-overhead)
-	part := strings.TrimSpace(runesCut(reason, budget))
-	if !strings.HasPrefix(f, "%s") {
-		part = upperFirst(part)
-	}
-	out := fmt.Sprintf(f, name, part)
-	// Defensive: trim the reason again if the rebuilt line is still too long.
-	if extra := utf8.RuneCountInString(out) - maxOpener; extra > 0 {
-		part = strings.TrimSpace(runesCut(part, utf8.RuneCountInString(part)-extra))
-		out = fmt.Sprintf(f, name, part)
-	}
-	return out
+	return fmt.Sprintf(f, name)
 }

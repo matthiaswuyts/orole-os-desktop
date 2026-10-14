@@ -7,9 +7,11 @@ import (
 	"fmt"
 	"log/slog"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/google/uuid"
@@ -44,6 +46,12 @@ type Dialer interface {
 	ConversationStatus(ctx context.Context, id string) (string, int, error)
 }
 
+// Phone controls a live call at the carrier (Twilio) by its call SID: hanging up and reading its status.
+type Phone interface {
+	Hangup(ctx context.Context, callSID string) error
+	CallStatus(ctx context.Context, callSID string) (string, error)
+}
+
 type Sender interface {
 	Send(ctx context.Context, f Frame) error
 	Connected() bool
@@ -62,10 +70,12 @@ type live struct {
 	call    CallRecord
 	botName string
 	brief   string
-	inject  []string
+	inject  []injected // news folded into the call; inject[:delivered] reached the bot in a finished turn
 	history []chat.VoiceLine
-	spoken  bool // the first turn (opener) has been taken
-	ended   bool
+	// delivered counts inject lines a completed model turn has seen; the rest become a notification at the end.
+	delivered int
+	spoken    bool // the first turn (opener) has been taken
+	ended     bool
 
 	opener chan string   // receives the opener exactly once (buffered)
 	done   chan struct{} // closed when the call ends
@@ -77,15 +87,21 @@ type live struct {
 	turnDone   chan struct{}
 }
 
+// injected is a call request folded into the call in progress.
+type injected struct{ bot, reason string }
+
 type Calls struct {
 	store    *Store
 	host     Host
 	dial     Dialer
+	phone    Phone
 	relay    Sender
 	settings func() PhoneSettings
 	now      func() time.Time
 	log      *slog.Logger
 	after    func(time.Duration) <-chan time.Time // injectable for tests
+	// speechWait is how long to let the voice finish a line before hanging up at the carrier (tests use 0).
+	speechWait func(text string) time.Duration
 	// Retry places the second attempt after an unanswered urgent call. The daemon points it at the policy-checked path
 	// (caps, quiet hours); the default calls Place directly.
 	Retry func(ctx context.Context, req PlaceRequest)
@@ -102,10 +118,10 @@ type Calls struct {
 	closed bool
 }
 
-func NewCalls(store *Store, host Host, dial Dialer, relay Sender, settings func() PhoneSettings, now func() time.Time, log *slog.Logger) *Calls {
+func NewCalls(store *Store, host Host, dial Dialer, phone Phone, relay Sender, settings func() PhoneSettings, now func() time.Time, log *slog.Logger) *Calls {
 	ctx, cancel := context.WithCancel(context.Background())
-	c := &Calls{store: store, host: host, dial: dial, relay: relay, settings: settings, now: now, log: log,
-		after: time.After, baseCtx: ctx, stop: cancel}
+	c := &Calls{store: store, host: host, dial: dial, phone: phone, relay: relay, settings: settings, now: now, log: log,
+		after: time.After, speechWait: speechTime, baseCtx: ctx, stop: cancel}
 	c.Retry = func(ctx context.Context, req PlaceRequest) { _, _ = c.Place(ctx, req) }
 	return c
 }
@@ -143,15 +159,6 @@ func (c *Calls) Active() (CallRecord, bool) {
 	return c.cur.call, true
 }
 
-// Inject adds a line of news to the live call; the bot sees it in its next turn's brief.
-func (c *Calls) Inject(text string) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.cur != nil && c.cur.verify == "" {
-		c.cur.inject = append(c.cur.inject, text)
-	}
-}
-
 func (c *Calls) Place(ctx context.Context, req PlaceRequest) (CallRecord, error) {
 	s := c.settings()
 	if s.AgentID == "" || s.PhoneNumberID == "" || s.OwnerNumber == "" {
@@ -182,13 +189,17 @@ func (c *Calls) Place(ctx context.Context, req PlaceRequest) (CallRecord, error)
 			c.mu.Unlock()
 			return CallRecord{}, &Refusal{"A call is already in progress."}
 		}
-		c.cur.inject = append(c.cur.inject, bot.Name+": "+req.Reason)
+		c.cur.inject = append(c.cur.inject, injected{bot: bot.Name, reason: clipRunes(req.Reason, maxTitle)})
 		c.mu.Unlock()
 		return CallRecord{}, ErrInjected
 	}
-	call := CallRecord{ID: uuid.NewString(), BotID: bot.ID, Direction: Outbound, RuleID: req.RuleID, Reason: req.Reason,
+	call := CallRecord{ID: uuid.NewString(), BotID: bot.ID, Direction: Outbound, RuleID: req.RuleID, Reason: clipRunes(req.Reason, maxTitle),
 		Status: StatusDialing, StartedAt: c.now().UnixMilli()}
-	l := &live{call: call, botName: bot.Name, brief: req.Brief, opener: make(chan string, 1), done: make(chan struct{}),
+	brief := req.Brief
+	if req.Verify == "" {
+		brief += "\n\n" + openedNote
+	}
+	l := &live{call: call, botName: bot.Name, brief: brief, opener: make(chan string, 1), done: make(chan struct{}),
 		verify: req.Verify, urgent: req.Urgent, quiet: req.QuietOverride}
 	c.cur = l
 	c.seed++
@@ -233,23 +244,32 @@ func (c *Calls) Place(ctx context.Context, req PlaceRequest) (CallRecord, error)
 		}
 		cctx, cancel := context.WithTimeout(octx, 15*time.Second)
 		defer cancel()
-		text, err := c.host.Compose(cctx, bot.ID, openerInstruction(bot.Name, req.Reason, req.Brief))
+		text, err := c.host.Compose(cctx, bot.ID, openerInstruction(bot.Name))
 		if err == nil {
 			if t, ok := CheckOpener(bot.Name, text); ok {
 				l.opener <- t
 				return
 			}
 		}
-		l.opener <- FallbackOpener(bot.Name, req.Reason, seed)
+		l.opener <- FallbackOpener(bot.Name, seed)
 	})
 	return snap, nil
 }
 
-func openerInstruction(name, reason, brief string) string {
-	return fmt.Sprintf("You are phoning the owner right now. Write the very first sentence you will say when they pick up. "+
-		"Start with your name (%s) in a natural way, then say why you are calling: %s. One or two short sentences, no greeting formula, "+
-		"never name the app. Context:\n%s", name, reason, brief)
+// openerInstruction asks for a name-only greeting. It carries no reason and no context: the call may reach
+// voicemail, and the opener is spoken before anyone has answered.
+func openerInstruction(name string) string {
+	return fmt.Sprintf("You are phoning the owner right now. Write the very first sentence you will say when they pick up: "+
+		"a short, natural greeting with your name (%s) that asks whether they have a minute. Do not say why you are calling yet; "+
+		"the call may reach voicemail. One short sentence, never name the app.", name)
 }
+
+// openedNote tells the bot, in its call brief, that the opener did not give the reason.
+const openedNote = "Your opening line only greeted the owner by name. When they answer, say why you are calling before anything else. " +
+	"If you reach voicemail or an answering machine, say nothing about the reason."
+
+// maxTitle caps event titles and call reasons that reach a brief, a card or a notification.
+const maxTitle = 200
 
 func spaced(digits string) string { return strings.Join(strings.Split(digits, ""), " ") }
 
@@ -392,6 +412,7 @@ type speaker struct {
 	san        *sanitizer
 	first      time.Time
 	lastFiller string
+	tools      []string // tools this turn started, for the note a superseded turn leaves
 }
 
 func (c *Calls) newSpeaker(ctx context.Context, id, callID, botName string) *speaker {
@@ -417,12 +438,21 @@ func (s *speaker) say(text string) {
 func (s *speaker) filler(tool string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if !slices.Contains(s.tools, tool) {
+		s.tools = append(s.tools, tool)
+	}
 	f := filler(tool)
 	if f == s.lastFiller {
 		return
 	}
 	s.lastFiller = f
 	s.emit(s.san.Write(f + " "))
+}
+
+func (s *speaker) toolsRan() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.tools...)
 }
 
 // finish flushes held text and closes the turn.
@@ -448,69 +478,161 @@ func (c *Calls) logTurn(sp *speaker, start time.Time, opener bool) {
 	c.log.Info("jarvis: turn", "call", sp.callID, "first_audio_ms", first, "total_ms", end.Sub(start).Milliseconds(), "opener", opener)
 }
 
-func (c *Calls) hangup(ctx context.Context, callID string) {
-	_ = c.relay.Send(ctx, Frame{Type: FrameHangup, CallID: callID})
+// hangup ends a call at the carrier. Without a call SID there is nothing to end; the provider's own timeouts apply.
+func (c *Calls) hangup(ctx context.Context, callSID string) {
+	if callSID == "" || c.phone == nil {
+		return
+	}
+	hctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+	defer cancel()
+	if err := c.phone.Hangup(hctx, callSID); err != nil {
+		c.log.Warn("jarvis: hang-up failed", "err", err)
+	}
+}
+
+// hangupAfter hangs up once the voice has had time to say text (a goodbye or the verification code).
+func (c *Calls) hangupAfter(callSID, text string) {
+	wait := c.speechWait(text)
+	if wait <= 0 {
+		c.hangup(c.baseCtx, callSID)
+		return
+	}
+	c.spawn(func() {
+		select {
+		case <-c.after(wait):
+			c.hangup(c.baseCtx, callSID)
+		case <-c.baseCtx.Done():
+		}
+	})
+}
+
+// speechTime estimates how long the voice needs for text: about 150 words a minute plus a margin.
+func speechTime(text string) time.Duration {
+	return 2*time.Second + time.Duration(len(strings.Fields(text)))*400*time.Millisecond
+}
+
+// silent ends a turn without a word.
+func (c *Calls) silent(ctx context.Context, f Frame) {
+	_ = c.relay.Send(ctx, Frame{Type: FrameLLMDone, ID: f.ID, CallID: f.CallID})
+}
+
+// endUnknown answers a turn for a call that is not live: it says nothing and, if the call is on record with a
+// carrier id, hangs it up.
+func (c *Calls) endUnknown(ctx context.Context, f Frame) {
+	c.silent(ctx, f)
+	if f.CallID == "" {
+		return
+	}
+	if rec, err := c.store.GetCall(ctx, f.CallID); err == nil {
+		c.hangup(ctx, rec.ProviderCallID)
+	}
 }
 
 func (c *Calls) turn(ctx context.Context, f Frame) {
 	start := c.now()
+	utter := lastUser(f.Messages)
 	c.mu.Lock()
 	l := c.cur
-	if l == nil || l.call.ID != f.CallID || l.ended {
+	if l == nil || f.CallID == "" || l.call.ID != f.CallID || l.ended {
 		c.mu.Unlock()
-		sp := c.newSpeaker(ctx, f.ID, f.CallID, "")
-		sp.say("Sorry, this call has ended. I'll message you instead.")
-		sp.finish()
-		c.hangup(ctx, f.CallID)
+		c.endUnknown(ctx, f)
 		return
 	}
-	if l.call.AnsweredAt == 0 {
+	verify := l.verify != ""
+	sid := l.call.ProviderCallID
+	if !verify && l.call.Direction == Outbound && l.call.AnsweredAt == 0 && utter != "" && IsVoicemail(utter) {
+		// An answering machine: say nothing more, end the call, and report it as unanswered.
+		c.mu.Unlock()
+		c.silent(ctx, f)
+		c.hangup(ctx, sid)
+		c.finish(ctx, l, StatusVoicemail, 0)
+		c.log.Info("jarvis: voicemail detected", "call", f.CallID)
+		return
+	}
+	var answered *CallRecord
+	if l.call.AnsweredAt == 0 && (utter != "" || verify) {
 		l.call.AnsweredAt = c.now().UnixMilli()
 		l.call.Status = StatusInProgress
+		snap := l.call
+		answered = &snap
 	}
 	first := !l.spoken
 	l.spoken = true
-	botID, botName, reason := l.call.BotID, l.botName, l.call.Reason
+	botName := l.botName
 	c.mu.Unlock()
+	if answered != nil {
+		_ = c.store.UpdateCall(ctx, *answered)
+		if answered.MessageID != "" {
+			_ = c.host.UpdateCallCard(ctx, answered.MessageID, c.card(*answered))
+		}
+		c.changed()
+	}
 	sp := c.newSpeaker(ctx, f.ID, f.CallID, botName)
 
-	utter := lastUser(f.Messages)
-	if first && (utter == "" || l.verify != "") {
-		var text string
-		select {
-		case text = <-l.opener:
-		default:
-			select {
-			case text = <-l.opener:
-			case <-time.After(3 * time.Second):
-				text = FallbackOpener(botName, reason, 0)
-			case <-ctx.Done():
-				return
-			}
+	if first {
+		// The first turn always speaks the opener, whatever the owner already said.
+		text, ok := c.awaitOpener(ctx, l, botName)
+		if !ok {
+			return
 		}
+		sp.say(text)
+		if verify {
+			sp.finish()
+			c.hangupAfter(sid, text)
+			c.logTurn(sp, start, true)
+			return
+		}
+		greeting := utter == "" || bareGreeting(utter)
 		c.mu.Lock()
+		if utter != "" && greeting {
+			l.history = append(l.history, chat.VoiceLine{Role: "user", Text: utter})
+		}
 		l.history = append(l.history, chat.VoiceLine{Role: "assistant", Text: text})
 		c.mu.Unlock()
-		sp.say(text)
-		sp.finish()
-		if l.verify != "" {
-			c.hangup(ctx, f.CallID)
+		if greeting {
+			sp.finish()
+			c.logTurn(sp, start, true)
+			return
 		}
-		c.logTurn(sp, start, true)
-		return
+		sp.say(" ") // the owner opened with a real request: answer it in the same response
 	}
-	if l.verify != "" || utter == "" {
+	if verify || utter == "" {
 		sp.finish()
 		return
 	}
+	c.modelTurn(ctx, l, f, sp, utter, sid)
+	c.logTurn(sp, start, first)
+}
+
+// awaitOpener returns the opener written while the phone rang, or a fallback if it is late.
+func (c *Calls) awaitOpener(ctx context.Context, l *live, botName string) (string, bool) {
+	select {
+	case text := <-l.opener:
+		return text, true
+	default:
+	}
+	select {
+	case text := <-l.opener:
+		return text, true
+	case <-time.After(3 * time.Second):
+		return FallbackOpener(botName, 0), true
+	case <-ctx.Done():
+		return "", false
+	}
+}
+
+// modelTurn answers one utterance with the bot's model and tools.
+func (c *Calls) modelTurn(ctx context.Context, l *live, f Frame, sp *speaker, utter, sid string) {
 	// A new request for this call means the owner barged in: cancel the in-flight turn and wait for it to release
-	// chat's run slot before starting this one. The superseded turn stays silent and leaves no history.
+	// chat's run slot before starting this one. The superseded turn stays silent; it leaves only a note of the tools
+	// it already ran.
 	tctx, tcancel := context.WithCancel(ctx)
 	sp.quiet = tctx
 	myDone := make(chan struct{})
 	c.mu.Lock()
 	prevCancel, prevDone := l.turnCancel, l.turnDone
 	l.turnCancel, l.turnDone = tcancel, myDone
+	botID := l.call.BotID
 	c.mu.Unlock()
 	defer func() {
 		tcancel()
@@ -540,9 +662,10 @@ func (c *Calls) turn(ctx context.Context, f Frame) {
 		var ge *GateError
 		if errors.As(err, &ge) {
 			c.host.DisableJarvis(ctx, botID, ge.Reason)
-			sp.say("I can't act on that: " + ge.Reason)
+			line := "I can't act on that: " + ge.Reason
+			sp.say(line)
 			sp.finish()
-			c.hangup(ctx, f.CallID)
+			c.hangupAfter(sid, line)
 			return
 		}
 		sp.say("I can't do that right now.")
@@ -551,20 +674,33 @@ func (c *Calls) turn(ctx context.Context, f Frame) {
 	}
 	c.mu.Lock()
 	brief := l.brief
-	if len(l.inject) > 0 {
-		brief += "\n\nNews since the call started:\n- " + strings.Join(l.inject, "\n- ")
+	seen := len(l.inject)
+	if seen > 0 {
+		lines := make([]string, 0, seen)
+		for _, in := range l.inject {
+			lines = append(lines, in.bot+" wants to tell the owner: "+chat.Fence("call reason", in.reason))
+		}
+		brief += "\n\nNews since the call started:\n- " + strings.Join(lines, "\n- ")
 	}
 	history := append([]chat.VoiceLine(nil), l.history...)
 	c.mu.Unlock()
 	reply, err := c.host.VoiceTurn(tctx, chat.VoiceRequest{BotID: bot.ID, CallID: f.CallID, Text: utter, Brief: brief, History: history,
 		OnText: sp.say, OnTool: sp.filler})
 	if tctx.Err() != nil {
-		return // superseded or aborted: no more speech, no history
+		// Superseded or aborted: no more speech. Keep a note of tools that already ran so the next turn knows.
+		if ran := sp.toolsRan(); len(ran) > 0 {
+			c.mu.Lock()
+			l.history = append(l.history, chat.VoiceLine{Role: "assistant",
+				Text: "(I was interrupted. These tools already ran: " + strings.Join(ran, ", ") + ".)"})
+			c.mu.Unlock()
+		}
+		return
 	}
 	if err != nil {
 		sp.say(" That failed: " + firstSentence(err.Error()))
 	}
 	c.mu.Lock()
+	l.delivered = max(l.delivered, seen)
 	l.history = append(l.history, chat.VoiceLine{Role: "user", Text: utter})
 	if reply != "" {
 		l.history = append(l.history, chat.VoiceLine{Role: "assistant", Text: reply})
@@ -574,7 +710,42 @@ func (c *Calls) turn(ctx context.Context, f Frame) {
 	}
 	c.mu.Unlock()
 	sp.finish()
-	c.logTurn(sp, start, false)
+}
+
+// greetingWords open a reply that only answers the phone ("hello", "yes?", "who is this", "met Ray").
+var greetingWords = map[string]bool{
+	"hello": true, "hallo": true, "hi": true, "hey": true, "hoi": true, "yes": true, "yeah": true, "yep": true, "ja": true,
+	"oui": true, "allo": true, "allô": true, "bonjour": true, "salut": true, "met": true, "who": true, "wie": true, "qui": true,
+	"wer": true, "ok": true, "okay": true, "sure": true, "speaking": true, "morning": true, "good": true,
+	"goedemorgen": true, "goedemiddag": true, "goedenavond": true, "dag": true, "guten": true, "moin": true,
+}
+
+// bareGreeting reports whether an utterance only answers the phone: at most four words starting with a greeting.
+func bareGreeting(utter string) bool {
+	words := strings.FieldsFunc(strings.ToLower(utter), func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsDigit(r) && r != '\''
+	})
+	return len(words) > 0 && len(words) <= 4 && greetingWords[words[0]]
+}
+
+// voicemailPhrases are answering-machine prompts (English, Dutch, French, German), lower case.
+var voicemailPhrases = []string{
+	"leave a message", "after the tone", "after the beep", "voicemail", "voice mail", "mailbox", "is not available",
+	"can't take your call", "cannot take your call",
+	"spreek een bericht in", "na de piep", "niet bereikbaar",
+	"laissez un message", "après le bip", "apres le bip", "messagerie",
+	"nach dem signalton", "hinterlassen sie",
+}
+
+// IsVoicemail reports whether an utterance heard before anyone answered sounds like an answering machine.
+func IsVoicemail(utter string) bool {
+	u := strings.ToLower(strings.ReplaceAll(utter, "’", "'"))
+	for _, p := range voicemailPhrases {
+		if strings.Contains(u, p) {
+			return true
+		}
+	}
+	return false
 }
 
 func lastUser(ms []LLMMessage) string {
@@ -754,8 +925,9 @@ func (c *Calls) status(ctx context.Context, f Frame) {
 	c.finish(ctx, l, st, f.DurationSecs)
 }
 
-// monitor ends the call even if the post-call webhook never arrives: it polls the provider while the call is live
-// and enforces a hard ceiling. finish is idempotent, so whichever path ends the call first wins.
+// monitor ends the call even if the post-call webhook never arrives: every pollEvery it asks Twilio for the call's
+// status by its SID (both directions), then ElevenLabs for the conversation's, and it enforces a hard ceiling.
+// finish is idempotent, so whichever path ends the call first wins.
 func (c *Calls) monitor(l *live) {
 	ceiling := c.after(maxCallDuration)
 	for {
@@ -765,36 +937,69 @@ func (c *Calls) monitor(l *live) {
 		case <-l.done:
 			return
 		case <-ceiling:
+			c.mu.Lock()
+			sid := l.call.ProviderCallID
+			c.mu.Unlock()
 			if c.finish(c.baseCtx, l, StatusCompleted, 0) {
-				c.hangup(c.baseCtx, l.call.ID)
+				c.hangup(c.baseCtx, sid)
 			}
 			return
 		case <-c.after(pollEvery):
-			c.mu.Lock()
-			conv := l.call.ConversationID
-			answered := l.call.AnsweredAt != 0
-			c.mu.Unlock()
-			if conv == "" {
-				continue
-			}
-			pctx, cancel := context.WithTimeout(c.baseCtx, 10*time.Second)
-			st, secs, err := c.dial.ConversationStatus(pctx, conv)
-			cancel()
-			if err != nil {
-				continue
-			}
-			switch strings.ToLower(st) {
-			case "done":
-				end := StatusCompleted
-				if !answered {
-					end = StatusNoAnswer
-				}
-				c.finish(c.baseCtx, l, end, secs)
-			case "failed":
-				c.finish(c.baseCtx, l, StatusFailed, secs)
+			c.poll(l)
+		}
+	}
+}
+
+// poll checks the carrier, then the voice provider, and ends the call if either reports it over.
+func (c *Calls) poll(l *live) {
+	c.mu.Lock()
+	sid, conv := l.call.ProviderCallID, l.call.ConversationID
+	answered := l.call.AnsweredAt != 0
+	c.mu.Unlock()
+	if sid != "" && c.phone != nil {
+		pctx, cancel := context.WithTimeout(c.baseCtx, 10*time.Second)
+		st, err := c.phone.CallStatus(pctx, sid)
+		cancel()
+		if err == nil {
+			if end, ok := carrierEnd(st, answered); ok {
+				c.finish(c.baseCtx, l, end, 0)
+				return
 			}
 		}
 	}
+	if conv == "" {
+		return
+	}
+	pctx, cancel := context.WithTimeout(c.baseCtx, 10*time.Second)
+	st, secs, err := c.dial.ConversationStatus(pctx, conv)
+	cancel()
+	if err != nil {
+		return
+	}
+	switch strings.ToLower(st) {
+	case "done":
+		end := StatusCompleted
+		if !answered {
+			end = StatusNoAnswer
+		}
+		c.finish(c.baseCtx, l, end, secs)
+	case "failed":
+		c.finish(c.baseCtx, l, StatusFailed, secs)
+	}
+}
+
+// carrierEnd maps a terminal Twilio call status to ours; ok is false while the call is still live.
+func carrierEnd(status string, answered bool) (string, bool) {
+	switch strings.ToLower(status) {
+	case "completed", "busy", "no-answer", "canceled":
+		if answered {
+			return StatusCompleted, true
+		}
+		return StatusNoAnswer, true
+	case "failed":
+		return StatusFailed, true
+	}
+	return "", false
 }
 
 // finish ends the call exactly once and reports whether this invocation was the one that ended it.
@@ -816,7 +1021,13 @@ func (c *Calls) finish(ctx context.Context, l *live, status string, durationSecs
 	}
 	call := l.call
 	name := l.botName
-	brief := l.brief
+	brief := strings.TrimSuffix(l.brief, "\n\n"+openedNote)
+	var missed []string
+	if l.delivered < len(l.inject) {
+		for _, in := range l.inject[l.delivered:] {
+			missed = append(missed, in.bot+": "+in.reason)
+		}
+	}
 	if c.cur == l {
 		c.cur = nil
 	}
@@ -828,6 +1039,10 @@ func (c *Calls) finish(ctx context.Context, l *live, status string, durationSecs
 	}
 	c.host.Audit("jarvis.call.ended", call.ID, "allowed", status)
 	c.changed()
+	if len(missed) > 0 {
+		// News folded into this call never reached a finished turn: tell the owner in writing instead.
+		c.host.Notify("News you missed on the call", strings.Join(missed, "\n"), "bot:"+call.BotID, "info")
+	}
 	if (status == StatusNoAnswer || status == StatusVoicemail) && l.verify == "" && call.Direction == Outbound {
 		c.host.Notify(name+" tried to call", call.Reason, "bot:"+call.BotID, "warning")
 		if l.urgent {

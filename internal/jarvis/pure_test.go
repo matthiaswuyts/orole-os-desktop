@@ -82,7 +82,7 @@ func TestCheckOpener(t *testing.T) {
 		}
 	}
 	for i := 0; i < 6; i++ {
-		f := FallbackOpener("Atlas", "the deploy finished", i)
+		f := FallbackOpener("Atlas", i)
 		if _, ok := CheckOpener("Atlas", f); !ok {
 			t.Errorf("fallback %d fails its own check: %q", i, f)
 		}
@@ -97,16 +97,16 @@ func TestCheckOpenerRejectsEmptyName(t *testing.T) {
 	}
 }
 
-func TestFallbackNonASCIIReason(t *testing.T) {
-	reason := strings.Repeat("échec du déploiement ünd 日本語 ", 10)
-	for i := 0; i < 6; i++ {
-		f := FallbackOpener("Atlas", reason, i)
-		if !utf8.ValidString(f) {
-			t.Errorf("fallback %d is invalid UTF-8: %q", i, f)
+// The opener may reach voicemail, so it is a greeting with the bot's name and nothing about why it calls.
+func TestFallbackIsNameOnlyGreeting(t *testing.T) {
+	for seed := -1; seed < 8; seed++ {
+		f := FallbackOpener("Atlas", seed)
+		if !strings.Contains(f, "Atlas") || strings.Contains(strings.ToLower(f), "orole") {
+			t.Errorf("seed %d: %q", seed, f)
 		}
-		if _, ok := CheckOpener("Atlas", f); !ok {
-			t.Errorf("fallback %d fails CheckOpener: %q", i, f)
-		}
+	}
+	if openerInstruction("Atlas") == "" || strings.Contains(openerInstruction("Atlas"), "Context") {
+		t.Fatal("opener instruction carries context")
 	}
 }
 
@@ -115,30 +115,102 @@ func TestFallbackAlwaysPassesCheck(t *testing.T) {
 		"Atlas", "日本", "Atlas!", "Nova  Bot", "Orolebot",
 		strings.Repeat("A", 80), strings.Repeat("日", 80),
 	}
-	reasons := []string{
-		"the deploy finished",
-		strings.Repeat("échec du déploiement ünd 日本語 ", 20),
-		"the deploy\nfailed\r\n on tests",
-		"Orole sync failed",
-	}
 	for _, name := range names {
-		for _, reason := range reasons {
-			for seed := 0; seed < 6; seed++ {
-				f := FallbackOpener(name, reason, seed)
-				if !utf8.ValidString(f) {
-					t.Errorf("name %q seed %d: invalid UTF-8", name, seed)
-				}
-				if n := utf8.RuneCountInString(f); n > maxOpener {
-					t.Errorf("name %q seed %d: %d runes", name, seed, n)
-				}
-				if strings.Contains(f, "\n") {
-					t.Errorf("name %q seed %d: newline in %q", name, seed, f)
-				}
-				if _, ok := CheckOpener(name, f); !ok {
-					t.Errorf("name %q seed %d fails CheckOpener: %q", name, seed, f)
-				}
+		for seed := 0; seed < 6; seed++ {
+			f := FallbackOpener(name, seed)
+			if !utf8.ValidString(f) {
+				t.Errorf("name %q seed %d: invalid UTF-8", name, seed)
+			}
+			if n := utf8.RuneCountInString(f); n > maxOpener {
+				t.Errorf("name %q seed %d: %d runes", name, seed, n)
+			}
+			if strings.Contains(f, "\n") {
+				t.Errorf("name %q seed %d: newline in %q", name, seed, f)
+			}
+			if _, ok := CheckOpener(name, f); !ok {
+				t.Errorf("name %q seed %d fails CheckOpener: %q", name, seed, f)
 			}
 		}
+	}
+}
+
+func TestIsVoicemail(t *testing.T) {
+	cases := []struct {
+		text string
+		want bool
+	}{
+		{"Hi, you've reached Ray. Please leave a message after the tone.", true},
+		{"The person you are calling is not available.", true},
+		{"Sorry, I can’t take your call right now", true},
+		{"Welcome to the voicemail of Ray", true},
+		{"This mailbox is full", true},
+		{"Hallo, spreek een bericht in na de piep.", true},
+		{"De abonnee is momenteel niet bereikbaar", true},
+		{"Bonjour, laissez un message après le bip.", true},
+		{"Vous êtes sur la messagerie de Ray", true},
+		{"Bitte hinterlassen Sie eine Nachricht nach dem Signalton.", true},
+		{"Die Mailbox von Ray", true},
+		{"Hello?", false},
+		{"Yes, Ray speaking", false},
+		{"What's up Atlas?", false},
+		{"Hallo, met Ray", false},
+	}
+	for _, c := range cases {
+		if got := IsVoicemail(c.text); got != c.want {
+			t.Errorf("IsVoicemail(%q) = %v, want %v", c.text, got, c.want)
+		}
+	}
+}
+
+func TestBareGreeting(t *testing.T) {
+	cases := []struct {
+		text string
+		want bool
+	}{
+		{"Hello?", true}, {"hallo", true}, {"Yes?", true}, {"Hi", true}, {"Who is this?", true}, {"Met Ray", true},
+		{"Hey, what's up?", true}, {"Yes, Ray speaking.", true},
+		{"Hello, can you start the deploy for me?", false},
+		{"What's running?", false},
+		{"Start the nightly build now", false},
+		{"", false},
+	}
+	for _, c := range cases {
+		if got := bareGreeting(c.text); got != c.want {
+			t.Errorf("bareGreeting(%q) = %v, want %v", c.text, got, c.want)
+		}
+	}
+}
+
+func TestCarrierEnd(t *testing.T) {
+	cases := []struct {
+		status   string
+		answered bool
+		want     string
+		ok       bool
+	}{
+		{"in-progress", true, "", false},
+		{"ringing", false, "", false},
+		{"queued", false, "", false},
+		{"completed", true, StatusCompleted, true},
+		{"completed", false, StatusNoAnswer, true},
+		{"busy", false, StatusNoAnswer, true},
+		{"no-answer", false, StatusNoAnswer, true},
+		{"canceled", false, StatusNoAnswer, true},
+		{"canceled", true, StatusCompleted, true},
+		{"failed", false, StatusFailed, true},
+	}
+	for _, c := range cases {
+		got, ok := carrierEnd(c.status, c.answered)
+		if got != c.want || ok != c.ok {
+			t.Errorf("carrierEnd(%q, %v) = %q, %v", c.status, c.answered, got, ok)
+		}
+	}
+}
+
+func TestSpeechTimeGrowsWithText(t *testing.T) {
+	short, long := speechTime("Bye."), speechTime("Your verification code is 1 2 3 4 5 6. Again, 1 2 3 4 5 6.")
+	if short < time.Second || long <= short || long > 30*time.Second {
+		t.Fatalf("short=%v long=%v", short, long)
 	}
 }
 

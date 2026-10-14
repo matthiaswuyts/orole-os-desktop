@@ -34,7 +34,7 @@ func Matches(r JarvisRule, ev Event, nowMs int64) bool {
 		if kind != ev.TargetID {
 			return false
 		}
-		return source == "" || strings.HasPrefix(ev.Source, source)
+		return source == "" || sourceMatches(ev.Source, source)
 	}
 	return false
 }
@@ -54,4 +54,11 @@ func NextAt(r JarvisRule, after time.Time) time.Time {
 		t = t.AddDate(0, 0, 1)
 	}
 	return t
+}
+
+// sourceMatches reports whether a notification source is want or nested under it: "github" matches "github",
+// "github.ci" and "github/ci", never "githubber".
+func sourceMatches(source, want string) bool {
+	rest, ok := strings.CutPrefix(source, want)
+	return ok && (rest == "" || rest[0] == '.' || rest[0] == '/')
 }
