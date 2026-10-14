@@ -5,6 +5,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/rayorole/orole-os-desktop/internal/llm"
 	"github.com/rayorole/orole-os-desktop/internal/llm/llmtest"
@@ -235,5 +236,86 @@ func TestJarvisConfigValidationAndSaveCheck(t *testing.T) {
 	in.Config.Jarvis.Enabled = false
 	if _, err := e.m.SaveBot(context.Background(), in); err != nil {
 		t.Errorf("disabled jarvis rejected: %v", err)
+	}
+}
+
+func TestVoiceLimitsNeverWiden(t *testing.T) {
+	cases := []struct{ in, want BotLimits }{
+		{BotLimits{}, BotLimits{MaxSteps: voiceMaxSteps, MaxToolCalls: voiceMaxToolCalls}},
+		{BotLimits{MaxSteps: 3, MaxToolCalls: 2}, BotLimits{MaxSteps: 3, MaxToolCalls: 2}},
+		{BotLimits{MaxSteps: 50, MaxToolCalls: 50}, BotLimits{MaxSteps: voiceMaxSteps, MaxToolCalls: voiceMaxToolCalls}},
+	}
+	for _, c := range cases {
+		if got := voiceLimits(c.in); got != c.want {
+			t.Errorf("voiceLimits(%+v) = %+v, want %+v", c.in, got, c.want)
+		}
+	}
+	// End to end: a bot limited to 1 step gets a final, tool-less call on the phone.
+	ft := &fakeTool{id: "probe"}
+	e := newEnv(t, func(call int, _ llm.Request) []llm.Delta { return []llm.Delta{llmtest.Text("hi")} })
+	e.m.AddTools(ft)
+	b := e.bot("Atlas", func(in *BotInput) { in.Config.Limits = BotLimits{MaxSteps: 1}; in.Config.ToolAccess = ToolAccessAll })
+	if _, err := e.m.VoiceTurn(context.Background(), VoiceRequest{BotID: b.ID, CallID: "c1", Text: "go"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(e.lastRequest().Tools) != 0 {
+		t.Error("a 1-step bot was offered tools on a call")
+	}
+}
+
+func blockingEnv(t *testing.T, release *func()) *env {
+	t.Helper()
+	gate := make(chan struct{})
+	var once sync.Once
+	*release = func() { once.Do(func() { close(gate) }) }
+	t.Cleanup(*release)
+	return newEnv(t, func(call int, _ llm.Request) []llm.Delta {
+		<-gate
+		return []llm.Delta{llmtest.Text("late")}
+	})
+}
+
+func TestArchiveAndClearStopVoiceTurn(t *testing.T) {
+	for _, name := range []string{"archive", "clear"} {
+		t.Run(name, func(t *testing.T) {
+			var release func()
+			e := blockingEnv(t, &release)
+			b := e.bot("Atlas")
+			done := make(chan error, 1)
+			go func() {
+				_, err := e.m.VoiceTurn(context.Background(), VoiceRequest{BotID: b.ID, CallID: "c1", Text: "go"})
+				done <- err
+			}()
+			e.until("voice turn to reach the model", func() bool { return len(e.fake.Calls()) == 1 })
+			finished := make(chan error, 1)
+			go func() {
+				if name == "archive" {
+					finished <- e.m.ArchiveBot(context.Background(), b.ID)
+				} else {
+					finished <- e.m.Clear(context.Background(), b.ID)
+				}
+			}()
+			time.Sleep(150 * time.Millisecond) // let Archive/Clear cancel the turn; the fake ignores ctx, the engine must not
+			release()
+			if err := <-finished; err != nil {
+				t.Fatal(err)
+			}
+			if err := <-done; err == nil {
+				t.Error("voice turn was not canceled")
+			}
+			e.m.mu.Lock()
+			n := len(e.m.runs)
+			e.m.mu.Unlock()
+			if n != 0 {
+				t.Errorf("%d runs left", n)
+			}
+			if name == "clear" {
+				if h := e.history(b.ID); len(h) != 0 {
+					t.Errorf("orphan messages after clear: %+v", h)
+				}
+			} else if _, err := e.m.VoiceTurn(context.Background(), VoiceRequest{BotID: b.ID, CallID: "c2", Text: "hi"}); err == nil {
+				t.Error("voice turn started for an archived bot")
+			}
+		})
 	}
 }

@@ -28,6 +28,17 @@ func voiceReasoning(levels []string) string {
 	return ""
 }
 
+// voiceLimits caps a bot's limits for a call; a limit the bot set lower is never widened.
+func voiceLimits(l BotLimits) BotLimits {
+	capTo := func(own, voice int) int {
+		if own > 0 {
+			return min(own, voice)
+		}
+		return voice
+	}
+	return BotLimits{MaxSteps: capTo(l.MaxSteps, voiceMaxSteps), MaxToolCalls: capTo(l.MaxToolCalls, voiceMaxToolCalls)}
+}
+
 // VoiceLine is one earlier utterance of a call. Role is "user" (the owner) or "assistant" (the bot).
 type VoiceLine struct{ Role, Text string }
 
@@ -52,11 +63,15 @@ func (m *Manager) VoiceTurn(ctx context.Context, req VoiceRequest) (string, erro
 	if req.CallID == "" {
 		return "", invalidf("A voice turn needs a call id.")
 	}
+	key := callPrefix + req.CallID
+	// The bot lock orders this start against Archive/Clear (whenIdle): either the bot is gone and we refuse,
+	// or our run is registered and whenIdle will see and stop it.
+	unlockBot := m.lockBot(req.BotID)
 	bot, err := m.Bot(ctx, req.BotID)
 	if err != nil {
+		unlockBot()
 		return "", err
 	}
-	key := callPrefix + req.CallID
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	stop := context.AfterFunc(m.ctx, cancel) // daemon shutdown ends the turn
@@ -64,16 +79,19 @@ func (m *Manager) VoiceTurn(ctx context.Context, req VoiceRequest) (string, erro
 	m.mu.Lock()
 	if m.closed {
 		m.mu.Unlock()
+		unlockBot()
 		return "", ErrClosed
 	}
 	if m.runs[key] != nil {
 		m.mu.Unlock()
+		unlockBot()
 		return "", busyf("Still answering the previous sentence.")
 	}
-	st := &runState{cancel: cancel, done: make(chan struct{})}
+	st := &runState{cancel: cancel, done: make(chan struct{}), botID: bot.ID}
 	m.runs[key] = st
 	m.wg.Add(1)
 	m.mu.Unlock()
+	unlockBot()
 	defer func() {
 		m.mu.Lock()
 		delete(m.runs, key)
@@ -124,6 +142,9 @@ func (m *Manager) VoiceTurn(ctx context.Context, req VoiceRequest) (string, erro
 		status, text := StatusError, describeError(err)
 		if runCtx.Err() != nil {
 			status, text = StatusCanceled, ""
+			if m.ctx.Err() != nil {
+				status = StatusIncomplete
+			}
 		}
 		_ = s.finish(status, text)
 		return "", err

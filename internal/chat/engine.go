@@ -270,7 +270,7 @@ func (m *Manager) prepare(ctx context.Context, p prep) (*turnEnv, error) {
 	}
 	if p.voice {
 		env.reasoning = voiceReasoning(mdl.Reasoning)
-		env.bot.Config.Limits = BotLimits{MaxSteps: voiceMaxSteps, MaxToolCalls: voiceMaxToolCalls}
+		env.bot.Config.Limits = voiceLimits(p.bot.Config.Limits)
 		env.onText, env.onTool = p.onText, p.onTool
 	}
 	return env, nil

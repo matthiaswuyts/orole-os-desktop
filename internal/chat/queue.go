@@ -53,6 +53,7 @@ func (t turn) deliver(r handoffResult) {
 // runState exists in Manager.runs while a bot (or draft) has an active run. Further sends are
 // queued here and processed in order after the current run, one run per bot at a time.
 type runState struct {
+	botID  string             // set on phone-call runs ("call:<id>"), which belong to a bot but are not its chat run
 	cancel context.CancelFunc // cancels the active turn; nil between turns
 	active string             // user message id of the active turn
 	queue  []turn
@@ -416,6 +417,17 @@ func (m *Manager) cancelQueued(ctx context.Context, t turn, reason string) {
 	}
 }
 
+// callRunsLocked returns the active phone-call turns of a bot. m.mu must be held.
+func (m *Manager) callRunsLocked(botID string) []*runState {
+	var out []*runState
+	for k, st := range m.runs {
+		if st.botID == botID && strings.HasPrefix(k, callPrefix) {
+			out = append(out, st)
+		}
+	}
+	return out
+}
+
 // whenIdle stops the bot's run (dropping its queue), then runs fn while no new run can start.
 func (m *Manager) whenIdle(ctx context.Context, botID string, fn func() error) error {
 	for {
@@ -428,6 +440,22 @@ func (m *Manager) whenIdle(ctx context.Context, botID string, fn func() error) e
 		}
 		st := m.runs[botID]
 		if st == nil {
+			if calls := m.callRunsLocked(botID); len(calls) > 0 {
+				// A phone call is mid-turn: stop it and wait, then look again.
+				m.mu.Unlock()
+				unlock()
+				for _, c := range calls {
+					c.cancel()
+				}
+				for _, c := range calls {
+					select {
+					case <-c.done:
+					case <-ctx.Done():
+						return ctx.Err()
+					}
+				}
+				continue
+			}
 			// No run exists and only holders of the bot lock can start one, so fn runs with the bot
 			// idle without the global lock being held across its SQLite work.
 			m.mu.Unlock()
@@ -492,7 +520,7 @@ func (m *Manager) consolidate(botID string, j *idleJob) {
 	}
 	delete(m.idle, botID)
 	mem := m.memory
-	if m.closed || mem == nil || m.runs[botID] != nil {
+	if m.closed || mem == nil || m.runs[botID] != nil || len(m.callRunsLocked(botID)) > 0 {
 		m.mu.Unlock()
 		return
 	}
