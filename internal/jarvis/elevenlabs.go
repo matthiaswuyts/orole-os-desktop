@@ -136,8 +136,9 @@ func (e *ElevenLabs) Models(ctx context.Context) ([]TTSModel, error) {
 	return out, nil
 }
 
-// agentBody configures the shared agent: the brain is our relay (custom LLM), the first turn comes from the LLM
-// (first_message empty) so the daemon's cached opener is spoken, and voicemail detection ends unanswered calls.
+// agentBody configures the shared agent: the brain is our relay (custom LLM) and the first turn comes from the LLM
+// (first_message empty) so the daemon's cached opener is spoken. The end_call and voicemail_detection tools stay
+// configured, but nothing relies on them: the daemon detects voicemail itself and hangs up through Twilio.
 func agentBody(c AgentConfig) map[string]any {
 	conv := map[string]any{
 		"agent": map[string]any{
