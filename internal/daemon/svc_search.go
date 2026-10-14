@@ -24,6 +24,9 @@ var settingsIndex = []struct{ view, section, tab, title, keywords string }{
 	{"settings", "integrations", "plugins", "Plugins", "extensions install permissions"},
 	{"settings", "notifications", "notifications", "Notifications", "alerts toasts mute sources native"},
 	{"settings", "notifications", "automations", "Automations", "workflows triggers webhook"},
+	{"settings", "task-permissions", "", "Task permissions", "yolo manual auto permission mode bots approve approvals remembered allow"},
+	{"settings", "bot-tools", "", "Bot tools", "bots integrations tools access without asking read write approve"},
+	{"settings", "bot-code-tasks", "", "Bot code tasks", "bots agent harness model effort reasoning claude codex code tasks"},
 	{"settings", "system", "updates", "Updates", "version release"},
 	{"settings", "system", "diagnostics", "Diagnostics and startup", "diagnostics daemon health logs autostart login startup"},
 }

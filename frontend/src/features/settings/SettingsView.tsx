@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { Bell, Bot, Cpu, Palette, PlugZap, Settings2, Sparkles, Upload } from "lucide-react";
+import { Bell, Bot, Cpu, Palette, PlugZap, Settings2, ShieldCheck, Sparkles, SquareTerminal, Upload, Wrench } from "lucide-react";
 import { useSettings } from "@/stores/settings";
 import { BUILTIN_THEMES } from "@/themes/builtin";
 import { useDaemon } from "@/stores/daemon";
@@ -16,7 +16,7 @@ import { Integrations } from "@/features/integrations/Integrations";
 import { NotificationSettings } from "@/features/notifications/NotificationSettings";
 import { AutomationSettings } from "@/features/automations/AutomationSettings";
 import { SoundSettings } from "@/features/settings/SoundSettings";
-import { AgentSafetySettings } from "@/features/settings/AgentSafetySettings";
+import { BotCodeTasksSettings, BotToolsSettings, TaskNamingSettings, TaskPermissionsSettings } from "@/features/settings/AgentSafetySettings";
 import { SettingsSection } from "@/features/settings/SettingsSection";
 import { UpdateSettings } from "@/features/settings/UpdateSettings";
 import { useUI } from "@/stores/ui";
@@ -30,6 +30,9 @@ const SECTIONS: Section[] = [
   { id: "integrations", label: "Integrations", icon: PlugZap },
   { id: "skills", label: "Skills", icon: Sparkles },
   { id: "ai", label: "AI providers", icon: Bot },
+  { id: "task-permissions", label: "Task permissions", icon: ShieldCheck },
+  { id: "bot-tools", label: "Bot tools", icon: Wrench },
+  { id: "bot-code-tasks", label: "Bot code tasks", icon: SquareTerminal },
   { id: "notifications", label: "Alerts & automations", icon: Bell },
   { id: "system", label: "System", icon: Settings2 },
 ];
@@ -175,7 +178,7 @@ function System() {
   return (
     <>
       <Group id="settings-updates" title="Updates"><UpdateSettings /></Group>
-      <AgentSafetySettings />
+      <TaskNamingSettings />
       <div id="settings-diagnostics" className="scroll-mt-2"><Diagnostics /><AutostartPanel /></div>
     </>
   );
@@ -197,11 +200,15 @@ function Diagnostics() {
   );
 }
 
+/** Where a pre-split System anchor lives now; links, search results and bot messages still send the old section. */
+const MOVED_FROM_SYSTEM: Record<string, string> = { "task-permissions": "task-permissions", "bot-tools": "bot-tools", "bot-tasks": "bot-code-tasks" };
+
 export function SettingsView() {
-  const requested = useUI((state) => state.settingsSection);
+  const section = useUI((state) => state.settingsSection);
   const tab = useUI((state) => state.settingsTab);
   // "mcp" is the pre-merge section id; orole://settings/mcp links and the settings index still send it.
-  const sec = SECTIONS.find((section) => section.id === (requested === "mcp" ? "integrations" : requested)) ?? SECTIONS[0]!;
+  const requested = section === "mcp" ? "integrations" : section === "system" && MOVED_FROM_SYSTEM[tab ?? ""] ? MOVED_FROM_SYSTEM[tab ?? ""] : section;
+  const sec = SECTIONS.find((candidate) => candidate.id === requested) ?? SECTIONS[0]!;
   const id = sec.id;
   const setId = useUI((state) => state.openSettings);
   useEffect(() => { if (tab) document.getElementById(`settings-${tab}`)?.scrollIntoView({ block: "start" }); }, [id, tab]);
@@ -225,6 +232,9 @@ export function SettingsView() {
           { id: "notifications", label: "Alerts", panel: <NotificationSettings /> },
           { id: "automations", label: "Automation limits", panel: <AutomationSettings /> },
         ]} />}
+        {id === "task-permissions" && <TaskPermissionsSettings />}
+        {id === "bot-tools" && <BotToolsSettings />}
+        {id === "bot-code-tasks" && <BotCodeTasksSettings />}
         {id === "system" && <System />}
       </div>
     </div>

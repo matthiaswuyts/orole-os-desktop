@@ -1,4 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react";
+import { create } from "zustand";
 import { Chat, Policy, Settings, type BotTaskDefaults, type Rule } from "@/mygo";
 import { inDesktop } from "@/lib/backend";
 import { Button } from "@/components/ui/button";
@@ -6,6 +7,7 @@ import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "@/c
 import { Switch } from "@/components/ui/switch";
 import { errText, useAction } from "@/features/agents/format";
 import { useHarnessOptions } from "@/features/agents/useHarnessOptions";
+import { harnessLogo, modelLogo, WithLogo } from "@/features/chat/botLogos";
 import {
   PERMISSION_LABELS, TASK_AUTO, TOOL_ACCESS, botHarnesses, botYoloBlocked, fitTaskChoice, permissionModeOf, taskChoices, toolAccessOf,
   type ToolAccess,
@@ -29,6 +31,43 @@ export type AgentsSetting = {
 
 const MODES: { value: PermissionMode; label: string }[] = [{ value: "manual", label: "Manual" }, { value: "auto", label: "Auto" }, { value: "yolo", label: "Yolo" }];
 
+type AgentsStore = { setting: AgentsSetting | null; error: string | null; load: () => void; change: (patch: AgentsSetting) => Promise<void> };
+
+/**
+ * The daemon reads the "agents" setting on every task start, mode change, title request and bot tool call, so changes take
+ * effect at once. The value is one JSON object shared by every control on the Task permissions, Bot tools and Bot code tasks
+ * pages (and the task naming switch under System): each save writes the whole object back so it never drops a key another
+ * control (or a newer daemon) owns.
+ */
+export const useAgentsSetting = create<AgentsStore>((set, get) => ({
+  setting: null,
+  error: null,
+  load: () => {
+    if (!inDesktop) return;
+    Settings.all().then(
+      (all) => set({ setting: (all.agents as AgentsSetting | undefined) ?? {} }),
+      (failure: unknown) => set({ error: errText(failure) }),
+    );
+  },
+  change: async (patch) => {
+    const current = get().setting;
+    if (!current) return;
+    set({ error: null });
+    const next = { ...current, ...patch };
+    try { await Settings.set("agents", next); set({ setting: next }); }
+    catch (failure) { set({ error: errText(failure) }); }
+  },
+}));
+
+/** The shared setting, loaded when a page using it opens. */
+function useAgents() {
+  const { setting, error, load, change } = useAgentsSetting();
+  useEffect(load, [load]);
+  const yoloOff = !!setting?.yoloDisabled;
+  const defaultMode: PermissionMode = setting?.defaultPermissionMode === "auto" || (setting?.defaultPermissionMode === "yolo" && !yoloOff) ? setting.defaultPermissionMode : "manual";
+  return { setting, change: (patch: AgentsSetting) => void change(patch), disabled: !inDesktop || setting === null, yoloOff, defaultMode, error };
+}
+
 /** A setting row with a select on the right; the select is named by the row's label. */
 function SelectRow({ id, label, hint, children }: { id: string; label: string; hint?: ReactNode; children: ReactNode }) {
   return <div className="flex items-center justify-between gap-6 px-3 py-2.5">
@@ -40,52 +79,32 @@ function SelectRow({ id, label, hint, children }: { id: string; label: string; h
   </div>;
 }
 
-/**
- * The daemon reads the "agents" setting on every task start, mode change, title request and bot tool call, so changes take
- * effect at once. The value is one JSON object shared by every control here: each save writes the whole object back so it
- * never drops a key another control (or a newer daemon) owns.
- */
-export function AgentSafetySettings() {
-  const [setting, setSetting] = useState<AgentsSetting | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  useEffect(() => {
-    if (!inDesktop) return;
-    let live = true;
-    Settings.all().then(
-      (all) => { if (live) setSetting((all.agents as AgentsSetting | undefined) ?? {}); },
-      (failure: unknown) => { if (live) setError(errText(failure)); },
-    );
-    return () => { live = false; };
-  }, []);
-  async function change(patch: AgentsSetting) {
-    if (!setting) return;
-    setError(null);
-    const next = { ...setting, ...patch };
-    try { await Settings.set("agents", next); setSetting(next); }
-    catch (failure) { setError(errText(failure)); }
-  }
-  const disabled = !inDesktop || setting === null;
-  const yoloOff = !!setting?.yoloDisabled;
-  const defaultMode: PermissionMode = setting?.defaultPermissionMode === "auto" || (setting?.defaultPermissionMode === "yolo" && !yoloOff) ? setting.defaultPermissionMode : "manual";
-  const access = toolAccessOf(setting?.botToolAccess) || "ask";
+function SwitchRow({ id, label, hint, checked, disabled, onChange }: { id: string; label: string; hint?: ReactNode; checked: boolean; disabled: boolean; onChange: (on: boolean) => void }) {
+  return <div className="flex items-center justify-between gap-6 px-3 py-2.5">
+    <div className="min-w-0">
+      <label htmlFor={id} className="block">{label}</label>
+      {hint && <p className="text-xs text-muted-foreground">{hint}</p>}
+    </div>
+    <Switch id={id} checked={checked} disabled={disabled} onCheckedChange={onChange} aria-label={label} />
+  </div>;
+}
+
+function ErrorLine({ error }: { error: string | null }) {
+  return error ? <p role="alert" className="-mt-3 mb-5 px-3 text-xs text-destructive-foreground">{error}</p> : null;
+}
+
+/** Settings › Task permissions: how tasks start and what bots may do with them. */
+export function TaskPermissionsSettings() {
+  const { setting, change, disabled, yoloOff, defaultMode, error } = useAgents();
+  const tasks = setting?.botTasks ?? {};
+  const botMode = permissionModeOf(tasks.permissionMode);
+  const yoloBlocked = botYoloBlocked(setting);
+  const botModeItems = [{ value: "", label: `Same as my default (${PERMISSION_LABELS[defaultMode]})` }, ...MODES];
   return <>
-    <SettingsSection id="settings-task-permissions" title="Task permissions" description="Manual, Auto and Yolo are chosen per task; the default here applies when nobody picked one.">
-      <div className="flex items-center justify-between gap-6 px-3 py-2.5">
-        <div className="min-w-0">
-          <label htmlFor="allow-yolo" className="block">Allow Yolo mode</label>
-          <p className="text-xs text-muted-foreground">Yolo runs a task without ever asking. Turning this off blocks starting or switching to it; tasks already in Yolo must be switched before they continue.</p>
-        </div>
-        <Switch id="allow-yolo" checked={!yoloOff} disabled={disabled} onCheckedChange={(checked) => void change({ yoloDisabled: !checked })} aria-label="Allow Yolo mode" />
-      </div>
-      <div className="flex items-center justify-between gap-6 px-3 py-2.5">
-        <div className="min-w-0">
-          <label htmlFor="ai-task-titles" className="block">Name tasks with AI</label>
-          <p className="text-xs text-muted-foreground">Uses your Claude or ChatGPT account for one short extra request per new task. Oh My Pi names its own tasks.</p>
-        </div>
-        <Switch id="ai-task-titles" checked={!setting?.aiTitlesDisabled} disabled={disabled} onCheckedChange={(checked) => void change({ aiTitlesDisabled: !checked })} aria-label="Name tasks with AI" />
-      </div>
-      <SelectRow id="default-permission-mode" label="Default permission mode" hint={`How a new task runs when nobody picked a mode, including the ones bots start unless Bot code tasks says otherwise. Each task can still be switched.${yoloOff ? " Yolo is turned off above." : ""}`}>
-        <Select value={defaultMode} items={MODES} disabled={disabled} onValueChange={(mode: PermissionMode | null) => { if (mode) void change({ defaultPermissionMode: mode }); }}>
+    <SettingsSection id="settings-task-modes" title="Task modes" description="Manual, Auto and Yolo are chosen per task; the default applies when nobody picked one.">
+      <SwitchRow id="allow-yolo" label="Allow Yolo mode" hint="Yolo runs a task without ever asking. Off blocks starting or switching to it; tasks already in Yolo must be switched." checked={!yoloOff} disabled={disabled} onChange={(on) => change({ yoloDisabled: !on })} />
+      <SelectRow id="default-permission-mode" label="Default permission mode" hint={yoloOff ? "Yolo is turned off above." : undefined}>
+        <Select value={defaultMode} items={MODES} disabled={disabled} onValueChange={(mode: PermissionMode | null) => { if (mode) change({ defaultPermissionMode: mode }); }}>
           <SelectTrigger aria-labelledby="default-permission-mode-label" className="w-40 shrink-0"><SelectValue /></SelectTrigger>
           <SelectPopup>
             {MODES.map((mode) => <SelectItem key={mode.value} value={mode.value} disabled={mode.value === "yolo" && yoloOff}>{mode.label}</SelectItem>)}
@@ -93,9 +112,39 @@ export function AgentSafetySettings() {
         </Select>
       </SelectRow>
     </SettingsSection>
-    <SettingsSection id="settings-bot-tools" title="Bot tools" description="How much bots may do through integrations and tools before they ask you. A bot's own settings can choose differently.">
-      <SelectRow id="bot-tool-access" label="Without asking, bots may" hint={<>{TOOL_ACCESS.find((level) => level.value === access)!.hint} An integration tool you set to Always ask or Block still asks or stays blocked.</>}>
-        <Select value={access} items={TOOL_ACCESS} disabled={disabled} onValueChange={(level: ToolAccess | null) => { if (level) void change({ botToolAccess: level }); }}>
+    <SettingsSection id="settings-bot-permissions" title="Bots" description="A bot's own settings can choose differently.">
+      <SelectRow id="bot-task-mode" label="Bot permission mode" hint={botMode === "yolo" && yoloBlocked ? `Bots cannot start tasks in Yolo right now, so their starts are refused. ${yoloBlocked}` : "Bots never choose this themselves."}>
+        <Select value={botMode} items={botModeItems} disabled={disabled} onValueChange={(next: PermissionMode | "" | null) => { if (next !== null) change({ botTasks: { ...tasks, permissionMode: next } }); }}>
+          <SelectTrigger aria-labelledby="bot-task-mode-label" className="w-56 shrink-0"><SelectValue /></SelectTrigger>
+          <SelectPopup alignItemWithTrigger={false} className="w-72">
+            {botModeItems.map((item) => {
+              const blocked = item.value === "yolo" ? yoloBlocked : "";
+              return <SelectItem key={item.value} value={item.value} disabled={!!blocked} className="items-start py-1.5">
+                <span className="flex min-w-0 flex-col gap-0.5">
+                  <span>{item.label}</span>
+                  {blocked && <span className="text-xs text-muted-foreground">{blocked}</span>}
+                </span>
+              </SelectItem>;
+            })}
+          </SelectPopup>
+        </Select>
+      </SelectRow>
+      <SwitchRow id="bot-yolo" label="Bots may use Yolo" hint={<>Lets a bot start a task in Yolo.{yoloOff ? " Needs Yolo mode allowed above." : ""}</>} checked={!!setting?.botYolo && !yoloOff} disabled={disabled || yoloOff} onChange={(on) => change({ botYolo: on })} />
+      <SwitchRow id="bot-auto-approve" label="Bots start tasks without asking" hint="Off: every start and follow-up waits for your approval in the bot's chat, unless you allowed that bot always." checked={!!setting?.botAutoApprove} disabled={disabled} onChange={(on) => change({ botAutoApprove: on })} />
+    </SettingsSection>
+    <SettingsSection id="settings-remembered-approvals" title="Remembered approvals" description="What you allowed or blocked for a bot always. Removing one makes that bot ask again."><RememberedApprovals /></SettingsSection>
+    <ErrorLine error={error} />
+  </>;
+}
+
+/** Settings › Bot tools: how much bots may do through integrations and tools before they ask. */
+export function BotToolsSettings() {
+  const { setting, change, disabled, error } = useAgents();
+  const access = toolAccessOf(setting?.botToolAccess) || "ask";
+  return <>
+    <SettingsSection id="settings-bot-tools" title="Approvals" description="A bot's own settings can choose differently. A tool set to Always ask or Block still asks or stays blocked.">
+      <SelectRow id="bot-tool-access" label="Without asking, bots may" hint={TOOL_ACCESS.find((level) => level.value === access)!.hint}>
+        <Select value={access} items={TOOL_ACCESS} disabled={disabled} onValueChange={(level: ToolAccess | null) => { if (level) change({ botToolAccess: level }); }}>
           <SelectTrigger aria-labelledby="bot-tool-access-label" className="w-64 shrink-0"><SelectValue /></SelectTrigger>
           <SelectPopup alignItemWithTrigger={false} className="w-80">
             {TOOL_ACCESS.map((level) => <SelectItem key={level.value} value={level.value} className="items-start py-1.5">
@@ -108,86 +157,73 @@ export function AgentSafetySettings() {
         </Select>
       </SelectRow>
     </SettingsSection>
-    <SettingsSection id="settings-bot-tasks" title="Bot code tasks" description="How the code tasks your bots start run. Auto lets the bot choose for each task. A bot's own settings can choose differently.">
-      <BotTaskDefaultsRows setting={setting} disabled={disabled} defaultMode={defaultMode} change={change} />
-      <div className="flex items-center justify-between gap-6 px-3 py-2.5">
-        <div className="min-w-0">
-          <label htmlFor="bot-yolo" className="block">Bots may use Yolo</label>
-          <p className="text-xs text-muted-foreground">Lets a bot start a task in Yolo when its permission mode is Yolo.{yoloOff ? " Needs Yolo mode allowed above." : ""}</p>
-        </div>
-        <Switch id="bot-yolo" checked={!!setting?.botYolo && !yoloOff} disabled={disabled || yoloOff} onCheckedChange={(checked) => void change({ botYolo: checked })} aria-label="Bots may use Yolo" />
-      </div>
-      <div className="flex items-center justify-between gap-6 px-3 py-2.5">
-        <div className="min-w-0">
-          <label htmlFor="bot-auto-approve" className="block">Bots start tasks without asking</label>
-          <p className="text-xs text-muted-foreground">Off: every start and follow-up a bot sends waits for your approval in its chat, unless you allowed that bot always.</p>
-        </div>
-        <Switch id="bot-auto-approve" checked={!!setting?.botAutoApprove} disabled={disabled} onCheckedChange={(checked) => void change({ botAutoApprove: checked })} aria-label="Bots start tasks without asking" />
-      </div>
-      <RememberedApprovals />
-    </SettingsSection>
-    {error && <p role="alert" className="-mt-3 mb-5 px-3 text-xs text-destructive-foreground">{error}</p>}
+    <ErrorLine error={error} />
   </>;
 }
 
-/** Harness, model, effort and permission mode for the code tasks bots start. */
-function BotTaskDefaultsRows({ setting, disabled, defaultMode, change }: { setting: AgentsSetting | null; disabled: boolean; defaultMode: PermissionMode; change: (patch: AgentsSetting) => Promise<void> }) {
+type Choice = { value: string; label: string; logo?: ReactNode };
+
+/** Settings › Bot code tasks: which agent, model and effort the code tasks bots start run with. */
+export function BotCodeTasksSettings() {
+  const { setting, change, disabled, error } = useAgents();
   const source = useHarnessOptions("local");
   const harnesses = botHarnesses(source.options?.harnesses);
   const tasks = setting?.botTasks ?? {};
   const harness = tasks.harness || TASK_AUTO;
   const model = tasks.model || TASK_AUTO;
   const reasoning = tasks.reasoning || TASK_AUTO;
-  const mode = permissionModeOf(tasks.permissionMode);
   const { models, levels } = taskChoices(harnesses, harness, model);
-  const yoloBlocked = botYoloBlocked(setting);
-  const save = (patch: BotTaskDefaults) => void change({ botTasks: { ...tasks, ...patch } });
+  const save = (patch: BotTaskDefaults) => change({ botTasks: { ...tasks, ...patch } });
 
   const installed = harnesses.filter((h) => h.available);
-  const harnessItems = [{ value: TASK_AUTO, label: "Auto — the bot chooses" }, ...installed.map((h) => ({ value: h.id, label: h.name || h.id }))];
-  if (!harnessItems.some((item) => item.value === harness)) harnessItems.push({ value: harness, label: `${harnesses.find((h) => h.id === harness)?.name || harness} (not installed)` });
-  const modelItems = [{ value: TASK_AUTO, label: harness === TASK_AUTO ? "Auto" : "Auto — the bot chooses" }, ...models.map((m) => ({ value: m.id, label: m.name || m.id }))];
+  const harnessItems: Choice[] = [{ value: TASK_AUTO, label: "Auto — the bot chooses" }, ...installed.map((h) => ({ value: h.id, label: h.name || h.id, logo: harnessLogo(h.id) }))];
+  if (!harnessItems.some((item) => item.value === harness)) harnessItems.push({ value: harness, label: `${harnesses.find((h) => h.id === harness)?.name || harness} (not installed)`, logo: harnessLogo(harness) });
+  const modelItems: Choice[] = [{ value: TASK_AUTO, label: harness === TASK_AUTO ? "Auto" : "Auto — the bot chooses" }, ...models.map((m) => ({ value: m.id, label: m.name || m.id, logo: modelLogo(harness, m) }))];
   if (!modelItems.some((item) => item.value === model)) modelItems.push({ value: model, label: model });
   const levelItems = [{ value: TASK_AUTO, label: harness === TASK_AUTO ? "Auto" : "Auto — the bot chooses" }, ...levels.map((level) => ({ value: level, label: level }))];
   if (!levelItems.some((item) => item.value === reasoning)) levelItems.push({ value: reasoning, label: reasoning });
-  const modeItems = [{ value: "", label: `Same as my default (${PERMISSION_LABELS[defaultMode]})` }, ...MODES];
-  const discovering = source.loading ? " Looking for installed agents…" : source.error ? ` Could not list installed agents: ${source.error}` : "";
+  const discovering = source.loading ? "Looking for installed agents…" : source.error ? `Could not list installed agents: ${source.error}` : undefined;
+
+  /** The closed select value, with the logo of the chosen option. */
+  const withLogo = (items: Choice[]) => (value: string) => {
+    const item = items.find((entry) => entry.value === value);
+    return <WithLogo logo={item?.logo}>{item?.label ?? value}</WithLogo>;
+  };
+  const logoItems = (items: Choice[]) => items.map((item) => <SelectItem key={item.value} value={item.value}><WithLogo logo={item.logo}>{item.label}</WithLogo></SelectItem>);
 
   return <>
-    <SelectRow id="bot-task-harness" label="Agent" hint={`Which coding agent runs the task. Auto lets the bot pick any installed one.${discovering}`}>
-      <Select value={harness} items={harnessItems} disabled={disabled} onValueChange={(next: string | null) => { if (next) save({ harness: next, ...fitTaskChoice(harnesses, { harness: next, model, reasoning }) }); }}>
-        <SelectTrigger aria-labelledby="bot-task-harness-label" className="w-56 shrink-0"><SelectValue /></SelectTrigger>
-        <SelectPopup>{harnessItems.map((item) => <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>)}</SelectPopup>
-      </Select>
-    </SelectRow>
-    <SelectRow id="bot-task-model" label="Model" hint={harness === TASK_AUTO ? "Pick an agent first to fix its model. With Auto the bot chooses, or the agent's default is used." : "Auto lets the bot choose, or uses the agent's default."}>
-      <Select value={model} items={modelItems} disabled={disabled || harness === TASK_AUTO} onValueChange={(next: string | null) => { if (next) save({ model: next, reasoning: fitTaskChoice(harnesses, { harness, model: next, reasoning }).reasoning }); }}>
-        <SelectTrigger aria-labelledby="bot-task-model-label" className="w-56 shrink-0"><SelectValue /></SelectTrigger>
-        <SelectPopup>{modelItems.map((item) => <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>)}</SelectPopup>
-      </Select>
-    </SelectRow>
-    <SelectRow id="bot-task-reasoning" label="Effort" hint={levels.length === 0 && harness !== TASK_AUTO ? "This agent reports no effort levels." : "How hard the agent thinks. Auto lets the bot choose, or uses the agent's default."}>
-      <Select value={reasoning} items={levelItems} disabled={disabled || (levels.length === 0 && reasoning === TASK_AUTO)} onValueChange={(next: string | null) => { if (next) save({ reasoning: next }); }}>
-        <SelectTrigger aria-labelledby="bot-task-reasoning-label" className="w-56 shrink-0 capitalize"><SelectValue /></SelectTrigger>
-        <SelectPopup>{levelItems.map((item) => <SelectItem key={item.value} value={item.value} className="capitalize">{item.label}</SelectItem>)}</SelectPopup>
-      </Select>
-    </SelectRow>
-    <SelectRow id="bot-task-mode" label="Permission mode" hint={mode === "yolo" && yoloBlocked ? `Bots cannot start tasks in Yolo right now, so their starts are refused. ${yoloBlocked}` : "Bots never choose this themselves."}>
-      <Select value={mode} items={modeItems} disabled={disabled} onValueChange={(next: PermissionMode | "" | null) => { if (next !== null) save({ permissionMode: next }); }}>
-        <SelectTrigger aria-labelledby="bot-task-mode-label" className="w-56 shrink-0"><SelectValue /></SelectTrigger>
-        <SelectPopup alignItemWithTrigger={false} className="w-72">
-          {modeItems.map((item) => {
-            const blocked = item.value === "yolo" ? yoloBlocked : "";
-            return <SelectItem key={item.value} value={item.value} disabled={!!blocked} className="items-start py-1.5">
-              <span className="flex min-w-0 flex-col gap-0.5">
-                <span>{item.label}</span>
-                {blocked && <span className="text-xs text-muted-foreground">{blocked}</span>}
-              </span>
-            </SelectItem>;
-          })}
-        </SelectPopup>
-      </Select>
-    </SelectRow>
+    <SettingsSection id="settings-bot-tasks" title="Run with" description="Auto lets the bot choose for each task. A bot's own settings can choose differently.">
+      <SelectRow id="bot-task-harness" label="Agent" hint={discovering}>
+        <Select value={harness} items={harnessItems} disabled={disabled} onValueChange={(next: string | null) => { if (next) save({ harness: next, ...fitTaskChoice(harnesses, { harness: next, model, reasoning }) }); }}>
+          <SelectTrigger aria-labelledby="bot-task-harness-label" className="w-56 shrink-0"><SelectValue>{withLogo(harnessItems)}</SelectValue></SelectTrigger>
+          <SelectPopup>{logoItems(harnessItems)}</SelectPopup>
+        </Select>
+      </SelectRow>
+      <SelectRow id="bot-task-model" label="Model" hint={harness === TASK_AUTO ? "Pick an agent first to fix its model." : undefined}>
+        <Select value={model} items={modelItems} disabled={disabled || harness === TASK_AUTO} onValueChange={(next: string | null) => { if (next) save({ model: next, reasoning: fitTaskChoice(harnesses, { harness, model: next, reasoning }).reasoning }); }}>
+          <SelectTrigger aria-labelledby="bot-task-model-label" className="w-56 shrink-0"><SelectValue>{withLogo(modelItems)}</SelectValue></SelectTrigger>
+          <SelectPopup>{logoItems(modelItems)}</SelectPopup>
+        </Select>
+      </SelectRow>
+      <SelectRow id="bot-task-reasoning" label="Effort" hint={levels.length === 0 && harness !== TASK_AUTO ? "This agent reports no effort levels." : undefined}>
+        <Select value={reasoning} items={levelItems} disabled={disabled || (levels.length === 0 && reasoning === TASK_AUTO)} onValueChange={(next: string | null) => { if (next) save({ reasoning: next }); }}>
+          <SelectTrigger aria-labelledby="bot-task-reasoning-label" className="w-56 shrink-0 capitalize"><SelectValue /></SelectTrigger>
+          <SelectPopup>{levelItems.map((item) => <SelectItem key={item.value} value={item.value} className="capitalize">{item.label}</SelectItem>)}</SelectPopup>
+        </Select>
+      </SelectRow>
+    </SettingsSection>
+    <ErrorLine error={error} />
+  </>;
+}
+
+/** Settings › System › Tasks: whether new tasks get an AI-written title. */
+export function TaskNamingSettings() {
+  const { setting, change, disabled, error } = useAgents();
+  return <>
+    <SettingsSection id="settings-task-naming" title="Tasks">
+      <SwitchRow id="ai-task-titles" label="Name tasks with AI" hint="Uses your Claude or ChatGPT account for one short extra request per new task. Oh My Pi names its own tasks." checked={!setting?.aiTitlesDisabled} disabled={disabled} onChange={(on) => change({ aiTitlesDisabled: !on })} />
+    </SettingsSection>
+    <ErrorLine error={error} />
   </>;
 }
 
@@ -216,11 +252,9 @@ function RememberedApprovals() {
   }, [revision]);
   if (!inDesktop) return null;
   return <div className="flex flex-col gap-1 px-3 py-2.5">
-    <span className="block">Remembered approvals</span>
-    <p className="text-xs text-muted-foreground">What you allowed or blocked for a bot always. Removing one makes that bot ask again.</p>
     {error && <p role="alert" className="text-xs text-destructive-foreground">{error} <Button type="button" variant="link" size="xs" onClick={() => setRevision((value) => value + 1)}>Retry</Button></p>}
     {rules?.length === 0 && <p className="text-xs text-muted-foreground">None yet.</p>}
-    {rules && rules.length > 0 && <ul className="mt-1 flex flex-col divide-y divide-border/60 rounded-lg border">
+    {rules && rules.length > 0 && <ul className="flex flex-col divide-y divide-border/60 rounded-lg border">
       {rules.map((rule) => <li key={rule.id} className="flex items-center justify-between gap-3 px-2.5 py-1.5 text-xs">
         <span className="flex min-w-0 flex-1 flex-col">
           <span className="truncate"><span className="font-medium">{names[rule.actor] ?? rule.actor.slice(4)}</span> · {botRequestTitle(rule.action, rule.resource)}</span>

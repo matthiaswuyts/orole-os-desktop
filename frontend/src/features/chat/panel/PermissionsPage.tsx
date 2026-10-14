@@ -8,20 +8,26 @@ import {
   PERMISSION_LABELS, TASK_AUTO, TOOL_ACCESS, botHarnesses, botYoloBlocked, fitTaskChoice, harnessName, modelName, permissionModeOf, taskChoices,
   toolAccessLabel, toolAccessOf,
 } from "@/features/chat/botTrust";
+import { harnessLogo, modelLogo, WithLogo } from "@/features/chat/botLogos";
 import type { AgentsSetting } from "@/features/settings/AgentSafetySettings";
 import type { FormState } from "../builder/botForm";
 import { ControlRow, Group } from "./rows";
 
-type Item = { value: string; label: string; detail?: string; disabled?: boolean };
+type Item = { value: string; label: string; detail?: string; logo?: ReactNode; disabled?: boolean };
 
-/** A compact select inside a panel row; items can carry a second line (a risk, or why one is unavailable). */
+/** A compact select inside a panel row; items can carry a logo, and a second line for why one is unavailable. */
 function RowSelect({ id, value, items, disabled, onChange, capitalize }: { id: string; value: string; items: Item[]; disabled?: boolean; onChange: (value: string) => void; capitalize?: boolean }) {
   return <Select value={value} items={items} disabled={disabled} onValueChange={(next: string | null) => { if (next !== null) onChange(next); }}>
-    <SelectTrigger id={id} size="sm" className={`w-auto min-w-24 max-w-52 border-0 bg-transparent shadow-none ${capitalize ? "capitalize" : ""}`}><SelectValue /></SelectTrigger>
+    <SelectTrigger id={id} size="sm" className={`w-auto min-w-24 max-w-52 border-0 bg-transparent shadow-none ${capitalize ? "capitalize" : ""}`}><SelectValue>
+      {(current: string) => {
+        const item = items.find((entry) => entry.value === current);
+        return item ? <WithLogo logo={item.logo}>{item.label}</WithLogo> : current;
+      }}
+    </SelectValue></SelectTrigger>
     <SelectPopup alignItemWithTrigger={false} className="w-72 max-w-[calc(100vw-2rem)]">
       {items.map((item) => <SelectItem key={item.value} value={item.value} disabled={item.disabled} className="items-start py-1.5">
         <span className="flex min-w-0 flex-col gap-0.5">
-          <span className={capitalize ? "capitalize" : undefined}>{item.label}</span>
+          <WithLogo logo={item.logo}><span className={capitalize ? "capitalize" : undefined}>{item.label}</span></WithLogo>
           {item.detail && <span className="text-muted-foreground text-xs">{item.detail}</span>}
         </span>
       </SelectItem>)}
@@ -39,7 +45,7 @@ function withStored(items: Item[], value: string): Item[] {
 }
 
 /**
- * What this bot may do without asking and how its code tasks run, each defaulting to the global choice under Settings › System.
+ * What this bot may do without asking and how its code tasks run, each defaulting to the global choice under Settings › Task permissions, Bot tools and Bot code tasks.
  * The daemon applies these; per-integration "Always ask" and "Block" settings still win over any level.
  */
 export function PermissionsPage({ form, patch }: { form: FormState; patch: (p: Partial<FormState>) => void }) {
@@ -56,7 +62,7 @@ export function PermissionsPage({ form, patch }: { form: FormState; patch: (p: P
   const globalAccess = toolAccessOf(agents?.botToolAccess) || "ask";
   const accessItems: Item[] = [
     { value: "", label: agents ? `Use global setting (${toolAccessLabel(globalAccess)})` : "Use global setting" },
-    ...TOOL_ACCESS.map((level) => ({ value: level.value, label: level.label, detail: level.hint })),
+    ...TOOL_ACCESS.map((level) => ({ value: level.value, label: level.label })),
   ];
   const accessHint = TOOL_ACCESS.find((level) => level.value === (toolAccessOf(form.toolAccess) || globalAccess))!.hint;
 
@@ -69,14 +75,15 @@ export function PermissionsPage({ form, patch }: { form: FormState; patch: (p: P
   const inherit = (name: string) => agents ? `Use global setting (${name})` : "Use global setting";
 
   const harnessItems = withStored([
-    { value: "", label: inherit(harnessName(harnesses, global.harness)) },
+    { value: "", label: inherit(harnessName(harnesses, global.harness)), logo: harnessLogo(global.harness) },
     { value: TASK_AUTO, label: "Auto — the bot chooses" },
-    ...harnesses.filter((h) => h.available).map((h) => ({ value: h.id, label: h.name || h.id })),
+    ...harnesses.filter((h) => h.available).map((h) => ({ value: h.id, label: h.name || h.id, logo: harnessLogo(h.id) })),
   ], form.taskHarness);
+  const globalModel = taskChoices(harnesses, global.harness, global.model).models.find((m) => m.id === global.model);
   const modelItems = withStored([
-    { value: "", label: inherit(modelName(harnesses, global.harness, global.model)) },
+    { value: "", label: inherit(modelName(harnesses, global.harness, global.model)), logo: globalModel && modelLogo(global.harness, globalModel) },
     { value: TASK_AUTO, label: "Auto — the bot chooses" },
-    ...models.map((m) => ({ value: m.id, label: m.name || m.id })),
+    ...models.map((m) => ({ value: m.id, label: m.name || m.id, logo: modelLogo(harness, m) })),
   ], form.taskModel);
   const levelItems = withStored([
     { value: "", label: inherit(global.reasoning === TASK_AUTO ? "Auto" : global.reasoning) },

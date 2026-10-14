@@ -26,6 +26,9 @@ const MARKS: Record<string, string> = {
   Perplexity: perplexity, MiniMax: minimax, IBM: ibm, Amazon: aws,
 };
 
+/** Whether a company has a bundled mark, for callers that would rather show nothing than the generic bot glyph. */
+export const hasCompanyLogo = (company: string) => company in MARKS;
+
 /** A company's mark, or a generic bot glyph when none is bundled. Decorative: callers label the company in text. */
 export function CompanyLogo({ company, className }: { company: string; className?: string }) {
   const mark = MARKS[company];
