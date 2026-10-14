@@ -1,10 +1,11 @@
-import { SquareArrowOutUpRightIcon, XIcon } from "lucide-react";
+import { ChevronLeftIcon, SquareArrowOutUpRightIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "@/components/ui/tooltip";
 import { sessionTitle } from "@/features/agents/format";
 import { openTask } from "@/features/projects/tasks";
 import { TaskView } from "@/features/tasks/TaskView";
-import { HarnessBadge, TaskStatusGlyph } from "./parts/TaskChip";
+import { TaskStatusGlyph } from "./parts/TaskChip";
 import { TASK_STATUS_LABEL, useTaskSession } from "./taskSession";
 
 /**
@@ -17,13 +18,18 @@ export function TaskPane({ taskId, ready, onClose }: { taskId: string; ready: bo
   const title = session ? sessionTitle(session) : "Code task";
   return <section aria-labelledby="side-pane-title" data-slot="task-pane" className="flex h-full min-w-0 flex-col">
     <header className="flex h-10 shrink-0 items-center gap-2 border-b px-3">
-      {session && <TaskStatusGlyph status={session.status} />}
+      <Button type="button" variant="ghost" size="icon-xs" aria-label="Close task pane" onClick={onClose}><ChevronLeftIcon aria-hidden /></Button>
       <h2 id="side-pane-title" tabIndex={-1} className="min-w-0 flex-1 truncate text-sm font-medium outline-none">{title}</h2>
-      {session && <span className="sr-only">{TASK_STATUS_LABEL[session.status]}</span>}
-      {session?.kind && <HarnessBadge kind={session.kind} />}
-      <Button type="button" variant="ghost" size="xs" onClick={() => openTask(taskId)}><SquareArrowOutUpRightIcon aria-hidden />Open in Tasks</Button>
-      <Button type="button" variant="ghost" size="icon-xs" aria-label="Close task" onClick={onClose}><XIcon aria-hidden /></Button>
+      <Tooltip>
+        <TooltipTrigger render={<Button type="button" variant="ghost" size="icon-xs" aria-label="Open task page" onClick={() => openTask(taskId)} />}>
+          <SquareArrowOutUpRightIcon aria-hidden />
+        </TooltipTrigger>
+        <TooltipPopup>Open task page</TooltipPopup>
+      </Tooltip>
     </header>
+    {session && <p data-slot="task-pane-status" className="flex shrink-0 items-center gap-1.5 border-b px-3 py-1.5 text-xs text-muted-foreground">
+      <TaskStatusGlyph status={session.status} />{TASK_STATUS_LABEL[session.status]}
+    </p>}
     <div className="flex min-h-0 flex-1 flex-col">
       {session && ready
         ? <TaskView session={session} />

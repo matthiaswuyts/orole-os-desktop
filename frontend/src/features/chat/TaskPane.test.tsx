@@ -125,7 +125,12 @@ describe("task rows in a bot reply", () => {
     expect(api.sendMessage.mock.calls[0]![0]).toBe("t2");
     expect(api.sendMessage.mock.calls[0]![1]).toBe("Also cover the edge cases");
 
-    fireEvent.click(within(region).getByRole("button", { name: "Close task" }));
+    expect(within(region).queryByText("Open in Tasks")).toBeNull();
+    expect(region.querySelector("[data-slot=harness-badge]")).toBeNull();
+    expect(within(region).getByRole("button", { name: "Open task page" })).toBeInTheDocument();
+    expect(region.querySelector("[data-slot=task-pane-status]")).toHaveTextContent("Working");
+
+    fireEvent.click(within(region).getByRole("button", { name: "Close task pane" }));
     expect(pane()).toBeNull();
     await waitFor(() => expect(screen.queryByRole("region", { name: "Add tests" })).toBeNull());
     expect(screen.getByTestId("conversation")).toBeInTheDocument();
