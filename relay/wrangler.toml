@@ -1,0 +1,11 @@
+name = "orole-jarvis-relay"
+main = "src/index.ts"
+compatibility_date = "2026-08-01"
+
+[[durable_objects.bindings]]
+name = "HUB"
+class_name = "Hub"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["Hub"]

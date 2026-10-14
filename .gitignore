@@ -19,3 +19,7 @@ frontend/playwright-report/
 *.p12
 mygo-update.key
 mygo-update.pub
+
+# cloudflare relay
+relay/node_modules/
+relay/.wrangler/
