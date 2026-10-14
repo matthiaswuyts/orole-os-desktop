@@ -124,7 +124,10 @@ func (m *Manager) VoiceTurn(ctx context.Context, req VoiceRequest) (string, erro
 	if err := m.store.insertMessage(bg, &user); err != nil {
 		return "", err
 	}
-	m.publishCallMessage(user)
+	if !req.Cue {
+		// A cue is stored but never published: the live call pane draws every user message as something the owner said.
+		m.publishCallMessage(user)
+	}
 	asst := Message{ID: newID(), BotID: bot.ID, Role: "assistant", Author: "bot:" + bot.ID, Status: StatusRunning, CreatedAt: m.nowMs(),
 		CallID: req.CallID, Parts: []MsgPart{}}
 	if err := m.store.insertMessage(bg, &asst); err != nil {
@@ -145,6 +148,8 @@ func (m *Manager) VoiceTurn(ctx context.Context, req VoiceRequest) (string, erro
 			req.OnText(t)
 		}
 	}
+	// Cue turns deliberately keep Author "user" (the owner is on the line). The cue text is also the memory Recall query,
+	// so cue texts stay short and instruction-like.
 	rc := RunContext{BotID: bot.ID, Bot: bot, MessageID: asst.ID, Actor: "bot:" + bot.ID, Author: "user", CallID: req.CallID, Emit: s.upsertTool}
 	hist := make([]Message, 0, len(req.History))
 	for _, l := range req.History {

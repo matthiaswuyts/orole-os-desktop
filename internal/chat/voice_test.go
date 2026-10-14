@@ -570,17 +570,25 @@ func TestCueTurnIsHiddenFromTheTranscriptButInModelHistory(t *testing.T) {
 	if tail.msgs[2].Author != "user" {
 		t.Errorf("a normal utterance was stored with author %q", tail.msgs[2].Author)
 	}
-	cues := 0
+	var streamed bool
 	for _, r := range e.rec.all() {
-		if m, ok := r.payload.(Message); ok && r.event == "chat.message" && m.CallID != "" {
+		m, ok := r.payload.(Message)
+		if !ok {
+			continue
+		}
+		if r.event == "chat.message" && m.CallID != "" {
 			t.Fatalf("cue published as chat.message: %+v", m)
 		}
-		if m, ok := r.payload.(Message); ok && r.event == "chat.call.message" && m.Author == cueAuthor {
-			cues++
+		// The live call pane draws every user message as the owner's words: the cue must never be published.
+		if r.event == "chat.call.message" && (m.Author == cueAuthor || messageText(m.Parts) == cue) {
+			t.Fatalf("cue published as chat.call.message: %+v", m)
+		}
+		if r.event == "chat.call.message" && m.Role == "assistant" && replyText(m) == "Hi, Atlas here." {
+			streamed = true
 		}
 	}
-	if cues == 0 {
-		t.Error("the cue was not published as chat.call.message")
+	if !streamed {
+		t.Error("the reply to the cue was not published as chat.call.message")
 	}
 
 	// The model still sees it.
