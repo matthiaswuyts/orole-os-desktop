@@ -235,6 +235,27 @@ The voice model choices are a curated list in `internal/jarvis/elevenlabs.go` (`
 for calls; v3 Conversational; Turbo v2.5, older; the first two name Dutch support), filtered to what the account's `/v1/models` offers. Voices carry
 ElevenLabs' description, or one built from their labels. The UI picker is `frontend/src/features/jarvis/VoicePicker.tsx`.
 
+**Voices per call language** (`internal/jarvis/voices.go`). `jarvis.voices {language}` (empty = the chosen call
+language; `auto` lists Dutch) returns `{language, groups: [{label, voices}], library}`; each voice carries `id`,
+`publicOwnerId` (Voice Library voices), `name`, `description`, `accent`, `gender`, `age`, `previewUrl` and `inLibrary`.
+Sources are ElevenLabs' Voice Library (`GET /v1/shared-voices`, sorted by `usage_character_count_1y`) and the account's
+own voices (`GET /v1/voices`, returned as `library` to name a stored voice outside the groups):
+
+- Dutch: shared voices with `language=nl`, plus a best-effort `locale=nl-BE` query so Flemish voices appear. Grouped by
+  the voice's Dutch locale or accent (from its `verified_languages` entry for `nl` when present): "Standaard
+  Nederlands" (nl-NL, a standard or no accent), "Vlaams" (nl-BE, Flemish or Belgian accent), "Andere" (anything else).
+  Conversational voices first, then featured, then most used; at most 12 per group.
+- English: one group "Best for calls": the account's premade voices labelled conversational, then up to 15 shared
+  voices with `language=en` and `use_cases=conversational` (featured first).
+
+Lists are cached in the daemon for 10 minutes per language; saving a new ElevenLabs key clears the cache.
+`jarvis.voices.add {voiceId, publicOwnerId}` runs when the owner picks a voice that is not in their library: the
+daemon checks the library itself, adds a Voice Library voice with `POST /v1/voices/add/{public_user_id}/{voice_id}`
+(`new_name` = the voice's name) and returns the id to store (audit `jarvis.voice.add`). ElevenLabs documents adding
+shared voices but not using one directly by id in an agent, so the daemon always adds before storing. Each option has
+a preview button that plays the voice's public `preview_url` clip in the app (one clip at a time; the app sets no
+content security policy, so the ElevenLabs CDN needs no allowance).
+
 | Credential key (`internal/credentials`) | Holds | Set by |
 |---|---|---|
 | `jarvis/twilio/sid`, `jarvis/twilio/token` | Twilio account SID and auth token | Settings > Phone |
@@ -310,4 +331,4 @@ the in-flight request.
 
 `jarvis.enable.checked`, `jarvis.disabled`, `jarvis.call.started`, `jarvis.call.ended`, `jarvis.inbound.rejected`,
 `jarvis.rule.add`, `jarvis.rule.delete`, `jarvis.secrets.set`, `jarvis.relay.secrets`, `jarvis.configure`,
-`jarvis.verify.started`, `jarvis.webhook.orphaned`. Values of secrets are never recorded.
+`jarvis.verify.started`, `jarvis.webhook.orphaned`, `jarvis.voice.add`. Values of secrets are never recorded.
