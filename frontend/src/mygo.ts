@@ -400,6 +400,16 @@ export interface CallResult {
   untrusted: boolean;
 }
 
+/**
+ * CallTranscript is the jarvis.calls.transcript result: one call and its spoken turns in order (the owner's
+ * utterances and the bot's replies, with their tool parts). Owner-only data; it never carries a secret or the
+ * provider ids.
+ */
+export interface CallTranscript {
+  call: CallRecord;
+  messages: Message[];
+}
+
 export interface Capabilities {
   canFolders: boolean;
   canList: boolean;
@@ -1733,6 +1743,12 @@ export interface Message {
    * error, canceled); 0 while it is pending or running, or for messages from before it was recorded.
    */
   finishedAt?: number;
+  /**
+   * CallID marks a spoken turn of a phone call (the owner's utterance or the bot's reply). Such messages stay in the
+   * bot's history and memory but never reach the chat UI: paging, previews and chat.message events skip them, and
+   * they are read through the call transcript (chat.call.message events while the call is live). "" otherwise.
+   */
+  callId?: string;
 }
 
 /**
@@ -3869,9 +3885,6 @@ export const Jarvis = {
   models(): Promise<TTSModel[]> {
     return call("Jarvis.Models");
   },
-  recentCalls(botID: string): Promise<CallRecord[]> {
-    return call("Jarvis.RecentCalls", botID);
-  },
   rules(botID: string): Promise<JarvisRule[]> {
     return call("Jarvis.Rules", botID);
   },
@@ -3886,6 +3899,10 @@ export const Jarvis = {
   },
   testCall(botID: string): Promise<string> {
     return call("Jarvis.TestCall", botID);
+  },
+  /** Transcript returns a phone call and its spoken turns, which the chat timeline does not show. */
+  transcript(callID: string): Promise<CallTranscript> {
+    return call("Jarvis.Transcript", callID);
   },
   voices(): Promise<Voice[]> {
     return call("Jarvis.Voices");
@@ -4710,6 +4727,12 @@ export const events = {
   chatMessage: event<Message>("chat:message"),
   /** ChatMessageDelta carries text appended to a streaming message between full chat:message snapshots. */
   chatMessageDelta: event<MessageDelta>("chat:message-delta"),
+  /**
+   * ChatCallMessage and ChatCallDelta carry the spoken turns of a phone call (Message.CallID set) for the call
+   * pane; the chat timeline never receives them.
+   */
+  chatCallMessage: event<Message>("chat:call-message"),
+  chatCallDelta: event<MessageDelta>("chat:call-delta"),
   chatRun: event<RunState>("chat:run"),
   chatBot: event<BotChange>("chat:bot"),
   chatMemory: event<MemoryChange>("chat:memory"),

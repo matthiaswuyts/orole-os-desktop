@@ -18,3 +18,11 @@ func TestForwardJarvis(t *testing.T) {
 		}
 	}
 }
+
+func TestForwardChatRoutesCallEvents(t *testing.T) {
+	for _, ev := range []string{"chat.call.message", "chat.call.delta"} {
+		if !forwardChat(ev, json.RawMessage(`{"callId":"c1"}`)) {
+			t.Fatalf("%q must be routed", ev)
+		}
+	}
+}

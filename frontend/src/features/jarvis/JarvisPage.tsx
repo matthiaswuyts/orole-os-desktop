@@ -8,15 +8,12 @@ import { LIMITS, validate, type FormState } from "@/features/chat/builder/botFor
 import { ControlRow, Group, SwitchRow } from "@/features/chat/panel/rows";
 import type { AgentsSetting } from "@/features/settings/AgentSafetySettings";
 import { inDesktop } from "@/lib/backend";
-import { Jarvis, Settings, type Bot, type CallRecord, type JarvisRule, type TTSModel, type Voice } from "@/mygo";
+import { Jarvis, Settings, type Bot, type JarvisRule, type TTSModel, type Voice } from "@/mygo";
 import { useUI } from "@/stores/ui";
-import { CallCard, callPart } from "./CallCard";
 import { describeRule } from "./describe";
 import { jarvisGate } from "./gate";
 import { phoneReady, useJarvis } from "./store";
 import { ModelPicker, VoicePicker } from "./VoicePicker";
-
-const RECENT_CALLS = 5;
 
 function Note({ children, alert }: { children: React.ReactNode; alert?: boolean }) {
   return <p role={alert ? "alert" : undefined} className="selectable break-words px-1 text-muted-foreground text-xs">{children}</p>;
@@ -24,7 +21,7 @@ function Note({ children, alert }: { children: React.ReactNode; alert?: boolean 
 
 /**
  * A bot's phone calls: Jarvis mode (the bot may phone the owner and take their calls), when to call, the voice, the
- * call rules the bot has set up for itself, and recent calls. Needs phone setup first and, to switch on, a bot with
+ * call rules the bot has set up for itself, and a test call. Past calls are cards in the bot's chat. Needs phone setup first and, to switch on, a bot with
  * full permissions: calls have no approval prompt. The gate shown here only mirrors the daemon's; the daemon checks again on save.
  */
 export function JarvisPage({ bot, form, patch, onOpenPermissions }: { bot: Bot; form: FormState; patch: (p: Partial<FormState>) => void; onOpenPermissions?: () => void }) {
@@ -39,7 +36,6 @@ export function JarvisPage({ bot, form, patch, onOpenPermissions }: { bot: Bot; 
 
   const [agents, setAgents] = useState<AgentsSetting | null>(null);
   const [rules, setRules] = useState<JarvisRule[] | null>(null);
-  const [calls, setCalls] = useState<CallRecord[]>([]);
   const [voices, setVoices] = useState<Voice[]>([]);
   const [models, setModels] = useState<TTSModel[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -58,9 +54,7 @@ export function JarvisPage({ bot, form, patch, onOpenPermissions }: { bot: Bot; 
   const refresh = useCallback(async () => {
     if (!inDesktop) return;
     try {
-      const [nextRules, nextCalls] = await Promise.all([Jarvis.rules(bot.id), Jarvis.recentCalls(bot.id)]);
-      setRules(nextRules);
-      setCalls(nextCalls.slice(0, RECENT_CALLS));
+      setRules(await Jarvis.rules(bot.id));
     } catch (failure) {
       setError(errText(failure));
     }
@@ -105,7 +99,6 @@ export function JarvisPage({ bot, form, patch, onOpenPermissions }: { bot: Bot; 
     setTestResult(null);
     try {
       setTestResult(await Jarvis.testCall(bot.id));
-      void refresh();
     } catch (failure) {
       setError(errText(failure));
     } finally {
@@ -160,9 +153,7 @@ export function JarvisPage({ bot, form, patch, onOpenPermissions }: { bot: Bot; 
           })}
     </Group>
 
-    <Group title="Recent calls">
-      {calls.length === 0 ? <p className="px-3 py-2 text-muted-foreground text-xs">No calls yet.</p>
-        : <div className="flex flex-col gap-1.5 p-2">{calls.map((call) => <CallCard key={call.id} part={callPart(call)} />)}</div>}
+    <Group title="Test call">
       <div className="flex items-center gap-2 px-3 py-2">
         <Button type="button" variant="outline" size="sm" disabled={!form.jarvisEnabled || !ready || testing} onClick={() => void testCall()}><PhoneCallIcon aria-hidden />Test call</Button>
         {testResult && <span className="selectable min-w-0 break-words text-muted-foreground text-xs">{testResult}</span>}

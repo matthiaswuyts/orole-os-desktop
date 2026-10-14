@@ -710,8 +710,9 @@ func (s *Service) DeleteRule(ctx context.Context, id string) error {
 	return err
 }
 
-func (s *Service) RecentCalls(ctx context.Context, botID string) ([]CallRecord, error) {
-	return s.store.RecentCalls(ctx, botID, 20)
+// Call returns one call record (ErrNotFound when there is none).
+func (s *Service) Call(ctx context.Context, id string) (CallRecord, error) {
+	return s.store.GetCall(ctx, id)
 }
 
 func (s *Service) SwitchBot(ctx context.Context, callID, name string) (string, error) {

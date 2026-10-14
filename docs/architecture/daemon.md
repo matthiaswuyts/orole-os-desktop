@@ -96,7 +96,7 @@ need not be open for calls.
 | `jarvis.verify.start` / `.confirm` | place the code call to a number / enter the six digits |
 | `jarvis.voices` / `jarvis.models` | ElevenLabs voices and TTS models for the pickers |
 | `jarvis.rules.list` / `.delete` | `{botId}` / `{id}` |
-| `jarvis.calls.recent` | `{botId}` -> last 20 `CallRecord`s |
+| `jarvis.calls.transcript` | `{callId}` -> `CallTranscript{call, messages}`: one call and its spoken turns in order (hidden from the chat timeline) |
 | `jarvis.call.test` | `{botId}` -> places a test call (caps apply; quiet hours and cool-down do not) |
 
 Event `jarvis.changed` carries the `StatusView` when the relay connects or drops, a call starts or ends, or settings and

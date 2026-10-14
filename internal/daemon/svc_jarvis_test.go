@@ -2,9 +2,11 @@ package daemon
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -325,5 +327,51 @@ func TestJarvisOverIPC(t *testing.T) {
 	var rules []jarvis.JarvisRule
 	if err := c.Call(ctx, "jarvis.rules.list", map[string]string{"botId": ""}, &rules); err != nil || len(rules) != 0 {
 		t.Fatalf("rules %v err=%v", rules, err)
+	}
+}
+
+func TestJarvisCallTranscriptOverIPC(t *testing.T) {
+	d := jarvisDaemon(t)
+	c := dialDaemon(t, d)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	b, err := d.Chat.SaveBot(ctx, chat.BotInput{Name: "Atlas"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.DB.Exec(`INSERT INTO jarvis_calls(id,bot_id,direction,status,conversation_id,started_at,created_at)
+		VALUES('call1',?,'outbound','completed','conv-secret',1000,1000)`, b.ID); err != nil {
+		t.Fatal(err)
+	}
+	for i, m := range []struct{ role, text, call string }{
+		{"user", "typed", ""}, {"user", "hello there", "call1"}, {"assistant", "hi, all good", "call1"}, {"user", "other call", "call2"},
+	} {
+		if _, err := d.DB.Exec(`INSERT INTO messages(id,bot_id,seq,role,author,parts,status,created_at,text,call_id)
+			VALUES(?,?,?,?,?,?,'complete',?,?,?)`, "m"+strconv.Itoa(i), b.ID, i+1, m.role, "user",
+			`[{"type":"text","text":"`+m.text+`"}]`, 2000+i, m.text, m.call); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var raw json.RawMessage
+	if err := c.Call(ctx, "jarvis.calls.transcript", map[string]string{"callId": "call1"}, &raw); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "conv-secret") {
+		t.Fatal("transcript leaks the provider conversation id")
+	}
+	var tr jarvis.CallTranscript
+	if err := json.Unmarshal(raw, &tr); err != nil {
+		t.Fatal(err)
+	}
+	if tr.Call.ID != "call1" || len(tr.Messages) != 2 || tr.Messages[0].Text() != "hello there" || tr.Messages[1].Text() != "hi, all good" || tr.Messages[1].CallID != "call1" {
+		t.Fatalf("transcript %+v", tr)
+	}
+	var page chat.MessagePage
+	if err := c.Call(ctx, "chat.messages.list", chat.MessagesRequest{BotID: b.ID}, &page); err != nil || len(page.Messages) != 1 {
+		t.Fatalf("chat page %+v err=%v", page, err)
+	}
+	var ie *ipc.Error
+	if err := c.Call(ctx, "jarvis.calls.transcript", map[string]string{"callId": "nope"}, &raw); !errors.As(err, &ie) || ie.Code != ipc.CodeNotFound {
+		t.Fatalf("missing call: %v", err)
 	}
 }

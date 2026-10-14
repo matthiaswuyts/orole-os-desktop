@@ -152,23 +152,6 @@ func (s *Store) GetCall(ctx context.Context, id string) (CallRecord, error) {
 	return scanCall(s.db.QueryRowContext(ctx, `SELECT `+callCols+` FROM jarvis_calls WHERE id=?`, id))
 }
 
-func (s *Store) RecentCalls(ctx context.Context, botID string, limit int) ([]CallRecord, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT `+callCols+` FROM jarvis_calls WHERE (?='' OR bot_id=?) ORDER BY created_at DESC LIMIT ?`, botID, botID, limit)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []CallRecord
-	for rows.Next() {
-		c, err := scanCall(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, c)
-	}
-	return out, rows.Err()
-}
-
 // CallsSince counts placed calls (inbound and outbound, any status except rejected) created at or after ms.
 func (s *Store) CallsSince(ctx context.Context, ms int64) (int, int64, error) {
 	var n int

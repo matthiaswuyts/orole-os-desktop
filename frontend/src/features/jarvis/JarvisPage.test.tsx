@@ -1,11 +1,11 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
-const api = vi.hoisted(() => ({ rules: vi.fn(), deleteRule: vi.fn(), recentCalls: vi.fn(), testCall: vi.fn(), voices: vi.fn(), models: vi.fn(), all: vi.fn(), openSettings: vi.fn() }));
+const api = vi.hoisted(() => ({ rules: vi.fn(), deleteRule: vi.fn(), testCall: vi.fn(), voices: vi.fn(), models: vi.fn(), all: vi.fn(), openSettings: vi.fn() }));
 vi.mock("@/lib/backend", () => ({ inDesktop: true }));
 vi.mock("@/stores/ui", () => ({ useUI: { getState: () => ({ openSettings: api.openSettings }) } }));
 vi.mock("@/mygo", () => ({
-  Jarvis: { rules: api.rules, deleteRule: api.deleteRule, recentCalls: api.recentCalls, testCall: api.testCall, voices: api.voices, models: api.models, status: vi.fn() },
+  Jarvis: { rules: api.rules, deleteRule: api.deleteRule, testCall: api.testCall, voices: api.voices, models: api.models, status: vi.fn() },
   Settings: { all: api.all },
   events: { jarvisChanged: { on: () => () => undefined } },
 }));
@@ -21,7 +21,6 @@ const full = { ...initialForm(), codeTasks: true, toolAccess: "all", taskPermiss
 beforeEach(() => {
   vi.clearAllMocks();
   api.rules.mockResolvedValue([{ id: "r1", botId: "b1", trigger: "task_failed", target: "any", repeat: true, urgent: false, quietOverride: false, note: "", createdAt: 1 }]);
-  api.recentCalls.mockResolvedValue([]);
   api.voices.mockResolvedValue([{ id: "v1", name: "Rachel", description: "Calm" }]);
   api.models.mockResolvedValue([{ id: "eleven_flash_v2_5", name: "Flash v2.5", description: "Fast.", recommended: true }]);
   api.all.mockResolvedValue({ agents: { botYolo: true } });
@@ -45,6 +44,8 @@ it("keeps the switch and rules while the relay is down; only the test call waits
   expect(await screen.findByText("When any task I start fails")).toBeInTheDocument();
   expect(screen.getByText(/relay is not connected/)).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Test call" })).toBeDisabled();
+  // Past calls are cards in the bot's chat; this page lists none.
+  expect(screen.queryByText("Recent calls")).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole("switch", { name: "Jarvis mode" }));
   expect(patch).toHaveBeenCalledWith({ jarvisEnabled: false });
 });

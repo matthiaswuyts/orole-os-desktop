@@ -74,9 +74,10 @@ func (s Jarvis) DeleteRule(ctx context.Context, id string) error {
 	return s.L.call(ctx, "jarvis.rules.delete", map[string]string{"id": id}, nil)
 }
 
-func (s Jarvis) RecentCalls(ctx context.Context, botID string) ([]jarvis.CallRecord, error) {
-	var out []jarvis.CallRecord
-	return out, s.L.call(ctx, "jarvis.calls.recent", map[string]string{"botId": botID}, &out)
+// Transcript returns a phone call and its spoken turns, which the chat timeline does not show.
+func (s Jarvis) Transcript(ctx context.Context, callID string) (jarvis.CallTranscript, error) {
+	var out jarvis.CallTranscript
+	return out, s.L.call(ctx, "jarvis.calls.transcript", map[string]string{"callId": callID}, &out)
 }
 
 func (s Jarvis) TestCall(ctx context.Context, botID string) (string, error) {

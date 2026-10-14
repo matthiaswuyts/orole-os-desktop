@@ -471,14 +471,10 @@ func (d *Daemon) registerJarvis() {
 		d.jarvisChanged()
 		return none{}, nil
 	})
-	handle(d, "jarvis.calls.recent", func(ctx context.Context, p struct {
-		BotID string `json:"botId"`
-	}) ([]jarvis.CallRecord, error) {
-		cs, err := d.Jarvis.RecentCalls(ctx, p.BotID)
-		if cs == nil {
-			cs = []jarvis.CallRecord{}
-		}
-		return cs, err
+	handle(d, "jarvis.calls.transcript", func(ctx context.Context, p struct {
+		CallID string `json:"callId"`
+	}) (jarvis.CallTranscript, error) {
+		return d.jarvisTranscript(ctx, p.CallID)
 	})
 	handle(d, "jarvis.call.test", func(ctx context.Context, p struct {
 		BotID string `json:"botId"`
@@ -502,4 +498,23 @@ func secretNames(p jarvis.SecretsInput) string {
 		names = append(names, "elevenlabs key")
 	}
 	return strings.Join(names, ", ")
+}
+
+// jarvisTranscript returns a call and its spoken turns, which the chat timeline hides (chat.Message.CallID).
+func (d *Daemon) jarvisTranscript(ctx context.Context, callID string) (jarvis.CallTranscript, error) {
+	if callID == "" {
+		return jarvis.CallTranscript{}, &ipc.Error{Code: ipc.CodeBadRequest, Message: "A call id is required."}
+	}
+	c, err := d.Jarvis.Call(ctx, callID)
+	if errors.Is(err, jarvis.ErrNotFound) {
+		return jarvis.CallTranscript{}, &ipc.Error{Code: ipc.CodeNotFound, Message: "That call was not found."}
+	}
+	if err != nil {
+		return jarvis.CallTranscript{}, err
+	}
+	msgs, err := d.Chat.CallMessages(ctx, c.ID)
+	if err != nil {
+		return jarvis.CallTranscript{}, err
+	}
+	return jarvis.CallTranscript{Call: c, Messages: msgs}, nil
 }

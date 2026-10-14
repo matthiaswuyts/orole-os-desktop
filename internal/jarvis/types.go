@@ -3,6 +3,8 @@
 // outbound WebSocket to a relay, so the daemon never listens on a network interface.
 package jarvis
 
+import "github.com/rayorole/orole-os-desktop/internal/chat"
+
 type JarvisTrigger string
 
 const (
@@ -67,6 +69,14 @@ type CallRecord struct {
 	EndedAt        int64  `json:"endedAt,omitempty"`
 	EstCostMicros  int64  `json:"estCostMicros"`
 	CreatedAt      int64  `json:"createdAt"`
+}
+
+// CallTranscript is the jarvis.calls.transcript result: one call and its spoken turns in order (the owner's
+// utterances and the bot's replies, with their tool parts). Owner-only data; it never carries a secret or the
+// provider ids.
+type CallTranscript struct {
+	Call     CallRecord     `json:"call"`
+	Messages []chat.Message `json:"messages"`
 }
 
 // PhoneSettings is the plain (non-secret) global configuration, stored as JSON under settings key "jarvis".
