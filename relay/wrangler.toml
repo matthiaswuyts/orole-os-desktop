@@ -1,6 +1,9 @@
 name = "orole-jarvis-relay"
 main = "src/index.ts"
 compatibility_date = "2026-08-01"
+# Served only on the custom domain; the workers.dev URL is switched off.
+workers_dev = false
+routes = [{ pattern = "call-relay.orole.be", custom_domain = true }]
 
 [[durable_objects.bindings]]
 name = "HUB"
