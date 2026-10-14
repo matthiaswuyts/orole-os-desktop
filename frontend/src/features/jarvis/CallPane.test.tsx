@@ -187,7 +187,7 @@ it("draws cues as nothing and any other author as a collapsed item with its labe
   t.messages.push(from("cue", "q1", 3, "Tell the owner the build is done."), from("automation:a1", "x1", 4, "Nightly backup finished."), from("", "e1", 5, "Plain words."));
   api.transcript.mockResolvedValueOnce(t);
   render(<CallPane callId="c1" botId="b1" onClose={vi.fn()} />);
-  expect(await screen.findByText("Message from automation:a1")).toBeInTheDocument();
+  expect(await screen.findByText("From an automation")).toBeInTheDocument();
   expect(screen.queryByText(/Tell the owner/)).toBeNull();
   const generic = document.querySelector("[data-slot=call-followup]")!;
   expect(generic.querySelector("details")!.open).toBe(false);
@@ -196,6 +196,28 @@ it("draws cues as nothing and any other author as a collapsed item with its labe
   expect(screen.getByText("Plain words.").closest("[data-slot=chat-user]")).not.toBeNull();
   // The cue gets no (empty) list item: the owner's line, the bot's, the automation's and the plain words remain.
   expect(within(screen.getByRole("list", { name: "Transcript" })).getAllByRole("listitem")).toHaveLength(4);
+});
+
+it("labels a follow-up written by a bot with that bot's name, or generically when it is unknown or unnamed", async () => {
+  const t = transcript();
+  t.messages.push(from("bot:b2", "x1", 3, "Nova here."), from("bot:gone", "x2", 4, "Who?"), from("system", "x3", 5, "Something else."));
+  api.transcript.mockResolvedValueOnce(t);
+  render(<CallPane callId="c1" botId="b1" onClose={vi.fn()} />);
+  expect(await screen.findByText("From Nova")).toBeInTheDocument();
+  expect(screen.getByText("From another bot")).toBeInTheDocument();
+  expect(screen.getByText("Message")).toBeInTheDocument();
+  expect(document.querySelectorAll("[data-slot=call-followup]")).toHaveLength(3);
+});
+
+it("renders a code task update's text as markdown", async () => {
+  const t = transcript();
+  t.messages.push(from("task:t42", "k1", 3, "Result:\n\n- **12** tests pass\n- `go vet` clean"));
+  api.transcript.mockResolvedValueOnce(t);
+  render(<CallPane callId="c1" botId="b1" onClose={vi.fn()} />);
+  const update = (await screen.findByText("Code task update")).closest("[data-slot=call-task-update]") as HTMLElement;
+  expect(update.querySelectorAll("li")).toHaveLength(2);
+  expect(update.querySelector("strong")).toHaveTextContent("12");
+  expect(update.querySelector("code")).toHaveTextContent("go vet");
 });
 
 it("shows follow-ups that arrive after the call ended and keeps the call ended", async () => {

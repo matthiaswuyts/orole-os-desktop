@@ -1,5 +1,6 @@
 import { ChevronLeftIcon, CodeIcon, MessageSquareIcon, UsersIcon, WrenchIcon } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import { Markdown } from "@/components/Markdown";
 import { Button } from "@/components/ui/button";
 import { errText } from "@/features/agents/format";
 import { Bubble } from "@/features/chat/parts/Bubble";
@@ -154,14 +155,18 @@ function Incoming({ message, bots }: { message: Message; bots: readonly Bot[] })
   if (author.startsWith("task:")) {
     const taskId = author.slice(5);
     return <FollowUp slot="call-task-update" icon={<CodeIcon aria-hidden className="size-4 shrink-0" />} label="Code task update" text={text}
-      action={taskId && <button type="button" data-slot="call-task-open" onClick={() => useChat.getState().openTaskPane(taskId)}
-        className="mt-1.5 w-fit rounded-md text-xs text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring">Open the task</button>} />;
+      action={taskId && <Button type="button" variant="ghost" size="xs" data-slot="call-task-open" className="mt-1.5 w-fit text-muted-foreground hover:text-foreground"
+        onClick={() => useChat.getState().openTaskPane(taskId)}>Open the task</Button>} />;
   }
-  const from = author.startsWith("bot:") ? bots.find((b) => b.id === author.slice(4))?.name ?? "Another bot" : author;
-  return <FollowUp slot="call-followup" icon={<MessageSquareIcon aria-hidden className="size-4 shrink-0" />} label={`Message from ${from}`} text={text} />;
+  const label = author.startsWith("automation:") ? "From an automation"
+    : author.startsWith("bot:") ? `From ${bots.find((b) => b.id === author.slice(4))?.name ?? "another bot"}` : "Message";
+  return <FollowUp slot="call-followup" icon={<MessageSquareIcon aria-hidden className="size-4 shrink-0" />} label={label} text={text} />;
 }
 
-/** A compact collapsed item for input that reached the bot after the words were spoken; the text opens on click, like the main chat's report card. */
+/**
+ * A compact collapsed item for input that reached the bot after the words were spoken; the text opens on click, like the
+ * main chat's report card. The text is rendered as markdown (a task's result is markdown) by the same component as bot replies.
+ */
 function FollowUp({ slot, icon, label, text, action }: { slot: string; icon: ReactNode; label: string; text: string; action?: ReactNode }) {
   return <div data-slot={slot} className="flex w-full min-w-0 flex-col rounded-xl border bg-card/50 px-3 py-2">
     <details className="group">
@@ -170,7 +175,7 @@ function FollowUp({ slot, icon, label, text, action }: { slot: string; icon: Rea
         <span className="min-w-0 flex-1 truncate">{label}</span>
         <span className="group-open:hidden">Show</span><span className="hidden group-open:inline">Hide</span>
       </summary>
-      <p className="selectable mt-2 min-w-0 whitespace-pre-wrap break-words border-s-2 ps-3 text-sm leading-relaxed">{text}</p>
+      <div className="mt-2 min-w-0 border-s-2 ps-3"><Markdown>{text}</Markdown></div>
     </details>
     {action}
   </div>;
