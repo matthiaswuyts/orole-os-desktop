@@ -1,7 +1,8 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, it } from "vitest";
 import type { TTSModel, Voice } from "@/mygo";
-import { ModelPicker, VoicePicker, voiceGradient } from "./VoicePicker";
+import { ModelPicker, VoicePicker } from "./VoicePicker";
+import { voiceGradient } from "./voices";
 
 afterEach(cleanup);
 
