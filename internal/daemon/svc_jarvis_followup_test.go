@@ -44,7 +44,7 @@ func TestTaskFollowUpOfAnEndedCallIsAnnouncedByJarvis(t *testing.T) {
 	}
 	d.reportToOwner(events.TopicAgentFailed, agents.Session{ID: "t1", Title: "Fix login", Kind: "claude", Status: agents.StatusFailed,
 		Error: "boom", Owner: chat.BotPrefix + b.ID, CallID: "call-gone"})
-	n := awaitNotice(t, d, "Fix login reported back")
+	n := awaitNotice(t, d, "Fix login failed")
 	if n.Body != "From your call with Atlas. Open the call to read it." || n.Target != "bot:"+b.ID || n.Level != notifications.Info || n.Source != jarvisSource {
 		t.Fatalf("notice %+v", n)
 	}

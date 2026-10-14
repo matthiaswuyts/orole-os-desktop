@@ -61,8 +61,18 @@ func TestBotReportedRule(t *testing.T) {
 	if len(got) != 1 || got[0].ID != r.ID || got[0].Trigger != BotReported || got[0].Target != "Nova" {
 		t.Fatalf("stored %+v", got)
 	}
-	if _, err := s.AddRule(ctx, JarvisRule{BotID: "b1", Trigger: BotReported, Target: ""}); err == nil {
-		t.Error("accepted a bot_reported rule without a target")
+	for _, target := range []string{"", "   ", "\t\n"} {
+		if _, err := s.AddRule(ctx, JarvisRule{BotID: "b1", Trigger: BotReported, Target: target}); err == nil {
+			t.Errorf("accepted a bot_reported rule with target %q", target)
+		}
+	}
+	// A bot's name is stored without the spaces around it, or it would never match.
+	padded, err := s.AddRule(ctx, JarvisRule{BotID: "b1", Trigger: BotReported, Target: "  Atlas \n"})
+	if err != nil || padded.Target != "Atlas" {
+		t.Fatalf("padded target: %+v %v", padded, err)
+	}
+	if got, _ := s.Rules(ctx, "b1"); len(got) != 2 || got[1].Target != "Atlas" {
+		t.Fatalf("stored %+v", got)
 	}
 }
 

@@ -597,7 +597,12 @@ func (s *Service) OnEvent(ev Event) {
 //     thread, which raises no chat notification.
 func (s *Service) OnFollowUp(f chat.FollowUp) bool {
 	rec, live := s.calls.Active()
-	told := live && (rec.BotID == f.BotID || f.CallID == rec.ID) && s.calls.Inject(rec.ID, f.From, f.Status+": "+f.Text)
+	from, news := f.From, f.Status+": "+f.Text // a callee bot's name is the owner's; the text is its report
+	if f.Kind == chat.FollowUpTask {
+		// A task's title is written by a bot: it goes into the fenced news, never into the label.
+		from, news = taskNewsFrom, followUpPhrase(f)+": "+f.Text
+	}
+	told := live && (rec.BotID == f.BotID || f.CallID == rec.ID) && s.calls.Inject(rec.ID, from, news)
 	onCall := told && f.CallID == rec.ID
 	if f.CallID != "" && !onCall {
 		s.noticeEndedCall(f) // the call it was started on is not live: it ended
@@ -615,6 +620,37 @@ func (s *Service) OnFollowUp(f chat.FollowUp) bool {
 	return onCall
 }
 
+// taskNewsFrom labels news from a code task on a call.
+const taskNewsFrom = "A code task"
+
+// followUpPhrase says what happened to the work a follow-up is about, with the work's name in front for a task:
+// "complete" for a report, and for a task "Fix login finished", "Fix login failed" or "Fix login is waiting for you".
+func followUpPhrase(f chat.FollowUp) string {
+	if f.Kind != chat.FollowUpTask {
+		return f.Status
+	}
+	what := f.Status
+	if f.Status == "waiting" {
+		what = "is waiting for you"
+	}
+	return clipRunes(strings.Join(strings.Fields(f.From), " "), maxTitle) + " " + what
+}
+
+// followUpTitle is the notification title of a follow-up of a call that has ended: the name of the bot or task, and
+// how it went unless it went well.
+func followUpTitle(f chat.FollowUp) string {
+	from := clipRunes(strings.Join(strings.Fields(f.From), " "), maxTitle)
+	switch f.Status {
+	case "failed":
+		return from + " failed"
+	case "stopped":
+		return from + " stopped"
+	case "waiting":
+		return from + " is waiting for you"
+	}
+	return from + " reported back" // complete, finished
+}
+
 // noticeEndedCall tells the owner that work started on a call that has ended came back; its answer is in the call.
 func (s *Service) noticeEndedCall(f chat.FollowUp) {
 	if !s.track() {
@@ -627,7 +663,7 @@ func (s *Service) noticeEndedCall(f chat.FollowUp) {
 		if b, err := s.cfg.Host.Bot(ctx, f.BotID); err == nil && b.Name != "" {
 			who = b.Name
 		}
-		s.cfg.Host.Notify(clipRunes(f.From, maxTitle)+" reported back", "From your call with "+who+". Open the call to read it.", "bot:"+f.BotID, "info")
+		s.cfg.Host.Notify(followUpTitle(f), "From your call with "+who+". Open the call to read it.", "bot:"+f.BotID, "info")
 	}()
 }
 

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -37,10 +38,14 @@ func validateRule(r JarvisRule) error {
 	if r.Trigger == AtTime && !hhmm.MatchString(r.Target) {
 		return errors.New("A time rule needs a time like 08:30.")
 	}
-	if r.Trigger != AtTime && r.Target == "" {
+	target := r.Target
+	if r.Trigger == BotReported {
+		target = strings.TrimSpace(target)
+	}
+	if r.Trigger != AtTime && target == "" {
 		return errors.New("A rule needs a target id or \"any\".")
 	}
-	if len(r.Target) > 200 || len(r.Note) > 280 {
+	if len(target) > 200 || len(r.Note) > 280 {
 		return errors.New("The rule's target or note is too long.")
 	}
 	return nil
@@ -49,6 +54,9 @@ func validateRule(r JarvisRule) error {
 func (s *Store) AddRule(ctx context.Context, r JarvisRule) (JarvisRule, error) {
 	if err := validateRule(r); err != nil {
 		return JarvisRule{}, err
+	}
+	if r.Trigger == BotReported {
+		r.Target = strings.TrimSpace(r.Target) // a bot's name; stray spaces would never match
 	}
 	r.ID = uuid.NewString()
 	r.CreatedAt = s.now().UnixMilli()
