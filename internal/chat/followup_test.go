@@ -426,3 +426,26 @@ func TestCallFollowUpBehindAChatTurnStaysOutOfChatRun(t *testing.T) {
 		t.Fatalf("chat.run: %+v", runs)
 	}
 }
+
+// A worker the chat was never told about counts as running for a chat message queued behind it even before it pops its
+// first turn (its cancel func is still nil then), so the chat offers Stop at once.
+func TestChatMessageAnnouncesAWorkerThatHasNotStartedYet(t *testing.T) {
+	e := newEnv(t, nil)
+	b := e.bot("Coder")
+	// A worker about to answer a call follow-up: registered, nothing popped yet. Nothing runs it in this test.
+	st := &runState{done: make(chan struct{}), wake: make(chan struct{}, 1), queue: []turn{{callID: "call-8"}}}
+	e.m.mu.Lock()
+	e.m.runs[b.ID] = st
+	e.m.mu.Unlock()
+	t.Cleanup(func() {
+		e.m.mu.Lock()
+		delete(e.m.runs, b.ID)
+		e.m.mu.Unlock()
+	})
+	if msg := e.send(b.ID, "hello"); msg.Status != StatusPending {
+		t.Fatalf("the message must wait behind the worker: %+v", msg)
+	}
+	if runs := e.runStates(b.ID); len(runs) != 1 || !runs[0].Running || runs[0].Paused {
+		t.Fatalf("chat.run: %+v", runs)
+	}
+}

@@ -5,6 +5,10 @@ import (
 	"encoding/json"
 	"io"
 	"log/slog"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -190,6 +194,83 @@ func TestTaskReportStatusNamesTheTopic(t *testing.T) {
 	for topic, want := range map[string]string{events.TopicAgentFinished: "finished", events.TopicAgentWaiting: "waiting", events.TopicAgentFailed: "failed"} {
 		if got := taskReportStatus(topic); got != want {
 			t.Errorf("%s: %q, want %q", topic, got, want)
+		}
+	}
+}
+
+// fakeClaudeOnPath builds the agents tests' scripted claude stand-in as "claude" in a temp dir and puts that dir first
+// on PATH, so the daemon's Claude adapter runs it instead of a real CLI.
+func fakeClaudeOnPath(t *testing.T) {
+	t.Helper()
+	dir := t.TempDir()
+	name := "claude"
+	if runtime.GOOS == "windows" {
+		name += ".exe"
+	}
+	out, err := exec.Command("go", "build", "-o", filepath.Join(dir, name), "../agents/testdata/fakeagent").CombinedOutput()
+	if err != nil {
+		t.Fatalf("building the fake claude: %v\n%s", err, out)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+// A task a bot starts from a call thread reports there; steering it moves its reports to where it was last steered
+// from: another call's thread, or (steered from chat) back to the chat.
+func TestBotTaskSteeringMovesItsCallThread(t *testing.T) {
+	fakeClaudeOnPath(t)
+	d, err := New(t.TempDir(), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- d.Run(context.Background()) }()
+	defer func() {
+		d.Shutdown()
+		if err := <-done; err != nil {
+			t.Error(err)
+		}
+	}()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	// Bots start and steer tasks without an approval prompt.
+	if _, err := d.DB.Exec(`INSERT INTO settings(key,value,updated_at) VALUES('agents','{"botAutoApprove":true}',0) ON CONFLICT(key) DO UPDATE SET value=excluded.value`); err != nil {
+		t.Fatal(err)
+	}
+	p, err := d.Projects.Create(ctx, "demo", t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	rt := newBotTasks(d)
+	rt.options.list, rt.options.at = []agents.HarnessOption{{ID: "claude", CustomModel: true}}, time.Now()
+	bot := chat.Bot{ID: "b1", Config: chat.BotConfig{CodeTasks: true}}
+	actor := chat.BotPrefix + bot.ID
+
+	info, err := rt.Start(ctx, actor, bot, tools.TaskStart{ProjectID: p.ID, Harness: "claude", Prompt: "hello", CallID: "call-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	settled := func(s agents.Session) bool { return s.Status != agents.StatusWorking && s.Status != agents.StatusIdle }
+	callOf := func() string {
+		t.Helper()
+		s, err := d.Agents.WaitFor(ctx, info.ID, settled)
+		if err != nil {
+			t.Fatal(err)
+		}
+		stored, err := d.Agents.Store().GetSession(info.ID)
+		if err != nil || stored.CallID != s.CallID {
+			t.Fatalf("stored call %q, live %q: %v", stored.CallID, s.CallID, err)
+		}
+		return s.CallID
+	}
+	if got := callOf(); got != "call-1" {
+		t.Fatalf("started on call-1, call %q", got)
+	}
+	for _, step := range []struct{ thread, text string }{{"call-2", "more from the second call"}, {"", "more from chat"}} {
+		if _, err := rt.Send(ctx, actor, info.ID, step.text, step.thread); err != nil {
+			t.Fatal(err)
+		}
+		if got := callOf(); got != step.thread {
+			t.Fatalf("steered from %q, call %q", step.thread, got)
 		}
 	}
 }

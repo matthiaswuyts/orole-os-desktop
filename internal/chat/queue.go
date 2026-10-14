@@ -200,9 +200,11 @@ func (m *Manager) submit(ctx context.Context, msg Message, text string, attachme
 		cur.queue = append(cur.queue, turns...)
 		if msg.CallID == "" && len(turns) > 0 && !cur.shown {
 			// A chat message waits behind a call thread answer the chat was never told about: show the bot busy
-			// (and stoppable) now. Emitted under m.mu so it precedes everything the worker announces later.
+			// (and stoppable) now. A worker always has work running or queued, and one the chat was never told
+			// about was never paused, so it is running even before it pops its first turn (cancel still nil).
+			// Emitted under m.mu so it precedes everything the worker announces later.
 			cur.shown = true
-			m.emit("chat.run", RunState{BotID: msg.BotID, Running: cur.cancel != nil, Paused: cur.paused})
+			m.emit("chat.run", RunState{BotID: msg.BotID, Running: true})
 		}
 	} else {
 		m.startLocked(msg.BotID, turns...)
