@@ -162,6 +162,23 @@ describe("llm tool calls", () => {
     ws.close();
   });
 
+  it("ignores the llm.done the daemon sends right after llm.tool", async () => {
+    // Calls.skip sends the tool frame and then llm.done for the same request, so an old relay ends it at once.
+    const ws = await answeringDaemon([
+      { type: "llm.tool", tool: "skip_turn", args: "{}" },
+      { type: "llm.done" },
+    ]);
+    const text = await (await llm()).text();
+    const events = sseEvents(text);
+    expect(events).toHaveLength(3);
+    expect((events[0] as Chunk).choices[0].delta.tool_calls).toMatchObject([{ function: { name: "skip_turn" } }]);
+    expect((events[1] as Chunk).choices[0].finish_reason).toBe("tool_calls");
+    expect(events[2]).toBe("[DONE]");
+    expect(text).not.toContain('"finish_reason":"stop"');
+    expect(text.split("[DONE]")).toHaveLength(2); // exactly one [DONE]
+    ws.close();
+  });
+
   it("passes JSON object arguments through and replaces anything else with {}", async () => {
     const run = async (args: unknown) => {
       const ws = await answeringDaemon([{ type: "llm.tool", tool: "end_call", args }]);

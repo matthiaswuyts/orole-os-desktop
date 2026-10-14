@@ -1527,20 +1527,25 @@ func TestCallLanguageReachesTheRelay(t *testing.T) {
 	}
 }
 
-// skip answers a turn with the skip_turn function call (the relay streams it as an OpenAI tool call).
-func TestSkipAnswersWithSkipTurnTool(t *testing.T) {
+// skip answers a turn with the skip_turn function call (the relay streams it as an OpenAI tool call), then an llm.done
+// for the same request: a new relay already finished the stream on the tool frame and ignores the done, an old relay
+// ignores the tool frame and ends the request at once on the done.
+func TestSkipAnswersWithSkipTurnToolThenDone(t *testing.T) {
 	e := newCallEnv(t)
 	e.c.skip(context.Background(), Frame{Type: FrameLLMRequest, ID: "r7", CallID: "call-1"})
 	got := e.relay.all()
-	if len(got) != 1 {
+	if len(got) != 2 {
 		t.Fatalf("frames %+v", got)
 	}
-	b, _ := json.Marshal(got[0])
-	if want := `{"type":"llm.tool","id":"r7","callId":"call-1","tool":"skip_turn","args":"{}"}`; string(b) != want {
-		t.Fatalf("frame = %s, want %s", b, want)
+	wire := func(f Frame) string { b, _ := json.Marshal(f); return string(b) }
+	if want := `{"type":"llm.tool","id":"r7","callId":"call-1","tool":"skip_turn","args":"{}"}`; wire(got[0]) != want {
+		t.Fatalf("first frame = %s, want %s", wire(got[0]), want)
 	}
-	if e.relay.done("r7") || e.relay.text("r7") != "" {
-		t.Fatal("skip also spoke or finished the turn")
+	if want := `{"type":"llm.done","id":"r7","callId":"call-1"}`; wire(got[1]) != want {
+		t.Fatalf("second frame = %s, want %s", wire(got[1]), want)
+	}
+	if e.relay.text("r7") != "" {
+		t.Fatal("skip spoke")
 	}
 }
 

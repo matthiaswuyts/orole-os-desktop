@@ -35,9 +35,12 @@ stream; the daemon uses `skip_turn` to keep the agent silent and waiting for the
 empty delta and `finish_reason: "tool_calls"`, then `data: [DONE]`. Text deltas sent before the tool frame stay ahead of
 the call. `args` that is not a JSON object is replaced by `{}`, and a frame without `tool` is ignored.
 
-**The relay must be redeployed (`wrangler deploy`) for this to work.** An old relay ignores `llm.tool`, so the request
-gets no answer: ElevenLabs waits out its cascade timeout and retries, and after a few attempts fails the call. (The
-request itself only ends when the relay's idle timer fires.)
+The daemon follows every `llm.tool` with an `llm.done` for the same request. The relay has already finished the stream
+on the tool frame and ignores that done.
+
+**The relay must be redeployed (`wrangler deploy`) for this to work.** An old relay ignores `llm.tool` but ends the
+request at once on the `llm.done`, so the request ends empty (no text, `finish_reason: "stop"`). ElevenLabs treats an
+empty answer as a failure: it retries, and after a few attempts fails the call.
 
 Call language: the daemon puts `lang` (`"nl"` for Dutch and Auto, `"en"` for English) next to `call_id` in
 `custom_llm_extra_body` (outbound calls, in the ElevenLabs outbound-call request; inbound calls, as `vars.lang` in

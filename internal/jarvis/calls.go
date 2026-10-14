@@ -639,10 +639,14 @@ const skipTool = "skip_turn"
 
 // skip answers a turn with a skip_turn function call instead of text: the relay streams it as an OpenAI tool call and
 // ElevenLabs executes it, so the agent stays quiet and keeps listening. An empty response would not do: ElevenLabs
-// retries a custom LLM that returns nothing and, after a few attempts, fails the call. The relay must be a version
-// that understands llm.tool (an old one ignores the frame and the request ends empty).
+// retries a custom LLM that returns nothing and, after a few attempts, fails the call.
+//
+// The tool frame is followed by an llm.done for the same request. A relay that understands llm.tool has already
+// finished the stream on the tool frame and ignores the done. An old relay ignores the tool frame and ends the request
+// at once on the done (an empty answer, which ElevenLabs retries) instead of holding it until its idle timer fires.
 func (c *Calls) skip(ctx context.Context, f Frame) {
 	_ = c.relay.Send(ctx, Frame{Type: FrameLLMTool, ID: f.ID, CallID: f.CallID, Tool: skipTool, Args: "{}"})
+	c.silent(ctx, f)
 }
 
 // endUnknown answers a turn for a call that is not live: it says nothing and, if the call is on record with a
