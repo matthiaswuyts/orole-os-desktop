@@ -20,7 +20,10 @@ type phrases struct {
 	acks    []string // said when a turn is still silent after a moment ("one moment, I'm on it")
 	still   []string // said now and then during a long silence while a tool runs
 	bye     string   // goodbye when end_call ended the call without the bot saying one
-	writeIn string   // appended to the opener and inbound greeting instructions
+	// tooLong ends a turn that ran past Calls.turnDeadline; stillThere answers the third silence prompt in a row and
+	// byeSilent the ninth, before the call is hung up (see Calls.plan).
+	tooLong, stillThere, byeSilent string
+	writeIn                        string // appended to the opener and inbound greeting instructions
 }
 
 var english = phrases{
@@ -43,11 +46,14 @@ var english = phrases{
 		"automation_runs": "Checking the runs.", "research": "Starting the research.", "web_search": "Looking that up.",
 		"web_fetch": "Reading that.", "switch_bot": "One moment.",
 	},
-	filler:  "One moment.",
-	acks:    []string{"One moment, I'm on it.", "Let me check.", "Sure, one sec."},
-	still:   []string{"Still on it.", "Almost there, bear with me.", "Still working on it."},
-	bye:     "Okay, talk later!",
-	writeIn: " Write it in English.",
+	filler:     "One moment.",
+	acks:       []string{"One moment, I'm on it.", "Let me check.", "Sure, one sec."},
+	still:      []string{"Still on it.", "Almost there, bear with me.", "Still working on it."},
+	bye:        "Okay, talk later!",
+	tooLong:    "This is taking longer than expected. I'll keep at it and let you know.",
+	stillThere: "Are you still there?",
+	byeSilent:  "I can't hear you anymore, so I'll hang up. Call me back anytime.",
+	writeIn:    " Write it in English.",
 }
 
 var dutch = phrases{
@@ -70,11 +76,14 @@ var dutch = phrases{
 		"automation_runs": "Ik bekijk de runs.", "research": "Ik start het onderzoek.", "web_search": "Ik zoek het even op.",
 		"web_fetch": "Ik lees het even.", "switch_bot": "Momentje.",
 	},
-	filler:  "Momentje.",
-	acks:    []string{"Momentje, ik ben ermee bezig.", "Even kijken.", "Oké, momentje."},
-	still:   []string{"Nog even geduld.", "Ik ben er nog mee bezig.", "Bijna klaar."},
-	bye:     "Oké, tot later!",
-	writeIn: " Write it in Dutch (Nederlands), as a native speaker would say it on the phone.",
+	filler:     "Momentje.",
+	acks:       []string{"Momentje, ik ben ermee bezig.", "Even kijken.", "Oké, momentje."},
+	still:      []string{"Nog even geduld.", "Ik ben er nog mee bezig.", "Bijna klaar."},
+	bye:        "Oké, tot later!",
+	tooLong:    "Dit duurt langer dan verwacht. Ik werk verder en laat het je weten.",
+	stillThere: "Ben je er nog?",
+	byeSilent:  "Ik hoor je niet meer, dus ik hang op. Bel me gerust terug.",
+	writeIn:    " Write it in Dutch (Nederlands), as a native speaker would say it on the phone.",
 }
 
 // phrasesFor returns the lines of a call language (see PhoneSettings.CallLanguage); anything but English is Dutch.
