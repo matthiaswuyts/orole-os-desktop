@@ -38,14 +38,16 @@ export interface ChatState {
   /** The slim settings panel beside the conversation (name, description, instructions, model). */
   settingsOpen: boolean;
   setSettingsOpen: (open: boolean) => void;
-  /** What the side pane beside the conversation shows: a code task or a document a reply wrote; it and the settings panel are never open together. */
+  /** What the side pane beside the conversation shows: a code task, a phone call's transcript or a document a reply wrote; it and the settings panel are never open together. */
   pane: ChatPane | null;
   openTaskPane: (taskId: string) => void;
+  /** Opens a phone call's transcript (its spoken turns are not in the thread). */
+  openCallPane: (callId: string) => void;
   openDocument: (messageId: string, partIndex: number) => void;
   closePane: () => void;
 }
 
-export type ChatPane = { kind: "task"; id: string } | { kind: "document"; messageId: string; partIndex: number };
+export type ChatPane = { kind: "task"; id: string } | { kind: "call"; id: string } | { kind: "document"; messageId: string; partIndex: number };
 
 const readSelected = (): string | null => {
   try { return localStorage.getItem(SELECTED_KEY) || null; } catch { return null; }
@@ -222,6 +224,7 @@ export const useChat = create<ChatState>((set, get) => ({
   closeBuilder: () => set({ builder: { open: false, botId: null } }),
   setSettingsOpen: (settingsOpen) => set((state) => ({ settingsOpen, pane: settingsOpen ? null : state.pane })),
   openTaskPane: (id) => set({ pane: { kind: "task", id }, settingsOpen: false }),
+  openCallPane: (id) => set({ pane: { kind: "call", id }, settingsOpen: false }),
   openDocument: (messageId, partIndex) => set({ pane: { kind: "document", messageId, partIndex }, settingsOpen: false }),
   closePane: () => set({ pane: null }),
 }));

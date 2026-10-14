@@ -1,7 +1,10 @@
-import { cleanup, render, screen } from "@testing-library/react";
-import { afterEach, expect, it } from "vitest";
-import { CallCard, callPart } from "./CallCard";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, beforeEach, expect, it } from "vitest";
+import { useChat } from "@/stores/chat";
+import { CallCard } from "./CallCard";
+import { callPart } from "./callFormat";
 
+beforeEach(() => useChat.setState({ pane: null, settingsOpen: false }));
 afterEach(cleanup);
 
 it("renders a finished outbound call", () => {
@@ -26,6 +29,27 @@ it("shows a declined call as missed and a queued call as live", () => {
   expect(screen.getByText("Missed call")).toBeInTheDocument();
   rerender(<CallCard part={{ type: "call", id: "c", name: "outbound", status: "queued" }} />);
   expect(screen.getByText("Calling you…")).toBeInTheDocument();
+});
+
+it("is drawn as the bot's chat bubble and opens the call pane when clicked", () => {
+  render(<CallCard part={{ type: "call", id: "c1", name: "outbound", status: "completed" }} />);
+  const card = screen.getByRole("button", { name: /Called you/ });
+  expect(card.closest("[data-slot=chat-bubble]")).not.toBeNull();
+  expect(card.closest("[data-slot=chat-bubble]")!.className).not.toMatch(/\bborder\b/);
+  expect(card).toHaveAttribute("aria-pressed", "false");
+  fireEvent.click(card);
+  expect(useChat.getState().pane).toEqual({ kind: "call", id: "c1" });
+  expect(card).toHaveAttribute("aria-pressed", "true");
+});
+
+it("opens from the keyboard", () => {
+  render(<CallCard part={{ type: "call", id: "c2", name: "inbound", status: "completed" }} />);
+  const card = screen.getByRole("button", { name: /You called/ });
+  card.focus();
+  expect(card).toHaveFocus();
+  // A native button activates on Enter/Space; the click is what the browser dispatches.
+  fireEvent.click(card);
+  expect(useChat.getState().pane).toEqual({ kind: "call", id: "c2" });
 });
 
 it("turns a stored call into a card part like the chat does", () => {

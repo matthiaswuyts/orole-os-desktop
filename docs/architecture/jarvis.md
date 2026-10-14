@@ -19,11 +19,11 @@ call does not survive a daemon restart.**
 |---|---|---|
 | Relay | `relay/` (TypeScript Worker + one Durable Object `Hub`) | Authenticates provider requests, turns them into frames for the daemon's one WebSocket, writes the daemon's reply as OpenAI-style SSE. Stores nothing. |
 | `internal/jarvis` | daemon | Gate, rules, policy, call state machine, relay client, Twilio and ElevenLabs clients, provisioning, openers, inbound check, call records. |
-| `internal/chat/voice.go` | daemon | `VoiceTurn`, `Compose`, `PostCallCard`, `UpdateCallCard`. |
+| `internal/chat/voice.go` | daemon | `VoiceTurn`, `Compose`, `PostCallCard`, `UpdateCallCard` (and `Manager.CallMessages`). |
 | `internal/chat/tools/jarvis.go` | daemon | Bot tools `jarvis_rule_add`, `jarvis_rule_list`, `jarvis_rule_delete`, `call_owner`, `switch_bot`. |
 | `internal/daemon/svc_jarvis.go` | daemon | IPC methods, event hooks, the save check, audit and notifications. |
 | `internal/app/jarvis.go` | desktop | Stateless MyGo service forwarding to the daemon. |
-| `frontend/src/features/jarvis/` | UI | Settings > Phone, the bot's Phone calls page, the call card. |
+| `frontend/src/features/jarvis/` | UI | Settings > Phone, the bot's Phone calls page, the call card and the call pane. |
 
 ## The permission gate
 
@@ -89,8 +89,16 @@ becomes a notification with the reason; for `call_owner` it is returned to the b
 Statuses: `dialing -> in_progress -> completed | no_answer | voicemail | failed`, plus `rejected` for an inbound call
 that was turned away. Each call has a `jarvis_calls` row and one `PartCall` card in the bot's chat (created at start,
 rewritten at the end). The card carries the direction (outbound or inbound), status, reason, duration and estimated
-cost; the spoken turns are the ordinary user and assistant messages around it, with tool, task and research parts
-attached as if typed.
+cost. The spoken turns are user and assistant messages in the bot's thread, with tool, task and research parts attached
+as if typed, but tagged with the call id (`messages.call_id`): the bot keeps them in its history and memory, while the
+chat UI never shows them (see `chat.md`). The card is the call's only entry in the thread; it is drawn like the bot's
+text bubble and clicking it (or Enter/Space on it) opens the **call pane** beside the conversation
+(`frontend/src/features/jarvis/CallPane.tsx`): a header with the direction (Called you, You called, Missed call), the
+bot, the start time, duration, estimated cost and status, then the transcript in order, the owner's lines and the
+bot's, with tool, delegation and code-task activity as compact rows (a task row opens the task pane). It loads
+`jarvis.calls.transcript {callId}` -> `{call: CallRecord, messages: Message[]}` (owner-only; no provider ids or
+secrets) and, while the call is live, follows the `chat:call-message` and `chat:call-delta` events, refreshing the
+header when the call's card changes. Calls made before this change keep their turns in the thread.
 
 ### Outbound
 

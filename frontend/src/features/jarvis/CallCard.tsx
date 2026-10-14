@@ -1,37 +1,29 @@
-import { PhoneIncomingIcon, PhoneMissedIcon, PhoneOutgoingIcon } from "lucide-react";
-import type { CallRecord, MsgPart } from "@/mygo";
+import { Bubble } from "@/features/chat/parts/Bubble";
+import { cn } from "@/lib/utils";
+import type { MsgPart } from "@/mygo";
+import { useChat } from "@/stores/chat";
+import { callLook, clock } from "./callFormat";
 
-function clock(ms: number): string {
-  const s = Math.round(ms / 1000);
-  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
-}
-
-/** A stored call as the same card part the daemon puts in chat (internal/jarvis Calls.card). */
-export function callPart(call: CallRecord): MsgPart {
-  const durationMs = call.answeredAt && call.endedAt ? call.endedAt - call.answeredAt : 0;
-  return {
-    type: "call", id: call.id, name: call.direction, status: call.status, title: call.reason,
-    ...(durationMs > 0 ? { durationMs } : {}),
-    ...(call.estCostMicros > 0 ? { summary: `est. $${(call.estCostMicros / 1e6).toFixed(2)}` } : {}),
-  };
-}
-
-/** A phone call between the owner and a bot: who rang, why, how long and the estimated cost. */
+/**
+ * A phone call between the owner and a bot: who rang, why, how long and the estimated cost. Drawn as one of the bot's
+ * chat bubbles; clicking it opens the call's transcript beside the conversation (the spoken turns are not in the thread).
+ */
 export function CallCard({ part }: { part: MsgPart }) {
-  const missed = part.status === "voicemail" || part.status === "no_answer" || part.status === "failed" || part.status === "rejected";
-  const live = part.status === "queued" || part.status === "dialing" || part.status === "in_progress";
-  const inbound = part.name === "inbound";
-  const Icon = missed ? PhoneMissedIcon : inbound ? PhoneIncomingIcon : PhoneOutgoingIcon;
-  const label = missed ? "Missed call" : inbound ? (live ? "You called · on the line" : "You called") : live ? "Calling you…" : "Called you";
+  const { Icon, label, missed } = callLook(part);
   const meta = [part.durationMs ? clock(part.durationMs) : "", part.summary ?? ""].filter(Boolean).join(" · ");
+  const id = part.id ?? "";
+  const selected = useChat((s) => id !== "" && s.pane?.kind === "call" && s.pane.id === id);
   return (
-    <div data-slot="call-card" className="flex items-center gap-3 rounded-lg border bg-card px-3 py-2 text-sm">
-      <Icon aria-hidden className={missed ? "size-4 shrink-0 text-destructive-foreground" : "size-4 shrink-0 text-muted-foreground"} />
-      <div className="min-w-0">
-        <p className="font-medium">{label}</p>
-        {part.title && <p className="truncate text-muted-foreground">{part.title}</p>}
-      </div>
-      {meta && <p className="ml-auto shrink-0 text-xs text-muted-foreground">{meta}</p>}
-    </div>
+    <Bubble className={cn("p-0", selected && "ring-1 ring-ring/60")}>
+      <button type="button" data-slot="call-card" aria-pressed={selected} disabled={!id} onClick={() => useChat.getState().openCallPane(id)}
+        className="flex w-full min-w-56 items-center gap-3 rounded-[inherit] px-3 py-1.5 text-start outline-none transition-colors hover:bg-foreground/5 focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none motion-reduce:transition-none">
+        <Icon aria-hidden className={cn("size-4 shrink-0", missed ? "text-destructive-foreground" : "text-muted-foreground")} />
+        <span className="flex min-w-0 flex-col">
+          <span className="font-medium">{label}</span>
+          {part.title && <span className="truncate text-muted-foreground">{part.title}</span>}
+        </span>
+        {meta && <span className="ml-auto shrink-0 text-xs text-muted-foreground tabular-nums">{meta}</span>}
+      </button>
+    </Bubble>
   );
 }
