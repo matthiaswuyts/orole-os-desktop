@@ -3,13 +3,13 @@ import { CheckCircle2Icon, CircleIcon, CopyIcon, XIcon } from "lucide-react";
 import { Jarvis, type PhoneSettings as PhoneConfig, type StatusView, type TTSModel, type Voice } from "@/mygo";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "@/components/ui/tooltip";
 import { errText } from "@/features/agents/format";
 import { Failure, Loading } from "@/features/mcp/shared";
 import { SettingsSection } from "@/features/settings/SettingsSection";
 import { inDesktop } from "@/lib/backend";
 import { useJarvis } from "./store";
+import { ModelPicker, VoicePicker } from "./VoicePicker";
 
 /** One labelled control row. */
 function Row({ label, htmlFor, hint, children }: { label: string; htmlFor?: string; hint?: string; children: ReactNode }) {
@@ -264,8 +264,6 @@ function OwnerSection({ status }: { status: StatusView }) {
   );
 }
 
-const DEFAULT_ITEM = { value: "", label: "Default" };
-
 function CallsSection({ status }: { status: StatusView }) {
   const s = status.settings;
   const ids = { start: useId(), end: useId(), daily: useId(), monthly: useId(), voice: useId(), model: useId() };
@@ -288,9 +286,6 @@ function CallsSection({ status }: { status: StatusView }) {
       .catch((failure: unknown) => { if (active) setLookupError(errText(failure)); });
     return () => { active = false; };
   }, [status.hasElevenLabs]);
-
-  const voiceItems = [DEFAULT_ITEM, ...voices.map((voice) => ({ value: voice.id, label: voice.name }))];
-  const modelItems = [DEFAULT_ITEM, ...models.map((model) => ({ value: model.id, label: `${model.name} · ${model.latency}` }))];
 
   async function save() {
     const next: PhoneConfig = {
@@ -322,20 +317,10 @@ function CallsSection({ status }: { status: StatusView }) {
         <Input id={ids.monthly} type="number" min={0} step="0.01" size="sm" className="w-32" value={monthlyDollars} onChange={(event) => setMonthlyDollars(event.target.value)} />
       </Row>
       <Row label="Default voice" htmlFor={ids.voice}>
-        <Select value={voiceId} items={voiceItems} onValueChange={(next: string | null) => setVoiceId(next ?? "")}>
-          <SelectTrigger id={ids.voice} size="sm" className="w-52"><SelectValue /></SelectTrigger>
-          <SelectPopup alignItemWithTrigger={false} className="max-h-80">
-            {voiceItems.map((item) => <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>)}
-          </SelectPopup>
-        </Select>
+        <VoicePicker id={ids.voice} value={voiceId} voices={voices} defaultId="" onChange={setVoiceId} />
       </Row>
       <Row label="Default voice model" htmlFor={ids.model}>
-        <Select value={ttsModel} items={modelItems} onValueChange={(next: string | null) => setTtsModel(next ?? "")}>
-          <SelectTrigger id={ids.model} size="sm" className="w-52"><SelectValue /></SelectTrigger>
-          <SelectPopup alignItemWithTrigger={false} className="max-h-80">
-            {modelItems.map((item) => <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>)}
-          </SelectPopup>
-        </Select>
+        <ModelPicker id={ids.model} value={ttsModel} models={models} defaultId="" onChange={setTtsModel} />
       </Row>
       <div className="flex items-center justify-between gap-2 px-3 py-2">
         <span className="text-xs text-muted-foreground">Calls today: {status.callsToday} · This month: ${cost}</span>

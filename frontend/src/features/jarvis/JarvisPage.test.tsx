@@ -22,8 +22,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   api.rules.mockResolvedValue([{ id: "r1", botId: "b1", trigger: "task_failed", target: "any", repeat: true, urgent: false, quietOverride: false, note: "", createdAt: 1 }]);
   api.recentCalls.mockResolvedValue([]);
-  api.voices.mockResolvedValue([{ id: "v1", name: "Rachel" }]);
-  api.models.mockResolvedValue([{ id: "eleven_flash_v2_5", name: "Flash v2.5", latency: "fast" }]);
+  api.voices.mockResolvedValue([{ id: "v1", name: "Rachel", description: "Calm" }]);
+  api.models.mockResolvedValue([{ id: "eleven_flash_v2_5", name: "Flash v2.5", description: "Fast.", recommended: true }]);
   api.all.mockResolvedValue({ agents: { botYolo: true } });
   useJarvis.setState({ status: ready as never, error: null });
 });

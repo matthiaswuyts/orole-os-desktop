@@ -1,7 +1,6 @@
 import { MicIcon, PhoneCallIcon, PhoneIcon, Trash2Icon } from "lucide-react";
 import { useCallback, useEffect, useId, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "@/components/ui/tooltip";
 import { errText } from "@/features/agents/format";
@@ -15,23 +14,12 @@ import { CallCard, callPart } from "./CallCard";
 import { describeRule } from "./describe";
 import { jarvisGate } from "./gate";
 import { phoneReady, useJarvis } from "./store";
+import { ModelPicker, VoicePicker } from "./VoicePicker";
 
 const RECENT_CALLS = 5;
-const DEFAULT_ITEM = { value: "", label: "Default" };
 
 function Note({ children, alert }: { children: React.ReactNode; alert?: boolean }) {
   return <p role={alert ? "alert" : undefined} className="selectable break-words px-1 text-muted-foreground text-xs">{children}</p>;
-}
-
-/** A compact select for a row: the first item ("Default") means "use the global choice". */
-function RowSelect({ id, value, items, onChange }: { id: string; value: string; items: { value: string; label: string }[]; onChange: (value: string) => void }) {
-  const shown = items.some((item) => item.value === value) ? items : [...items, { value, label: value }];
-  return <Select value={value} items={shown} onValueChange={(next: string | null) => onChange(next ?? "")}>
-    <SelectTrigger id={id} size="sm" className="w-auto min-w-24 max-w-52 border-0 bg-transparent shadow-none"><SelectValue /></SelectTrigger>
-    <SelectPopup alignItemWithTrigger={false} className="max-h-80">
-      {shown.map((item) => <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>)}
-    </SelectPopup>
-  </Select>;
 }
 
 /**
@@ -125,9 +113,6 @@ export function JarvisPage({ bot, form, patch, onOpenPermissions }: { bot: Bot; 
     }
   }
 
-  const voiceItems = [DEFAULT_ITEM, ...voices.map((voice) => ({ value: voice.id, label: voice.name }))];
-  const modelItems = [DEFAULT_ITEM, ...models.map((model) => ({ value: model.id, label: `${model.name} · ${model.latency}` }))];
-
   return <>
     <Group title="Jarvis">
       <SwitchRow icon={PhoneIcon} label="Jarvis mode" hint={`Lets ${bot.name} phone you and take your calls.`} checked={form.jarvisEnabled} disabled={locked} onChange={(jarvisEnabled) => patch({ jarvisEnabled })} />
@@ -151,10 +136,10 @@ export function JarvisPage({ bot, form, patch, onOpenPermissions }: { bot: Bot; 
 
     <Group title="Voice">
       <ControlRow icon={MicIcon} label="Voice" htmlFor={ids.voice}>
-        <RowSelect id={ids.voice} value={form.jarvisVoice} items={voiceItems} onChange={(jarvisVoice) => patch({ jarvisVoice })} />
+        <VoicePicker compact id={ids.voice} value={form.jarvisVoice} voices={voices} defaultId={status?.settings.defaultVoiceId ?? ""} onChange={(jarvisVoice) => patch({ jarvisVoice })} />
       </ControlRow>
       <ControlRow icon={MicIcon} label="Voice model" htmlFor={ids.model}>
-        <RowSelect id={ids.model} value={form.jarvisModel} items={modelItems} onChange={(jarvisModel) => patch({ jarvisModel })} />
+        <ModelPicker compact id={ids.model} value={form.jarvisModel} models={models} defaultId={status?.settings.defaultTtsModel ?? ""} onChange={(jarvisModel) => patch({ jarvisModel })} />
       </ControlRow>
     </Group>
 
