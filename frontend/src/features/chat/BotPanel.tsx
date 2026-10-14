@@ -17,7 +17,6 @@ import { useModelOptions, type Option } from "./builder/modelOptions";
 import { IntegrationsPage, SkillsPage, ToolsPage } from "./builder/ToolsTab";
 import { MemoriesPage, ownScope, useBotMemory } from "./panel/MemoriesPage";
 import { PermissionsPage } from "./panel/PermissionsPage";
-import { AutomationIdeas } from "./panel/AutomationIdeas";
 import { ControlRow, Group, NavRow, PageHeader, SwitchRow } from "./panel/rows";
 
 type Page = "main" | "memories" | "skills" | "tools" | "integrations" | "permissions";
@@ -133,11 +132,7 @@ function PanelBody({ bot }: { bot: Bot }) {
           <SwitchRow icon={UsersIcon} label="Leads the team" hint="Hands work to your other bots and talks with them to get it done." checked={form.executive} onChange={(executive) => patch({ executive })} />
         </Group>
       </>}
-      {page === "memories" && <>
-        <PageHeader title="Memories" onBack={back} />
-        <MemoriesPage botId={bot.id} />
-        <AutomationIdeas botId={bot.id} />
-      </>}
+      {page === "memories" && <MemoriesPage botId={bot.id} onBack={back} />}
       {page === "skills" && <>
         <PageHeader title="Skills" onBack={back} />
         <SkillsPage form={form} dispatch={dispatch} problems={problems} />

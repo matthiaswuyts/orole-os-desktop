@@ -26,6 +26,18 @@ from the `gaze` style. Gaze by DiceBear is licensed under CC0 1.0
 ([license](https://creativecommons.org/publicdomain/zero/1.0/)). Nothing is copied into the repository; avatars
 are generated locally and no avatar is fetched from the network.
 
+### Dictation engine and models (downloaded at runtime, not in the repository)
+
+Nothing is copied into the repository; the daemon downloads these on the user's request and pins each file by URL,
+size and SHA-256 in `internal/dictation/catalog.go`. The structs in `internal/dictation/engine` mirror the C API header
+of sherpa-onnx v1.13.8 (`sherpa-onnx/c-api/c-api.h`); no code is copied from it.
+
+| Artifact | Source | Licence |
+|---|---|---|
+| sherpa-onnx v1.13.8 C API + ONNX Runtime DLLs (`sherpa-onnx-v1.13.8-win-x64-shared-MT-Release-no-tts-lib.tar.bz2`) | https://github.com/k2-fsa/sherpa-onnx/releases/tag/v1.13.8 | Apache-2.0 (sherpa-onnx), MIT (ONNX Runtime) |
+| Parakeet TDT 0.6B v3, int8 ONNX export | https://huggingface.co/csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8 @ 2bda32ec70b097a55adaa07d9a7173915b43cc78, from https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3 | CC-BY-4.0, NVIDIA (credited on the Voice settings page) |
+| Whisper large-v3 turbo, int8 ONNX export | https://huggingface.co/csukuangfj/sherpa-onnx-whisper-turbo @ 2ca6ff69fc878651b770880507669577ac41c2ff, from https://huggingface.co/openai/whisper-large-v3-turbo | MIT, OpenAI |
+
 ### Dither Kit charts
 
 Only the official `area-chart` registry component and its shared chart core were

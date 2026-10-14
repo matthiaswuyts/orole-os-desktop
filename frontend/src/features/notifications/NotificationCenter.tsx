@@ -1,19 +1,102 @@
-import { lazy, Suspense, useEffect, useRef, useState } from "react";
-import { Bell, Check, CheckCheck, CircleAlert, CircleCheck, Ellipsis, RefreshCw, X } from "lucide-react";
-import { useNotifications } from "@/stores/notifications";
+import { useEffect, useRef, useState, type ComponentType, type CSSProperties } from "react";
+import { Bell, Check, Hand, MessageCircle, ShieldQuestion, SquareTerminal, TriangleAlert, Workflow, X } from "lucide-react";
+import { useNotifications, type NotificationItem, type NotificationTab } from "@/stores/notifications";
 import { useDaemon } from "@/stores/daemon";
+import { useChat } from "@/stores/chat";
+import { useUI } from "@/stores/ui";
 import { inDesktop } from "@/lib/backend";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "@/components/ui/empty";
-import { Popover, PopoverClose, PopoverDescription, PopoverPopup, PopoverTitle, PopoverTrigger } from "@/components/ui/popover";
-import { Menu, MenuCheckboxItem, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "@/components/ui/menu";
+import { Popover, PopoverDescription, PopoverPopup, PopoverTitle, PopoverTrigger } from "@/components/ui/popover";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Tabs, TabsList, TabsTab } from "@/components/ui/tabs";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "@/components/ui/tooltip";
+import { BotAvatar } from "@/components/shell/BotAvatar";
+import { dayGroup, shortTime } from "./format";
+import { openTarget, parseTarget } from "./targets";
 
-const SourceFilter = lazy(() => import("./SourceFilter"));
+type Icon = ComponentType<{ className?: string }>;
+
+/** Per kind: the corner badge, its tone, and how a screen reader hears it. */
+const KINDS: Record<string, { label: string; badge: Icon; tone: string }> = {
+  approval: { label: "Needs you", badge: Hand, tone: "var(--warning)" },
+  failed: { label: "Failed", badge: X, tone: "var(--destructive)" },
+  finished: { label: "Finished", badge: Check, tone: "var(--success)" },
+  reply: { label: "Replied", badge: MessageCircle, tone: "var(--info)" },
+  message: { label: "Message", badge: Bell, tone: "var(--muted-foreground)" },
+};
+const kindOf = (item: NotificationItem) => KINDS[item.kind] ?? KINDS.message!;
+
+/** A message's tone follows its level; other kinds have their own. */
+function messageTone(item: NotificationItem) {
+  if (item.level === "error") return "var(--destructive)";
+  if (item.level === "warning") return "var(--warning)";
+  if (item.level === "success") return "var(--success)";
+  return "var(--muted-foreground)";
+}
+
+function sourceIcon(item: NotificationItem): Icon {
+  if (item.source === "task") return SquareTerminal;
+  if (item.source.startsWith("automation/")) return Workflow;
+  if (item.source === "policy") return ShieldQuestion;
+  return Bell;
+}
+
+/** The thing that reported, with the kind as a small badge on its corner. Messages show a tinted tile instead. */
+function Mark({ item }: { item: NotificationItem }) {
+  const target = parseTarget(item.target);
+  const bot = useChat((s) => target?.type === "bot" ? s.bots.find((b) => b.id === target.id) : undefined);
+  const kind = kindOf(item);
+  if (item.kind === "message") {
+    const Glyph = item.level === "warning" || item.level === "error" ? TriangleAlert : sourceIcon(item);
+    return <span aria-hidden="true" style={{ "--tone": messageTone(item) } as CSSProperties}
+      className="inline-flex size-6 flex-none items-center justify-center rounded-md bg-[color-mix(in_oklab,var(--tone)_14%,var(--card))] text-(--tone) dark:bg-[color-mix(in_oklab,var(--tone)_22%,var(--card))]">
+      <Glyph className="size-3.5" />
+    </span>;
+  }
+  const Glyph = sourceIcon(item);
+  const KindBadge = kind.badge;
+  return <span aria-hidden="true" className="relative inline-flex size-6 flex-none" style={{ "--tone": kind.tone } as CSSProperties}>
+    {bot ? <BotAvatar name={bot.name} avatar={bot.avatar} className="size-6" />
+      : <span className="inline-flex size-full items-center justify-center rounded-md bg-muted text-muted-foreground shadow-[inset_0_0_0_1px_color-mix(in_oklab,var(--foreground)_6%,transparent)] dark:bg-background">
+        <Glyph className="size-3.5" />
+      </span>}
+    <span className="absolute -right-1 -bottom-1 inline-flex size-3.5 items-center justify-center rounded-full bg-(--tone) text-card shadow-[0_0_0_2px_var(--card)]">
+      <KindBadge className="size-2.5" />
+    </span>
+  </span>;
+}
+
+function Row({ item, now, onOpen }: { item: NotificationItem; now: number; onOpen: (item: NotificationItem) => void }) {
+  const kind = kindOf(item);
+  const time = shortTime(item.at, now);
+  const date = new Date(item.at * 1000);
+  return <li>
+    <button type="button" data-kind={item.kind} data-read={item.read || undefined} onClick={() => onOpen(item)}
+      aria-label={[item.title, item.needsYou ? "Needs your approval" : kind.label, item.body, time, item.read ? "" : "unread"].filter(Boolean).join(", ")}
+      className="flex h-10 w-full min-w-0 cursor-pointer items-center gap-2.5 rounded-lg px-2 text-left outline-none transition-colors duration-150 hover:bg-foreground/4 focus-visible:ring-2 focus-visible:ring-ring/50 active:bg-foreground/6 motion-reduce:transition-none">
+      <Mark item={item} />
+      <span className="flex min-w-0 flex-1 items-baseline gap-1.5 text-[13px] leading-5">
+        <span className={cn("max-w-[70%] min-w-0 flex-none truncate", item.read ? "text-card-foreground/80" : "font-medium text-card-foreground")}>{item.title}</span>
+        {item.body && <span className="min-w-0 flex-1 truncate text-muted-foreground">{item.body}</span>}
+      </span>
+      <time dateTime={date.toISOString()} className="flex-none text-xs leading-4 tabular-nums text-muted-foreground">{time}</time>
+      <span aria-hidden="true" className={cn("size-1.5 flex-none rounded-full bg-primary transition-[opacity,scale] duration-200 motion-reduce:transition-none", item.read ? "scale-50 opacity-0" : "scale-100 opacity-100")} />
+    </button>
+  </li>;
+}
+
+/** The time rows are aged against: reset when the panel opens, then ticking once a minute while it is open. */
+function useMinuteClock(enabled: boolean) {
+  const [now, setNow] = useState(Date.now);
+  useEffect(() => {
+    if (!enabled) return;
+    const timer = window.setInterval(() => setNow(Date.now()), 60_000);
+    return () => window.clearInterval(timer);
+  }, [enabled]);
+  return [now, () => setNow(Date.now())] as const;
+}
 
 export function NotificationCenter() {
   const [open, setOpen] = useState(false);
@@ -21,83 +104,80 @@ export function NotificationCenter() {
   const n = useNotifications();
   const link = useDaemon((state) => state.link);
   useEffect(() => n.startSync(), [n.startSync]);
+  const [now, resetClock] = useMinuteClock(open);
   const offline = link === "offline";
   const unavailable = !inDesktop || offline;
   const countKnown = n.loaded && !n.error && !unavailable;
-  const matchingUnread = n.source ? (n.sources.find((source) => source.source === n.source)?.unread ?? 0) : n.unread;
-  const sourceItems = [{ value: "", label: "All" }, ...Array.from(new Set([...n.sources.map((source) => source.source), ...(n.source ? [n.source] : [])])).map((source) => ({ value: source, label: source }))];
+
+  const choose = (item: NotificationItem) => {
+    if (!item.read) void n.markRead([item.id]);
+    if (openTarget(item.target)) setOpen(false);
+  };
+  const groups: { label: string; items: NotificationItem[] }[] = [];
+  for (const item of n.items) {
+    const label = dayGroup(item.at, now);
+    const last = groups[groups.length - 1];
+    if (last?.label === label) last.items.push(item); else groups.push({ label, items: [item] });
+  }
+  const needsYouTab = n.tab === "needs-you";
 
   return (
-    <Popover open={open} onOpenChange={(value) => { setOpen(value); if (value) void n.load(); }}>
+    <Popover open={open} onOpenChange={(value) => { setOpen(value); if (value) { resetClock(); void n.load(); } }}>
       <span ref={cornerAnchor} aria-hidden="true" className="pointer-events-none fixed right-3 top-[var(--titlebar-h)] size-px" />
       <Tooltip><TooltipTrigger render={<PopoverTrigger render={<Button variant="ghost" size="icon-xs" className="relative" />} />} aria-label={countKnown ? `Notifications, ${n.unread} unread` : "Notifications, unread count unavailable"}>
         <Bell />
         {countKnown && n.unread > 0 && <Badge size="sm" className="absolute -right-1 -top-1" aria-hidden="true">{n.unread > 99 ? "99+" : n.unread}</Badge>}
       </TooltipTrigger><TooltipPopup>Notifications</TooltipPopup></Tooltip>
-      <PopoverPopup anchor={cornerAnchor} align="end" sideOffset={8} className="w-[min(420px,calc(100vw-24px))] rounded-xl [&>[data-slot=popover-viewport]]:p-0">
-        <div className="flex max-h-[min(440px,var(--available-height))] flex-col">
-          <div className="flex shrink-0 flex-wrap items-center gap-1.5 border-b px-4 py-3">
-            <PopoverTitle className="text-sm">Notifications</PopoverTitle>
-            {inDesktop && <Suspense fallback={null}><SourceFilter value={n.source} items={sourceItems} onChange={(value) => n.filter(value, n.unreadOnly)} /></Suspense>}
-            <div className="ml-auto flex items-center gap-1">
-              {inDesktop && <><Button size="xs" variant="ghost" className="text-muted-foreground" disabled={unavailable || n.busy || n.loading || matchingUnread === 0} onClick={() => void n.markRead([], true)}><CheckCheck />{n.source ? "Mark source read" : "Mark all read"}</Button>
-                <Menu><MenuTrigger render={<Button size="icon-xs" variant="ghost" aria-label="Notification options" />}><Ellipsis /></MenuTrigger>
-                  <MenuPopup align="end">
-                    <MenuCheckboxItem checked={n.unreadOnly} onCheckedChange={(checked) => n.filter(n.source, checked)}>Unread only</MenuCheckboxItem>
-                    <MenuItem disabled={n.loading} onClick={() => { void useDaemon.getState().refresh(); void n.load(); }}><RefreshCw />Refresh notifications</MenuItem>
-                    <MenuSeparator />
-                    <MenuItem disabled={unavailable || n.busy || n.loading || n.items.length === 0} onClick={() => void n.dismiss(n.items.map((item) => item.id))}>Dismiss shown</MenuItem>
-                  </MenuPopup>
-                </Menu>
-              </>}
-              <PopoverClose render={<Button size="icon-xs" variant="ghost" aria-label="Close notifications" />}><X /></PopoverClose>
-            </div>
-            <PopoverDescription className="sr-only">{countKnown ? `${n.unread} unread across all sources` : "Activity from your connected services and local tools."}</PopoverDescription>
+      <PopoverPopup anchor={cornerAnchor} align="end" sideOffset={8}
+        className="w-[360px] max-w-[calc(100vw-16px)] rounded-2xl bg-card text-card-foreground [&>[data-slot=popover-viewport]]:p-0">
+        <PopoverTitle className="sr-only">Notifications</PopoverTitle>
+        <PopoverDescription className="sr-only">{countKnown ? `${n.unread} unread, ${n.needsYou} waiting for you` : "Activity from your tasks, bots and flows."}</PopoverDescription>
+        <div className="flex max-h-[min(480px,var(--available-height))] flex-col text-sm">
+          <div className="flex h-11 flex-none items-center gap-2 px-2">
+            <Tabs value={n.tab} onValueChange={(value) => n.setTab(value as NotificationTab)}>
+              <TabsList aria-label="Filter" className="h-7 rounded-full bg-foreground/6 p-0.5 [&>[data-slot=tab-indicator]]:rounded-full">
+                <TabsTab value="all" size="sm" className="h-6 rounded-full px-2.5 text-xs sm:h-6 sm:text-xs">All</TabsTab>
+                <TabsTab value="needs-you" size="sm" className="h-6 gap-1 rounded-full px-2.5 text-xs sm:h-6 sm:text-xs">
+                  Needs you
+                  {countKnown && n.needsYou > 0 && <span aria-label={`${n.needsYou} waiting`} className="inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-[color-mix(in_oklab,var(--warning)_18%,transparent)] px-1 text-[10px] leading-none tabular-nums text-warning-foreground">{n.needsYou}</span>}
+                </TabsTab>
+              </TabsList>
+            </Tabs>
+            <span className="flex-1" />
+            {inDesktop && <Button size="xs" variant="ghost" className="mr-0.5 text-muted-foreground" disabled={unavailable || n.busy || n.unread === 0} onClick={() => void n.markRead([], true)}>Mark all read</Button>}
           </div>
-          <div className="min-h-0 overflow-y-auto px-4 py-2">
-          {!inDesktop ? (
-            <Empty><EmptyHeader><EmptyTitle>Open the desktop app</EmptyTitle><EmptyDescription>Notification history is stored by the Orole daemon. It is not available in this browser preview.</EmptyDescription></EmptyHeader></Empty>
-          ) : (
-            <div className="flex flex-col gap-3">
-              {n.unreadOnly && <p className="text-xs text-muted-foreground">Unread notifications</p>}
-              {(offline || n.error) && <Alert variant="warning"><AlertTitle>{offline ? "Daemon offline" : "Could not load notifications"}</AlertTitle><AlertDescription>{offline ? "Reconnect the daemon, then refresh. Any entries below are the last loaded history." : n.error}</AlertDescription></Alert>}
-              {n.actionError && <Alert variant="error"><AlertTitle>Notification was not changed</AlertTitle><AlertDescription>{n.actionError}</AlertDescription></Alert>}
-              {n.loading && <div role="status" aria-label="Loading notifications" className="flex flex-col gap-2"><Skeleton className="h-14 w-full" /><Skeleton className="h-14 w-full" /></div>}
-              {!n.loading && n.loaded && !n.error && !offline && n.items.length === 0 && <Empty><EmptyHeader><EmptyTitle>{n.unreadOnly ? "No unread notifications" : "No notifications"}</EmptyTitle><EmptyDescription>{n.source ? "There is no matching activity from this source." : "New activity will appear here when your services send notifications."}</EmptyDescription></EmptyHeader></Empty>}
-              <ul className="flex flex-col gap-1" aria-busy={n.loading || n.busy} aria-label="Notification history">
-                {n.items.map((item, index) => {
-                  const date = new Date(item.at * 1000);
-                  const day = date.toLocaleDateString(undefined, { month: "long", day: "numeric", year: "numeric" });
-                  const previous = n.items[index - 1];
-                  const startsDay = !previous || new Date(previous.at * 1000).toDateString() !== date.toDateString();
-                  const Icon = item.level === "warning" || item.level === "error" ? CircleAlert : item.level === "success" ? CircleCheck : Bell;
-                  return <li key={item.id}>
-                    {startsDay && <h3 className="pb-2 pt-3 text-xs font-medium text-muted-foreground">{day}</h3>}
-                    <div className="group flex items-start gap-3 rounded-lg py-3">
-                      <span aria-label={item.read ? "Read" : "Unread"} className={cn("mt-1.5 size-1.5 shrink-0 rounded-full", item.read ? "bg-transparent" : item.level === "warning" || item.level === "error" ? "bg-warning" : "bg-primary")} />
-                      <Icon aria-hidden="true" className={cn("mt-0.5 size-4 shrink-0", item.read ? "text-muted-foreground" : item.level === "warning" ? "text-warning-foreground" : item.level === "error" ? "text-destructive-foreground" : "text-muted-foreground")} />
-                      <div className="min-w-0 flex-1">
-                        <p className={cn("break-words text-sm leading-snug", item.read ? "text-muted-foreground" : "font-semibold")}>{item.title}</p>
-                        <p className="mt-1 truncate text-xs text-muted-foreground">{item.source}{item.level !== "info" && ` · ${item.level}`}</p>
-                        {item.body && <p className="mt-1 whitespace-pre-wrap break-words text-sm text-muted-foreground">{item.body}</p>}
-                      </div>
-                      <div className="flex shrink-0 flex-col items-end gap-1">
-                        <time dateTime={date.toISOString()} aria-label={date.toLocaleString()} className="text-xs tabular-nums text-muted-foreground">{date.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}</time>
-                        <div className="flex gap-0.5 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 [@media(hover:none)]:opacity-100">
-                          {!item.read && <Tooltip><TooltipTrigger render={<Button size="icon-xs" variant="ghost" disabled={unavailable || n.busy} aria-label={`Mark read: ${item.title}`} onClick={() => void n.markRead([item.id])} />}><Check /></TooltipTrigger><TooltipPopup>Mark read</TooltipPopup></Tooltip>}
-                          <Tooltip><TooltipTrigger render={<Button size="icon-xs" variant="ghost" disabled={unavailable || n.busy} aria-label={`Dismiss: ${item.title}`} onClick={() => void n.dismiss([item.id])} />}><X /></TooltipTrigger><TooltipPopup>Dismiss</TooltipPopup></Tooltip>
-                        </div>
-                      </div>
-                    </div>
-                  </li>;
-                })}
-              </ul>
-              {n.items.length > 0 && <p className="text-xs text-muted-foreground">Showing the latest {n.items.length} matching notifications (up to 100).</p>}
-            </div>
-          )}
+          <div className="min-h-0 overflow-y-auto overscroll-contain" aria-busy={n.loading || n.busy}>
+            {!inDesktop ? (
+              <Notice title="Open the desktop app">Notifications are kept by the Orole daemon, which this browser preview does not run.</Notice>
+            ) : (
+              <>
+                {(offline || n.error) && <p role="alert" className="mx-3.5 mb-2 rounded-lg bg-warning/8 px-2.5 py-2 text-xs text-warning-foreground">{offline ? "The daemon is offline. Showing the last loaded notifications." : `Could not load notifications: ${n.error}`}</p>}
+                {n.actionError && <p role="alert" className="mx-3.5 mb-2 rounded-lg bg-destructive/8 px-2.5 py-2 text-xs text-destructive-foreground">Not marked read: {n.actionError}</p>}
+                {n.loading && !n.loaded && <div role="status" aria-label="Loading notifications" className="flex flex-col gap-1 px-3.5 pb-3 pt-2"><Skeleton className="h-8 w-full" /><Skeleton className="h-8 w-full" /><Skeleton className="h-8 w-full" /></div>}
+                {n.loaded && !n.error && n.items.length === 0 && (needsYouTab
+                  ? <Notice title="Nothing needs you">Approvals and questions from tasks, bots and flows wait here until you answer them.</Notice>
+                  : <Notice title="No notifications yet">Tasks, bots and flows report here when they finish, fail or need you.</Notice>)}
+                {groups.length > 0 && <ul aria-label={needsYouTab ? "Waiting for you" : "Notifications"} className="flex flex-col px-1.5 pb-1.5">
+                  {groups.map((group) => <li key={group.label}>
+                    <div className="sticky top-0 z-1 bg-card px-2 pb-1 pt-2 text-xs leading-4 text-muted-foreground">{group.label}</div>
+                    <ul className="flex flex-col">{group.items.map((item) => <Row key={item.id} item={item} now={now} onOpen={choose} />)}</ul>
+                  </li>)}
+                </ul>}
+              </>
+            )}
+          </div>
+          <div className="flex h-10 flex-none items-center justify-between gap-2 px-2 shadow-[inset_0_1px_0_0_var(--border)]">
+            <Button size="xs" variant="ghost" className="text-muted-foreground" onClick={() => { setOpen(false); useUI.getState().openSettings("notifications", "notifications"); }}>Settings</Button>
           </div>
         </div>
       </PopoverPopup>
     </Popover>
   );
+}
+
+function Notice({ title, children }: { title: string; children: string }) {
+  return <div className="flex flex-col items-center gap-1 px-6 py-8 text-center">
+    <p className="font-medium text-card-foreground">{title}</p>
+    <p className="text-xs text-muted-foreground">{children}</p>
+  </div>;
 }

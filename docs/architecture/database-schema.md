@@ -28,7 +28,7 @@ prefixes (0010, 0020, ...) so concurrent work does not collide; `DB.Version()` i
 | `mcp_cache(server_id PK/FK, fetched_at, tools, resources, prompts, ...)` | 0030 | last discovered capabilities; server-controlled, untrusted display data |
 | `policy_rules(id, actor, action, resource, max_effect, decision, note, created_at, UNIQUE(...))` | 0030 | generic permission rules; most specific wins, deny > ask > allow |
 | `audit_events(id, at, actor, action, target, outcome allowed\|denied\|error, detail)` + index on `at` | 0001 | audit log |
-| `notifications(id, at, source, title, body, read, dismissed)` + `level` | 0001, 0050 | notification inbox |
+| `notifications(id, at, source, title, body, read, dismissed)` + `level`, `kind`, `target`, `ref`, `needs_you` + partial index on `ref` where `needs_you=1` | 0001, 0050, 0108 | notification center; `kind` is `approval \| failed \| finished \| reply \| message`, `target` what a click opens (`task:<id>`, `bot:<id>`, `automation:<id>`), `ref` the wait an approval reports, open while `needs_you=1`. `dismissed` rows predate 0108 and stay hidden |
 | `file_roots(id, provider, path, label, created_at, UNIQUE(provider,path))` | 0050 | approved roots for the files providers; paths stored fully resolved |
 | `agent_sessions(id, kind, status, ..., data JSON)`, `agent_events`, `agent_journal`, `agent_runs` | 0020 | agent runtime state and an at-most-once orchestration journal |
 | `agent_sessions.data.permissionMode` | 0100 | renamed to `manual \| auto \| yolo` (`default`/empty → `manual`, `acceptEdits` → `auto`; `plan` unchanged) |

@@ -245,6 +245,7 @@ func (d *Daemon) registerAgents() {
 	}
 	tasks := newTaskEvents(d.Events, d.reportToOwner)
 	tasks.settle = taskSettleDelay
+	tasks.notices = d.notices
 	tasks.lookup = func(id string) (agents.Session, error) { return d.Agents.Get(id) }
 	prices := pricing.Embedded()
 	refresher := &pricing.Refresher{Catalog: prices, Dir: filepath.Join(d.DataDir, "pricing"), Delay: time.Minute, Log: d.Log}

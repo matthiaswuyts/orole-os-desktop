@@ -20,7 +20,7 @@ GitHub #7. Versions below are declared direct dependencies; `go.mod`, `go.sum`, 
 | SSH/SFTP | x/crypto and pkg/sftp (versions in go.mod) | Daemon machine transport | Independently supplied host fingerprint; pinned key; external-host acceptance still required |
 | Git / GitHub | Installed Git and gh executables; GitHub REST API | Daemon | No token returned to React; mutations require Go policy |
 | Brand marks | simple-icons ^16.35.0 (CC0) | Frontend only, bundled paths | Marks identify the services they connect to; vendors own their trademarks |
-| Audio and charts | @web-kits/audio ^0.2.0; attributed Dither Kit chart source | Frontend/native notification bridge | Real samples only; native acceptance is not proof of acoustic audibility |
+| Audio and charts | @web-kits/audio ^0.2.0; attributed Dither Kit chart source | Interface cues and one cue per notification kind | Synthesized, no samples; playback is not proof of acoustic audibility |
 
 ## Integration prerequisites and acceptance boundaries
 

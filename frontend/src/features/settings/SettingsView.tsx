@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { Bell, Bot, Cpu, Palette, PlugZap, Settings2, ShieldCheck, Sparkles, SquareTerminal, Upload, Wrench } from "lucide-react";
+import { Bell, Bot, Cpu, Mic, Palette, PlugZap, Settings2, ShieldCheck, Sparkles, SquareTerminal, Upload, Wrench } from "lucide-react";
 import { useSettings } from "@/stores/settings";
 import { BUILTIN_THEMES } from "@/themes/builtin";
 import { useDaemon } from "@/stores/daemon";
@@ -22,6 +22,7 @@ import { UpdateSettings } from "@/features/settings/UpdateSettings";
 import { useUI } from "@/stores/ui";
 import { SkillsView } from "@/features/skills/SkillsView";
 import { AIProviders } from "@/features/settings/AIProviders";
+import { VoiceSettings } from "@/features/settings/VoiceSettings";
 
 type Section = { id: string; label: string; icon: typeof Palette };
 // Search and deep links address a section by id and, optionally, a tab or an anchor inside it (see openSettings).
@@ -30,6 +31,7 @@ const SECTIONS: Section[] = [
   { id: "integrations", label: "Integrations", icon: PlugZap },
   { id: "skills", label: "Skills", icon: Sparkles },
   { id: "ai", label: "AI providers", icon: Bot },
+  { id: "voice", label: "Voice", icon: Mic },
   { id: "task-permissions", label: "Task permissions", icon: ShieldCheck },
   { id: "bot-tools", label: "Bot tools", icon: Wrench },
   { id: "bot-code-tasks", label: "Bot code tasks", icon: SquareTerminal },
@@ -227,6 +229,7 @@ export function SettingsView() {
         {id === "customization" && <Customization />}
         {id === "skills" && <SkillsView />}
         {id === "ai" && <AIProviders />}
+        {id === "voice" && <VoiceSettings />}
         {id === "integrations" && <Integrations />}
         {id === "notifications" && <Tabbed section={id} tabs={[
           { id: "notifications", label: "Alerts", panel: <NotificationSettings /> },

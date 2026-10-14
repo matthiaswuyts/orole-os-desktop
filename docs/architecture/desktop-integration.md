@@ -33,7 +33,7 @@ Implementation research read both the local `../_upstream/mygo` source and the p
 - Separately, `Ctrl+Alt+Space` is registered **system-wide** after the app is ready and the main window exists. It shows/restores/focuses Orole and navigates to Home, including when Orole is hidden to the tray or another application is focused. It uses the same navigation event/snapshot path as menu actions and deep links. `Ctrl+K` is not captured globally.
 - The Orole OS menu's Open Home action displays the system-wide shortcut when registration succeeds. If registration fails (for example, another app owns the keys), it instead displays “system-wide shortcut unavailable” and logs the error. The menu action remains usable, startup continues, and tray/menu navigation still works. This label is not a menu accelerator or a claim of a second registration.
 - Quit unregisters `Ctrl+Alt+Space` in `OnWillQuit`, while the native event loop is alive; hiding the GUI does not unregister it. Binding generation bypasses native registration.
-- Existing Files/Notifications code owns native notifications. This slice creates no parallel notification integration.
+- There are no native (OS toast) notifications: the in-app notification center and its sounds are the only delivery.
 
 ### Deep links
 

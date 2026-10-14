@@ -115,13 +115,12 @@ launcher owns process lifetime. Do not expose the CDP port to a network or reuse
 
 Native acceptance creates a uniquely named workspace through the UI, adds/edits/reorders/resizes a
 widget, uses the palette to change theme, and checks persisted daemon records plus reloaded UI.
-It removes the widget/workspace and verifies removal after reload. Notification acceptance uses
-the actual Settings **Test notification** action with native delivery/sound disabled for the test
-source, then marks read and dismisses through the center, checking persistence after reload.
-Tests restore preferences and clean only their owned records in `finally`; the disposable home
-also removes dismissed history. Browser layout persistence covers #22; real notification mutations
-cover #23. This does not assert native Windows toast delivery, installer correctness, or survival
-across a daemon restart; use the separate installer/manual checks for those release gates.
+It removes the widget/workspace and verifies removal after reload. Notification acceptance sends a
+real test notification with its sound off, marks it read by clicking its row in the center, and
+checks after reload that it stays read and that Needs you is empty. Tests restore preferences in
+`finally`; the read test entry stays in the disposable home's history. Browser layout persistence
+covers #22; real notification mutations cover #23. This does not assert installer correctness or
+survival across a daemon restart; use the separate installer/manual checks for those release gates.
 
 Observed on Windows, 2026-10-08: the rebuilt NSIS-installed app passed both native
 Playwright cases (workspace/grid/palette persistence and notification preferences,

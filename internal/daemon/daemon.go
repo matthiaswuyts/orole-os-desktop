@@ -22,6 +22,7 @@ import (
 	"github.com/rayorole/orole-os-desktop/internal/cliruntime"
 	"github.com/rayorole/orole-os-desktop/internal/daemon/api"
 	"github.com/rayorole/orole-os-desktop/internal/database"
+	"github.com/rayorole/orole-os-desktop/internal/dictation"
 	"github.com/rayorole/orole-os-desktop/internal/events"
 	"github.com/rayorole/orole-os-desktop/internal/gateway"
 	"github.com/rayorole/orole-os-desktop/internal/ipc"
@@ -58,6 +59,8 @@ type Daemon struct {
 	LLM llm.Service
 	// LLMManifests stores declarative OpenAI-compatible providers and their trust (svc_llm_manifests.go).
 	LLMManifests *manifest.Service
+	// Dictation is local speech recognition for the composers (svc_dictation.go).
+	Dictation *dictation.Service
 	// Chat owns bots, conversations and runs (svc_chat.go).
 	Chat *chat.Manager
 	// ChatMemory is the chat memory subsystem attached to Chat (svc_chat_memory.go).
@@ -74,7 +77,8 @@ type Daemon struct {
 	// endpoint (crash recovery must not run in a refused second daemon), agentsShutdown on exit.
 	Agents                      *agents.Manager
 	agentsStart, agentsShutdown func()
-	gh                          *ghService // GitHub service; agents publish through its client
+	gh                          *ghService  // GitHub service; agents publish through its client
+	notices                     *appNotices // reports tasks, bots, flows and approvals to the notification center
 	Token                       string
 	Endpoint                    string
 	started                     time.Time
@@ -111,7 +115,11 @@ func (d *Daemon) Run(ctx context.Context) error {
 		if d.Chat != nil {
 			d.Chat.Close() // releases the chat storage root so the data directory can be removed
 		}
+		d.notices.close()
 		d.Terminals.Shutdown()
+		if d.Dictation != nil {
+			d.Dictation.Close()
+		}
 		d.DB.Close()
 		return fmt.Errorf("listen %s (is another daemon running?): %w", d.Endpoint, err)
 	}
@@ -135,6 +143,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 			return fmt.Errorf("automations: %w", err)
 		}
 	}
+	d.notices.reconcile()
 	d.Log.Info("daemon listening", "endpoint", d.Endpoint, "version", oroleos.Version, "pid", os.Getpid(), "go", runtime.Version())
 	errc := make(chan error, 1)
 	go func() { errc <- d.IPC.Serve(ln) }()
@@ -158,6 +167,7 @@ func (d *Daemon) cleanup(ln interface{ Close() error }) {
 	if d.agentsShutdown != nil {
 		d.agentsShutdown()
 	}
+	d.notices.close() // after the runtimes stopped: drains what they reported last
 	if d.ChatMemory != nil {
 		d.ChatMemory.Close() // cancels in-flight consolidation so Chat.Close does not wait on a model call
 	}
@@ -175,6 +185,9 @@ func (d *Daemon) cleanup(ln interface{ Close() error }) {
 	}
 	if d.Machines != nil {
 		d.Machines.Close()
+	}
+	if d.Dictation != nil {
+		d.Dictation.Close() // stops downloads and the speech engine helper
 	}
 	d.Terminals.Shutdown()
 	os.Remove(api.TokenPath(d.DataDir))

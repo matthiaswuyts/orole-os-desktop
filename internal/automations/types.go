@@ -274,11 +274,12 @@ type GitHubQuery interface {
 	QueryGitHub(context.Context, QueryRequest) (any, error)
 }
 type NotificationRequest struct {
-	Title  string
-	Body   string
-	Level  string
-	Source string
-	Key    string
+	Title        string
+	Body         string
+	Level        string
+	Source       string
+	AutomationID string
+	Key          string
 }
 type Notifier interface {
 	Notify(context.Context, NotificationRequest) (any, error)

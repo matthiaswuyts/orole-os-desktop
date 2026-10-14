@@ -13,6 +13,7 @@ import (
 
 	"github.com/rayorole/orole-os-desktop/internal/agents/hook"
 	"github.com/rayorole/orole-os-desktop/internal/daemon"
+	"github.com/rayorole/orole-os-desktop/internal/dictation/engine"
 	gatewaystdio "github.com/rayorole/orole-os-desktop/internal/gateway/stdio"
 	"github.com/rayorole/orole-os-desktop/internal/paths"
 )
@@ -25,6 +26,10 @@ func main() {
 	// Harnesses launch `orole-daemon mcp-gateway` as their stdio MCP server (see internal/gateway).
 	if len(os.Args) > 1 && os.Args[1] == "mcp-gateway" {
 		os.Exit(gatewaystdio.Main(os.Args[2:], os.Stdin, os.Stdout, os.Stderr))
+	}
+	// The daemon runs speech recognition in `orole-daemon voice-engine` (see internal/dictation/engine).
+	if len(os.Args) > 1 && os.Args[1] == "voice-engine" {
+		os.Exit(engine.Main(os.Args[2:], os.Stdin, os.Stdout, os.Stderr))
 	}
 	var verbose bool
 	var stderr bool

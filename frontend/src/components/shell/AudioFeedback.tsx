@@ -3,6 +3,7 @@ import { events } from "@/mygo";
 import { inDesktop } from "@/lib/backend";
 import { disposeSounds, playSound, stopSounds } from "@/lib/audio";
 import { useSettings } from "@/stores/settings";
+import { targetOnScreen } from "@/features/notifications/targets";
 
 /** Shared semantic activation feedback, including portaled controls and keyboard clicks. */
 export function AudioFeedback() {
@@ -21,16 +22,16 @@ export function AudioFeedback() {
     const offSettings = useSettings.subscribe((next, previous) => {
       if (next.sound.volume !== previous.sound.volume || next.sound.uiEnabled !== previous.sound.uiEnabled) stopSounds();
     });
-    // History fetches/read/dismiss events never play. Windows owns native cues,
-    // including suppressed/failed deliveries: no duplicate web fallback.
+    // Only new notifications play, each kind with its own cue; history loads and read changes never do.
+    // Nothing plays for what the focused window already shows.
     const seen = new Set<string>();
     const offNotification = inDesktop ? events.notificationsChanged.on((event) => {
       const notification = event.notification;
-      if (event.kind !== "created" || !event.sound || event.native || !notification || seen.has(notification.id)) return;
+      if (event.kind !== "created" || !event.sound || !notification || seen.has(notification.id)) return;
       seen.add(notification.id);
       if (seen.size > 128) seen.delete(seen.values().next().value!);
-      const level = notification.level;
-      void playSound(level === "success" || level === "warning" || level === "error" ? level : "info", "notification");
+      if (targetOnScreen(notification.target)) return;
+      void playSound(notification.kind, "notification");
     }) : undefined;
     return () => {
       document.removeEventListener("click", click);

@@ -18,8 +18,8 @@ async function installBridge(page: Page) {
     g.__calls = calls;
     const handlers: Record<string, (...args: never[]) => unknown> = {
       "Daemon.Health": () => ({ version: "0.1.0", memAllocMB: 24, startedAt: new Date(now).toISOString() }), "Settings.All": () => ({}),
-      "Projects.List": () => projects, "Worktrees.List": () => [], "Notifications.List": () => ({ items: [], sources: [], unread: 0 }),
-      "Notifications.Prefs": () => ({ default: { enabled: true, native: false, sound: false }, sources: {} }), "Policy.Pending": () => [], "Plugins.List": () => [], "Desktop.Ready": () => ({ view: "", sequence: 0 }),
+      "Projects.List": () => projects, "Worktrees.List": () => [], "Notifications.List": () => ({ items: [], unread: 0, needsYou: 0 }),
+      "Notifications.Prefs": () => ({ kinds: {} }), "Policy.Pending": () => [], "Plugins.List": () => [], "Desktop.Ready": () => ({ view: "", sequence: 0 }),
       "Updates.Check": () => ({ enabled: false, available: false, error: "" }), "Terminals.List": () => [], "Machines.List": () => [{ id: "local", name: "devl", kind: "local", status: "online" }], "MCP.List": () => [],
       "Settings.Set": () => null, "Agents.List": () => sessions, "Agents.Runs": () => [], "Agents.Options": () => options,
       "Agents.Start": (spec: StartSpec) => { calls.push({ method: "Agents.Start", args: [spec] }); return session("s-new", "New task", { status: "working" }); },

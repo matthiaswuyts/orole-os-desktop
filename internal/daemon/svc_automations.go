@@ -15,7 +15,11 @@ import (
 type automationNotifier struct{ d *Daemon }
 
 func (n automationNotifier) Notify(ctx context.Context, p automations.NotificationRequest) (any, error) {
-	return n.d.Notify(p.Source, p.Title, p.Body, notifications.Level(p.Level))
+	res, err := n.d.notifyResult(ctx, notifications.Input{Source: p.Source, Kind: notifications.Message, Title: p.Title, Body: p.Body, Level: notifications.Level(p.Level), Target: "automation:" + p.AutomationID})
+	if err != nil || !res.Stored {
+		return notifications.Notification{}, err
+	}
+	return res.Notification, nil
 }
 func (d *Daemon) registerAutomations() {
 	e := automations.New(automations.Options{DB: d.DB.DB, Bus: d.Events, Credentials: credentials.New(), Log: d.Log, Audit: d.audit, Notifier: automationNotifier{d}, Authorize: func(ctx context.Context, request policy.Request) error {
@@ -23,7 +27,10 @@ func (d *Daemon) registerAutomations() {
 			return fmt.Errorf("automation policy is unavailable")
 		}
 		return d.Policy.Require(ctx, request)
-	}, Changed: func(r automations.Run) { d.IPC.Publish("automations.run", r) }})
+	}, Changed: func(r automations.Run) {
+		d.IPC.Publish("automations.run", r)
+		d.notices.run(r)
+	}})
 	d.Automations = e
 	handle(d, "automations.list", func(ctx context.Context, _ none) ([]automations.Summary, error) { return e.List(ctx) })
 	handle(d, "automations.save", func(ctx context.Context, p automations.Definition) (automations.SaveResult, error) {

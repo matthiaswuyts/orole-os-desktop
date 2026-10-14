@@ -22,7 +22,7 @@ type mcpCall struct {
 }
 
 func (d *Daemon) registerMCP() {
-	d.Policy = policy.New(d.DB.DB, d.IPC, d.Log)
+	d.Policy = policy.New(d.DB.DB, policyPublisher{pub: d.IPC, notices: d.notices}, d.Log)
 	d.MCP = mcp.New(mcp.Options{DB: d.DB.DB, Creds: credentials.New(), Pub: d.IPC, Policy: d.Policy, Events: d.Events, Log: d.Log, Version: oroleos.Version})
 	if d.Automations != nil {
 		d.Automations.SetToolInvoker(automationMCP{d})

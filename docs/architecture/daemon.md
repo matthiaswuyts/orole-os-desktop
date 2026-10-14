@@ -40,24 +40,42 @@ Notifications and search are registered through the integration service initiali
 These modules are reachable through authenticated IPC; unavailable configuration is reported
 explicitly rather than replaced with mock data. See the module guides and `ipc-protocol.md`.
 
-### Dictation (`svc_dictation.go`, `internal/dictation`)
+### Dictation (`svc_dictation.go`, `internal/dictation`, `internal/dictation/engine`)
+
+Speech is recognized **on this computer**: no API key, no network call per recording. The engine is sherpa-onnx's C API
+(v1.13.8, ONNX Runtime, CPU, static C runtime) and one of two int8 models the user downloads from Settings > Voice:
+NVIDIA Parakeet TDT 0.6B v3 (639.4 MB, finds the language itself, 25 European languages) or Whisper large-v3 turbo
+(988.6 MB, about 100 languages, the spoken language can be set). Nothing is downloaded until the user asks.
 
 | Method | Behaviour |
 |---|---|
-| `dictation.status` | `{ready, provider, maxSeconds, maxBytes}`: `ready` is whether an OpenAI API key is stored; no network call |
-| `dictation.transcribe` | `{mimeType, dataBase64, durationMs}` -> `{text, model}`; sends one recording to OpenAI `/v1/audio/transcriptions` |
+| `dictation.status` | `VoiceStatus`: supported, ready, model in use, language, each model's state/sizes/progress, Whisper's languages, limits |
+| `dictation.download` / `.cancel` / `.remove` | `{id}` -> `VoiceStatus`; download runs in the background, cancel keeps the partial files for resuming, remove deletes the model (and the engine once no model is left) |
+| `dictation.use` / `.language` | `{id}` / `{language}` -> `VoiceStatus`; stored as JSON under the `dictation` settings key |
+| `dictation.prepare` | starts loading the model in use while the user is still speaking; returns at once |
+| `dictation.upload` | `{id, part, pcmBase64}`: one in-order part (≤ 1 MiB) of 16 kHz mono 16-bit PCM |
+| `dictation.transcribe` / `.discard` | `{id}` -> `{text, model}` / drops an upload |
 
-The desktop's `Dictation` service forwards these. The webview records with `MediaRecorder` (`audio/webm;codecs=opus`
-where supported) and Chromium's Web Speech API is deliberately not used: WebView2 has no speech service behind it.
-The daemon reads the OpenAI key from Credential Manager (`llm/openai/key`, the same entry as the AI providers page) for
-every call; it never reaches the frontend, logs or SQLite, and is scrubbed from every error. Models: `gpt-4o-mini-transcribe`,
-then `whisper-1` only when the account cannot use the first. Caps: 2 MiB of audio, 120 s (the frontend stops there; the daemon
-rejects more than 125 s), 25 s upstream timeout, two recordings in flight. Neither audio nor transcript is logged or stored.
-Every attempt is audited as `dictation.transcribe` on `dictation/openai` with the outcome, model and audio size, never the text.
-Failures are IPC errors coded `dictation_<code>` (`not_connected`, `auth`, `quota`, `rate_limit`, `network`, `timeout`, `server`,
-`rejected`, `too_large`, `too_long`, `no_audio`, `unsupported`, `busy`, `canceled`, `credentials`) with a user-ready message.
-The MyGo WebView2 shell grants the microphone to the app's own pages by default (`Page.SetPermissionHandler` is not needed);
-Windows can still block it under Settings > Privacy & security > Microphone, which the UI explains.
+Event `dictation.changed` carries the `VoiceStatus` on every change (download progress at most about 4 per second).
+
+Downloads: every file is pinned in `internal/dictation/catalog.go` by URL (a Hugging Face repository revision or the
+sherpa-onnx GitHub release asset), size and SHA-256, and checked while streaming; a mismatch deletes the file. Files land
+in `<DataDir>/voice/downloads/<id>/*.part` (resumed with HTTP `Range` after an interruption) and move to
+`voice/models/<id>` once all are verified; the engine DLLs go to `voice/engine/<version>`. Downloads and removals are
+audited (`dictation.download`, `dictation.remove`).
+
+Recognition: the webview records with `MediaRecorder` (WebView2 has no Web Speech service), decodes the recording to
+16 kHz mono PCM with Web Audio and uploads it in parts (a recording is larger than one 4 MiB IPC frame). The daemon runs
+the model in a helper process, `orole-daemon voice-engine`, which loads `sherpa-onnx-c-api.dll` without cgo and refuses
+a DLL reporting another version (the C structs it fills are laid out for exactly that build). A native fault ends only the
+helper; the model's memory is returned 10 minutes after the last use. Whisper reads 30 s windows, so longer recordings
+are split at the quietest point before 28 s. Caps: 120 s per recording (the daemon rejects more than 125 s of PCM), two
+recordings in flight, one transcription at a time, 3 minutes per transcription. Neither audio nor transcript is logged,
+stored or sent anywhere. Failures are IPC errors coded `dictation_<code>` (`not_ready`, `unsupported`, `unknown`,
+`too_long`, `no_audio`, `bad_audio`, `busy`, `canceled`, `timeout`, `engine`, `downloading`) with a user-ready message.
+The engine runs on Windows x64 only; elsewhere the Voice page says so. The MyGo WebView2 shell grants the microphone to
+the app's own pages by default; Windows can still block it under Settings > Privacy & security > Microphone, which the
+UI explains.
 
 ## Operating it
 

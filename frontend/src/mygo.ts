@@ -220,14 +220,6 @@ export interface AutostartStatus {
   detail: string;
 }
 
-/** Availability tells the UI whether dictation can run and what limits apply. */
-export interface Availability {
-  ready: boolean;
-  provider: string;
-  maxSeconds: number;
-  maxBytes: number;
-}
-
 /** Bot is a contact: identity, brain settings and live status. */
 export interface Bot {
   id: string;
@@ -1397,6 +1389,17 @@ export interface Journal {
   finishedAt: number;
 }
 
+/** Kind is the event a notification reports. Preferences and sounds are per kind. */
+export type Kind = "approval" | "failed" | "finished" | "reply" | "message";
+
+/** KindPref is the preference for one kind. */
+export interface KindPref {
+  /** InApp false drops the kind's notifications. Approvals are always shown. */
+  inApp: boolean;
+  /** Sound plays the kind's cue when one arrives. */
+  sound: boolean;
+}
+
 /** KnowledgeAdd attaches a committed upload as knowledge. */
 export interface KnowledgeAdd {
   botId: string;
@@ -1428,6 +1431,17 @@ export interface Label {
   name: Untrusted;
   color: string;
   description: Untrusted;
+}
+
+/** Language is one spoken language a model can be told to expect. */
+export interface Language {
+  code: string;
+  name: string;
+}
+
+/** LanguageRequest sets the spoken language ("" = automatic). */
+export interface LanguageRequest {
+  language: string;
 }
 
 /** LaunchOptions contains discovered machine-scoped choices, not an account model inventory. */
@@ -1750,6 +1764,40 @@ export interface ModelOption {
   default: boolean;
 }
 
+/** ModelRef names a model. */
+export interface ModelRef {
+  id: string;
+}
+
+/** ModelState is where a model is in its life on this computer. */
+export type ModelState = "absent" | "downloading" | "ready" | "failed";
+
+/** ModelStatus is one model as the Voice settings page shows it. */
+export interface ModelStatus {
+  id: string;
+  name: string;
+  description: string;
+  /**
+   * LanguageChoice reports that the spoken language can be set for this model (Whisper). Without it the model
+   * finds the language itself.
+   */
+  languageChoice: boolean;
+  /** SizeBytes is the model's files on disk. */
+  sizeBytes: number;
+  /**
+   * DownloadBytes is what a download fetches now: the model's files plus the speech engine when it is not
+   * installed yet. Bytes already kept from an interrupted download are not subtracted.
+   */
+  downloadBytes: number;
+  state: ModelState;
+  /** ReceivedBytes and TotalBytes describe the running download (State == downloading). */
+  receivedBytes: number;
+  totalBytes: number;
+  /** Error is the last download's failure, user-ready (State == failed). */
+  error?: string;
+  license: string;
+}
+
 /** MsgPart is one renderable piece of a message; fields are used per Type. */
 export interface MsgPart {
   type: string;
@@ -1805,9 +1853,8 @@ export interface NotificationEvent {
   kind: string;
   notification?: NotificationsNotification;
   unread: number;
-  /** Native asks the desktop to show an OS notification (per-source preference). */
-  native?: boolean;
-  /** Sound permits audio only for newly created notifications. */
+  needsYou: number;
+  /** Sound permits the kind's cue only for newly created notifications. */
   sound: boolean;
 }
 
@@ -1815,15 +1862,7 @@ export interface NotificationEvent {
 export interface NotificationList {
   items: NotificationsNotification[];
   unread: number;
-  sources: SourceCount[];
-}
-
-/** NotificationNativeState reports submission, not whether a user saw or heard a toast. */
-export interface NotificationNativeState {
-  id: string;
-  accepted: boolean;
-  denied: boolean;
-  error?: string;
+  needsYou: number;
 }
 
 /** Notification is one stored entry. */
@@ -1832,11 +1871,15 @@ export interface NotificationsNotification {
   /** unix seconds */
   at: number;
   source: string;
+  kind: Kind;
   title: string;
   body: string;
   level: Level;
+  /** Target is what the notification is about: "task:<id>", "bot:<id>", "automation:<id>" or "". */
+  target: string;
   read: boolean;
-  dismissed: boolean;
+  /** NeedsYou is true while the approval this reports is still waiting. */
+  needsYou: boolean;
 }
 
 export interface Page {
@@ -1993,10 +2036,9 @@ export interface PluginWidget {
   actionId: string;
 }
 
-/** Prefs are per-source preferences with defaults for unlisted sources. */
+/** Prefs are per-kind preferences. Missing kinds use defaults. */
 export interface Prefs {
-  default: SourcePref;
-  sources: Record<string, SourcePref>;
+  kinds: Record<string, KindPref>;
 }
 
 export interface Preview {
@@ -2293,6 +2335,11 @@ export interface Recipient {
   revision: string;
 }
 
+/** RecordingRef names an uploaded recording. */
+export interface RecordingRef {
+  id: string;
+}
+
 /** RegenerateRequest replaces the assistant reply to the last user message. */
 export interface RegenerateRequest {
   botId: string;
@@ -2368,10 +2415,11 @@ export interface Response {
 /** Result of Notify. */
 export interface Result {
   notification: NotificationsNotification;
-  /** Stored is false when the source is disabled by preference. */
+  /**
+   * Stored is false when the kind is turned off, or an approval with the same ref is
+   * already open.
+   */
   stored: boolean;
-  /** Native tells the desktop to also show an OS notification. */
-  native: boolean;
   /** Sound applies only to this newly created notification, never history. */
   sound: boolean;
 }
@@ -2800,23 +2848,6 @@ export interface SkillResolve {
   approve: boolean;
 }
 
-/** Sources lists sources that have visible notifications, with counts. */
-export interface SourceCount {
-  source: string;
-  count: number;
-  unread: number;
-}
-
-/** SourcePref is the preference for one source. A missing entry means defaults. */
-export interface SourcePref {
-  /** Enabled false drops the source's notifications entirely. */
-  enabled: boolean;
-  /** Native shows an OS notification as well. */
-  native: boolean;
-  /** Sound allows sound for new notifications; Windows controls native volume. */
-  sound: boolean;
-}
-
 /** StartSpec is a request to start an agent. */
 export interface StartSpec {
   kind: string;
@@ -3044,16 +3075,6 @@ export interface TopicField {
   label: string;
 }
 
-/**
- * TranscribeRequest is one recording. DataBase64 is the raw container (webm, ogg, mp4, ...) the
- * browser's MediaRecorder produced.
- */
-export interface TranscribeRequest {
-  mimeType: string;
-  dataBase64: string;
-  durationMs: number;
-}
-
 /** Transcript is the recognized text. Text is empty when nothing intelligible was said. */
 export interface Transcript {
   text: string;
@@ -3128,6 +3149,15 @@ export interface UploadAttachmentSpec {
   dataBase64: string;
 }
 
+/** UploadRequest carries one part of a recording. Parts are numbered from 0 and must arrive in order. */
+export interface UploadRequest {
+  /** ID is chosen by the client for this recording (8-64 characters of [A-Za-z0-9_-]). */
+  id: string;
+  part: number;
+  /** PCMBase64 is base64 of signed 16-bit little-endian mono samples at SampleRate, at most PartBytes raw. */
+  pcmBase64: string;
+}
+
 /** UsageQuery is the agents.usage request. */
 export interface UsageQuery {
   /** "24h" | "7d" | "all"; default "24h" */
@@ -3174,6 +3204,26 @@ export interface User {
   html_url: string;
   type: string;
   name?: string;
+}
+
+/**
+ * VoiceStatus is everything the composers and the Voice settings page need. (Not "Status": the generated
+ * TypeScript bindings already have one.)
+ */
+export interface VoiceStatus {
+  /** Supported is false on computers the speech engine has no build for; nothing can be downloaded there. */
+  supported: boolean;
+  /** Ready reports that dictation can run now: a model is in use and it and the engine are on disk. */
+  ready: boolean;
+  /** Model is the model in use ("" = none chosen yet). */
+  model: string;
+  /** Language is the spoken language for models with LanguageChoice ("" = detect automatically). */
+  language: string;
+  models: ModelStatus[];
+  languages: Language[];
+  maxSeconds: number;
+  sampleRate: number;
+  partBytes: number;
 }
 
 /**
@@ -3649,16 +3699,14 @@ export const Files = {
   },
 } as const;
 
-/** Notifications forwards persisted center operations; notification creation is daemon-owned. */
+/** Notifications forwards notification center operations; notification creation is daemon-owned. */
 export const Notifications = {
-  dismiss(ids: string[], source: string, all: boolean): Promise<number> {
-    return call("Notifications.Dismiss", ids, source, all);
+  /** List returns the newest notifications, or only open approvals when needsYou is set. */
+  list(needsYou: boolean): Promise<NotificationList> {
+    return call("Notifications.List", needsYou);
   },
-  list(source: string, unreadOnly: boolean): Promise<NotificationList> {
-    return call("Notifications.List", source, unreadOnly);
-  },
-  markRead(ids: string[], source: string, all: boolean): Promise<number> {
-    return call("Notifications.MarkRead", ids, source, all);
+  markRead(ids: string[], all: boolean): Promise<number> {
+    return call("Notifications.MarkRead", ids, all);
   },
   prefs(): Promise<Prefs> {
     return call("Notifications.Prefs");
@@ -4252,20 +4300,49 @@ export const LLM = {
 } as const;
 
 /**
- * Dictation is a stateless bridge to the daemon's voice transcription. The recording is sent to
- * OpenAI with the user's own OpenAI key, which stays in the daemon and the Windows credential store.
+ * Dictation is a stateless bridge to the daemon's local speech recognition. The engine and the models are
+ * downloaded and run by the daemon; audio never leaves this computer.
  */
 export const Dictation = {
-  /** Status says whether an OpenAI key is connected and what recording limits apply. */
-  status(): Promise<Availability> {
+  /** Cancel stops a download; what was received is kept so the next download continues from there. */
+  cancel(ref: ModelRef): Promise<VoiceStatus> {
+    return call("Dictation.Cancel", ref);
+  },
+  /** Discard drops an uploaded recording that will not be transcribed. */
+  discard(ref: RecordingRef): Promise<void> {
+    return call("Dictation.Discard", ref);
+  },
+  /** Download starts downloading a model (and the speech engine when missing) in the background. */
+  download(ref: ModelRef): Promise<VoiceStatus> {
+    return call("Dictation.Download", ref);
+  },
+  /** Prepare starts loading the model in use so the next transcription starts at once. It returns at once. */
+  prepare(): Promise<void> {
+    return call("Dictation.Prepare");
+  },
+  /** Remove deletes a model from this computer. */
+  remove(ref: ModelRef): Promise<VoiceStatus> {
+    return call("Dictation.Remove", ref);
+  },
+  /** SetLanguage sets the spoken language for models that accept one ("" = detect automatically). */
+  setLanguage(req: LanguageRequest): Promise<VoiceStatus> {
+    return call("Dictation.SetLanguage", req);
+  },
+  /** Status reports the engine, the models, the chosen model and language, and the recording limits. */
+  status(): Promise<VoiceStatus> {
     return call("Dictation.Status");
   },
-  /**
-   * Transcribe sends one recording (base64 of the recorded container) to OpenAI and returns the
-   * text, which is empty when nothing intelligible was said.
-   */
-  transcribe(req: TranscribeRequest): Promise<Transcript> {
-    return call("Dictation.Transcribe", req);
+  /** Transcribe turns an uploaded recording into text. The text is empty when nothing intelligible was said. */
+  transcribe(ref: RecordingRef): Promise<Transcript> {
+    return call("Dictation.Transcribe", ref);
+  },
+  /** Upload sends one part of a recording (16 kHz mono 16-bit PCM, base64). */
+  upload(req: UploadRequest): Promise<void> {
+    return call("Dictation.Upload", req);
+  },
+  /** Use makes a downloaded model the one dictation runs with. */
+  use(ref: ModelRef): Promise<VoiceStatus> {
+    return call("Dictation.Use", ref);
   },
 } as const;
 
@@ -4465,6 +4542,8 @@ export const events = {
   chatBot: event<BotChange>("chat:bot"),
   chatMemory: event<MemoryChange>("chat:memory"),
   llmChanged: event<Change>("llm:changed"),
+  /** DictationChanged carries the voice status after every change in the daemon (downloads report progress). */
+  dictationChanged: event<VoiceStatus>("dictation:changed"),
   /** GitHubChanged fires when the GitHub connection or cached data changed. */
   githubChanged: event<GitHubChange>("github:changed"),
   /** GitHubClone reports progress of a clone started with GitHub.Clone. */
@@ -4476,7 +4555,6 @@ export const events = {
   notificationsChanged: event<NotificationEvent>("notifications:changed"),
   filesChanged: event<FilesChanged>("files:changed"),
   filesRootsChanged: event<FileRootsChange>("files:rootsChanged"),
-  notificationsNativeState: event<NotificationNativeState>("notifications:nativeState"),
   pluginsChanged: event<PluginChange>("plugins:changed"),
   /** ProjectsChanged fires when the project registry changes. */
   projectsChanged: event<ProjectRef>("projects:changed"),

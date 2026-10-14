@@ -34,47 +34,25 @@ test("installed dashboard grid and palette persist through the real daemon", asy
   }
 });
 
-test("installed notification preferences, read and dismiss survive reload", async ({ nativePage: page }) => {
+test("installed notification center marks a test read and keeps it through reload", async ({ nativePage: page }) => {
   const original = await nativeCall<Prefs>(page, "Notifications.Prefs");
-  const initial = await nativeCall<NotificationList>(page, "Notifications.List", "system.test", false);
-  const existing = new Set(initial.items.map((item) => item.id));
   try {
-    await runPaletteCommand(page, "Go to Settings");
-    await page.getByRole("navigation", { name: "Settings sections" }).getByRole("button", { name: "Notifications", exact: true }).click();
-    const windows = page.getByRole("group", { name: "system.test", exact: true }).getByRole("switch", { name: /Windows notifications$/ });
-    await expect(windows).toBeEnabled();
-    if (await windows.isChecked()) await windows.click();
-    const sound = page.getByRole("group", { name: "system.test", exact: true }).getByRole("switch", { name: /notification sound$/ });
-    await expect(sound).toBeEnabled();
-    if (await sound.isChecked()) await sound.click();
-    await expect.poll(async () => (await nativeCall<Prefs>(page, "Notifications.Prefs")).sources["system.test"]?.native).toBe(false);
-    await page.getByRole("button", { name: "Test notification", exact: true }).click();
-    let created: NotificationList["items"] = [];
-    await expect.poll(async () => {
-      created = (await nativeCall<NotificationList>(page, "Notifications.List", "system.test", false)).items.filter((item) => !existing.has(item.id));
-      return created.length;
-    }).toBe(1);
-    const notification = created[0]!;
+    await nativeCall(page, "Notifications.SetPrefs", { kinds: { ...original.kinds, message: { inApp: true, sound: false } } });
+    const result = await nativeCall<{ stored: boolean; notification: NotificationList["items"][number] }>(page, "Notifications.Test");
+    expect(result.stored).toBe(true);
+    const notification = result.notification;
+    // Newest first, so the first row with the title is this run's test.
+    const row = (unread: boolean) => page.getByRole("list", { name: "Notifications", exact: true })
+      .getByRole("button", { name: new RegExp(`^${notification.title}, Message, .+${unread ? ", unread$" : "(?<!, unread)$"}`) }).first();
     await page.getByRole("button", { name: /^Notifications,/ }).click();
-    const history = page.getByRole("list", { name: "Notification history" });
-    await expect(history.getByText(notification.title, { exact: true })).toBeVisible();
-    await history.getByRole("button", { name: `Mark read: ${notification.title}`, exact: true }).click();
-    await expect.poll(async () => (await nativeCall<NotificationList>(page, "Notifications.List", "system.test", false)).items.find((item) => item.id === notification.id)?.read).toBe(true);
+    await row(true).click();
+    await expect.poll(async () => (await nativeCall<NotificationList>(page, "Notifications.List", false)).items.find((item) => item.id === notification.id)?.read).toBe(true);
     await page.reload();
     await page.getByRole("button", { name: /^Notifications,/ }).click();
-    await expect(history.getByText(notification.title, { exact: true })).toBeVisible();
-    await expect(history.getByRole("button", { name: `Mark read: ${notification.title}`, exact: true })).toHaveCount(0);
-    await history.getByRole("button", { name: `Dismiss: ${notification.title}`, exact: true }).click();
-    await expect(history.getByText(notification.title, { exact: true })).toHaveCount(0);
-    await page.reload();
-    expect((await nativeCall<NotificationList>(page, "Notifications.List", "system.test", false)).items.some((item) => item.id === notification.id)).toBe(false);
-    await runPaletteCommand(page, "Go to Settings");
-    await page.getByRole("navigation", { name: "Settings sections" }).getByRole("button", { name: "Notifications", exact: true }).click();
-    await expect(windows).not.toBeChecked();
-    await expect(sound).not.toBeChecked();
+    await expect(row(false)).toBeVisible();
+    await page.getByRole("tab", { name: /^Needs you/ }).click();
+    await expect(page.getByText("Nothing needs you")).toBeVisible();
   } finally {
-    const owned = (await nativeCall<NotificationList>(page, "Notifications.List", "system.test", false)).items.filter((item) => !existing.has(item.id));
-    if (owned.length) await nativeCall(page, "Notifications.Dismiss", owned.map((item) => item.id), "", false);
     await nativeCall(page, "Notifications.SetPrefs", original);
     await page.reload();
   }

@@ -102,7 +102,7 @@ func (e *Engine) invoke(ctx context.Context, r Run, s Step, p map[string]any, ke
 		if notify == nil {
 			return nil, fmt.Errorf("Notification adapter is unavailable")
 		}
-		return notify.Notify(ctx, NotificationRequest{Title: e.redact.Text(str(p, "title")), Body: e.redact.Text(str(p, "body")), Level: str(p, "level"), Source: "automation/" + r.AutomationID, Key: key})
+		return notify.Notify(ctx, NotificationRequest{Title: e.redact.Text(str(p, "title")), Body: e.redact.Text(str(p, "body")), Level: str(p, "level"), Source: "automation/" + r.AutomationID, AutomationID: r.AutomationID, Key: key})
 	case "branch":
 		ex, err := expr.Parse(str(p, "condition"))
 		if err != nil {

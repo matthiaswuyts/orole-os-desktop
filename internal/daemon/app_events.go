@@ -26,13 +26,14 @@ const appEventText = 2000
 // next turn right after, so the event waits settle and is dropped when the session is
 // working again by then (the later turn's end publishes instead).
 type taskEvents struct {
-	bus    *events.Bus
-	owned  func(topic string, s agents.Session)
-	settle time.Duration                           // 0 publishes agent.finished at once
-	lookup func(id string) (agents.Session, error) // current state at settle time; nil uses the reported one
-	mu     sync.Mutex
-	seen   map[string]taskMark
-	timers map[string]*time.Timer // pending settles per session
+	bus     *events.Bus
+	owned   func(topic string, s agents.Session)
+	notices *appNotices                             // notification center; nil reports nothing
+	settle  time.Duration                           // 0 publishes agent.finished at once
+	lookup  func(id string) (agents.Session, error) // current state at settle time; nil uses the reported one
+	mu      sync.Mutex
+	seen    map[string]taskMark
+	timers  map[string]*time.Timer // pending settles per session
 }
 
 type taskMark struct {
@@ -60,6 +61,7 @@ func (t *taskEvents) observe(event string, data any) {
 				delete(t.timers, m["id"])
 			}
 			t.mu.Unlock()
+			t.notices.taskResolved(m["id"])
 		}
 		return
 	case "agents.updated":
@@ -81,6 +83,9 @@ func (t *taskEvents) observe(event string, data any) {
 		t.publish(events.TopicTaskStatus, s, d)
 	}
 	if prev.status != s.Status {
+		if prev.status == agents.StatusNeedsYou {
+			t.notices.taskResolved(s.ID)
+		}
 		switch s.Status {
 		case agents.StatusNeedsYou:
 			d := taskData(s)
@@ -150,8 +155,11 @@ func (t *taskEvents) publish(topic string, s agents.Session, data map[string]any
 	if t.bus != nil {
 		t.bus.Publish(events.Event{Topic: topic, Data: data, Chain: s.Chain})
 	}
-	if t.owned != nil && s.Owner != "" && (topic == events.TopicAgentFinished || topic == events.TopicAgentWaiting || topic == events.TopicAgentFailed) {
-		t.owned(topic, s)
+	if topic == events.TopicAgentFinished || topic == events.TopicAgentWaiting || topic == events.TopicAgentFailed {
+		t.notices.task(topic, s)
+		if t.owned != nil && s.Owner != "" {
+			t.owned(topic, s)
+		}
 	}
 }
 
@@ -181,13 +189,11 @@ func projectCreated(bus *events.Bus, p projects.Project, chain []string) {
 type botReplies struct {
 	bus  *events.Bus
 	mu   sync.Mutex
-	done map[string]struct{}
-	ring []string
-	next int
+	done recentIDs
 }
 
 func newBotReplies(bus *events.Bus) *botReplies {
-	return &botReplies{bus: bus, done: map[string]struct{}{}, ring: make([]string, 512)}
+	return &botReplies{bus: bus, done: newRecentIDs(512)}
 }
 
 func (b *botReplies) observe(event string, payload any) {
@@ -200,17 +206,11 @@ func (b *botReplies) observe(event string, payload any) {
 		return
 	}
 	b.mu.Lock()
-	if _, dup := b.done[m.ID]; dup {
-		b.mu.Unlock()
+	fresh := b.done.add(m.ID)
+	b.mu.Unlock()
+	if !fresh {
 		return
 	}
-	if old := b.ring[b.next]; old != "" {
-		delete(b.done, old)
-	}
-	b.ring[b.next] = m.ID
-	b.next = (b.next + 1) % len(b.ring)
-	b.done[m.ID] = struct{}{}
-	b.mu.Unlock()
 	// The chain bounds flows triggered by this reply exactly like the flow that caused it.
 	b.bus.Publish(events.Event{Topic: events.TopicBotMessage, Chain: m.Automations, Data: map[string]any{
 		"botId": m.BotID, "messageId": m.ID, "text": clip(m.Text()),

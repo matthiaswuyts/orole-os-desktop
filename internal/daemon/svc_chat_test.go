@@ -9,6 +9,7 @@ import (
 	"github.com/rayorole/orole-os-desktop/internal/daemon"
 	"github.com/rayorole/orole-os-desktop/internal/daemon/control"
 	"github.com/rayorole/orole-os-desktop/internal/llm"
+	"github.com/rayorole/orole-os-desktop/internal/notifications"
 )
 
 // TestChatOverIPCWithoutProvider exercises the real daemon wiring: provider status, bot CRUD,
@@ -89,6 +90,21 @@ func TestChatOverIPCWithoutProvider(t *testing.T) {
 		}
 		if time.Now().After(deadline) {
 			t.Fatalf("no terminal reply: %+v", page.Messages)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	// The real engine's reply (authored by the bot) reaches the notification center under the bot's name.
+	for {
+		var list daemon.NotificationList
+		must("notifications.list", notifications.ListOptions{}, &list)
+		if len(list.Items) == 1 {
+			if n := list.Items[0]; n.Kind != notifications.Failed || n.Target != "bot:"+bot.ID || n.Title != "Researcher" {
+				t.Fatalf("reply notification: %+v", n)
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the bot's reply did not notify: %+v", list.Items)
 		}
 		time.Sleep(50 * time.Millisecond)
 	}

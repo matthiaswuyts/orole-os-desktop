@@ -237,8 +237,8 @@ tool results are not read, so outside content cannot fabricate a pattern. A sign
 `SuggestionsPrompt` is a user section (`Manager.AddUserSection`, added only to runs answering the user): it lists at most
 two ready signals and marks them offered, at most once a day per bot, each signal at most twice and a week apart. The bot
 offers in one sentence, drafts with `propose_automation` only after the user agrees, and records the answer with
-`automation_suggestion {key, decision}` (declined: silenced 90 days; accepted: for good). The bot's Memories page lists the
-ideas (`chat.signals.list`) and forgets one (`chat.signals.delete`).
+`automation_suggestion {key, decision}` (declined: silenced 90 days; accepted: for good). The ideas are not shown in the
+bot settings for now; `chat.signals.list` and `chat.signals.delete` remain available.
 
 ## Structured output (`show_*` tools)
 Bots whose model can call tools get nine tools that render chat components instead of Markdown: `show_table`,

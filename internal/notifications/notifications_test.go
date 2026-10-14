@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/rayorole/orole-os-desktop/internal/database"
@@ -24,15 +23,19 @@ func open(t *testing.T, path string) *database.DB {
 	return db
 }
 
+func store(t *testing.T) *Store {
+	return New(open(t, filepath.Join(t.TempDir(), "orole.db")).DB)
+}
+
 func TestNotifyPersistsAcrossReopen(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "orole.db")
 	db := open(t, path)
 	s := New(db.DB)
-	r, err := s.Notify(ctx, "github", "PR merged", "details", Success)
-	if err != nil || !r.Stored || !r.Native || !r.Sound {
+	r, err := s.Notify(ctx, Input{Source: "task", Kind: Finished, Title: "Fix login", Body: "details", Level: Success, Target: "task:t1"})
+	if err != nil || !r.Stored || !r.Sound {
 		t.Fatalf("notify: %+v %v", r, err)
 	}
-	if _, err := s.Notify(ctx, "mail", "New mail", "", ""); err != nil {
+	if _, err := s.Notify(ctx, Input{Source: "automation/a1", Title: "Deploy note"}); err != nil {
 		t.Fatal(err)
 	}
 	db.Close()
@@ -42,234 +45,188 @@ func TestNotifyPersistsAcrossReopen(t *testing.T) {
 	if err != nil || len(list) != 2 {
 		t.Fatalf("after reopen: %+v %v", list, err)
 	}
-	if list[0].Source != "mail" || list[0].Level != Info || list[1].Level != Success || list[1].Body != "details" || list[1].Read {
+	if list[0].Kind != Message || list[0].Level != Info || list[1].Kind != Finished || list[1].Target != "task:t1" || list[1].Body != "details" || list[1].Read || list[1].NeedsYou {
 		t.Fatalf("rows: %+v", list)
 	}
-	if n, _ := s2.Unread(ctx); n != 2 {
-		t.Fatalf("unread %d", n)
+	if c, _ := s2.Counts(ctx); c.Unread != 2 || c.NeedsYou != 0 {
+		t.Fatalf("counts %+v", c)
 	}
 }
 
-func TestReadDismissFilter(t *testing.T) {
-	s := New(open(t, filepath.Join(t.TempDir(), "orole.db")).DB)
+func TestApprovalsStayInNeedsYouUntilResolved(t *testing.T) {
+	s := store(t)
+	approval := Input{Source: "task", Kind: Approval, Title: "Fix login", Body: "Run tests?", Target: "task:t1", Ref: "task:t1"}
+	if r, err := s.Notify(ctx, approval); err != nil || !r.Stored || !r.Notification.NeedsYou {
+		t.Fatalf("approval: %+v %v", r, err)
+	}
+	// The same wait reported again (a restart, a repeated status) does not stack.
+	if r, err := s.Notify(ctx, approval); err != nil || r.Stored {
+		t.Fatalf("duplicate open approval stored: %+v %v", r, err)
+	}
+	other := approval
+	other.Ref, other.Target = "run:r1", "automation:a1"
+	if r, _ := s.Notify(ctx, other); !r.Stored {
+		t.Fatal("approval for another wait was dropped")
+	}
+	if _, err := s.Notify(ctx, Input{Source: "bot", Kind: Reply, Title: "Ada", Body: "Hi"}); err != nil {
+		t.Fatal(err)
+	}
+	if l, _ := s.List(ctx, ListOptions{NeedsYou: true}); len(l) != 2 {
+		t.Fatalf("needs-you list: %+v", l)
+	}
+	// Reading an approval does not end the wait it reports.
+	if _, err := s.MarkRead(ctx, nil, true); err != nil {
+		t.Fatal(err)
+	}
+	if c, _ := s.Counts(ctx); c.Unread != 0 || c.NeedsYou != 2 {
+		t.Fatalf("after read: %+v", c)
+	}
+	if n, err := s.Resolve(ctx, "task:t1"); err != nil || n != 1 {
+		t.Fatalf("resolve: %d %v", n, err)
+	}
+	if l, _ := s.List(ctx, ListOptions{NeedsYou: true}); len(l) != 1 || l[0].Target != "automation:a1" {
+		t.Fatalf("after resolve: %+v", l)
+	}
+	if refs, _ := s.OpenRefs(ctx); len(refs) != 1 || refs[0] != "run:r1" {
+		t.Fatalf("open refs: %v", refs)
+	}
+	// A new wait after the old one ended is reported again; history keeps the resolved one.
+	if r, _ := s.Notify(ctx, approval); !r.Stored {
+		t.Fatal("new wait with a resolved ref was dropped")
+	}
+	if l, _ := s.List(ctx, ListOptions{}); len(l) != 4 {
+		t.Fatalf("history: %d rows", len(l))
+	}
+}
+
+func TestMarkRead(t *testing.T) {
+	s := store(t)
 	var ids []string
-	for _, src := range []string{"a", "a", "b"} {
-		r, err := s.Notify(ctx, src, "t-"+src, "", Info)
+	for i := range 3 {
+		r, err := s.Notify(ctx, Input{Source: "bot", Kind: Reply, Title: fmt.Sprint("reply ", i)})
 		if err != nil {
 			t.Fatal(err)
 		}
 		ids = append(ids, r.Notification.ID)
 	}
-	if n, err := s.MarkRead(ctx, ids[:1], "", false); err != nil || n != 1 {
-		t.Fatalf("markread: %d %v", n, err)
+	if n, err := s.MarkRead(ctx, ids[:1], false); err != nil || n != 1 {
+		t.Fatalf("mark one: %d %v", n, err)
 	}
-	if n, _ := s.MarkRead(ctx, ids[:1], "", false); n != 0 {
-		t.Fatalf("re-marking counts again: %d", n)
+	if n, _ := s.MarkRead(ctx, ids[:1], false); n != 0 {
+		t.Fatal("re-marking a read row reported a change")
 	}
-	if u, _ := s.Unread(ctx); u != 2 {
-		t.Fatalf("unread %d", u)
+	if c, _ := s.Counts(ctx); c.Unread != 2 {
+		t.Fatalf("unread %d", c.Unread)
 	}
-	if l, _ := s.List(ctx, ListOptions{Source: "a"}); len(l) != 2 {
-		t.Fatalf("source filter: %d", len(l))
+	if n, _ := s.MarkRead(ctx, nil, true); n != 2 {
+		t.Fatalf("mark all: %d", n)
 	}
-	if l, _ := s.List(ctx, ListOptions{UnreadOnly: true}); len(l) != 2 {
-		t.Fatalf("unread filter: %d", len(l))
-	}
-	srcs, _ := s.Sources(ctx)
-	if len(srcs) != 2 || srcs[0].Source != "a" || srcs[0].Count != 2 || srcs[0].Unread != 1 {
-		t.Fatalf("sources: %+v", srcs)
-	}
-	if n, err := s.Dismiss(ctx, ids[1:2], "", false); err != nil || n != 1 {
-		t.Fatalf("dismiss: %d %v", n, err)
-	}
-	if l, _ := s.List(ctx, ListOptions{}); len(l) != 2 {
-		t.Fatalf("dismissed still listed: %d", len(l))
-	}
-	if l, _ := s.List(ctx, ListOptions{IncludeDismissed: true}); len(l) != 3 {
-		t.Fatalf("includeDismissed: %d", len(l))
-	}
-	if u, _ := s.Unread(ctx); u != 1 { // dismissed counts as read
-		t.Fatalf("unread after dismiss %d", u)
-	}
-	if n, _ := s.Dismiss(ctx, nil, "b", true); n != 1 {
-		t.Fatalf("dismiss all b: %d", n)
-	}
-	if _, err := s.MarkRead(ctx, nil, "", false); !errors.Is(err, ErrInvalid) {
+	if _, err := s.MarkRead(ctx, nil, false); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("empty selection: %v", err)
-	}
-	if n, _ := s.MarkRead(ctx, nil, "", true); n != 0 {
-		t.Fatalf("all: %d", n) // only the dismissed/read remain
 	}
 }
 
 func TestValidation(t *testing.T) {
-	s := New(open(t, filepath.Join(t.TempDir(), "orole.db")).DB)
-	bad := []struct {
-		src, title, body string
-		lvl              Level
-	}{
-		{"", "t", "", Info}, {"Has Space", "t", "", Info}, {"UPPER", "t", "", Info}, {strings.Repeat("a", 65), "t", "", Info},
-		{"a", "", "", Info}, {"a", "   ", "", Info}, {"a", strings.Repeat("x", MaxTitle+1), "", Info},
-		{"a", "t", strings.Repeat("x", MaxBody+1), Info}, {"a", "t", "", "fatal"},
+	s := store(t)
+	bad := []Input{
+		{Source: "", Title: "t"},
+		{Source: "Bad Source", Title: "t"},
+		{Source: "ok", Title: "   "},
+		{Source: "ok", Title: string(make([]rune, MaxTitle+1))},
+		{Source: "ok", Title: "t", Body: string(make([]rune, MaxBody+1))},
+		{Source: "ok", Title: "t", Level: "loud"},
+		{Source: "ok", Title: "t", Kind: "mention"},
+		{Source: "ok", Title: "t", Kind: Approval}, // an approval nobody can resolve
 	}
-	for i, b := range bad {
-		if _, err := s.Notify(ctx, b.src, b.title, b.body, b.lvl); !errors.Is(err, ErrInvalid) {
+	for i, in := range bad {
+		if _, err := s.Notify(ctx, in); !errors.Is(err, ErrInvalid) {
 			t.Errorf("case %d: want ErrInvalid, got %v", i, err)
 		}
 	}
-	if l, _ := s.List(ctx, ListOptions{}); len(l) != 0 {
-		t.Fatalf("invalid input was stored: %d", len(l))
-	}
 }
 
-func TestPreferencesPerSource(t *testing.T) {
-	s := New(open(t, filepath.Join(t.TempDir(), "orole.db")).DB)
-	p, _ := s.Prefs(ctx)
-	if !p.Default.Enabled || !p.Default.Native || !p.Default.Sound {
-		t.Fatalf("defaults: %+v", p)
-	}
-	if err := s.SetPrefs(ctx, Prefs{Default: SourcePref{Enabled: true, Native: false, Sound: true}, Sources: map[string]SourcePref{
-		"mail": {Enabled: false, Native: true, Sound: true}, "github": {Enabled: true, Native: true, Sound: false},
-	}}); err != nil {
-		t.Fatal(err)
-	}
-	r, _ := s.Notify(ctx, "mail", "ignored", "", Info)
-	if r.Stored || r.Native || r.Sound {
-		t.Fatal("disabled source stored or requested native delivery/sound")
-	}
-	r, _ = s.Notify(ctx, "github", "kept", "", Info)
-	if !r.Stored || !r.Native || r.Sound {
-		t.Fatalf("github: %+v", r)
-	}
-	r, _ = s.Notify(ctx, "agents", "kept quietly", "", Info)
-	if !r.Stored || r.Native || !r.Sound {
-		t.Fatalf("default pref: %+v", r)
-	}
-	if l, _ := s.List(ctx, ListOptions{}); len(l) != 2 {
-		t.Fatalf("stored: %d", len(l))
-	}
-	if err := s.SetPrefs(ctx, Prefs{Sources: map[string]SourcePref{"Bad Source": {}}}); !errors.Is(err, ErrInvalid) {
-		t.Fatalf("bad pref key: %v", err)
-	}
-	// Corrupt persisted preferences are reported, not silently replaced.
-	if _, err := s.DB.Exec(`UPDATE settings SET value='{nope' WHERE key=?`, PrefsKey); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := s.Prefs(ctx); err == nil {
-		t.Fatal("corrupt preferences were accepted")
-	}
-}
-
-func TestSoundPreferencesPersistAcrossReopen(t *testing.T) {
+func TestPreferencesPerKind(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "orole.db")
 	db := open(t, path)
-	prefs := Prefs{
-		Default: SourcePref{Enabled: true, Native: true, Sound: false},
-		Sources: map[string]SourcePref{
-			"audible": {Enabled: true, Native: true, Sound: true},
-			"silent":  {Enabled: true, Native: true, Sound: false},
-			"in-app":  {Enabled: true, Native: false, Sound: true},
-			"muted":   {Enabled: false, Native: true, Sound: true},
-		},
-	}
-	if err := New(db.DB).SetPrefs(ctx, prefs); err != nil {
+	s := New(db.DB)
+	stored, err := s.SetPrefs(ctx, Prefs{Kinds: map[Kind]KindPref{
+		Reply:    {InApp: false, Sound: true},
+		Finished: {InApp: true, Sound: false},
+		Approval: {InApp: false, Sound: false},
+	}})
+	if err != nil {
 		t.Fatal(err)
 	}
+	// Approvals cannot be hidden: something would wait on the user with no sign of it.
+	if got := stored.Kinds[Approval]; !got.InApp || got.Sound {
+		t.Fatalf("approval pref: %+v", got)
+	}
+	if got := stored.Kinds[Failed]; !got.InApp || !got.Sound {
+		t.Fatalf("unset kind must default on: %+v", got)
+	}
 	db.Close()
-	s := New(open(t, path).DB)
-	got, err := s.Prefs(ctx)
-	if err != nil || got.Default != prefs.Default {
-		t.Fatalf("reopened defaults: %+v, %v", got, err)
-	}
-	for source, want := range prefs.Sources {
-		if got.For(source) != want {
-			t.Errorf("%s preference: %+v, want %+v", source, got.For(source), want)
-		}
-	}
-	for _, source := range []string{"unlisted", "audible", "silent", "in-app", "muted"} {
-		want := prefs.For(source)
-		result, err := s.Notify(ctx, source, "Sound preference test", "", Info)
-		if err != nil || result.Stored != want.Enabled || result.Native != (want.Enabled && want.Native) || result.Sound != (want.Enabled && want.Sound) {
-			t.Errorf("%s notification: %+v, %v", source, result, err)
-		}
-	}
-	rows, err := s.List(ctx, ListOptions{})
-	if err != nil || len(rows) != 4 {
-		t.Fatalf("silent notifications must persist, disabled notifications must not: %+v, %v", rows, err)
-	}
-}
 
-func TestLegacySoundPreferences(t *testing.T) {
-	cases := []struct {
-		name                                  string
-		raw                                   string
-		wantDefault, wantLegacy, wantExplicit bool
+	s = New(open(t, path).DB)
+	for _, tc := range []struct {
+		in           Input
+		stored, beep bool
 	}{
-		{
-			name:        "legacy defaults and source",
-			raw:         `{"default":{"enabled":true,"native":true},"sources":{"legacy":{"enabled":true,"native":true},"explicit":{"enabled":true,"native":true,"sound":false}}}`,
-			wantDefault: true, wantLegacy: true, wantExplicit: false,
-		},
-		{
-			name:        "explicit silent default does not rewrite legacy source",
-			raw:         `{"default":{"enabled":true,"native":true,"sound":false},"sources":{"legacy":{"enabled":true,"native":true},"explicit":{"enabled":true,"native":true,"sound":true}}}`,
-			wantDefault: false, wantLegacy: true, wantExplicit: true,
-		},
+		{Input{Source: "bot", Kind: Reply, Title: "Ada"}, false, false},
+		{Input{Source: "task", Kind: Finished, Title: "Done"}, true, false},
+		{Input{Source: "task", Kind: Approval, Title: "Wait", Ref: "task:1"}, true, false},
+		{Input{Source: "task", Kind: Failed, Title: "Broke"}, true, true},
+	} {
+		r, err := s.Notify(ctx, tc.in)
+		if err != nil || r.Stored != tc.stored || r.Sound != tc.beep {
+			t.Errorf("%s: %+v %v", tc.in.Kind, r, err)
+		}
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			s := New(open(t, filepath.Join(t.TempDir(), "orole.db")).DB)
-			if _, err := s.DB.Exec(`INSERT INTO settings(key,value,updated_at) VALUES(?,?,0)`, PrefsKey, tc.raw); err != nil {
-				t.Fatal(err)
-			}
-			prefs, err := s.Prefs(ctx)
-			if err != nil || prefs.Default.Sound != tc.wantDefault || prefs.For("legacy").Sound != tc.wantLegacy || prefs.For("explicit").Sound != tc.wantExplicit {
-				t.Fatalf("decoded preferences: %+v, %v", prefs, err)
-			}
-			// Saving migrated preferences must preserve both defaulted true and explicit false.
-			if err := s.SetPrefs(ctx, prefs); err != nil {
-				t.Fatal(err)
-			}
-			for source, wantSound := range map[string]bool{"unlisted": tc.wantDefault, "legacy": tc.wantLegacy, "explicit": tc.wantExplicit} {
-				result, err := s.Notify(ctx, source, "Legacy sound test", "", Info)
-				if err != nil || !result.Stored || !result.Native || result.Sound != wantSound {
-					t.Errorf("%s notification after save: %+v, %v", source, result, err)
-				}
-			}
-		})
+	if _, err := s.SetPrefs(ctx, Prefs{Kinds: map[Kind]KindPref{"mention": {}}}); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("unknown kind: %v", err)
 	}
 }
 
-func TestPrunesOldestReadFirst(t *testing.T) {
-	s := New(open(t, filepath.Join(t.TempDir(), "orole.db")).DB)
-	// Insert MaxKeep rows directly, the oldest unread, then add read ones.
+func TestOlderPreferenceShapeReadsAsDefaults(t *testing.T) {
+	s := store(t)
+	if _, err := s.DB.Exec(`INSERT INTO settings(key,value,updated_at) VALUES(?,?,0)`, PrefsKey, `{"default":{"enabled":false,"native":true,"sound":false},"sources":{"mail":{"enabled":false}}}`); err != nil {
+		t.Fatal(err)
+	}
+	p, err := s.Prefs(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, k := range Kinds {
+		if got := p.For(k); !got.InApp || !got.Sound {
+			t.Errorf("%s: %+v", k, got)
+		}
+	}
+}
+
+func TestPruneKeepsOpenApprovalsAndUnread(t *testing.T) {
+	s := store(t)
 	tx, _ := s.DB.Begin()
 	for i := range MaxKeep {
-		read := 0
-		if i%2 == 1 {
+		read, needsYou := 0, 0
+		switch i % 3 {
+		case 1:
 			read = 1
+		case 2:
+			read, needsYou = 1, 1
 		}
-		if _, err := tx.Exec(`INSERT INTO notifications(id,at,source,title,read) VALUES(?,?,?,?,?)`, fmt.Sprintf("bulk-%d", i), int64(1000+i), "bulk", "t", read); err != nil {
+		if _, err := tx.Exec(`INSERT INTO notifications(id,at,source,title,read,kind,ref,needs_you) VALUES(?,?,?,?,?,?,?,?)`, fmt.Sprintf("bulk-%d", i), int64(1000+i), "bulk", "t", read, "approval", fmt.Sprintf("ref-%d", i), needsYou); err != nil {
 			t.Fatal(err)
 		}
 	}
 	tx.Commit()
-	if _, err := s.Notify(ctx, "bulk", "newest", "", Info); err != nil {
+	if _, err := s.Notify(ctx, Input{Source: "bulk", Title: "newest"}); err != nil {
 		t.Fatal(err)
 	}
-	var n int
+	var n, newest, oldestRead, oldestOpen int
 	s.DB.QueryRow(`SELECT COUNT(*) FROM notifications`).Scan(&n)
-	if n != MaxKeep {
-		t.Fatalf("rows %d, want %d", n, MaxKeep)
-	}
-	var newest int
 	s.DB.QueryRow(`SELECT COUNT(*) FROM notifications WHERE title='newest'`).Scan(&newest)
-	if newest != 1 {
-		t.Fatal("newest notification pruned")
-	}
-	var oldestRead int
-	s.DB.QueryRow(`SELECT COUNT(*) FROM notifications WHERE id LIKE 'bulk-%' AND at=1001`).Scan(&oldestRead)
-	if oldestRead != 0 {
-		t.Fatal("oldest read row should have been pruned first")
+	s.DB.QueryRow(`SELECT COUNT(*) FROM notifications WHERE id='bulk-1'`).Scan(&oldestRead)
+	s.DB.QueryRow(`SELECT COUNT(*) FROM notifications WHERE id='bulk-2'`).Scan(&oldestOpen)
+	if n != MaxKeep || newest != 1 || oldestRead != 0 || oldestOpen != 1 {
+		t.Fatalf("rows=%d newest=%d oldestRead=%d oldestOpen=%d", n, newest, oldestRead, oldestOpen)
 	}
 }

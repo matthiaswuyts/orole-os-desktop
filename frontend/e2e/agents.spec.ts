@@ -16,7 +16,7 @@ async function installAgentsBridge(page: Page) {
     const handlers: Record<string, (...args: unknown[]) => unknown> = {
       "Daemon.Health": () => ({ version: "0.1.0", memAllocMB: 24, startedAt: new Date(now).toISOString() }), "Settings.All": () => ({}),
       "Projects.List": () => [{ id: "p1", name: "orole-os", path: "C:\\code\\orole-os", machineId: "local", missing: false }], "Worktrees.List": () => [],
-      "Notifications.List": () => ({ items: [], sources: [], unread: 0 }), "Notifications.Prefs": () => ({ default: { enabled: true, native: false, sound: false }, sources: {} }),
+      "Notifications.List": () => ({ items: [], unread: 0, needsYou: 0 }), "Notifications.Prefs": () => ({ kinds: {} }),
       "Policy.Pending": () => [], "Plugins.List": () => [], "Desktop.Ready": () => ({ view: "", sequence: 0 }),
       "Updates.Check": () => ({ enabled: false, available: false, error: "" }), "Terminals.List": () => [],
       "Machines.List": () => [{ id: "local", name: "This computer", kind: "local", status: "online" }],

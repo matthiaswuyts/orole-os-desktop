@@ -3,7 +3,6 @@ package app
 import (
 	"context"
 	"encoding/json"
-	"errors"
 
 	"github.com/egoist/mygo"
 	"github.com/rayorole/orole-os-desktop/internal/daemon"
@@ -19,26 +18,12 @@ type FileRootsChange struct {
 
 var FileRootsChanged = mygo.NewEvent[FileRootsChange]("files:rootsChanged")
 
-// NotificationNativeState reports submission, not whether a user saw or heard a toast.
-type NotificationNativeState struct {
-	ID       string `json:"id"`
-	Accepted bool   `json:"accepted"`
-	Denied   bool   `json:"denied"`
-	Error    string `json:"error,omitempty"`
-}
-
-var NotificationsNativeState = mygo.NewEvent[NotificationNativeState]("notifications:nativeState")
-
 func forwardFilesNotifications(event string, data json.RawMessage) bool {
 	switch event {
 	case "notifications.changed":
 		var e daemon.NotificationEvent
 		if json.Unmarshal(data, &e) == nil {
 			NotificationsChanged.Broadcast(e)
-			if e.Kind == "created" && e.Native && e.Notification != nil {
-				n := *e.Notification
-				go showNativeNotification(n, e.Sound)
-			}
 		}
 	case "files.changed":
 		var e daemon.FilesChanged
@@ -55,42 +40,19 @@ func forwardFilesNotifications(event string, data json.RawMessage) bool {
 	}
 	return true
 }
-func showNativeNotification(n notifications.Notification, sound bool) {
-	state := NotificationNativeState{ID: n.ID}
-	if !mygo.NotificationsSupported() {
-		state.Error = "Native notifications are unavailable on this system."
-		NotificationsNativeState.Broadcast(state)
-		return
-	}
-	err := mygo.NewNotification(mygo.NotificationOptions{ID: n.ID, Group: n.Source, Title: n.Title, Body: n.Body, Silent: !sound}).Show()
-	switch {
-	case errors.Is(err, mygo.ErrNotificationsDenied):
-		state.Denied = true
-		state.Error = "Windows has blocked notifications. Check system notification permissions."
-	case err != nil:
-		state.Error = "The system could not accept a native notification."
-	default:
-		state.Accepted = true
-	}
-	NotificationsNativeState.Broadcast(state)
-}
 
-// Notifications forwards persisted center operations; notification creation is daemon-owned.
+// Notifications forwards notification center operations; notification creation is daemon-owned.
 type Notifications struct{ L *Link }
 
-func (s Notifications) List(ctx context.Context, source string, unreadOnly bool) (daemon.NotificationList, error) {
+// List returns the newest notifications, or only open approvals when needsYou is set.
+func (s Notifications) List(ctx context.Context, needsYou bool) (daemon.NotificationList, error) {
 	var out daemon.NotificationList
-	err := s.L.call(ctx, "notifications.list", notifications.ListOptions{Source: source, UnreadOnly: unreadOnly, Limit: notifications.MaxList}, &out)
+	err := s.L.call(ctx, "notifications.list", notifications.ListOptions{NeedsYou: needsYou, Limit: notifications.DefaultList}, &out)
 	return out, err
 }
-func (s Notifications) MarkRead(ctx context.Context, ids []string, source string, all bool) (int64, error) {
+func (s Notifications) MarkRead(ctx context.Context, ids []string, all bool) (int64, error) {
 	var out int64
-	err := s.L.call(ctx, "notifications.markRead", map[string]any{"ids": ids, "source": source, "all": all}, &out)
-	return out, err
-}
-func (s Notifications) Dismiss(ctx context.Context, ids []string, source string, all bool) (int64, error) {
-	var out int64
-	err := s.L.call(ctx, "notifications.dismiss", map[string]any{"ids": ids, "source": source, "all": all}, &out)
+	err := s.L.call(ctx, "notifications.markRead", map[string]any{"ids": ids, "all": all}, &out)
 	return out, err
 }
 func (s Notifications) Prefs(ctx context.Context) (notifications.Prefs, error) {

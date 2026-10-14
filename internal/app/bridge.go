@@ -13,6 +13,7 @@ import (
 	"github.com/egoist/mygo"
 	"github.com/rayorole/orole-os-desktop/internal/daemon/api"
 	"github.com/rayorole/orole-os-desktop/internal/daemon/control"
+	"github.com/rayorole/orole-os-desktop/internal/dictation"
 	"github.com/rayorole/orole-os-desktop/internal/ipc"
 	"github.com/rayorole/orole-os-desktop/internal/terminals"
 )
@@ -87,7 +88,7 @@ func (l *Link) Start(ctx context.Context) error {
 		return err
 	}
 	c.OnEvent(forward)
-	if err := c.Subscribe(ctx, "terminal.*", "settings.*", "projects.*", "worktrees.*", "github.*", "files.*", "notifications.*", "agents.*", "mcp.*", "policy.*", "applications.*", "plugins.*", "chat.*", "llm.*"); err != nil {
+	if err := c.Subscribe(ctx, "terminal.*", "settings.*", "projects.*", "worktrees.*", "github.*", "files.*", "notifications.*", "agents.*", "mcp.*", "policy.*", "applications.*", "plugins.*", "chat.*", "llm.*", "dictation.*"); err != nil {
 		c.Close()
 		return err
 	}
@@ -122,7 +123,7 @@ func (l *Link) endMaintenance() {
 
 func forward(event string, data json.RawMessage) {
 	forwardMCP(event, data)
-	if forwardPlugins(event, data) || forwardChat(event, data) {
+	if forwardPlugins(event, data) || forwardChat(event, data) || forwardDictation(event, data) {
 		return
 	}
 	if forwardApplications(event, data) {
@@ -202,6 +203,8 @@ func (l *Link) call(ctx context.Context, method string, params, out any) error {
 		"machines.files.read", "machines.files.write",
 		"files.list", "files.stat", "files.read", "files.write", "files.search":
 		timeout = 16 * time.Minute // five-minute approval followed by a bounded tool call
+	case "dictation.transcribe":
+		timeout = dictation.TranscribeTimeout + 15*time.Second // the daemon bounds it itself; this only catches a lost reply
 	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()

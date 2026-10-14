@@ -11,20 +11,20 @@ export function SoundSettings() {
   const audioError = useAudioStatus((state) => state.error);
   return (
     <section className="space-y-4" aria-label="Sound preferences">
-      <p className="max-w-prose text-muted-foreground">Brief synthesized cues for buttons, switches, and in-app notifications. Sounds play only in the focused window, after you interact with it. No hover or typing sounds.</p>
+      <p className="max-w-prose text-muted-foreground">Brief synthesized cues for buttons, switches, and notifications. Interface sounds play only in the focused window; notification sounds also play while Orole is in the background. Nothing plays until you have interacted with the window once. No hover or typing sounds.</p>
       <div className="divide-y rounded-lg border bg-card">
         <div className="flex items-center justify-between gap-4 px-3 py-2.5">
           <label htmlFor="ui-sounds">Interface sounds</label>
           <Switch id="ui-sounds" checked={sound.uiEnabled} disabled={!loaded} onCheckedChange={(uiEnabled) => set("sound", { uiEnabled })} />
         </div>
         <div className="flex flex-wrap items-center justify-between gap-4 px-3 py-2.5">
-          <div><span>Web sound volume</span><p className="text-xs text-muted-foreground">Includes in-app notification cues. Zero mutes all web sounds.</p></div>
-          <div className="flex items-center gap-3"><Slider className="w-44" min={0} max={1} step={0.05} value={[sound.volume]} disabled={!loaded} onValueChange={(value) => set("sound", { volume: Array.isArray(value) ? value[0]! : value })}><SliderPrimitive.Label className="sr-only">Web sound volume</SliderPrimitive.Label></Slider><output className="w-9 text-right tabular-nums">{Math.round(sound.volume * 100)}%</output></div>
+          <div><span>Sound volume</span><p className="text-xs text-muted-foreground">Includes notification sounds. Zero mutes all sounds.</p></div>
+          <div className="flex items-center gap-3"><Slider className="w-44" min={0} max={1} step={0.05} value={[sound.volume]} disabled={!loaded} onValueChange={(value) => set("sound", { volume: Array.isArray(value) ? value[0]! : value })}><SliderPrimitive.Label className="sr-only">Sound volume</SliderPrimitive.Label></Slider><output className="w-9 text-right tabular-nums">{Math.round(sound.volume * 100)}%</output></div>
         </div>
       </div>
       {audioError && <p role="alert" className="text-destructive-foreground">{audioError}</p>}
       {saveError && <p role="alert" className="text-destructive-foreground">Settings could not be saved: {saveError}</p>}
-      <p className="max-w-prose text-xs text-muted-foreground">Which alerts make a sound is set in Alerts &amp; automations.</p>
+      <p className="max-w-prose text-xs text-muted-foreground">Which notifications make a sound is set in Alerts &amp; automations.</p>
     </section>
   );
 }

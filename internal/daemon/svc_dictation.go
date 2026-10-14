@@ -2,72 +2,92 @@ package daemon
 
 import (
 	"context"
-	"encoding/base64"
 	"errors"
-	"fmt"
+	"log/slog"
+	"os"
+	"path/filepath"
 
-	"github.com/rayorole/orole-os-desktop/internal/credentials"
 	"github.com/rayorole/orole-os-desktop/internal/dictation"
+	"github.com/rayorole/orole-os-desktop/internal/dictation/engine"
 	"github.com/rayorole/orole-os-desktop/internal/ipc"
 )
 
-// Test seam: production sends audio to OpenAI with the key from the OS credential store.
-var newDictation = func(store credentials.Store) (*dictation.Service, error) {
-	return dictation.New(dictation.Config{Credentials: store})
+// newVoiceEngine is a test seam: production recognizes speech in a helper process (this executable run as
+// "voice-engine") so a native fault never takes the daemon down.
+var newVoiceEngine = func(log *slog.Logger) dictation.Recognizer {
+	exe, _ := os.Executable()
+	return engine.New(engine.Config{Exe: exe, Log: log})
 }
 
-// registerDictation wires voice dictation for the composers.
+// registerDictation wires local voice dictation for the composers. Speech recognition runs on this computer;
+// the engine and the models are downloaded on request into <DataDir>/voice.
 //
-// IPC methods:
+// IPC methods (all return the VoiceStatus unless noted):
 //
-//	dictation.status      struct{}                     -> Availability  (is an OpenAI key stored; the limits)
-//	dictation.transcribe  TranscribeRequest            -> Transcript    (sends the recording to OpenAI)
+//	dictation.status      struct{}                                   (engine, models, preferences, limits)
+//	dictation.download    ModelRef        starts a download in the background (the engine first when missing)
+//	dictation.cancel      ModelRef        stops a download; its partial files are kept for resuming
+//	dictation.remove      ModelRef        deletes a model (and the engine once no model is left)
+//	dictation.use         ModelRef        makes a downloaded model the one dictation runs with
+//	dictation.language    LanguageRequest sets the spoken language ("" = automatic)
+//	dictation.prepare     struct{} -> struct{}     starts loading the model in the background
+//	dictation.upload      UploadRequest -> struct{} one part of a recording (16 kHz mono PCM)
+//	dictation.transcribe  RecordingRef -> Transcript
+//	dictation.discard     RecordingRef -> struct{}
 //
-// Transcribing sends the user's audio to OpenAI, so every attempt is audited with its outcome,
-// the model and the audio size. The audit never contains the transcript or the key. Failures
-// are IPC errors coded "dictation_<code>" (see dictation.Code) whose message is user-facing.
+// Event "dictation.changed" carries the VoiceStatus after every change. Downloads and removals are audited;
+// audio and transcripts are neither logged, audited nor stored. Failures are IPC errors coded
+// "dictation_<code>" (see dictation.Code) whose message is user-facing.
 func (d *Daemon) registerDictation() {
-	svc, err := newDictation(llmCredentialStore())
+	log := d.Log.With("module", "dictation")
+	svc, err := dictation.NewService(dictation.Config{
+		Dir:        filepath.Join(d.DataDir, "voice"),
+		Settings:   settingsKV{d.DB},
+		Recognizer: newVoiceEngine(log),
+		Publish:    func(st dictation.VoiceStatus) { d.IPC.Publish("dictation.changed", st) },
+		Audit:      d.audit,
+		Log:        log,
+	})
 	if err != nil {
 		d.Log.Error("dictation unavailable", "err", err)
 		return
 	}
-	handle(d, "dictation.status", func(ctx context.Context, _ none) (dictation.Availability, error) {
-		a, err := svc.Status()
-		return a, dictationError(err)
+	d.Dictation = svc
+	handle(d, "dictation.status", func(ctx context.Context, _ none) (dictation.VoiceStatus, error) {
+		return svc.Status(ctx), nil
 	})
-	handle(d, "dictation.transcribe", func(ctx context.Context, p dictation.TranscribeRequest) (dictation.Transcript, error) {
-		size := base64.StdEncoding.DecodedLen(len(p.DataBase64))
-		res, err := svc.Transcribe(ctx, p)
-		if err != nil {
-			var de *dictation.Error
-			outcome, detail := "error", "transcription failed"
-			if errors.As(err, &de) {
-				detail = string(de.Code)
-				if !sentAudio(de.Code) {
-					outcome = "denied"
-				}
-			}
-			d.audit("dictation.transcribe", "dictation/openai", outcome, detail)
-			return dictation.Transcript{}, dictationError(err)
-		}
-		d.audit("dictation.transcribe", "dictation/openai", "allowed", fmt.Sprintf("%s, %d KB audio", res.Model, (size+1023)/1024))
-		return res, nil
-	})
-}
-
-// sentAudio reports whether a failure happened after the recording left the machine.
-func sentAudio(c dictation.Code) bool {
-	switch c {
-	case dictation.CodeNotConnected, dictation.CodeTooLarge, dictation.CodeTooLong, dictation.CodeNoAudio,
-		dictation.CodeUnsupported, dictation.CodeBusy, dictation.CodeCredentials:
-		return false
+	models := map[string]func(context.Context, string) (dictation.VoiceStatus, error){
+		"dictation.download": svc.Download,
+		"dictation.cancel":   svc.Cancel,
+		"dictation.remove":   svc.Remove,
+		"dictation.use":      svc.Use,
 	}
-	return true
+	for name, f := range models {
+		handle(d, name, func(ctx context.Context, p dictation.ModelRef) (dictation.VoiceStatus, error) {
+			st, err := f(ctx, p.ID)
+			return st, dictationError(err)
+		})
+	}
+	handle(d, "dictation.language", func(ctx context.Context, p dictation.LanguageRequest) (dictation.VoiceStatus, error) {
+		st, err := svc.SetLanguage(ctx, p.Language)
+		return st, dictationError(err)
+	})
+	handle(d, "dictation.prepare", func(ctx context.Context, _ none) (none, error) {
+		return none{}, dictationError(svc.Prepare(ctx))
+	})
+	handle(d, "dictation.upload", func(ctx context.Context, p dictation.UploadRequest) (none, error) {
+		return none{}, dictationError(svc.Upload(ctx, p))
+	})
+	handle(d, "dictation.transcribe", func(ctx context.Context, p dictation.RecordingRef) (dictation.Transcript, error) {
+		tr, err := svc.Transcribe(ctx, p)
+		return tr, dictationError(err)
+	})
+	handle(d, "dictation.discard", func(ctx context.Context, p dictation.RecordingRef) (none, error) {
+		return none{}, dictationError(svc.Discard(ctx, p))
+	})
 }
 
-// dictationError exposes a dictation failure as a coded IPC error so the UI can show its message
-// and recognise "not connected".
+// dictationError exposes a dictation failure as a coded IPC error so the UI can show its message.
 func dictationError(err error) error {
 	var de *dictation.Error
 	if errors.As(err, &de) {

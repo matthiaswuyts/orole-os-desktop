@@ -18,6 +18,7 @@ import (
 // registerServices wires every daemon module. Each module lives in its own file
 // (svc_<name>.go) and adds one line here.
 func (d *Daemon) registerServices() {
+	d.notices = newAppNotices(d) // first: every runtime below reports to it
 	d.registerCore()
 	d.registerAutomations()
 	d.registerMCP()
@@ -33,7 +34,7 @@ func (d *Daemon) registerServices() {
 	d.registerAgents()
 	d.registerImages()
 	d.registerPublish()
-	d.registerDictation()   // reads the OpenAI key through llmCredentialStore; independent of registerLLM
+	d.registerDictation()   // local speech recognition; independent of the other services
 	d.registerCLIRuntimes() // before registerLLM: the CLI providers resolve through d.CLI
 	d.registerLLM()         // first of the chat services: registerChat resolves providers through d.LLM
 	d.registerChat()        // after registerLLM; registerChatMemory and registerChatTools attach to d.Chat

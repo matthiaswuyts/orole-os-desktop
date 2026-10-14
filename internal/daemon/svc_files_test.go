@@ -75,7 +75,7 @@ func TestFilesNotificationsSearchIPC(t *testing.T) {
 	var n notifications.Notification
 	call("notifications.notify", map[string]any{"source": "files-test", "title": "orole-ipc attention", "body": "message", "level": "warning"}, &n)
 	var list daemon.NotificationList
-	call("notifications.list", map[string]any{"source": "files-test"}, &list)
+	call("notifications.list", nil, &list)
 	if len(list.Items) != 1 || list.Unread != 1 {
 		t.Fatalf("notifications %+v", list)
 	}
@@ -85,11 +85,10 @@ func TestFilesNotificationsSearchIPC(t *testing.T) {
 		t.Fatalf("unified %+v", results)
 	}
 	call("notifications.markRead", map[string]any{"ids": []string{n.ID}}, nil)
-	call("notifications.dismiss", map[string]any{"ids": []string{n.ID}}, nil)
 	list = daemon.NotificationList{}
 	call("notifications.list", nil, &list)
-	if len(list.Items) != 0 || list.Unread != 0 {
-		t.Fatalf("dismissed %+v", list)
+	if len(list.Items) != 1 || list.Unread != 0 {
+		t.Fatalf("read %+v", list)
 	}
 	call("files.delete", map[string]any{"provider": "local", "path": path, "permanent": true}, nil)
 	call("files.roots.remove", map[string]any{"provider": "local", "id": root.ID}, nil)

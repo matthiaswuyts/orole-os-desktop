@@ -14,109 +14,94 @@ type NotificationEvent struct {
 	Kind         string                      `json:"kind"`
 	Notification *notifications.Notification `json:"notification,omitempty"`
 	Unread       int                         `json:"unread"`
-	// Native asks the desktop to show an OS notification (per-source preference).
-	Native bool `json:"native,omitempty"`
-	// Sound permits audio only for newly created notifications.
+	NeedsYou     int                         `json:"needsYou"`
+	// Sound permits the kind's cue only for newly created notifications.
 	Sound bool `json:"sound"`
 }
 
 // NotificationList is notifications.list's answer.
 type NotificationList struct {
-	Items   []notifications.Notification `json:"items"`
-	Unread  int                          `json:"unread"`
-	Sources []notifications.SourceCount  `json:"sources"`
+	Items    []notifications.Notification `json:"items"`
+	Unread   int                          `json:"unread"`
+	NeedsYou int                          `json:"needsYou"`
 }
 
-// Notify records a notification from daemon code: it applies the source's
-// preferences, persists, and publishes notifications.changed. Other modules
-// call this; text derived from external content is stored and shown as plain
-// text only. It returns the stored notification (zero ID when the source is
-// muted).
-func (d *Daemon) Notify(source, title, body string, level notifications.Level) (notifications.Notification, error) {
-	return d.notify(context.Background(), source, title, body, level)
-}
-
-func (d *Daemon) notify(ctx context.Context, source, title, body string, level notifications.Level) (notifications.Notification, error) {
-	res, err := d.notifyResult(ctx, source, title, body, level)
+// Notify records a notification from daemon code: it applies the kind's preference,
+// persists, and publishes notifications.changed. Text derived from external content is
+// stored and shown as plain text only. It returns the stored notification (zero ID when
+// the kind is off or the approval is already open).
+func (d *Daemon) Notify(in notifications.Input) (notifications.Notification, error) {
+	res, err := d.notifyResult(context.Background(), in)
 	if err != nil || !res.Stored {
 		return notifications.Notification{}, err
 	}
 	return res.Notification, nil
 }
 
-func (d *Daemon) notifyResult(ctx context.Context, source, title, body string, level notifications.Level) (notifications.Result, error) {
+func (d *Daemon) notifyResult(ctx context.Context, in notifications.Input) (notifications.Result, error) {
 	st := notifications.New(d.DB.DB)
-	res, err := st.Notify(ctx, source, title, body, level)
+	res, err := st.Notify(ctx, in)
 	if err != nil || !res.Stored {
 		return res, err
 	}
-	unread, _ := st.Unread(ctx)
+	c, _ := st.Counts(ctx)
 	n := res.Notification
-	d.IPC.Publish("notifications.changed", NotificationEvent{Kind: "created", Notification: &n, Unread: unread, Native: res.Native, Sound: res.Sound})
+	d.IPC.Publish("notifications.changed", NotificationEvent{Kind: "created", Notification: &n, Unread: c.Unread, NeedsYou: c.NeedsYou, Sound: res.Sound})
 	return res, nil
 }
 
+// resolveNotification ends the open approval with ref, once the wait it reports is over.
+func (d *Daemon) resolveNotification(ref string) {
+	st := notifications.New(d.DB.DB)
+	ctx := context.Background()
+	if n, err := st.Resolve(ctx, ref); err != nil {
+		d.Log.Warn("resolve notification failed", "ref", ref, "err", err)
+	} else if n > 0 {
+		d.notificationsUpdated(ctx, st)
+	}
+}
+
+func (d *Daemon) notificationsUpdated(ctx context.Context, st *notifications.Store) {
+	c, _ := st.Counts(ctx)
+	d.IPC.Publish("notifications.changed", NotificationEvent{Kind: "updated", Unread: c.Unread, NeedsYou: c.NeedsYou})
+}
+
 func mapNotifErr(err error) error {
-	switch {
-	case err == nil:
-		return nil
-	case errors.Is(err, notifications.ErrInvalid):
+	if errors.Is(err, notifications.ErrInvalid) {
 		return &ipc.Error{Code: ipc.CodeBadRequest, Message: err.Error()}
-	case errors.Is(err, notifications.ErrNotFound):
-		return &ipc.Error{Code: ipc.CodeNotFound, Message: err.Error()}
 	}
 	return err
 }
 
-type notifSelection struct {
-	IDs    []string `json:"ids"`
-	Source string   `json:"source"`
-	All    bool     `json:"all"`
-}
-
 func (d *Daemon) registerNotifications() {
 	st := notifications.New(d.DB.DB)
-	updated := func(ctx context.Context) {
-		unread, _ := st.Unread(ctx)
-		d.IPC.Publish("notifications.changed", NotificationEvent{Kind: "updated", Unread: unread})
-	}
 
 	handle(d, "notifications.list", func(ctx context.Context, p notifications.ListOptions) (NotificationList, error) {
 		items, err := st.List(ctx, p)
 		if err != nil {
 			return NotificationList{}, err
 		}
-		unread, err := st.Unread(ctx)
-		if err != nil {
-			return NotificationList{}, err
-		}
-		srcs, err := st.Sources(ctx)
-		return NotificationList{Items: items, Unread: unread, Sources: srcs}, err
+		c, err := st.Counts(ctx)
+		return NotificationList{Items: items, Unread: c.Unread, NeedsYou: c.NeedsYou}, err
 	})
-	handle(d, "notifications.notify", func(ctx context.Context, p struct {
-		Source string              `json:"source"`
-		Title  string              `json:"title"`
-		Body   string              `json:"body"`
-		Level  notifications.Level `json:"level"`
-	}) (notifications.Notification, error) {
-		n, err := d.notify(ctx, p.Source, p.Title, p.Body, p.Level)
-		return n, mapNotifErr(err)
+	handle(d, "notifications.notify", func(ctx context.Context, p notifications.Input) (notifications.Notification, error) {
+		res, err := d.notifyResult(ctx, p)
+		if err != nil || !res.Stored {
+			return notifications.Notification{}, mapNotifErr(err)
+		}
+		return res.Notification, nil
 	})
 	handle(d, "notifications.test", func(ctx context.Context, _ none) (notifications.Result, error) {
-		res, err := d.notifyResult(ctx, "system.test", "Orole test notification", "This test uses your saved notification and sound preferences.", notifications.Info)
+		res, err := d.notifyResult(ctx, notifications.Input{Source: "system.test", Kind: notifications.Message, Title: "Test notification", Body: "Notifications and sounds are working."})
 		return res, mapNotifErr(err)
 	})
-	handle(d, "notifications.markRead", func(ctx context.Context, p notifSelection) (int64, error) {
-		n, err := st.MarkRead(ctx, p.IDs, p.Source, p.All)
+	handle(d, "notifications.markRead", func(ctx context.Context, p struct {
+		IDs []string `json:"ids"`
+		All bool     `json:"all"`
+	}) (int64, error) {
+		n, err := st.MarkRead(ctx, p.IDs, p.All)
 		if err == nil && n > 0 {
-			updated(ctx)
-		}
-		return n, mapNotifErr(err)
-	})
-	handle(d, "notifications.dismiss", func(ctx context.Context, p notifSelection) (int64, error) {
-		n, err := st.Dismiss(ctx, p.IDs, p.Source, p.All)
-		if err == nil && n > 0 {
-			updated(ctx)
+			d.notificationsUpdated(ctx, st)
 		}
 		return n, mapNotifErr(err)
 	})
@@ -124,10 +109,11 @@ func (d *Daemon) registerNotifications() {
 		return st.Prefs(ctx)
 	})
 	handle(d, "notifications.prefs.set", func(ctx context.Context, p notifications.Prefs) (notifications.Prefs, error) {
-		if err := st.SetPrefs(ctx, p); err != nil {
+		stored, err := st.SetPrefs(ctx, p)
+		if err != nil {
 			return p, mapNotifErr(err)
 		}
-		d.IPC.Publish("settings.changed", map[string]any{"key": notifications.PrefsKey, "value": p})
-		return p, nil
+		d.IPC.Publish("settings.changed", map[string]any{"key": notifications.PrefsKey, "value": stored})
+		return stored, nil
 	})
 }

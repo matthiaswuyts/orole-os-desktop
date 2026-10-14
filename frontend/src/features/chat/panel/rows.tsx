@@ -4,11 +4,14 @@ import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
 
-/** A small caption over a rounded group of rows ("Brain", "Knows", "Does"). */
-export function Group({ title, children, className }: { title: string; children: ReactNode; className?: string }) {
+/** A small caption over a rounded group of rows ("Brain", "Knows", "Does"), with an optional quiet note on its right. */
+export function Group({ title, aside, children, className }: { title: string; aside?: ReactNode; children: ReactNode; className?: string }) {
   const id = useId();
   return <section aria-labelledby={id} className={cn("flex min-w-0 flex-col gap-1.5", className)}>
-    <h3 id={id} className="px-1 font-medium text-muted-foreground text-xs">{title}</h3>
+    <div className="flex items-baseline justify-between gap-2 px-1">
+      <h3 id={id} className="font-medium text-muted-foreground text-xs">{title}</h3>
+      {aside && <span className="shrink-0 text-muted-foreground text-xs tabular-nums">{aside}</span>}
+    </div>
     <div className="flex flex-col divide-y overflow-hidden rounded-xl border bg-card/60">{children}</div>
   </section>;
 }
@@ -57,10 +60,11 @@ export function SwitchRow({ icon, label, hint, checked, onChange }: { icon: Luci
   </div>;
 }
 
-/** The top of a sub-page: a way back and the page's name. */
-export function PageHeader({ title, onBack }: { title: string; onBack: () => void }) {
+/** The top of a sub-page: a way back, the page's name and an optional action on the right. */
+export function PageHeader({ title, onBack, action }: { title: string; onBack: () => void; action?: ReactNode }) {
   return <div className="flex items-center gap-1 pb-1">
     <Button type="button" variant="ghost" size="icon-xs" aria-label="Back to settings" onClick={onBack}><ChevronLeftIcon aria-hidden /></Button>
-    <h2 className="font-medium text-sm">{title}</h2>
+    <h2 className="flex-1 font-medium text-sm">{title}</h2>
+    {action}
   </div>;
 }

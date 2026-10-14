@@ -35,6 +35,7 @@ func (d *Daemon) registerChat() {
 		Publish: func(event string, payload any) {
 			d.IPC.Publish(event, payload)
 			replies.observe(event, payload)
+			d.notices.chatMessage(event, payload)
 		},
 	})
 	if err != nil {

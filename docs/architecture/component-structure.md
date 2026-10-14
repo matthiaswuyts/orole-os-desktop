@@ -110,53 +110,46 @@ loading/error/offline/not-connected states, the drag handle and the size menu.
 
 `lib/audio.ts` owns one `@web-kits/audio` engine. `shell/AudioFeedback.tsx`
 maps semantic activations to brief synthesized cues; no hover or typing sounds.
-Settings > Customization > Sounds persists interface enablement and web volume; there is no test-interface-sound action. A zero volume,
-unfocused/hidden window, missing user activation, or stale asynchronous activation
-prevents playback. Losing focus stops voices and suspends the engine.
-In-app notification cues use the source preference and only new events explicitly
-marked `sound && !native`; native delivery never also plays a web notification cue.
-Windows owns native-notification volume and may suppress delivery.
+Settings > Customization > Sounds persists interface enablement and volume; there is no test-interface-sound action. A zero volume,
+missing user activation, or stale asynchronous activation prevents playback; interface cues also need a focused, visible
+window. Losing focus stops voices and suspends the engine.
+Notification cues are one per kind (`approval`, `failed`, `finished`, `reply`, `message` in `soundDefinitions`) and play only
+for new `notifications.changed` events marked `sound` by the kind's preference. They also play while the window is in the
+background, since there are no OS toasts, and never for a notification whose task or bot chat the focused window shows
+(`features/notifications/targets.ts`). Only the main window plays them; the settings window plays previews only.
 
 Browser smoke exercised real Web Audio playback, keyboard slider changes, mute,
 and volume persistence after reload. The Sounds surface had zero automated axe
-violations. These checks do not prove acoustic audibility or Windows toast delivery.
-
-The installed Windows desktop's Test notification action persisted a real
-`system.test` notification and reported Windows acceptance through MyGo, both with
-sound enabled and disabled. The per-source silent preference survived a native
-page reload. OS display and acoustic audibility remain dependent on notification
-permissions, volume, and Focus Assist; API acceptance is not evidence of either.
+violations. These checks do not prove acoustic audibility.
 
 ## Alerts & automations settings
 
 Settings groups this surface into **Alerts** and **Automation limits**, retaining the existing navigation IDs.
-Alerts aligns per-source Allow, Windows, and Sound controls, marks default versus custom preferences, and offers Reset.
-Delivery details are collapsed; errors, connection recovery, saving status, and the real notification test remain visible.
+Alerts is one card with a row per notification kind (Needs you, Failed, Finished, Bot replies, Flow messages): an icon,
+what it reports, and In app and Sound toggle buttons (`aria-pressed`) plus a play button for the kind's cue. The daemon
+keeps approvals visible (`notifications.Prefs.normalize`), so the Needs you In app toggle is locked; a hidden kind is also
+silent. The card footer shows saving status and links to the volume. Errors and connection recovery stay visible.
 Automation limits separates concurrency controls from local webhooks. Port and signing instructions are under connection
 details; credential generation and explicit replacement confirmation remain available. Drafts survive save failures,
 and offline state prevents mutations while still allowing cancellation of secret replacement.
 
-Headless verification covers startup scene stability/manual override, alert preferences and disabled actions,
-automation save recovery and secret confirmation. All 11 real scene first frames were generated successfully.
-These checks do not verify browser canvas snapshots or visual layout.
-
 ## Notification panel
 
-The header bell opens a non-modal coss Popover, not a full-height sheet.
-Its independent viewport-corner anchor keeps the panel 12 px from the right edge,
-below the title bar, regardless of MyGo's native caption-button inset. Width is
-420 px (clamped to narrow viewports); height is capped at 440 px with scrolling.
-The header contains source selection, mark-read, an overflow menu, and close.
-Unread filtering, refresh, and dismiss-shown live in the overflow menu.
-Real history is grouped by local calendar date, with unread dots, level icons,
-timestamps, and keyboard-accessible per-entry mark-read/dismiss actions.
+The header bell opens a non-modal coss Popover, not a full-height sheet, modelled on the AI SDK Agents notification
+center. Its independent viewport-corner anchor keeps the panel 12 px from the right edge, below the title bar,
+regardless of MyGo's native caption-button inset. Width is 360 px (clamped to narrow viewports); height is capped at
+480 px with scrolling. The header holds All / Needs you tabs (Needs you counts open approvals) and Mark all read; the
+footer opens Settings. Rows are one line, grouped under sticky Today / Yesterday / This week / Earlier headers
+(`format.ts`, local calendar days): the reporter's mark (bot avatar, task, flow or permission icon) with a kind badge,
+bold title while unread, body truncated, compact age, unread dot. A Flow message shows a tinted tile toned by its
+level. Clicking a row marks it read and opens its `target` (`task:`, `bot:`, `automation:`); targetless rows only mark
+read. The row's accessible name carries the full body.
 
-Installed WebView2 verification created a real `system.test` notification,
-filtered its source, marked it read, confirmed the unread-only empty state,
-and dismissed it by keyboard. The smaller panel measured 420 px wide with a
-12 px right margin. Browser checks exercised Escape and outside-click dismissal.
-Preview, loading, empty, offline, and mutation-error states remain explicit;
-no screenshot sample notifications are inserted into production history.
+Notifications are produced in the daemon (`internal/daemon/app_notices.go`) from task status changes, bot messages,
+flow run status changes and the policy approval queue, through one ordered worker so producers never block. An
+approval carries a `ref` for the wait it reports and stays in Needs you (`needs_you=1`) until the producer resolves
+it: the task leaves needs-you, the user answers the bot, the run leaves its approval step, or the permission request
+is decided. Only one approval per open ref is stored. At startup the daemon resolves refs whose wait did not survive.
 
 ## Home composer and monitoring
 
@@ -394,10 +387,11 @@ muted "Starting…" (or "Failed") row. Several launches can be pending at once; 
   (Settings > Task permissions) seeds the choice once it loads, YOLO as that default counting as confirmed;
   picking a mode in the Home launcher saves it back to `agents.defaultPermissionMode` (new tasks only; running tasks keep their mode, and bots follow it with YOLO falling back to Manual unless "Bots may use Yolo" is on). Auto is also kept in `localStorage` (`orole.task.permissionMode`) as a fallback while the daemon is unreachable; YOLO never is.
   Optional dictation (`ComposerVoice`) records the microphone with `getUserMedia` + `MediaRecorder` (the packaged
-  WebView2 has no speech service, so the Web Speech API is not used) and sends the recording to the daemon
-  (`Dictation.transcribe`), which transcribes it with OpenAI using the user's own OpenAI API key. It requires an
-  explicit consent disclosure that audio goes to OpenAI; without a connected key it shows a setup state that opens
-  Settings > AI providers. Transcripts remain editable and are never sent automatically.
+  WebView2 has no speech service, so the Web Speech API is not used), decodes the recording to 16 kHz mono PCM with Web
+  Audio and hands it to the daemon (`Dictation.upload` parts, then `Dictation.transcribe`), which recognizes it on this
+  computer with the model chosen in Settings > Voice (`VoiceSettings`, state in `stores/dictation.ts`). Without a
+  downloaded model the microphone button opens a popover offering the Parakeet download and a link to Settings > Voice;
+  with one it starts recording at once. Transcripts remain editable and are never sent automatically.
 - **Harness limits**: installed Claude Code 2.1.289, Codex CLI 0.156.1, and Oh My Pi 18.8.4 protocols
   were inspected. Codex and OMP support typed question responses and authoritative context occupancy;
   Claude contributes only fields its stream actually reports. Sources are structured harness output,
