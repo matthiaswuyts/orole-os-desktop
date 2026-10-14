@@ -116,6 +116,25 @@ type live struct {
 // injected is a call request folded into the call in progress.
 type injected struct{ bot, reason string }
 
+// maxNews caps the text of news folded into a call by Inject (a report's outcome).
+const maxNews = 500
+
+// Inject folds news into the call callID as a second call request is (see Place): the bot hears it, fenced, in its next
+// finished turn, and a call that ends before that turns it into a notification. from names who it is from (a bot or a
+// task) and reason is what happened. It reports whether callID is the call in progress; a verification call takes none.
+func (c *Calls) Inject(callID, from, reason string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	l := c.cur
+	if l == nil || l.ended || l.verify != "" || callID == "" || l.call.ID != callID {
+		return false
+	}
+	// from is a bot name or a task title and reaches the model unfenced: one short line.
+	from = clipRunes(strings.Join(strings.Fields(from), " "), maxTitle)
+	l.inject = append(l.inject, injected{bot: from, reason: clipRunes(reason, maxNews)})
+	return true
+}
+
 type Calls struct {
 	store    *Store
 	host     Host

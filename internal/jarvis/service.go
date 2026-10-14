@@ -584,6 +584,53 @@ func (s *Service) OnEvent(ev Event) {
 	}()
 }
 
+// OnFollowUp is the chat follow-up hook (chat.Manager.SetFollowUpHook): a bot the bot handed work to reported back, or a
+// code task it started changed state. It never blocks the caller beyond a few lookups under the call manager's lock.
+//
+//   - While a call is live with the bot (or is the call the work was started on), the follow-up is folded into it as
+//     news and told there. The hook returns true only when the follow-up belongs to that call (f.CallID is the live
+//     call): its written answer is then not needed. A follow-up that started in chat is also told on the phone, but
+//     still gets its written answer in chat.
+//   - Otherwise a report goes to the call rules as a bot_reported event (task follow-ups already reach the rules as
+//     task events and must not fire twice).
+//   - A follow-up of a call that has ended is also announced in a notification: its written answer lands in the call's
+//     thread, which raises no chat notification.
+func (s *Service) OnFollowUp(f chat.FollowUp) bool {
+	rec, live := s.calls.Active()
+	told := live && (rec.BotID == f.BotID || f.CallID == rec.ID) && s.calls.Inject(rec.ID, f.From, f.Status+": "+f.Text)
+	onCall := told && f.CallID == rec.ID
+	if f.CallID != "" && !onCall {
+		s.noticeEndedCall(f) // the call it was started on is not live: it ended
+	}
+	if !told && f.Kind == chat.FollowUpReport {
+		title := f.From + " reported back"
+		switch f.Status {
+		case "failed":
+			title += " (failed)"
+		case "stopped":
+			title += " (stopped)"
+		}
+		s.OnEvent(Event{Trigger: BotReported, OwnerBotID: f.BotID, Source: f.From, Title: title, Detail: f.Text})
+	}
+	return onCall
+}
+
+// noticeEndedCall tells the owner that work started on a call that has ended came back; its answer is in the call.
+func (s *Service) noticeEndedCall(f chat.FollowUp) {
+	if !s.track() {
+		return
+	}
+	ctx := s.ctx()
+	go func() {
+		defer s.wg.Done()
+		who := "your bot"
+		if b, err := s.cfg.Host.Bot(ctx, f.BotID); err == nil && b.Name != "" {
+			who = b.Name
+		}
+		s.cfg.Host.Notify(clipRunes(f.From, maxTitle)+" reported back", "From your call with "+who+". Open the call to read it.", "bot:"+f.BotID, "info")
+	}()
+}
+
 func clipRunes(s string, n int) string {
 	r := []rune(s)
 	if len(r) <= n {

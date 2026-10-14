@@ -14,11 +14,14 @@ const (
 	AutomationFailed    JarvisTrigger = "automation_failed"
 	NotificationTrigger JarvisTrigger = "notification"
 	AtTime              JarvisTrigger = "at_time"
+	// BotReported fires when a bot the rule's bot handed work to reports back. The target is that bot's name
+	// (case-insensitive) or "any".
+	BotReported JarvisTrigger = "bot_reported"
 )
 
 func (t JarvisTrigger) Valid() bool {
 	switch t {
-	case TaskFinished, TaskFailed, AutomationFinished, AutomationFailed, NotificationTrigger, AtTime:
+	case TaskFinished, TaskFailed, AutomationFinished, AutomationFailed, NotificationTrigger, AtTime, BotReported:
 		return true
 	}
 	return false

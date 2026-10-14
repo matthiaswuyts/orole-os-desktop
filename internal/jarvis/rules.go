@@ -8,9 +8,9 @@ import (
 // Event is something a rule can fire on. The daemon builds it from task, automation and notification hooks.
 type Event struct {
 	Trigger    JarvisTrigger
-	OwnerBotID string // bot that started the task, if any
+	OwnerBotID string // bot that started the task, or the bot a report came back to
 	TargetID   string // task id, automation id, or notification kind
-	Source     string // notification source (e.g. "github.ci")
+	Source     string // notification source (e.g. "github.ci"), or the name of the bot that reported back
 	Title      string // short human title for the brief
 	Detail     string // untrusted detail (task result, error); fenced before it reaches a model
 }
@@ -29,6 +29,12 @@ func Matches(r JarvisRule, ev Event, nowMs int64) bool {
 		return r.Target == ev.TargetID
 	case AutomationFinished, AutomationFailed:
 		return r.Target == "any" || r.Target == ev.TargetID
+	case BotReported:
+		if r.BotID != ev.OwnerBotID {
+			return false
+		}
+		from := strings.TrimSpace(ev.Source)
+		return r.Target == "any" || from != "" && strings.EqualFold(strings.TrimSpace(r.Target), from)
 	case NotificationTrigger:
 		kind, source, _ := strings.Cut(r.Target, ":")
 		if kind != ev.TargetID {

@@ -406,6 +406,8 @@ func (d *Daemon) registerJarvis() {
 		LoadState: d.loadJarvisState, SaveState: d.saveJarvisState,
 		Changed: func(v jarvis.StatusView) { d.IPC.Publish("jarvis.changed", v) }})
 	d.Chat.SetSaveCheck(d.jarvisSaveCheck)
+	// Reports from bots and code tasks started on a call are told on the live call, or reach the call rules.
+	d.Chat.SetFollowUpHook(d.Jarvis.OnFollowUp)
 
 	handle(d, "jarvis.status", func(ctx context.Context, _ none) (jarvis.StatusView, error) { return d.Jarvis.Status(ctx), nil })
 	handle(d, "jarvis.secrets.set", func(ctx context.Context, p jarvis.SecretsInput) (jarvis.StatusView, error) {

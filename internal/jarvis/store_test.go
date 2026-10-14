@@ -50,6 +50,22 @@ func TestRulesRoundTrip(t *testing.T) {
 	}
 }
 
+func TestBotReportedRule(t *testing.T) {
+	s, _ := testStore(t)
+	ctx := context.Background()
+	r, err := s.AddRule(ctx, JarvisRule{BotID: "b1", Trigger: BotReported, Target: "Nova", Note: "tell me what it found"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, _ := s.Rules(ctx, "b1")
+	if len(got) != 1 || got[0].ID != r.ID || got[0].Trigger != BotReported || got[0].Target != "Nova" {
+		t.Fatalf("stored %+v", got)
+	}
+	if _, err := s.AddRule(ctx, JarvisRule{BotID: "b1", Trigger: BotReported, Target: ""}); err == nil {
+		t.Error("accepted a bot_reported rule without a target")
+	}
+}
+
 func TestAddRuleRejectsBadInput(t *testing.T) {
 	s, _ := testStore(t)
 	for _, r := range []JarvisRule{
