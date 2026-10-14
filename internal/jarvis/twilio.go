@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -47,7 +48,7 @@ func (t *Twilio) Numbers(ctx context.Context) ([]string, error) {
 			PhoneNumber string `json:"phone_number"`
 		} `json:"incoming_phone_numbers"`
 	}
-	if err := json.NewDecoder(res.Body).Decode(&body); err != nil {
+	if err := json.NewDecoder(io.LimitReader(res.Body, 1<<20)).Decode(&body); err != nil {
 		return nil, errors.New("Twilio returned an unreadable response.")
 	}
 	out := make([]string, 0, len(body.Numbers))

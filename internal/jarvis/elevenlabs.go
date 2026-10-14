@@ -18,6 +18,8 @@ type ElevenLabs struct {
 	Key     string
 	BaseURL string
 	HTTP    *http.Client
+	// Scrub lists extra secrets (for example the relay secret) to redact from error strings.
+	Scrub []string
 }
 
 type Voice struct {
@@ -31,9 +33,9 @@ type TTSModel struct {
 	Latency string `json:"latency"` // "fast" | "expressive"
 }
 
-// AgentConfig describes the shared agent. InboundURL and WebhookURL default to <RelayURL>/inbound and /status.
+// AgentConfig describes the shared agent. Empty VoiceID/TTSModel are omitted from the request.
 type AgentConfig struct {
-	RelayURL, LLMSecret, InboundURL, WebhookURL, VoiceID, TTSModel string
+	RelayURL, LLMSecret, VoiceID, TTSModel string
 }
 
 type OutboundCall struct {
@@ -71,12 +73,12 @@ func (e *ElevenLabs) do(ctx context.Context, method, path string, in, out any) e
 	req.Header.Set("Content-Type", "application/json")
 	res, err := e.client().Do(req)
 	if err != nil {
-		return fmt.Errorf("ElevenLabs %s %s: %s", method, path, scrub(err.Error(), e.Key))
+		return fmt.Errorf("ElevenLabs %s %s: %s", method, path, e.scrub(err.Error()))
 	}
 	defer res.Body.Close()
 	data, _ := io.ReadAll(io.LimitReader(res.Body, 1<<20))
 	if res.StatusCode >= 300 {
-		snippet := scrub(strings.TrimSpace(string(data[:min(len(data), 300)])), e.Key)
+		snippet := e.scrub(strings.TrimSpace(string(data[:min(len(data), 300)])))
 		return fmt.Errorf("ElevenLabs %s %s: %d %s", method, path, res.StatusCode, snippet)
 	}
 	if out != nil {
@@ -85,11 +87,13 @@ func (e *ElevenLabs) do(ctx context.Context, method, path string, in, out any) e
 	return nil
 }
 
-func scrub(s, secret string) string {
-	if secret == "" {
-		return s
+func (e *ElevenLabs) scrub(s string) string {
+	for _, secret := range append([]string{e.Key}, e.Scrub...) {
+		if secret != "" {
+			s = strings.ReplaceAll(s, secret, "[redacted]")
+		}
 	}
-	return strings.ReplaceAll(s, secret, "[redacted]")
+	return s
 }
 
 func (e *ElevenLabs) Voices(ctx context.Context) ([]Voice, error) {
@@ -135,32 +139,42 @@ func (e *ElevenLabs) Models(ctx context.Context) ([]TTSModel, error) {
 // agentBody configures the shared agent: the brain is our relay (custom LLM), the first turn comes from the LLM
 // (first_message empty) so the daemon's cached opener is spoken, and voicemail detection ends unanswered calls.
 func agentBody(c AgentConfig) map[string]any {
-	return map[string]any{
-		"name": "Jarvis",
-		"conversation_config": map[string]any{
-			"agent": map[string]any{
-				"first_message": "",
-				"language":      "en",
-				"prompt": map[string]any{
-					"prompt": "You relay a phone call. Speak the assistant's replies exactly.",
-					"llm":    "custom-llm",
-					"custom_llm": map[string]any{
-						"url":             strings.TrimRight(c.RelayURL, "/") + "/llm",
-						"model_id":        "bot",
-						"request_headers": map[string]string{"x-orole-relay": c.LLMSecret},
-					},
-					"built_in_tools": map[string]any{
-						"end_call": map[string]any{"name": "end_call", "params": map[string]any{"system_tool_type": "end_call"}},
-						"voicemail_detection": map[string]any{
-							"name":   "voicemail_detection",
-							"params": map[string]any{"system_tool_type": "voicemail_detection", "voicemail_message": ""},
-						},
+	conv := map[string]any{
+		"agent": map[string]any{
+			"first_message": "",
+			"language":      "en",
+			"prompt": map[string]any{
+				"prompt": "You relay a phone call. Speak the assistant's replies exactly.",
+				"llm":    "custom-llm",
+				"custom_llm": map[string]any{
+					"url":             strings.TrimRight(c.RelayURL, "/") + "/llm",
+					"model_id":        "bot",
+					"request_headers": map[string]string{"x-orole-relay": c.LLMSecret},
+				},
+				"built_in_tools": map[string]any{
+					"end_call": map[string]any{"name": "end_call", "params": map[string]any{"system_tool_type": "end_call"}},
+					"voicemail_detection": map[string]any{
+						"name":   "voicemail_detection",
+						"params": map[string]any{"system_tool_type": "voicemail_detection", "voicemail_message": ""},
 					},
 				},
 			},
-			"tts":  map[string]any{"voice_id": c.VoiceID, "model_id": c.TTSModel},
-			"turn": map[string]any{"turn_eagerness": "eager"},
 		},
+		"turn": map[string]any{"turn_eagerness": "eager"},
+	}
+	tts := map[string]any{}
+	if c.VoiceID != "" {
+		tts["voice_id"] = c.VoiceID
+	}
+	if c.TTSModel != "" {
+		tts["model_id"] = c.TTSModel
+	}
+	if len(tts) > 0 {
+		conv["tts"] = tts
+	}
+	return map[string]any{
+		"name":                "Jarvis",
+		"conversation_config": conv,
 		"platform_settings": map[string]any{
 			"overrides": map[string]any{
 				"conversation_config_override":                            map[string]any{"tts": map[string]any{"voice_id": true, "model_id": true}},
@@ -266,7 +280,7 @@ func (e *ElevenLabs) OutboundCall(ctx context.Context, c OutboundCall) (string, 
 		return "", "", err
 	}
 	if !res.Success {
-		return "", "", fmt.Errorf("ElevenLabs did not start the call: %s", scrub(res.Message, e.Key))
+		return "", "", fmt.Errorf("ElevenLabs did not start the call: %s", e.scrub(res.Message))
 	}
 	return res.ConversationID, res.CallSID, nil
 }

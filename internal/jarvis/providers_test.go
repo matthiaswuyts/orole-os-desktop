@@ -3,6 +3,7 @@ package jarvis
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -184,6 +185,52 @@ func TestTwilioBadCredentials(t *testing.T) {
 	tw := &Twilio{SID: "AC1", Token: "tok-secret", BaseURL: srv.URL, HTTP: srv.Client()}
 	_, err := tw.Numbers(context.Background())
 	if err == nil || strings.Contains(err.Error(), "tok-secret") {
+		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestProvisionKeepsWebhookIDUnsetWhenSecretNotStored(t *testing.T) {
+	for name, store := range map[string]func(string) error{
+		"store fails": func(string) error { return errors.New("vault down") },
+		"no callback": nil,
+	} {
+		srv, _ := provisionFake(t, nil)
+		el := &ElevenLabs{Key: "k", BaseURL: srv.URL, HTTP: srv.Client()}
+		tw := &Twilio{SID: "AC1", Token: "t", BaseURL: srv.URL, HTTP: srv.Client()}
+		s, err := Provision(context.Background(), el, tw, Settings{RelayURL: "https://relay.example", TwilioNumber: "+3220000000"},
+			ProvisionSecrets{LLMSecret: "ls", TwilioSID: "AC1", TwilioToken: "t", StoreWebhookSecret: store})
+		if err == nil || s.PostCallWebhookID != "" {
+			t.Errorf("%s: id=%q err=%v", name, s.PostCallWebhookID, err)
+		}
+	}
+}
+
+func TestAgentBodyOmitsEmptyVoiceAndModel(t *testing.T) {
+	srv, reqs := provisionFake(t, nil)
+	el := &ElevenLabs{Key: "k", BaseURL: srv.URL, HTTP: srv.Client()}
+	if _, err := el.CreateAgent(context.Background(), AgentConfig{RelayURL: "https://r", LLMSecret: "ls"}); err != nil {
+		t.Fatal(err)
+	}
+	b, _ := json.Marshal(reqs()[0].Body)
+	conv := reqs()[0].Body["conversation_config"].(map[string]any)
+	if _, ok := conv["tts"]; ok {
+		t.Errorf("tts present with no voice/model: %s", b)
+	}
+	if strings.Contains(string(b), `"voice_id":""`) || strings.Contains(string(b), `"model_id":""`) {
+		t.Errorf("empty ids sent: %s", b)
+	}
+}
+
+func TestProvisionScrubsLLMSecretFromErrors(t *testing.T) {
+	good, _ := provisionFake(t, nil)
+	tw := &Twilio{SID: "AC1", Token: "t", BaseURL: good.URL, HTTP: good.Client()}
+	bad := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "bad header supersecretllm", 400)
+	}))
+	defer bad.Close()
+	el := &ElevenLabs{Key: "k", BaseURL: bad.URL, HTTP: bad.Client()}
+	_, err := Provision(context.Background(), el, tw, Settings{RelayURL: "https://r", TwilioNumber: "+3220000000"}, ProvisionSecrets{LLMSecret: "supersecretllm"})
+	if err == nil || strings.Contains(err.Error(), "supersecretllm") {
 		t.Fatalf("err=%v", err)
 	}
 }

@@ -26,8 +26,13 @@ func Provision(ctx context.Context, el *ElevenLabs, tw *Twilio, s Settings, sec 
 	if !slices.Contains(nums, s.TwilioNumber) {
 		return s, fmt.Errorf("The number %s is not in this Twilio account.", s.TwilioNumber)
 	}
+	if sec.LLMSecret != "" {
+		e2 := *el
+		e2.Scrub = append(slices.Clone(el.Scrub), sec.LLMSecret)
+		el = &e2
+	}
 	base := strings.TrimRight(s.RelayURL, "/")
-	cfg := AgentConfig{RelayURL: base, LLMSecret: sec.LLMSecret, InboundURL: base + "/inbound", WebhookURL: base + "/status", VoiceID: s.DefaultVoiceID, TTSModel: s.DefaultTTSModel}
+	cfg := AgentConfig{RelayURL: base, LLMSecret: sec.LLMSecret, VoiceID: s.DefaultVoiceID, TTSModel: s.DefaultTTSModel}
 	if s.AgentID == "" {
 		if s.AgentID, err = el.CreateAgent(ctx, cfg); err != nil {
 			return s, err
@@ -43,23 +48,29 @@ func Provision(ctx context.Context, el *ElevenLabs, tw *Twilio, s Settings, sec 
 	if err := el.AssignAgent(ctx, s.PhoneNumberID, s.AgentID); err != nil {
 		return s, err
 	}
-	if s.PostCallWebhookID == "" {
-		id, secret, err := el.CreatePostCallWebhook(ctx, cfg.WebhookURL, sec.LLMSecret)
+	webhookID := s.PostCallWebhookID
+	if webhookID == "" {
+		id, secret, err := el.CreatePostCallWebhook(ctx, base+"/status", sec.LLMSecret)
 		if err != nil {
 			return s, err
 		}
 		if id == "" {
 			return s, fmt.Errorf("ElevenLabs returned no webhook id")
 		}
-		s.PostCallWebhookID = id
-		if secret != "" && sec.StoreWebhookSecret != nil {
+		// The signing secret is shown once; the id is only recorded after the secret is safely stored.
+		if secret != "" {
+			if sec.StoreWebhookSecret == nil {
+				return s, fmt.Errorf("The post-call webhook secret has nowhere to be stored; delete webhook %s in ElevenLabs and retry.", id)
+			}
 			if err := sec.StoreWebhookSecret(secret); err != nil {
-				return s, err
+				return s, fmt.Errorf("Could not store the post-call webhook secret (delete webhook %s in ElevenLabs and retry): %w", id, err)
 			}
 		}
+		webhookID = id
 	}
-	if err := el.SetWebhooks(ctx, cfg.InboundURL, sec.LLMSecret, s.PostCallWebhookID); err != nil {
+	if err := el.SetWebhooks(ctx, base+"/inbound", sec.LLMSecret, webhookID); err != nil {
 		return s, err
 	}
+	s.PostCallWebhookID = webhookID
 	return s, nil
 }
