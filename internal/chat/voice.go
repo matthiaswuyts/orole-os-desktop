@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/rayorole/orole-os-desktop/internal/llm"
+	"github.com/rayorole/orole-os-desktop/internal/policy"
 )
 
 const (
@@ -72,7 +73,8 @@ func (m *Manager) VoiceTurn(ctx context.Context, req VoiceRequest) (string, erro
 		unlockBot()
 		return "", err
 	}
-	runCtx, cancel := context.WithCancel(ctx)
+	// Nobody can answer an approval prompt mid-call: a policy "ask" fails at once with a spoken-friendly error.
+	runCtx, cancel := context.WithCancel(policy.WithoutApprovals(ctx))
 	defer cancel()
 	stop := context.AfterFunc(m.ctx, cancel) // daemon shutdown ends the turn
 	defer stop()

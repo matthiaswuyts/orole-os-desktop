@@ -495,3 +495,39 @@ func TestAutoApprovedCheckIsAuditedWithoutPrompt(t *testing.T) {
 		t.Fatalf("without hook: %+v %v", ev, err)
 	}
 }
+
+// On a phone call nobody can answer an approval: "ask" fails at once, nothing is parked, stored allows still apply.
+func TestAskFailsAtOnceWithoutApprovals(t *testing.T) {
+	e, _, _ := newEngine(t)
+	ctx := WithoutApprovals(context.Background())
+	req := Request{Actor: "bot:b1", Action: "mail.send", Resource: "mail/s", Effect: EffectWrite}
+	done := make(chan struct{})
+	var err error
+	go func() {
+		err = e.Require(ctx, req)
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Require waited for an approval")
+	}
+	if !errors.Is(err, ErrApprovalUnavailable) || !strings.Contains(err.Error(), "not available on a call") {
+		t.Fatalf("err = %v", err)
+	}
+	if len(e.Pending()) != 0 {
+		t.Fatal("an approval was parked")
+	}
+	if err := e.RequireOnce(ctx, req); !errors.Is(err, ErrApprovalUnavailable) {
+		t.Fatalf("RequireOnce err = %v", err)
+	}
+	if d, err := e.Check(ctx, Request{Actor: "bot:b1", Action: "x.read", Resource: "r", Effect: EffectRead}); err != nil || d != Allow {
+		t.Fatalf("read: %s %v", d, err)
+	}
+	if _, err := e.AddRule(context.Background(), Rule{Actor: "bot:b1", Action: "mail.send", Resource: "*", Decision: Allow}); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.Require(ctx, req); err != nil {
+		t.Fatalf("stored allow ignored: %v", err)
+	}
+}

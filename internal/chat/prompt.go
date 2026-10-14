@@ -38,7 +38,9 @@ You are on a phone call with the owner. Everything you write is spoken aloud.
 - No markdown, lists, code, links or emoji. Spell out identifiers so they are easy to say.
 - Never name the app you run in or say where you are calling from. You may say your own name.
 - When you start long work (a code task, research), say that it has started and keep talking; do not wait for it.
-- If the owner says to leave it, acknowledge briefly and stop.`
+- If the owner says to leave it, acknowledge briefly and stop.
+- If you reach voicemail or an answering machine, say nothing about the reason.
+- An action that needs the owner's approval cannot be approved on a call; say it is waiting in the app.`
 
 // systemInput gathers everything that goes into the system prompt.
 type systemInput struct {

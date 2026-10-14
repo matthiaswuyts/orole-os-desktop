@@ -92,6 +92,9 @@ func (d *Daemon) registerCore() {
 			p.Key, string(p.Value), time.Now().Unix())
 		if err == nil {
 			d.IPC.Publish("settings.changed", map[string]any{"key": p.Key, "value": p.Value})
+			if p.Key == "agents" {
+				d.jarvisSweep(ctx) // bot permissions may have dropped below what Jarvis needs
+			}
 		}
 		return none{}, err
 	})

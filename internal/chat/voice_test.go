@@ -2,13 +2,19 @@ package chat
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/rayorole/orole-os-desktop/internal/database"
 	"github.com/rayorole/orole-os-desktop/internal/llm"
 	"github.com/rayorole/orole-os-desktop/internal/llm/llmtest"
+	"github.com/rayorole/orole-os-desktop/internal/policy"
+	"github.com/rayorole/orole-os-desktop/migrations"
 )
 
 func textScript(replies ...string) llmtest.Script {
@@ -223,11 +229,17 @@ func TestJarvisConfigValidationAndSaveCheck(t *testing.T) {
 	if _, err := e.m.SaveBot(context.Background(), in); err == nil {
 		t.Error("accepted a voice id with whitespace")
 	}
-	e.m.SetSaveCheck(func(_ context.Context, in BotInput) error {
-		if in.Config.Jarvis.Enabled {
-			return invalidf("Jarvis needs this bot's tool access set to All.")
+	var sawStored []bool
+	e.m.SetSaveCheck(func(_ context.Context, stored *Bot, in BotInput) (BotInput, error) {
+		sawStored = append(sawStored, stored != nil && stored.Config.Jarvis.Enabled)
+		if in.Config.ToolAccess != ToolAccessAll {
+			if stored != nil && stored.Config.Jarvis.Enabled {
+				in.Config.Jarvis.Enabled = false // already on: keep the save, switch Jarvis off
+				return in, nil
+			}
+			return in, invalidf("Jarvis needs this bot's tool access set to All.")
 		}
-		return nil
+		return in, nil
 	})
 	in.Config.Jarvis = BotJarvis{Enabled: true, Policy: "only failures"}
 	if _, err := e.m.SaveBot(context.Background(), in); err == nil || !strings.Contains(err.Error(), "tool access") {
@@ -236,6 +248,18 @@ func TestJarvisConfigValidationAndSaveCheck(t *testing.T) {
 	in.Config.Jarvis.Enabled = false
 	if _, err := e.m.SaveBot(context.Background(), in); err != nil {
 		t.Errorf("disabled jarvis rejected: %v", err)
+	}
+	in.Config.ToolAccess, in.Config.Jarvis.Enabled = ToolAccessAll, true
+	if _, err := e.m.SaveBot(context.Background(), in); err != nil {
+		t.Fatalf("enable with full access: %v", err)
+	}
+	in.Config.ToolAccess = ToolAccessWrite
+	got, err := e.m.SaveBot(context.Background(), in)
+	if err != nil || got.Config.Jarvis.Enabled || got.Config.ToolAccess != ToolAccessWrite {
+		t.Fatalf("adjusted save: %+v %v", got.Config, err)
+	}
+	if len(sawStored) != 3 || sawStored[0] || sawStored[1] || !sawStored[2] {
+		t.Fatalf("stored bot passed to the check: %v", sawStored)
 	}
 }
 
@@ -317,5 +341,44 @@ func TestArchiveAndClearStopVoiceTurn(t *testing.T) {
 				t.Error("voice turn started for an archived bot")
 			}
 		})
+	}
+}
+
+// A voice turn cannot wait for an approval: a tool whose policy asks fails at once with a spoken-friendly error.
+func TestVoiceTurnPolicyAskFailsAtOnce(t *testing.T) {
+	db, err := database.Open(filepath.Join(t.TempDir(), "p.db"), migrations.FS)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	pe := policy.New(db.DB, nil, nil)
+	var toolErr error
+	ft := &fakeTool{id: "send_mail", call: func(ctx context.Context, rc RunContext, _ string, _ json.RawMessage) (ToolResult, error) {
+		toolErr = pe.Require(ctx, policy.Request{Actor: rc.Actor, Action: "mail.send", Resource: "mail/s", Effect: policy.EffectWrite})
+		return ToolResult{}, toolErr
+	}}
+	e := newEnv(t, func(call int, _ llm.Request) []llm.Delta {
+		if call == 0 {
+			return llmtest.Call("t1", "send_mail", `{}`)
+		}
+		return []llm.Delta{llmtest.Text("It is waiting in the app.")}
+	})
+	e.m.AddTools(ft)
+	b := e.bot("Atlas", func(in *BotInput) { in.Config.ToolAccess = ToolAccessAll })
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_, _ = e.m.VoiceTurn(context.Background(), VoiceRequest{BotID: b.ID, CallID: "c1", Text: "mail Bob"})
+	}()
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("voice turn waited for an approval")
+	}
+	if !errors.Is(toolErr, policy.ErrApprovalUnavailable) || len(pe.Pending()) != 0 {
+		t.Fatalf("tool err = %v, pending = %d", toolErr, len(pe.Pending()))
+	}
+	if !strings.Contains(e.lastRequest().System, "say nothing about the reason") {
+		t.Fatal("voice prompt lacks the voicemail rule")
 	}
 }

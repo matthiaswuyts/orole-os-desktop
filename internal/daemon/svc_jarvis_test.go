@@ -76,10 +76,71 @@ func TestJarvisSaveCheckRequiresFullPermissions(t *testing.T) {
 	if _, err := d.Chat.SaveBot(ctx, in); err != nil {
 		t.Fatalf("full permissions rejected: %v", err)
 	}
+	// Already on: lowering a permission saves the bot with Jarvis switched off, and tells the owner.
 	in.Config.ToolAccess = chat.ToolAccessWrite
-	if _, err := d.Chat.SaveBot(ctx, in); err == nil || !strings.Contains(err.Error(), "tool access") {
-		t.Fatalf("lowered tool access kept Jarvis on: %v", err)
+	got, err := d.Chat.SaveBot(ctx, in)
+	if err != nil || got.Config.Jarvis.Enabled || got.Config.ToolAccess != chat.ToolAccessWrite {
+		t.Fatalf("lowered tool access: %+v %v", got.Config, err)
 	}
+	waitNotice(t, d, "Jarvis turned off for Atlas")
+	// Off again: turning it on with too little access is still refused.
+	in.Config.Jarvis.Enabled = true
+	if _, err := d.Chat.SaveBot(ctx, in); err == nil || !strings.Contains(err.Error(), "tool access") {
+		t.Fatalf("enabled Jarvis without full tool access: %v", err)
+	}
+}
+
+func dialDaemon(t *testing.T, d *Daemon) *ipc.Client {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	for i := 0; i < 100; i++ {
+		c := control.NewClient(d.DataDir, "jarvis-test")
+		if c.Connect(ctx) == nil {
+			t.Cleanup(func() { c.Close() })
+			return c
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatal("cannot reach the daemon")
+	return nil
+}
+
+func waitNotice(t *testing.T, d *Daemon, title string) {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		ns, err := notifications.New(d.DB.DB).List(context.Background(), notifications.ListOptions{Limit: 50})
+		if err == nil {
+			for _, n := range ns {
+				if strings.Contains(n.Title, title) {
+					return
+				}
+			}
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("no notice %q", title)
+}
+
+// Saving the global agents setting switches Jarvis off for bots that no longer pass the gate.
+func TestAgentsSettingSweepsJarvisOff(t *testing.T) {
+	d := jarvisDaemon(t)
+	ctx := context.Background()
+	setAgents(t, d, `{"botYolo":true}`)
+	b, err := d.Chat.SaveBot(ctx, jarvisBotInput(""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := dialDaemon(t, d)
+	if err := c.Call(ctx, "settings.set", map[string]any{"key": "agents", "value": map[string]any{"botYolo": false}}, nil); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := d.Chat.Bot(ctx, b.ID)
+	if got.Config.Jarvis.Enabled {
+		t.Fatal("Jarvis still on after the agents setting dropped bot YOLO")
+	}
+	waitNotice(t, d, "Jarvis turned off for Atlas")
 }
 
 func TestJarvisDisableClearsFlag(t *testing.T) {

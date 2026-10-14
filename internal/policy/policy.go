@@ -352,6 +352,10 @@ func normalize(req Request) Request {
 }
 
 func (e *Engine) await(ctx context.Context, req Request, ev Evaluation) (Decision, error) {
+	if ApprovalsUnavailable(ctx) {
+		e.audit(req, "denied", "needs approval; nobody can answer on a call")
+		return Deny, ErrApprovalUnavailable
+	}
 	timeout := req.Timeout
 	if timeout <= 0 {
 		timeout = DefaultApprovalTimeout

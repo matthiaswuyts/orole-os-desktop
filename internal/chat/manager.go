@@ -68,7 +68,7 @@ type Config struct {
 // Manager owns bots, conversations, runs, attachments and the tool registry. Policy decisions for
 // individual tool calls live in the tools themselves (they receive the actor "bot:<id>").
 type Manager struct {
-	saveCheck func(context.Context, BotInput) error // guarded by mu; see SetSaveCheck
+	saveCheck SaveCheck // guarded by mu; see SetSaveCheck
 	cfg       Config
 	log       *slog.Logger
 	store     *store
@@ -346,8 +346,12 @@ func (m *Manager) Bot(ctx context.Context, id string) (Bot, error) {
 	return b, nil
 }
 
-// SetSaveCheck installs a check the daemon runs before a bot with Jarvis enabled is saved (Jarvis needs full permissions).
-func (m *Manager) SetSaveCheck(f func(ctx context.Context, in BotInput) error) {
+// SaveCheck runs before a bot with Jarvis enabled is saved. stored is the bot as saved now (nil when creating). It
+// returns the input to save, possibly adjusted (Jarvis switched off), or an error that refuses the save.
+type SaveCheck func(ctx context.Context, stored *Bot, in BotInput) (BotInput, error)
+
+// SetSaveCheck installs the daemon's Jarvis check (Jarvis needs full permissions).
+func (m *Manager) SetSaveCheck(f SaveCheck) {
 	m.mu.Lock()
 	m.saveCheck = f
 	m.mu.Unlock()
@@ -359,7 +363,14 @@ func (m *Manager) SaveBot(ctx context.Context, in BotInput) (Bot, error) {
 	check := m.saveCheck
 	m.mu.Unlock()
 	if check != nil && in.Config.Jarvis.Enabled {
-		if err := check(ctx, in); err != nil {
+		var stored *Bot
+		if in.ID != "" {
+			if b, err := m.Bot(ctx, in.ID); err == nil {
+				stored = &b
+			}
+		}
+		var err error
+		if in, err = check(ctx, stored, in); err != nil {
 			return Bot{}, err
 		}
 	}

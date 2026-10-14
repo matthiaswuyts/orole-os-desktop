@@ -104,19 +104,46 @@ func (d *Daemon) jarvisGateInput(c chat.BotConfig) jarvis.GateInput {
 }
 
 // jarvisSaveCheck runs before a bot with Jarvis on is saved: Jarvis needs full permissions, because phone
-// calls have no approval prompt.
-func (d *Daemon) jarvisSaveCheck(ctx context.Context, in chat.BotInput) error {
+// calls have no approval prompt. Turning Jarvis on is refused when the gate fails; a bot that already has it on is
+// saved with Jarvis switched off instead (so lowering a permission, granting a skill or saving a profile still works),
+// and the owner is told.
+func (d *Daemon) jarvisSaveCheck(ctx context.Context, stored *chat.Bot, in chat.BotInput) (chat.BotInput, error) {
+	wasOn := stored != nil && stored.Config.Jarvis.Enabled
 	if err := jarvis.CheckGate(d.jarvisGateInput(in.Config)); err != nil {
-		return &ipc.Error{Code: ipc.CodeBadRequest, Message: err.Error()}
+		if !wasOn {
+			return in, &ipc.Error{Code: ipc.CodeBadRequest, Message: err.Error()}
+		}
+		in.Config.Jarvis.Enabled = false
+		d.audit("jarvis.disabled", in.ID, "allowed", err.Error())
+		jarvisHost{d}.Notify("Jarvis turned off for "+in.Name, err.Error(), "bot:"+in.ID, "warning")
+		return in, nil
 	}
-	if in.ID != "" {
-		if prev, err := d.Chat.Bot(ctx, in.ID); err == nil && prev.Config.Jarvis.Enabled {
-			return nil
+	if !wasOn {
+		// The save itself may still fail; this records only that the permission check passed.
+		d.audit("jarvis.enable.checked", in.ID, "allowed", "permission check passed for "+in.Name)
+	}
+	return in, nil
+}
+
+// jarvisSweep switches Jarvis off for every bot whose permissions no longer pass the gate (after the global
+// agents setting changed), with the same audit entry and notice as a mid-call gate failure.
+func (d *Daemon) jarvisSweep(ctx context.Context) {
+	if d.Chat == nil {
+		return
+	}
+	bots, err := d.Chat.Bots(ctx)
+	if err != nil {
+		d.Log.Warn("jarvis: cannot list bots for the permission sweep", "err", err)
+		return
+	}
+	for _, b := range bots {
+		if !b.Config.Jarvis.Enabled {
+			continue
+		}
+		if err := jarvis.CheckGate(d.jarvisGateInput(b.Config)); err != nil {
+			jarvisHost{d}.DisableJarvis(ctx, b.ID, err.Error())
 		}
 	}
-	// The save itself may still fail; this records only that the permission check passed.
-	d.audit("jarvis.enable.checked", in.ID, "allowed", "permission check passed for "+in.Name)
-	return nil
 }
 
 // jarvisTools adapts the service to tools.JarvisRuntime; bots may only touch their own rules.
