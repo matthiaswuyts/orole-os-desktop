@@ -38,7 +38,18 @@ it("shows the setup checklist with nothing configured", async () => {
   render(<PhoneSettings />);
   expect(await screen.findByText("Twilio account")).toBeInTheDocument();
   expect(screen.getByText("Relay connected")).toBeInTheDocument();
-  expect(screen.getByText("Webhook secret")).toBeInTheDocument();
+  expect(screen.getByText("Webhook secret (optional)")).toBeInTheDocument();
+});
+
+it("does not ask ElevenLabs for voices until a key is stored", async () => {
+  api.status.mockResolvedValue(empty);
+  render(<PhoneSettings />);
+  expect(await screen.findByText("Twilio account")).toBeInTheDocument();
+  expect(api.voices).not.toHaveBeenCalled();
+  expect(api.models).not.toHaveBeenCalled();
+  act(() => { api.changed.forEach((cb) => cb({ ...empty, hasElevenLabs: true })); });
+  await waitFor(() => expect(api.voices).toHaveBeenCalled());
+  expect(api.models).toHaveBeenCalled();
 });
 
 it("saves Twilio secrets without echoing them back", async () => {

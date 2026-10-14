@@ -78,11 +78,11 @@ function SetupChecklist({ status }: { status: StatusView }) {
     ["Relay secrets", status.hasRelaySecrets],
     ["Relay connected", status.relayConnected],
     ["Number connected", !!status.settings.agentId],
-    ["Webhook secret", status.hasWebhookSecret],
+    ["Webhook secret (optional)", status.hasWebhookSecret],
     ["Your number verified", !!status.settings.ownerVerified],
   ];
   return (
-    <SettingsSection title="Setup" description="Work down this list once. Every step must be done before Orole can call you.">
+    <SettingsSection title="Setup" description="Work down this list once. Every step except the optional one must be done before Orole can call you. Without the webhook secret, calls still end on time: Orole asks Twilio for their status.">
       <ul className="divide-y">
         {rows.map(([label, done]) => (
           <li key={label} className="flex items-center gap-2 px-3 py-2">
@@ -281,6 +281,7 @@ function CallsSection({ status }: { status: StatusView }) {
   const action = useAction();
 
   useEffect(() => {
+    if (!status.hasElevenLabs) return; // the lists come from ElevenLabs: nothing to ask without a key
     let active = true;
     Promise.all([Jarvis.voices(), Jarvis.models()])
       .then(([v, m]) => { if (active) { setVoices(v); setModels(m); setLookupError(null); } })

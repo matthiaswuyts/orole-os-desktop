@@ -42,7 +42,11 @@ function RowSelect({ id, value, items, onChange }: { id: string; value: string; 
 export function JarvisPage({ bot, form, patch, onOpenPermissions }: { bot: Bot; form: FormState; patch: (p: Partial<FormState>) => void; onOpenPermissions?: () => void }) {
   const status = useJarvis((s) => s.status);
   const load = useJarvis((s) => s.load);
+  // Setup done once (the number is connected): the page stays usable while the relay or a key is down, so Jarvis can
+  // always be switched off and rules managed. Only a test call needs everything working right now.
+  const setUp = !!status?.settings.agentId;
   const ready = phoneReady(status);
+  const hasElevenLabs = !!status?.hasElevenLabs;
   const ids = { policy: useId(), voice: useId(), model: useId() };
 
   const [agents, setAgents] = useState<AgentsSetting | null>(null);
@@ -74,17 +78,17 @@ export function JarvisPage({ bot, form, patch, onOpenPermissions }: { bot: Bot; 
     }
   }, [bot.id]);
 
-  useEffect(() => { if (ready) void refresh(); }, [ready, refresh]);
+  useEffect(() => { if (setUp) void refresh(); }, [setUp, refresh]);
 
   useEffect(() => {
-    if (!inDesktop || !ready) return;
+    if (!inDesktop || !setUp || !hasElevenLabs) return;
     let live = true;
     // The lists come from ElevenLabs; without them the selects keep "Default" and any stored choice.
     Promise.all([Jarvis.voices(), Jarvis.models()]).then(([v, m]) => { if (live) { setVoices(v); setModels(m); } }, () => {});
     return () => { live = false; };
-  }, [ready]);
+  }, [setUp, hasElevenLabs]);
 
-  if (!ready) {
+  if (!setUp) {
     return <div className="flex flex-col items-start gap-2 px-1">
       <Note>Phone calls aren't set up yet.</Note>
       <Button type="button" size="sm" onClick={() => useUI.getState().openSettings("phone")}>Set up phone calls</Button>
@@ -128,6 +132,10 @@ export function JarvisPage({ bot, form, patch, onOpenPermissions }: { bot: Bot; 
     <Group title="Jarvis">
       <SwitchRow icon={PhoneIcon} label="Jarvis mode" hint={`Lets ${bot.name} phone you and take your calls.`} checked={form.jarvisEnabled} disabled={locked} onChange={(jarvisEnabled) => patch({ jarvisEnabled })} />
     </Group>
+    {!ready && <div className="flex flex-col items-start gap-1.5 px-1">
+      <Note>Phone calls are unavailable right now: {status?.relayConnected ? "a setup step needs attention" : "the relay is not connected"}. Rules and this switch still work.</Note>
+      <Button type="button" variant="outline" size="xs" onClick={() => useUI.getState().openSettings("phone")}>Open phone settings</Button>
+    </div>}
     {locked && <div className="flex flex-col items-start gap-1.5 px-1">
       <Note>{reason}</Note>
       {onOpenPermissions && <Button type="button" variant="outline" size="xs" onClick={onOpenPermissions}>Open permissions</Button>}
@@ -171,7 +179,7 @@ export function JarvisPage({ bot, form, patch, onOpenPermissions }: { bot: Bot; 
       {calls.length === 0 ? <p className="px-3 py-2 text-muted-foreground text-xs">No calls yet.</p>
         : <div className="flex flex-col gap-1.5 p-2">{calls.map((call) => <CallCard key={call.id} part={callPart(call)} />)}</div>}
       <div className="flex items-center gap-2 px-3 py-2">
-        <Button type="button" variant="outline" size="sm" disabled={!form.jarvisEnabled || testing} onClick={() => void testCall()}><PhoneCallIcon aria-hidden />Test call</Button>
+        <Button type="button" variant="outline" size="sm" disabled={!form.jarvisEnabled || !ready || testing} onClick={() => void testCall()}><PhoneCallIcon aria-hidden />Test call</Button>
         {testResult && <span className="selectable min-w-0 break-words text-muted-foreground text-xs">{testResult}</span>}
       </div>
     </Group>

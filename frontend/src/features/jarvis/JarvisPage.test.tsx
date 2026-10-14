@@ -30,12 +30,31 @@ beforeEach(() => {
 afterEach(cleanup);
 
 it("sends users to phone setup when it is not done", async () => {
-  useJarvis.setState({ status: { ...ready, relayConnected: false } as never });
+  useJarvis.setState({ status: { ...ready, settings: { ownerVerified: false } } as never });
   render(<JarvisPage bot={bot} form={full} patch={vi.fn()} />);
   const button = await screen.findByRole("button", { name: "Set up phone calls" });
   expect(screen.queryByRole("switch", { name: "Jarvis mode" })).toBeNull();
   fireEvent.click(button);
   expect(api.openSettings).toHaveBeenCalledWith("phone");
+});
+
+it("keeps the switch and rules while the relay is down; only the test call waits", async () => {
+  useJarvis.setState({ status: { ...ready, relayConnected: false } as never });
+  const patch = vi.fn();
+  render(<JarvisPage bot={bot} form={{ ...full, jarvisEnabled: true }} patch={patch} />);
+  expect(await screen.findByText("When any task I start fails")).toBeInTheDocument();
+  expect(screen.getByText(/relay is not connected/)).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Test call" })).toBeDisabled();
+  fireEvent.click(screen.getByRole("switch", { name: "Jarvis mode" }));
+  expect(patch).toHaveBeenCalledWith({ jarvisEnabled: false });
+});
+
+it("does not ask ElevenLabs for voices without a key", async () => {
+  useJarvis.setState({ status: { ...ready, hasElevenLabs: false } as never });
+  render(<JarvisPage bot={bot} form={full} patch={vi.fn()} />);
+  expect(await screen.findByRole("switch", { name: "Jarvis mode" })).toBeInTheDocument();
+  expect(api.voices).not.toHaveBeenCalled();
+  expect(api.models).not.toHaveBeenCalled();
 });
 
 it("disables the toggle and says why without full permissions", async () => {
