@@ -921,6 +921,89 @@ func TestVoicemailGreetingEndsCallSilently(t *testing.T) {
 	fa.fire(t, urgentRetryWait) // the urgent retry is scheduled
 }
 
+// A machine greeting in two chunks: the first passes as a bare greeting, the second must still end the call before
+// any model turn gives the reason.
+func TestVoicemailSplitGreetingEndsCall(t *testing.T) {
+	e := newCallEnv(t)
+	fa := e.withClock()
+	call, _ := e.c.Place(context.Background(), PlaceRequest{BotID: "b1", Reason: "prod is down", Urgent: true})
+	e.c.HandleFrame(context.Background(), llmFrame("r0", call.ID, "Hi, this is Ray."))
+	e.c.HandleFrame(context.Background(), llmFrame("r1", call.ID, "please leave a message after the tone"))
+	if got := e.relay.text("r1"); got != "" || !e.relay.done("r1") {
+		t.Fatalf("spoke %q into voicemail", got)
+	}
+	if n := len(e.host.turnList()); n != 0 {
+		t.Fatalf("%d model turns ran", n)
+	}
+	if !e.phone.hungUp(testSID) {
+		t.Fatal("no hangup")
+	}
+	if _, active := e.c.Active(); active {
+		t.Fatal("call still active")
+	}
+	if got := e.record(t, call.ID); got.Status != StatusVoicemail || got.EndedAt == 0 {
+		t.Fatalf("call %+v", got)
+	}
+	if n := e.host.noticeList(); len(n) != 1 || !strings.Contains(n[0], "Atlas tried to call") {
+		t.Fatalf("notices %v", n)
+	}
+	fa.fire(t, urgentRetryWait) // the urgent retry is scheduled
+}
+
+func TestHumanAnswerKeepsCallGoing(t *testing.T) {
+	e := newCallEnv(t)
+	call, _ := e.c.Place(context.Background(), PlaceRequest{BotID: "b1", Reason: "x"})
+	e.c.HandleFrame(context.Background(), llmFrame("r0", call.ID, "Hello?"))
+	e.c.HandleFrame(context.Background(), llmFrame("r1", call.ID, "yes what's up"))
+	if n := len(e.host.turnList()); n != 1 || e.relay.text("r1") != e.host.reply {
+		t.Fatalf("turns=%d spoke %q", n, e.relay.text("r1"))
+	}
+	if a, active := e.c.Active(); !active || a.Status != StatusInProgress || e.phone.hungUp(testSID) {
+		t.Fatalf("call %+v active=%v", a, active)
+	}
+}
+
+func TestVoicemailWordAfterReasonDoesNotEndCall(t *testing.T) {
+	e := newCallEnv(t)
+	call, _ := e.c.Place(context.Background(), PlaceRequest{BotID: "b1", Reason: "x"})
+	e.c.HandleFrame(context.Background(), Frame{Type: FrameLLMRequest, ID: "r0", CallID: call.ID})
+	e.c.HandleFrame(context.Background(), llmFrame("r1", call.ID, "hello?")) // the model turn gives the reason
+	e.c.HandleFrame(context.Background(), llmFrame("r2", call.ID, "did anyone leave a message on my voicemail?"))
+	if n := len(e.host.turnList()); n != 2 || e.relay.text("r2") != e.host.reply {
+		t.Fatalf("turns=%d spoke %q", n, e.relay.text("r2"))
+	}
+	if _, active := e.c.Active(); !active || e.phone.hungUp(testSID) {
+		t.Fatal("the owner mentioning voicemail ended the call")
+	}
+}
+
+// A voicemail prompt that arrives while a model turn is speaking cancels it: nothing more is said.
+func TestVoicemailCancelsInFlightTurn(t *testing.T) {
+	e := newCallEnv(t)
+	e.host.holdFirst = true
+	e.host.started = make(chan struct{}, 1)
+	call, _ := e.c.Place(context.Background(), PlaceRequest{BotID: "b1", Reason: "x"})
+	e.c.HandleFrame(context.Background(), Frame{Type: FrameLLMRequest, ID: "r0", CallID: call.ID})
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		e.c.HandleFrame(context.Background(), llmFrame("r1", call.ID, "Hi, you've reached Ray."))
+	}()
+	<-e.host.started
+	e.c.HandleFrame(context.Background(), llmFrame("r2", call.ID, "Leave a message after the beep."))
+	wg.Wait()
+	if got := e.relay.text("r1") + e.relay.text("r2"); got != "" {
+		t.Fatalf("spoke %q into voicemail", got)
+	}
+	if n := len(e.host.turnList()); n != 1 {
+		t.Fatalf("%d model turns ran", n)
+	}
+	if got := e.record(t, call.ID); got.Status != StatusVoicemail || !e.phone.hungUp(testSID) {
+		t.Fatalf("call %+v", got)
+	}
+}
+
 func TestVoicemailOnFirstRequestSpeaksNothing(t *testing.T) {
 	e := newCallEnv(t)
 	call, _ := e.c.Place(context.Background(), PlaceRequest{BotID: "b1", Reason: "x"})

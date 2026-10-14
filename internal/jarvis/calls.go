@@ -76,6 +76,10 @@ type live struct {
 	delivered int
 	spoken    bool // the first turn (opener) has been taken
 	ended     bool
+	// reasonGiven is set once a model turn has completed: the reason has been given, so the voicemail check stops.
+	reasonGiven bool
+	// silenced is set when voicemail is detected: no turn may speak or start from then on.
+	silenced bool
 
 	opener chan string   // receives the opener exactly once (buffered)
 	done   chan struct{} // closed when the call ends
@@ -545,9 +549,19 @@ func (c *Calls) turn(ctx context.Context, f Frame) {
 	}
 	verify := l.verify != ""
 	sid := l.call.ProviderCallID
-	if !verify && l.call.Direction == Outbound && l.call.AnsweredAt == 0 && utter != "" && IsVoicemail(utter) {
-		// An answering machine: say nothing more, end the call, and report it as unanswered.
+	if !verify && l.call.Direction == Outbound && !l.reasonGiven && utter != "" && IsVoicemail(utter) {
+		// An answering machine, possibly after a greeting that passed as a person answering: say nothing more (cancel
+		// a turn that is still speaking), end the call, and report it as unanswered.
+		l.silenced = true
+		cancel, done := l.turnCancel, l.turnDone
 		c.mu.Unlock()
+		if cancel != nil {
+			cancel()
+			select {
+			case <-done:
+			case <-ctx.Done():
+			}
+		}
 		c.silent(ctx, f)
 		c.hangup(ctx, sid)
 		c.finish(ctx, l, StatusVoicemail, 0)
@@ -577,6 +591,13 @@ func (c *Calls) turn(ctx context.Context, f Frame) {
 		// The first turn always speaks the opener, whatever the owner already said.
 		text, ok := c.awaitOpener(ctx, l, botName)
 		if !ok {
+			return
+		}
+		c.mu.Lock()
+		silenced := l.silenced
+		c.mu.Unlock()
+		if silenced {
+			c.silent(ctx, f)
 			return
 		}
 		sp.say(text)
@@ -637,6 +658,9 @@ func (c *Calls) modelTurn(ctx context.Context, l *live, f Frame, sp *speaker, ut
 	prevCancel, prevDone := l.turnCancel, l.turnDone
 	l.turnCancel, l.turnDone = tcancel, myDone
 	botID := l.call.BotID
+	if l.silenced {
+		tcancel() // voicemail: this turn must not start
+	}
 	c.mu.Unlock()
 	defer func() {
 		tcancel()
@@ -704,6 +728,9 @@ func (c *Calls) modelTurn(ctx context.Context, l *live, f Frame, sp *speaker, ut
 		sp.say(" That failed: " + firstSentence(err.Error()))
 	}
 	c.mu.Lock()
+	if err == nil {
+		l.reasonGiven = true
+	}
 	l.delivered = max(l.delivered, seen)
 	l.history = append(l.history, chat.VoiceLine{Role: "user", Text: utter})
 	if reply != "" {

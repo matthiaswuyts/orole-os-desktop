@@ -111,10 +111,14 @@ attached as if typed.
    "what", "who", "can", "check", "start", "wat", "hoe") is recorded in the call history and gets only the opener;
    anything else, however short ("ok, what's running?", "yes, start it"), is a real request and gets the opener and
    the answer in the same response.
-5. **Voicemail.** Until someone answers, every utterance is checked for answering-machine phrases (English, Dutch,
+5. **Voicemail.** On an outbound call, every utterance is checked for answering-machine phrases (English, Dutch,
    French and German: "leave a message", "after the tone", "spreek een bericht in", "na de piep", "laissez un message",
-   "nach dem Signalton", "mailbox" and so on). On a match the daemon says nothing more, hangs up through Twilio and ends
-   the call as `voicemail`. The owner gets a notification ("<bot> tried to call"). Only an `urgent` call retries (once,
+   "nach dem Signalton", "mailbox" and so on) until the reason has been given, that is until the first model turn has
+   completed. A machine greeting often arrives in pieces ("Hi, this is Ray." ... "Please leave a message after the
+   tone."), and the first piece passes as someone answering, so the check does not stop at the answer. On a match the
+   daemon cancels a turn that is still speaking, says nothing more, hangs up through Twilio and ends the call as
+   `voicemail`, even if it had already counted as answered. After the reason has been given, the word "voicemail" is
+   just conversation (the owner may ask about their own voicemail) and never ends the call. The owner gets a notification ("<bot> tried to call"). Only an `urgent` call retries (once,
    after 5 minutes, through the same policy checks). The call counts as answered (`in_progress`, `answeredAt`) at the
    first non-empty utterance that is not a voicemail prompt. The agent still carries ElevenLabs' `end_call` and
    `voicemail_detection` tools, but nothing relies on them, and the voice prompt says to say nothing about the reason to
