@@ -12,7 +12,6 @@ import (
 	oroleos "github.com/rayorole/orole-os-desktop"
 	"github.com/rayorole/orole-os-desktop/internal/daemon/api"
 	"github.com/rayorole/orole-os-desktop/internal/ipc"
-	"github.com/rayorole/orole-os-desktop/internal/jarvis"
 	"github.com/rayorole/orole-os-desktop/internal/terminals"
 )
 
@@ -86,7 +85,7 @@ func (d *Daemon) registerCore() {
 		if p.Key == "" || len(p.Key) > 128 || !json.Valid(p.Value) || len(p.Value) > 256<<10 {
 			return none{}, &ipc.Error{Code: ipc.CodeBadRequest, Message: "invalid key or value"}
 		}
-		if p.Key == jarvis.SettingsKey { // owner number and verification are changed only through jarvis.* methods
+		if jarvisProtectedKey(p.Key) { // owner number, verification and tick state change only through jarvis.* methods
 			return none{}, &ipc.Error{Code: ipc.CodeBadRequest, Message: "use jarvis.configure to change Jarvis settings"}
 		}
 		_, err := d.DB.ExecContext(ctx, `INSERT INTO settings(key,value,updated_at) VALUES(?,?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at`,

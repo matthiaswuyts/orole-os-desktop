@@ -44,9 +44,20 @@ type ServiceConfig struct {
 	ElevenLabsURL, TwilioURL string
 	LoadSettings             func() (Settings, error)
 	SaveSettings             func(Settings) error
+	// LoadState and SaveState keep daemon-owned runtime state (the last at_time tick) across restarts.
+	LoadState func() (State, error)
+	SaveState func(State) error
+	// Changed, if set, receives the status when the relay connects or drops and when a call starts or ends.
+	// Calls are coalesced and made from one goroutine after Start.
+	Changed func(StatusView)
 
 	dialer Dialer // test seam; nil = ElevenLabs with the stored key
 	sender Sender // test seam; nil = the relay WebSocket
+}
+
+// State is runtime state the daemon persists for the service; it is not user-editable.
+type State struct {
+	LastTickMs int64 `json:"lastTickMs"` // when at_time rules were last checked
 }
 
 // StatusView is what the settings screen shows. It never carries a secret, only whether one is stored.
@@ -104,6 +115,7 @@ type Service struct {
 	attempts    int
 	dialTo      string // set only while a verification call is being placed
 	lastTick    time.Time
+	changedCh   chan struct{} // coalesced Changed notifications
 	baseCtx     context.Context
 	cancel      context.CancelFunc
 	started     bool
@@ -123,7 +135,8 @@ func NewService(cfg ServiceConfig) *Service {
 	if cfg.Log == nil {
 		cfg.Log = slog.Default()
 	}
-	s := &Service{cfg: cfg, store: NewStore(cfg.DB, cfg.Now), log: cfg.Log, now: cfg.Now, baseCtx: context.Background()}
+	s := &Service{cfg: cfg, store: NewStore(cfg.DB, cfg.Now), log: cfg.Log, now: cfg.Now, baseCtx: context.Background(),
+		changedCh: make(chan struct{}, 1)}
 	if cfg.LoadSettings != nil {
 		v, err := cfg.LoadSettings()
 		if err != nil {
@@ -142,8 +155,17 @@ func NewService(cfg ServiceConfig) *Service {
 		s.sender = s.holder
 	}
 	s.calls = NewCalls(s.store, cfg.Host, dial, s.sender, s.callSettings, cfg.Now, s.log)
-	s.calls.Retry = func(ctx context.Context, req PlaceRequest) { s.fire(ctx, req, Ask{}) }
+	s.calls.Retry = func(ctx context.Context, req PlaceRequest) { s.fire(ctx, req, Ask{QuietOverride: req.QuietOverride}) }
+	s.calls.Changed = s.notifyChanged
 	return s
+}
+
+// notifyChanged asks for a Changed callback without blocking; bursts collapse into one.
+func (s *Service) notifyChanged() {
+	select {
+	case s.changedCh <- struct{}{}:
+	default:
+	}
 }
 
 // relayHolder points at the current RelayClient. A client is never mutated: a config change replaces it.
@@ -236,14 +258,37 @@ func (s *Service) Start(ctx context.Context) {
 	}
 	s.started = true
 	s.baseCtx, s.cancel = context.WithCancel(ctx)
-	s.lastTick = s.now()
+	// Resume from the last persisted tick, so a time that fell due while the daemon was down is reported.
+	now := s.now()
+	s.lastTick = now
+	if s.cfg.LoadState != nil {
+		if st, err := s.cfg.LoadState(); err != nil {
+			s.log.Warn("jarvis: cannot read state", "err", err)
+		} else if st.LastTickMs > 0 && st.LastTickMs < now.UnixMilli() {
+			s.lastTick = time.UnixMilli(st.LastTickMs).In(now.Location())
+		}
+	}
 	base := s.baseCtx
-	s.wg.Add(1)
+	s.wg.Add(2)
 	s.mu.Unlock()
+	go func() {
+		defer s.wg.Done()
+		for {
+			select {
+			case <-base.Done():
+				return
+			case <-s.changedCh:
+				if s.cfg.Changed != nil {
+					s.cfg.Changed(s.Status(base))
+				}
+			}
+		}
+	}()
 	go func() {
 		defer s.wg.Done()
 		t := time.NewTicker(tickEvery)
 		defer t.Stop()
+		s.tick(base)
 		for {
 			select {
 			case <-base.Done():
@@ -365,6 +410,7 @@ func (s *Service) restartRelay() {
 		return
 	}
 	rc := NewRelayClient(relaySocketURL(relayURL), string(tok), s.handleFrame, s.log)
+	rc.OnState = func(bool) { s.notifyChanged() }
 	s.holder.set(rc)
 	ctx, cancel := context.WithCancel(base)
 	done := make(chan struct{})
@@ -471,7 +517,7 @@ func (s *Service) OnEvent(ev Event) {
 			if d := clipRunes(ev.Detail, maxEventDetail); d != "" {
 				brief += "\nDetails:\n" + chat.Fence("event detail", d)
 			}
-			s.fire(ctx, PlaceRequest{BotID: r.BotID, Reason: ev.Title, Brief: brief, RuleID: r.ID, Urgent: r.Urgent},
+			s.fire(ctx, PlaceRequest{BotID: r.BotID, Reason: ev.Title, Brief: brief, RuleID: r.ID, Urgent: r.Urgent, QuietOverride: r.QuietOverride},
 				Ask{QuietOverride: r.QuietOverride})
 		}
 	}()
@@ -493,6 +539,11 @@ func (s *Service) tick(ctx context.Context) {
 	prev := s.lastTick
 	s.lastTick = now
 	s.mu.Unlock()
+	if s.cfg.SaveState != nil {
+		if err := s.cfg.SaveState(State{LastTickMs: now.UnixMilli()}); err != nil {
+			s.log.Warn("jarvis: cannot save state", "err", err)
+		}
+	}
 	rules, err := s.store.Rules(ctx, "")
 	if err != nil {
 		return
@@ -505,7 +556,12 @@ func (s *Service) tick(ctx context.Context) {
 			_ = s.store.DeleteRule(ctx, r.ID)
 			continue
 		}
-		at := NextAt(r, prev)
+		// A rule only fires for times after it was created ("12:00" saved at 12:00:10 means tomorrow).
+		from := prev
+		if created := time.UnixMilli(r.CreatedAt).In(now.Location()); created.After(from) {
+			from = created
+		}
+		at := NextAt(r, from)
 		if at.IsZero() || at.After(now) {
 			continue
 		}
@@ -529,7 +585,7 @@ func (s *Service) tick(ctx context.Context) {
 			if r.Note != "" {
 				brief += "\nThe owner's note for this rule: " + chat.Fence("rule note", r.Note)
 			}
-			s.fire(ctx, PlaceRequest{BotID: r.BotID, Reason: reason, Brief: brief, RuleID: r.ID, Urgent: r.Urgent},
+			s.fire(ctx, PlaceRequest{BotID: r.BotID, Reason: reason, Brief: brief, RuleID: r.ID, Urgent: r.Urgent, QuietOverride: r.QuietOverride},
 				Ask{QuietOverride: r.QuietOverride})
 		}()
 	}
@@ -632,6 +688,8 @@ func randomSecret() (string, error) {
 // secret is not generated here: ElevenLabs creates it during Configure. Rotating means redeploying the relay
 // secrets and running Configure again so the agent sends the new LLM secret.
 func (s *Service) GenerateRelaySecrets() (RelaySecrets, error) {
+	s.cfgMu.Lock()
+	defer s.cfgMu.Unlock()
 	var out RelaySecrets
 	var err error
 	if out.RelayToken, err = randomSecret(); err != nil {
@@ -686,8 +744,10 @@ func (s *Service) Configure(ctx context.Context, in Settings) (ConfigureResult, 
 	if in.TwilioNumber != cur.TwilioNumber {
 		in.PhoneNumberID = "" // a different number has to be imported
 	}
+	orphan := ""
 	if in.RelayURL != cur.RelayURL {
 		in.PostCallWebhookID = "" // the post-call webhook points at the old relay
+		orphan = cur.PostCallWebhookID
 	}
 	var webhookSecret string
 	if in.RelayURL != "" && in.TwilioNumber != "" {
@@ -717,6 +777,7 @@ func (s *Service) Configure(ctx context.Context, in Settings) (ConfigureResult, 
 				s.log.Warn("jarvis: cannot save settings", "err", err)
 			}
 			s.log.Warn("jarvis: provisioning failed", "err", msg)
+			s.noticeOrphan(orphan)
 			return ConfigureResult{}, perr
 		}
 		in = out
@@ -724,7 +785,19 @@ func (s *Service) Configure(ctx context.Context, in Settings) (ConfigureResult, 
 	if err := s.apply(in, ""); err != nil {
 		return ConfigureResult{}, err
 	}
+	s.noticeOrphan(orphan)
 	return ConfigureResult{Status: s.Status(ctx), WebhookSecret: webhookSecret}, nil
+}
+
+// noticeOrphan tells the owner about a post-call webhook that no longer points at the relay; nothing deletes
+// webhooks in ElevenLabs automatically.
+func (s *Service) noticeOrphan(id string) {
+	if id == "" {
+		return
+	}
+	s.cfg.Host.Notify("Delete the old Jarvis webhook", "The relay URL changed, so ElevenLabs webhook "+id+
+		" is no longer used. Delete it in the ElevenLabs workspace webhook settings.", "", "info")
+	s.cfg.Host.Audit("jarvis.webhook.orphaned", id, "allowed", "relay url changed")
 }
 
 // apply saves and adopts settings, records the last provisioning error and reconnects the relay if needed.

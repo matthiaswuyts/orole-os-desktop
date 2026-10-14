@@ -2,11 +2,13 @@ package jarvis
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -102,12 +104,62 @@ func TestQuietHoursTurnRuleIntoNotice(t *testing.T) {
 
 func TestMissedAtTimeBecomesNotice(t *testing.T) {
 	svc, host, dial, _, now := newTestService(t)
+	noon := *now
+	*now = noon.Add(-7 * time.Hour) // rule saved at 05:00
 	_, _ = svc.AddRule(context.Background(), Rule{BotID: "b1", Trigger: AtTime, Target: "08:00"})
+	*now = noon
 	svc.lastTick = now.Add(-6 * time.Hour) // asleep from 06:00 to 12:00
 	svc.tick(context.Background())
 	svc.wait()
 	if len(dial.dialed()) != 0 || len(host.noticeList()) != 1 {
 		t.Fatalf("dials=%d notices=%v", len(dial.dialed()), host.noticeList())
+	}
+}
+
+// The daemon was down across the due time: after Start the time is reported once, never called late.
+func TestMissedWhileDownBecomesNoticeAfterStart(t *testing.T) {
+	var saved []State
+	var mu sync.Mutex
+	noon := time.Date(2026, 10, 14, 12, 0, 0, 0, time.UTC)
+	e := newSvcEnv(t, func(c *ServiceConfig) {
+		c.LoadState = func() (State, error) { return State{LastTickMs: noon.Add(-6 * time.Hour).UnixMilli()}, nil }
+		c.SaveState = func(s State) error { mu.Lock(); saved = append(saved, s); mu.Unlock(); return nil }
+	})
+	*e.now = noon.Add(-7 * time.Hour) // rule saved at 05:00, daemon stopped at 06:00
+	if _, err := e.svc.AddRule(context.Background(), Rule{BotID: "b1", Trigger: AtTime, Target: "08:00"}); err != nil {
+		t.Fatal(err)
+	}
+	*e.now = noon
+	e.svc.Start(context.Background())
+	waitFor(t, func() bool { return len(e.host.noticeList()) == 1 })
+	e.svc.Close()
+	if len(e.dial.dialed()) != 0 || !strings.Contains(e.host.noticeList()[0], "missed") {
+		t.Fatalf("dials=%d notices=%v", len(e.dial.dialed()), e.host.noticeList())
+	}
+	if rules, _ := e.svc.Rules(context.Background(), "b1"); len(rules) != 0 {
+		t.Fatalf("once rule kept: %+v", rules)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(saved) == 0 || saved[len(saved)-1].LastTickMs != noon.UnixMilli() {
+		t.Fatalf("tick not persisted: %+v", saved)
+	}
+}
+
+func TestRuleSavedJustAfterItsTimeWaitsForTomorrow(t *testing.T) {
+	svc, host, dial, _, now := newTestService(t)
+	noon := *now
+	*now = noon.Add(10 * time.Second)
+	_, _ = svc.AddRule(context.Background(), Rule{BotID: "b1", Trigger: AtTime, Target: "12:00"})
+	svc.lastTick = noon.Add(-10 * time.Second)
+	*now = noon.Add(30 * time.Second)
+	svc.tick(context.Background())
+	svc.wait()
+	if len(dial.dialed()) != 0 || len(host.noticeList()) != 0 {
+		t.Fatalf("dials=%d notices=%v", len(dial.dialed()), host.noticeList())
+	}
+	if rules, _ := svc.Rules(context.Background(), "b1"); len(rules) != 1 {
+		t.Fatal("rule dropped")
 	}
 }
 
@@ -157,6 +209,104 @@ func TestRetryGoesThroughPolicy(t *testing.T) {
 	}
 	if n := host.noticeList(); len(n) != 1 || !strings.Contains(n[0], "quiet hours") {
 		t.Fatalf("notices=%v", n)
+	}
+}
+
+func TestRetryKeepsQuietOverride(t *testing.T) {
+	svc, _, dial, _, _ := newTestService(t)
+	svc.edit(func(s *Settings) { s.QuietStart, s.QuietEnd = "11:00", "13:00" })
+	svc.calls.Retry(context.Background(), PlaceRequest{BotID: "b1", Reason: "deploy failed", QuietOverride: true})
+	if len(dial.dialed()) != 1 {
+		t.Fatal("retry of a quiet-override rule blocked by quiet hours")
+	}
+}
+
+func TestChangedOnCallStartAndEnd(t *testing.T) {
+	got := make(chan StatusView, 8)
+	e := newSvcEnv(t, func(c *ServiceConfig) { c.Changed = func(v StatusView) { got <- v } })
+	e.svc.Start(context.Background())
+	ctx := context.Background()
+	if _, err := e.svc.CallOwner(ctx, "b1", "deploy failed", false); err != nil {
+		t.Fatal(err)
+	}
+	next := func() StatusView {
+		t.Helper()
+		select {
+		case v := <-got:
+			return v
+		case <-time.After(3 * time.Second):
+			t.Fatal("no Changed")
+		}
+		return StatusView{}
+	}
+	if v := next(); v.CallsToday != 1 {
+		t.Fatalf("after start %+v", v)
+	}
+	time.Sleep(50 * time.Millisecond)
+	for len(got) > 0 {
+		<-got
+	}
+	e.svc.calls.HandleFrame(ctx, Frame{Type: FrameCallStatus, CallID: e.dial.dialed()[0].CallID, Status: "done"})
+	next()
+}
+
+func TestChangedOnRelayConnectAndDrop(t *testing.T) {
+	drop := make(chan struct{})
+	var conns atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		c, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		if conns.Add(1) == 1 {
+			<-drop
+			c.CloseNow()
+			return
+		}
+		_, _, _ = c.Read(context.Background())
+	}))
+	t.Cleanup(srv.Close)
+	got := make(chan bool, 16)
+	e := newSvcEnv(t, func(c *ServiceConfig) {
+		c.sender = nil
+		c.LoadSettings = func() (Settings, error) { return Settings{RelayURL: srv.URL}, nil }
+		c.Changed = func(v StatusView) { got <- v.RelayConnected }
+	})
+	_ = e.creds.Set(KeyRelayToken, []byte("tok"))
+	e.svc.Start(context.Background())
+	want := func(state bool) {
+		t.Helper()
+		deadline := time.After(3 * time.Second)
+		for {
+			select {
+			case v := <-got:
+				if v == state {
+					return
+				}
+			case <-deadline:
+				t.Fatalf("no Changed with RelayConnected=%v", state)
+			}
+		}
+	}
+	want(true)
+	close(drop)
+	want(false)
+}
+
+func TestConfigureNoticesOrphanedWebhook(t *testing.T) {
+	e := newSvcEnv(t, func(c *ServiceConfig) {
+		c.LoadSettings = func() (Settings, error) {
+			return Settings{RelayURL: "https://old.example", PostCallWebhookID: "wh-old"}, nil
+		}
+	})
+	if _, err := e.svc.Configure(context.Background(), Settings{RelayURL: "https://new.example"}); err != nil {
+		t.Fatal(err)
+	}
+	if n := e.host.noticeList(); len(n) != 1 || !strings.Contains(n[0], "wh-old") {
+		t.Fatalf("notices=%v", n)
+	}
+	if e.svc.Settings().PostCallWebhookID != "" {
+		t.Fatal("old webhook id kept")
 	}
 }
 
@@ -341,9 +491,21 @@ func TestConfigureFailureKeepsCreatedIDs(t *testing.T) {
 func TestStatusNeverLeaksSecrets(t *testing.T) {
 	e := newSvcEnv(t, nil)
 	_ = e.svc.SetSecrets(SecretsInput{TwilioSID: "AC1", TwilioToken: "tok-secret", ElevenLabs: "el-secret"})
+	_, _ = e.svc.GenerateRelaySecrets()
 	st := e.svc.Status(context.Background())
-	if !st.HasTwilio || !st.HasElevenLabs {
+	if !st.HasTwilio || !st.HasElevenLabs || !st.HasRelaySecrets {
 		t.Fatalf("status %+v", st)
+	}
+	b, _ := json.Marshal(st)
+	secrets := []string{"AC1", "tok-secret", "el-secret"}
+	for _, k := range []string{KeyRelayToken, KeyLLMSecret} {
+		v, _ := e.creds.Get(k)
+		secrets = append(secrets, string(v))
+	}
+	for _, sec := range secrets {
+		if strings.Contains(string(b), sec) {
+			t.Fatalf("status JSON leaks a secret: %s", b)
+		}
 	}
 }
 

@@ -114,7 +114,8 @@ func (d *Daemon) jarvisSaveCheck(ctx context.Context, in chat.BotInput) error {
 			return nil
 		}
 	}
-	d.audit("jarvis.enabled", in.ID, "allowed", in.Name)
+	// The save itself may still fail; this records only that the permission check passed.
+	d.audit("jarvis.enable.checked", in.ID, "allowed", "permission check passed for "+in.Name)
 	return nil
 }
 
@@ -216,6 +217,35 @@ func (d *Daemon) loadJarvisSettings() (jarvis.Settings, error) {
 		return s, err
 	}
 	return s, json.Unmarshal([]byte(raw), &s)
+}
+
+// jarvisStateKey holds daemon-owned Jarvis state (the last at_time tick); settings.set cannot write it.
+const jarvisStateKey = "jarvis.state"
+
+// jarvisProtectedKey reports whether settings.set must refuse key: Jarvis settings change only through jarvis.*.
+func jarvisProtectedKey(key string) bool { return key == jarvis.SettingsKey || key == jarvisStateKey }
+
+func (d *Daemon) loadJarvisState() (jarvis.State, error) {
+	var raw string
+	var s jarvis.State
+	err := d.DB.QueryRow(`SELECT value FROM settings WHERE key=?`, jarvisStateKey).Scan(&raw)
+	if errors.Is(err, sql.ErrNoRows) {
+		return s, nil
+	}
+	if err != nil {
+		return s, err
+	}
+	return s, json.Unmarshal([]byte(raw), &s)
+}
+
+func (d *Daemon) saveJarvisState(s jarvis.State) error {
+	b, err := json.Marshal(s)
+	if err != nil {
+		return err
+	}
+	_, err = d.DB.Exec(`INSERT INTO settings(key,value,updated_at) VALUES(?,?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at`,
+		jarvisStateKey, string(b), time.Now().Unix())
+	return err
 }
 
 func (d *Daemon) saveJarvisSettings(s jarvis.Settings) error {
@@ -337,7 +367,9 @@ func (d *Daemon) registerJarvis() {
 		return
 	}
 	d.Jarvis = jarvis.NewService(jarvis.ServiceConfig{DB: d.DB.DB, Creds: jarvisCredentialStore(), Host: jarvisHost{d}, Log: d.Log,
-		HTTP: llm.NewHTTPClient(), LoadSettings: d.loadJarvisSettings, SaveSettings: d.saveJarvisSettings})
+		HTTP: llm.NewHTTPClient(), LoadSettings: d.loadJarvisSettings, SaveSettings: d.saveJarvisSettings,
+		LoadState: d.loadJarvisState, SaveState: d.saveJarvisState,
+		Changed: func(v jarvis.StatusView) { d.IPC.Publish("jarvis.changed", v) }})
 	d.Chat.SetSaveCheck(d.jarvisSaveCheck)
 
 	handle(d, "jarvis.status", func(ctx context.Context, _ none) (jarvis.StatusView, error) { return d.Jarvis.Status(ctx), nil })

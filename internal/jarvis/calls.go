@@ -52,6 +52,7 @@ type Sender interface {
 type PlaceRequest struct {
 	BotID, Reason, Brief, RuleID string
 	Urgent                       bool
+	QuietOverride                bool   // the rule may call during quiet hours; carried to the urgent retry
 	Verify                       string // digits for a phone verification call; no bot turns, BotID may be empty
 }
 
@@ -70,6 +71,7 @@ type live struct {
 	done   chan struct{} // closed when the call ends
 	verify string
 	urgent bool
+	quiet  bool // QuietOverride of the request, for the urgent retry
 
 	turnCancel context.CancelFunc // in-flight model turn, if any
 	turnDone   chan struct{}
@@ -87,6 +89,8 @@ type Calls struct {
 	// Retry places the second attempt after an unanswered urgent call. The daemon points it at the policy-checked path
 	// (caps, quiet hours); the default calls Place directly.
 	Retry func(ctx context.Context, req PlaceRequest)
+	// Changed, if set, is called (and must not block) when a call is recorded or ends.
+	Changed func()
 
 	baseCtx context.Context
 	stop    context.CancelFunc
@@ -185,7 +189,7 @@ func (c *Calls) Place(ctx context.Context, req PlaceRequest) (Call, error) {
 	call := Call{ID: uuid.NewString(), BotID: bot.ID, Direction: Outbound, RuleID: req.RuleID, Reason: req.Reason,
 		Status: StatusDialing, StartedAt: c.now().UnixMilli()}
 	l := &live{call: call, botName: bot.Name, brief: req.Brief, opener: make(chan string, 1), done: make(chan struct{}),
-		verify: req.Verify, urgent: req.Urgent}
+		verify: req.Verify, urgent: req.Urgent, quiet: req.QuietOverride}
 	c.cur = l
 	c.seed++
 	seed := c.seed
@@ -195,6 +199,7 @@ func (c *Calls) Place(ctx context.Context, req PlaceRequest) (Call, error) {
 		c.clear(l)
 		return Call{}, err
 	}
+	c.changed()
 	if req.Verify == "" {
 		if id, err := c.host.PostCallCard(ctx, bot.ID, c.card(call)); err == nil {
 			c.mu.Lock()
@@ -638,6 +643,7 @@ func (c *Calls) inbound(ctx context.Context, f Frame) {
 		reject("could not record the call")
 		return
 	}
+	c.changed()
 	if id, err := c.host.PostCallCard(ctx, bot.ID, c.card(call)); err == nil {
 		c.mu.Lock()
 		l.call.MessageID = id
@@ -821,23 +827,31 @@ func (c *Calls) finish(ctx context.Context, l *live, status string, durationSecs
 		_ = c.host.UpdateCallCard(ctx, call.MessageID, c.card(call))
 	}
 	c.host.Audit("jarvis.call.ended", call.ID, "allowed", status)
+	c.changed()
 	if (status == StatusNoAnswer || status == StatusVoicemail) && l.verify == "" && call.Direction == Outbound {
 		c.host.Notify(name+" tried to call", call.Reason, "bot:"+call.BotID, "warning")
 		if l.urgent {
-			c.spawn(func() { c.retry(call, brief) })
+			quiet := l.quiet
+			c.spawn(func() { c.retry(call, brief, quiet) })
 		}
 	}
 	return true
 }
 
 // retry places one more attempt after an unanswered urgent call; the retry itself is not urgent, so it never repeats.
-func (c *Calls) retry(call Call, brief string) {
+func (c *Calls) retry(call Call, brief string, quiet bool) {
 	select {
 	case <-c.after(urgentRetryWait):
 	case <-c.baseCtx.Done():
 		return
 	}
-	c.Retry(c.baseCtx, PlaceRequest{BotID: call.BotID, Reason: call.Reason, Brief: brief, RuleID: call.RuleID})
+	c.Retry(c.baseCtx, PlaceRequest{BotID: call.BotID, Reason: call.Reason, Brief: brief, RuleID: call.RuleID, QuietOverride: quiet})
+}
+
+func (c *Calls) changed() {
+	if c.Changed != nil {
+		c.Changed()
+	}
 }
 
 func (c *Calls) clear(l *live) {

@@ -813,12 +813,12 @@ func TestRetryHookIsUsed(t *testing.T) {
 	fa := e.withClock()
 	got := make(chan PlaceRequest, 1)
 	e.c.Retry = func(_ context.Context, r PlaceRequest) { got <- r }
-	call, _ := e.c.Place(context.Background(), PlaceRequest{BotID: "b1", Reason: "prod is down", Urgent: true})
+	call, _ := e.c.Place(context.Background(), PlaceRequest{BotID: "b1", Reason: "prod is down", Urgent: true, QuietOverride: true})
 	e.c.HandleFrame(context.Background(), Frame{Type: FrameCallStatus, CallID: call.ID, Status: "no-answer"})
 	fa.fire(t, urgentRetryWait)
 	select {
 	case r := <-got:
-		if r.BotID != "b1" || r.Urgent {
+		if r.BotID != "b1" || r.Urgent || !r.QuietOverride {
 			t.Fatalf("retry %+v", r)
 		}
 	case <-time.After(2 * time.Second):

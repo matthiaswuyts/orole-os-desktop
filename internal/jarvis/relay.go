@@ -53,6 +53,8 @@ type RelayClient struct {
 	url, token string
 	handle     func(Frame)
 	log        *slog.Logger
+	// OnState, if set before Run, is called (and must not block) when the connection opens or closes.
+	OnState func(connected bool)
 
 	mu   sync.Mutex
 	conn *websocket.Conn
@@ -82,6 +84,12 @@ func (c *RelayClient) Send(ctx context.Context, f Frame) error {
 	wctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	return conn.Write(wctx, websocket.MessageText, b)
+}
+
+func (c *RelayClient) state(connected bool) {
+	if c.OnState != nil {
+		c.OnState(connected)
+	}
 }
 
 func (c *RelayClient) Run(ctx context.Context) {
@@ -116,11 +124,13 @@ func (c *RelayClient) session(ctx context.Context) error {
 	c.mu.Lock()
 	c.conn = conn
 	c.mu.Unlock()
+	c.state(true)
 	defer func() {
 		c.mu.Lock()
 		c.conn = nil
 		c.mu.Unlock()
 		conn.CloseNow()
+		c.state(false)
 	}()
 	pctx, stop := context.WithCancel(ctx)
 	defer stop()

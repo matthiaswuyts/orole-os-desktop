@@ -243,9 +243,23 @@ func TestJarvisOverIPC(t *testing.T) {
 	if got, _ := d.loadJarvisSettings(); got.QuietStart != "22:00" {
 		t.Fatalf("not persisted: %+v", got)
 	}
-	err = c.Call(ctx, "settings.set", map[string]any{"key": jarvis.SettingsKey, "value": map[string]any{"ownerVerified": true}}, nil)
-	if !errors.As(err, &ie) || ie.Code != ipc.CodeBadRequest {
-		t.Fatalf("settings.set wrote the jarvis key: %v", err)
+	for _, key := range []string{jarvis.SettingsKey, jarvisStateKey} {
+		err = c.Call(ctx, "settings.set", map[string]any{"key": key, "value": map[string]any{"ownerVerified": true}}, nil)
+		if !errors.As(err, &ie) || ie.Code != ipc.CodeBadRequest {
+			t.Fatalf("settings.set wrote %s: %v", key, err)
+		}
+	}
+	// The ticker runs once right after Start and persists its time.
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		st, err := d.loadJarvisState()
+		if err == nil && st.LastTickMs > 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("state %+v err=%v", st, err)
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
 	var rules []jarvis.Rule
 	if err := c.Call(ctx, "jarvis.rules.list", map[string]string{"botId": ""}, &rules); err != nil || len(rules) != 0 {
