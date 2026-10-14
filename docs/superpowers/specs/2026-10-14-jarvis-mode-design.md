@@ -99,7 +99,7 @@ Jarvis may be enabled for a bot, a call may start, and every tool call during a 
 4. the bot has code tasks enabled (`BotConfig.CodeTasks`).
 
 Enforced in the daemon: on saving `Jarvis.Enabled=true` (refused with a message naming the failing condition), at call
-start, and before each tool call during a call. If the gate fails mid-call the action is refused, the bot says so,
+start, and before each tool call during a call. (As built, the timing differs: see §14, "Gate timing".) If the gate fails mid-call the action is refused, the bot says so,
 `Jarvis.Enabled` is set to false and a `jarvis.disabled` audit entry plus a notification are written. Explicit per-tool
 `deny` decisions in the shared permission policy still apply. Policy `ask` decisions that would need a UI approval are
 answered with "not available on a call, queued for the app" instead of blocking the call.
@@ -162,6 +162,7 @@ A refused call becomes a notification stating the reason.
    is spoken, an audit entry is written.
 3. The executive bot answers with a fresh greeting that contains its name, unless the owner names another bot; only
    bots passing the §4 gate are reachable. Switching bots mid-call swaps voice, model, tools, policy and brief; the new bot introduces itself by name.
+   (As built: the voice and the call card stay the first bot's; see §14.)
 
 ### 6.3 A spoken turn
 
@@ -337,8 +338,13 @@ describes it.
 **Relay authentication.** `/llm/chat/completions` and `/inbound` are authenticated by the secret header `x-orole-relay`
 (not an HMAC on `/inbound`); `/status` by the `ElevenLabs-Signature` HMAC. There is no Twilio status callback, so no
 Twilio signature check and no Twilio auth token on the Worker. The Worker secrets are `RELAY_TOKEN`, `LLM_SECRET` and
-`WEBHOOK_SECRET`. The relay fails closed with 503 until all three are set, and bounds a pending turn at 20 s idle with
-the daemon connected, 5 s grace when the socket is gone, and 120 s in total.
+`WEBHOOK_SECRET`. The relay fails closed with 503 **per path**: each path refuses while its own secret is unset
+(`/daemon` needs `RELAY_TOKEN`, the `/llm` paths and `/inbound` need `LLM_SECRET`, `/status` needs `WEBHOOK_SECRET`),
+so a missing webhook secret leaves calls working. It bounds a pending turn at 20 s idle with the daemon connected, 5 s
+grace when the socket is gone, and 120 s in total. `/llm` and `/llm/v1/chat/completions` are aliases of
+`/llm/chat/completions`. `/inbound` answers 503 (nothing spoken) when the daemon is offline, its socket drops or it does
+not answer within 4 s, and 403 when the daemon refuses the caller; an accepted answer carries `custom_llm_extra_body`
+`{call_id}` so inbound turns reach their call.
 
 **Secrets.** ElevenLabs generates the post-call webhook signing secret when the webhook is created. The app stores it
 (`jarvis/relay/webhook`) and shows it once after Connect, with the `wrangler secret put WEBHOOK_SECRET` step; it
@@ -348,17 +354,34 @@ old one: the app sends a notice naming the old id to delete.
 **Workspace-wide settings.** ElevenLabs' inbound personalization webhook and post-call webhook are settings of the
 owner's whole workspace, so Connect changes them for every agent in that account.
 
-**Call ending.** The post-call webhook is not the only way a call ends. While a call is live the daemon polls the
-ElevenLabs conversation every 5 s (`done` or `failed`) and enforces a 30-minute ceiling. A `done` call that was never
-answered is `no_answer`. An `urgent` retry goes through the same policy checks (caps, quiet hours) as any call.
+**Call ending and hang-up.** The post-call webhook is not the only way a call ends. While a call is live the daemon
+polls Twilio for the call's status by its SID every 5 s (both directions), then the ElevenLabs conversation as a
+fallback, and enforces a 30-minute ceiling. A call that ends without anyone answering is `no_answer`. There is no
+`call.hangup` frame: the daemon hangs up through the Twilio REST API (`Status=completed`) after a verification code or
+a gate refusal, on voicemail, at the ceiling and for turns of an ended call. Injected news no finished turn has seen is
+posted as one notification at the end. An `urgent` retry goes through the same policy checks (caps, quiet hours) as
+any call.
+
+**Opener and voicemail.** The opener is a name-only greeting; it never states the reason (§6.1 step 4's templates
+are replaced). The reason comes in the first model turn after the owner answers. The first turn always speaks the
+opener: a bare greeting from the owner gets only the opener, a real request gets the opener and the answer. Before
+anyone answers, each utterance is checked for answering-machine phrases (EN, NL, FR, DE); a match ends the call
+silently as `voicemail` (§6.1 step 6: ElevenLabs' `voicemail_detection` stays configured but nothing relies on it). A
+call counts as answered at the first non-empty utterance that is not a voicemail prompt.
+
+**Bot switch.** `switch_bot` swaps the bot's model, tools, policy and history; the voice stays the first bot's
+(ElevenLabs sets it when the call starts) and the call card stays in the first bot's chat.
 
 **Turns.** A new request for a call cancels the in-flight turn (barge-in); the cancelled turn speaks no more and leaves
 no history. Streamed speech passes a sanitizer that replaces "Orole" and "Orole OS" with "the app". Voice limits are the
 smaller of the voice cap and the bot's own limit. A scripted filler is spoken when a tool starts.
 
 **Gate timing.** The gate runs on save, before a call, on bot switch and at the start of each spoken turn (not before
-every individual tool call). A failure mid-call turns Jarvis off for the bot and ends the call. The save check currently
-refuses any save of a Jarvis-enabled bot whose permissions fail the gate, rather than saving it with Jarvis switched off.
+every individual tool call). A failure mid-call turns Jarvis off for the bot and ends the call. On save, turning Jarvis
+on is refused when the gate fails; a bot that already has Jarvis on is saved with Jarvis switched off instead
+(`jarvis.disabled` audit entry and a notification). Saving the global `agents` setting switches Jarvis off the same way
+for every bot that no longer passes. A policy `ask` during a call fails at once ("Needs your approval in the app — not
+available on a call.").
 
 **Missed scheduled calls.** The ticker keeps its last tick across restarts. An `at_time` rule that fell due while the
 daemon was down, or more than two minutes late, becomes a notification ("<bot> missed a scheduled call").

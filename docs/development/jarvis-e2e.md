@@ -28,7 +28,8 @@ first; if any item fails, fix `internal/jarvis/elevenlabs.go` (and `relay/` if t
       `/llm/v1/chat/completions`, add that path to `relay/src/index.ts` and `relay/README.md` before continuing.
 - [ ] **Post-call webhook.** After a call, the relay logs a POST to `/status` that passes the HMAC check once
       `WEBHOOK_SECRET` is set, and the call card ends within a few seconds (not after the 5 s poll).
-- [ ] **Voicemail tool.** The agent shows the `voicemail_detection` system tool.
+- [ ] **Voicemail tool.** The agent shows the `voicemail_detection` system tool (configured, but the daemon's own
+      voicemail check is what ends the call).
 
 ## 1. Setup
 
@@ -74,7 +75,11 @@ first; if any item fails, fix `internal/jarvis/elevenlabs.go` (and `relay/` if t
 ## 6. Not answered
 
 - [ ] Decline the call: notification "<bot> tried to call", card shows a missed call.
-- [ ] Let voicemail answer: nothing about the task is said; the notification arrives.
+- [ ] Let voicemail answer: only the name-only greeting is heard, the call is hung up as soon as the greeting
+      ("leave a message after the tone") is transcribed, the card says voicemail and the notification arrives.
+- [ ] Answer and say only "Hello?": the bot greets by name and asks for a minute; after "yes" it says why it called.
+- [ ] Answer, then hang up from the phone without the post-call webhook secret set: the card ends within ~5 s (Twilio poll).
+- [ ] Call in from your phone and ask "what is running?": the bot answers (the inbound call id reaches `/llm`).
 - [ ] An `urgent` rule retries once after 5 minutes; a normal rule does not.
 
 ## 7. Judgement call

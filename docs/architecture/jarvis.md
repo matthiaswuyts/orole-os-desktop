@@ -39,12 +39,19 @@ requires **all** of:
 Unreadable agent settings fail closed. The daemon resolves the effective values (`jarvisGateInput`), the pure check
 lives in `internal/jarvis/gate.go`. It runs:
 
-- when a bot is saved with Jarvis on (`chat.Manager.SetSaveCheck`; the save is refused with the failing condition);
+- when a bot is saved with Jarvis on (`chat.Manager.SetSaveCheck`). Turning Jarvis on is refused with the failing
+  condition. A bot that already has Jarvis on is saved anyway with Jarvis switched off (`jarvis.disabled` audit entry
+  plus a "Jarvis turned off for <bot>" notification), so lowering a permission, granting a skill or saving the bot's
+  profile still works;
+- when the global `agents` setting is saved (`settings.set`): every Jarvis bot that no longer passes is switched off
+  the same way;
 - before a call is placed, and for each bot an inbound call can reach, and on `switch_bot`;
 - at the start of every spoken turn. If it fails there, the daemon turns Jarvis off for the bot (`jarvis.disabled`
   audit entry plus a notification), the bot says why, and the call is ended.
 
-Explicit `deny` decisions in the shared permission policy still apply to tool calls on a call.
+Explicit `deny` decisions in the shared permission policy still apply to tool calls on a call. A policy `ask` cannot
+be answered on a call: voice turns run with `policy.WithoutApprovals`, so the tool fails at once with "Needs your
+approval in the app — not available on a call." instead of parking a five-minute approval, and the bot says so.
 
 ## Rules and triggers
 
@@ -55,7 +62,7 @@ and confirms it. The daemon evaluates rules against events, so no model has to n
 |---|---|---|
 | `task_finished`, `task_failed` | a task id, or `any` (any task this bot started) | agent session finished/failed events |
 | `automation_finished`, `automation_failed` | an automation id, or `any` | automation run results (`succeeded`; `failed`/`uncertain`) |
-| `notification` | notification kind, optionally `kind:source` (source matched by prefix) | the notifications store (Jarvis's own notices are ignored) |
+| `notification` | notification kind, optionally `kind:source` (the source equals it or continues with `.` or `/`: `github` matches `github.ci`, not `githubber`) | the notifications store (Jarvis's own notices are ignored) |
 | `at_time` | `HH:MM` local wall-clock time | the daemon's 20 s ticker |
 
 Rule fields: `repeat` (default: deleted after it fires), `expiresAt`, `urgent` (one retry after 5 minutes if
@@ -66,11 +73,16 @@ page or with `jarvis_rule_list` / `jarvis_rule_delete`.
 
 The ticker resumes from a persisted timestamp (settings key `jarvis.state`). An `at_time` that fell due while the daemon
 was down, or by more than two minutes, becomes a notification ("<bot> missed a scheduled call"), never a late call.
+Right after start the relay may still be connecting: while it is configured but has not connected yet (for at most two
+minutes), the ticker keeps its window open, and the relay's first connect re-runs it, so a time that fell due in that
+gap is called instead of refused.
 
 Before dialling, `Allow` checks: no call in progress, quiet hours (unless the rule overrides), daily cap (default 10),
 monthly estimated-cost cap (default $20) and, for `call_owner` only, a 10-minute per-bot cool-down. If a call is
 already live, the fired rule's reason is injected into that call as news ("also, the deploy finished") instead of
-dialling. A refusal becomes a notification with the reason; for `call_owner` it is returned to the bot.
+dialling; the bot sees it, fenced, in its next turn's brief. News that no finished turn has seen when the call ends
+(the call failed, or the owner hung up first) is posted as one notification ("News you missed on the call"). A refusal
+becomes a notification with the reason; for `call_owner` it is returned to the bot.
 
 ## Call lifecycle
 
@@ -82,24 +94,40 @@ attached as if typed.
 
 ### Outbound
 
-1. The brief is built: trigger, rule note, event detail. Untrusted text (task output, rule notes) is fenced as data.
+1. The brief is built: trigger, rule note, event detail. Untrusted text (event titles, task output, rule notes, call
+   reasons) is fenced as data, and titles and reasons are clipped to 200 characters.
 2. `Place` records the call, posts the card and calls ElevenLabs' Twilio outbound-call API with dynamic variables
-   `call_id` and `bot_id` and per-call overrides for voice and TTS model.
-3. While the phone rings, `Compose` asks the bot's model for the **opener**. `CheckOpener` requires the bot's name,
-   forbids "Orole", caps length at 240 characters and a single paragraph. A bad or late (3 s after pickup) opener is
-   replaced by a varied fallback template that never names the app.
-4. On pickup ElevenLabs requests the first turn; the cached opener is streamed at once.
-5. ElevenLabs' `voicemail_detection` tool ends the call on a machine without speaking task details. The owner gets a
-   notification ("<bot> tried to call"). Only an `urgent` call retries (once, after 5 minutes, through the same policy
-   checks).
+   `call_id` and `bot_id`, `custom_llm_extra_body` `{call_id}` and per-call overrides for voice and TTS model. The Twilio
+   call SID it returns is kept for hang-up and polling.
+3. While the phone rings, `Compose` asks the bot's model for the **opener**: a **name-only greeting** ("Hey, it's
+   Atlas. Got a minute?") that does not say why it is calling, because the call may reach voicemail. The instruction
+   carries no reason and no context. `CheckOpener` requires the bot's name, forbids "Orole", caps length at 240
+   characters and a single paragraph. A bad or late (3 s after the first request) opener is replaced by a varied
+   name-only fallback that never names the app. The reason is given in the first model turn after the owner answers
+   (the brief tells the bot so).
+4. The first turn **always** speaks the opener, whatever the request carries. If the owner already said something: a
+   bare greeting (at most four words starting with "hello", "yes", "who is this", "met <name>" and the like) is
+   recorded in the call history and gets only the opener; a real request gets the opener and the answer in the same
+   response.
+5. **Voicemail.** Until someone answers, every utterance is checked for answering-machine phrases (English, Dutch,
+   French and German: "leave a message", "after the tone", "spreek een bericht in", "na de piep", "laissez un message",
+   "nach dem Signalton", "mailbox" and so on). On a match the daemon says nothing more, hangs up through Twilio and ends
+   the call as `voicemail`. The owner gets a notification ("<bot> tried to call"). Only an `urgent` call retries (once,
+   after 5 minutes, through the same policy checks). The call counts as answered (`in_progress`, `answeredAt`) at the
+   first non-empty utterance that is not a voicemail prompt. The agent still carries ElevenLabs' `end_call` and
+   `voicemail_detection` tools, but nothing relies on them, and the voice prompt says to say nothing about the reason to
+   voicemail.
 
 ### Inbound
 
 ElevenLabs' personalization webhook reaches the relay's `/inbound`, which asks the daemon (`inbound.lookup`). The caller
 id must equal the **verified** owner number, otherwise the call is rejected, nothing is spoken and
 `jarvis.inbound.rejected` is audited. The executive bot (else the first bot passing the gate) answers with a fresh
-greeting containing its name. The owner is notified of every accepted inbound call. "Put me through to <bot>" calls
-`switch_bot`: voice, model, tools and history are swapped from the next sentence and the new bot introduces itself.
+greeting containing its name. The answer returns `custom_llm_extra_body` `{call_id}`, so ElevenLabs sends the call id
+on every inbound `/llm` request, and the Twilio call SID from the lookup is kept for polling and hang-up. The owner is
+notified of every accepted inbound call. "Put me through to <bot>" calls `switch_bot`: model, tools, policy and history
+are swapped from the next sentence and the new bot introduces itself. The **voice stays the first bot's** (ElevenLabs
+fixes it when the call starts) and the call card stays in the first bot's chat.
 
 ### A spoken turn
 
@@ -114,7 +142,12 @@ llm.delta -> SSE -> ElevenLabs TTS`.
 - **Fillers.** When the model starts a tool, a scripted line for that tool ("Checking your automations.") is streamed
   immediately, then the model's continuation.
 - **Barge-in.** A new request for the same call cancels the in-flight turn, waits for its run slot, and the cancelled turn
-  speaks no more and leaves no history.
+  speaks no more. It leaves only a one-line note in the call history naming the tools it already started, so the next
+  turn knows a task may already be running.
+- **Approvals.** A tool whose policy decision is `ask` fails at once ("Needs your approval in the app — not available
+  on a call.") instead of waiting for an approval nobody can give mid-call.
+- **Unknown call.** A request for a call that is not live, or with no call id, gets an empty reply (nothing spoken);
+  if the call is on record with a Twilio SID it is hung up.
 - **Sanitizer.** Streamed speech passes through a filter that replaces "Orole" and "Orole OS" with "the app" (across chunk
   boundaries), because tool text names the app.
 - **Long work.** Code tasks and research are started and the bot says so; it does not wait. Completion notifications and
@@ -123,9 +156,14 @@ llm.delta -> SSE -> ElevenLabs TTS`.
 
 ### Ending
 
-A call ends on the first of: the post-call webhook, the 5 s poll of the ElevenLabs conversation (`done` or `failed`),
-or a 30-minute ceiling (the daemon asks the relay to hang up). Ending is idempotent. It records duration and estimated
-cost (`centsPerMinute`, default 12), updates the card, audits `jarvis.call.ended` and notifies on no-answer or voicemail.
+A call ends on the first of: the post-call webhook; the 5 s poll, which asks **Twilio** for the call's status by its
+SID (both directions; `completed`, `busy`, `no-answer`, `canceled` and `failed` are final, and the first four count as
+`no_answer` unless someone answered) and then the ElevenLabs conversation (`done` or `failed`) as a fallback; the
+voicemail check; or a 30-minute ceiling. The daemon hangs up itself through the Twilio REST API
+(`POST /2010-04-01/Accounts/<sid>/Calls/<CallSid>.json` with `Status=completed`): after a verification code or a gate
+refusal has been spoken (it waits for an estimate of the speaking time first), on voicemail, at the ceiling, and for a
+turn of a call that already ended. Ending is idempotent. It records duration and estimated cost (`centsPerMinute`,
+default 12), updates the card, audits `jarvis.call.ended`, notifies on no-answer or voicemail and posts undelivered news.
 
 ## Speed design
 
@@ -151,10 +189,13 @@ number, post-call webhook). Per bot (`BotConfig.Jarvis`): enabled, policy text (
 | `jarvis/relay/llm-secret` | `x-orole-relay` header ElevenLabs sends to `/llm` and `/inbound` | generated by the app |
 | `jarvis/relay/webhook` | HMAC secret of the post-call webhook | **generated by ElevenLabs** when the webhook is created |
 
-Secrets never reach SQLite, logs or the frontend. The relay token and LLM secret are shown once after generating them;
-the webhook secret is shown **once**, after Connect creates the ElevenLabs webhook, with the matching
-`wrangler secret put WEBHOOK_SECRET` step. Until it is set on the relay, post-call webhooks are rejected and calls end
-through the 5 s poll instead.
+Secrets never reach SQLite or logs. **Exception R8 (owner-approved, 2026-10-14) to "secrets never reach the
+frontend":** the relay token and LLM secret are returned to Settings > Phone once, right after generating them, and the
+webhook secret once, right after Connect creates the ElevenLabs webhook, so the owner can copy them into
+`wrangler secret put`. They live only in that page's component state (never in a store, never persisted) and cannot be
+read back later; the provider keys entered by the owner are never sent to the frontend at all. The webhook secret is
+optional: until it is set on the relay, post-call webhooks are rejected and calls end through the 5 s Twilio and
+ElevenLabs poll instead (the setup checklist marks it "optional").
 
 Connect (`Configure`) validates the settings and provisions ElevenLabs idempotently: the agent (custom LLM URL
 `<relay>/llm`, secret header, empty first message, voicemail tool), the Twilio number imported and assigned to it, and
@@ -179,16 +220,19 @@ names in `internal/jarvis/relay.go` and `relay/src/hub.ts` must match exactly.
 
 | Direction | Frame | Meaning |
 |---|---|---|
-| relay -> daemon | `llm.request` | A custom-LLM turn: request `id`, `messages`, `vars` (`call_id`, `bot_id`) |
+| relay -> daemon | `llm.request` | A custom-LLM turn: request `id`, `callId` (from `elevenlabs_extra_body.call_id`), `messages` |
 | daemon -> relay | `llm.delta` / `llm.done` / `llm.error` | Streamed text for that request; `llm.error` text is spoken |
-| relay -> daemon | `inbound.lookup` | Inbound webhook: `caller`, `called`, `callSid`, `conversationId` |
-| daemon -> relay | `inbound.answer` | `accept`, `vars`, `overrides` (voice and model), or `accept:false` |
+| relay -> daemon | `inbound.lookup` | Inbound webhook: `caller`, `called`, `callSid` (no conversation id: ElevenLabs has not created one yet) |
+| daemon -> relay | `inbound.answer` | `accept`, `vars`, `overrides` (voice and model), or `accept:false`; the relay adds `custom_llm_extra_body` `{call_id}` |
 | relay -> daemon | `call.status` | Post-call webhook: `status`, `conversationId`, `durationSecs` |
-| daemon -> relay | `call.hangup` | End the call after the current turn |
 
-Provider authentication at the relay: the daemon socket by bearer token; `/llm/chat/completions` and `/inbound` by the
+There is no hang-up frame: the daemon hangs up through Twilio itself. The custom-LLM endpoint answers on
+`/llm/chat/completions` and on the aliases `/llm` and `/llm/v1/chat/completions`.
+
+Provider authentication at the relay: the daemon socket by bearer token; the `/llm` paths and `/inbound` by the
 `x-orole-relay` header (constant-time compare); `/status` by the `ElevenLabs-Signature` HMAC (timestamp within 30
-minutes). With any secret missing the relay answers 503 (fails closed). A pending turn is given up after 20 s without
+minutes). The relay fails closed **per path**: a path whose own secret is missing answers 503, while paths whose
+secret is set keep working (no `WEBHOOK_SECRET` refuses only `/status`). A pending turn is given up after 20 s without
 a frame while the daemon is connected, 5 s after the socket is gone, or 120 s in total. The relay keeps nothing beyond
 the in-flight request.
 
@@ -196,15 +240,17 @@ the in-flight request.
 
 | Situation | Behaviour |
 |---|---|
-| Daemon offline or relay socket down | No outbound calls ("The relay is not connected."). Inbound: the relay speaks one line and hangs up. Scheduled calls missed meanwhile become notifications. |
+| Daemon offline or relay socket down | No outbound calls ("The relay is not connected."). Inbound: `/inbound` answers 503 and nothing is spoken (also when the daemon socket drops or does not answer within 4 s); a refused caller gets 403. A turn on `/llm` with no daemon speaks one goodbye line. Scheduled calls missed meanwhile become notifications. The bot's Phone calls page keeps the Jarvis switch and rules usable; only Test call waits for the relay. |
 | Socket drops mid-call | The relay waits 5 s, then speaks "Lost connection, I'll message you." and ends the turn. |
 | Model or tool error | Spoken briefly, recorded in the chat, the call continues. |
 | Provider error placing a call | The call is `failed`; notification with the provider's error. |
 | Caps, quiet hours, cool-down | No call; notification with the reason. |
 | Gate fails mid-call | The bot says it cannot act, Jarvis is turned off for it, audit entry plus notification, the call ends. |
 | Opener invalid or late | Fallback template. |
-| Webhook never arrives | The 5 s poll or the 30-minute ceiling ends the call. |
-| Injection in task output, mail, MCP results | Stays fenced as data in the brief and in tool results. |
+| Webhook never arrives | The 5 s Twilio (then ElevenLabs) poll or the 30-minute ceiling ends the call. |
+| Voicemail answers | Nothing about the reason is said (the opener is name-only); the voicemail check hangs up; notification, urgent retry. |
+| Approval needed mid-call | The tool fails at once with "Needs your approval in the app"; the bot says so. |
+| Injection in event titles, task output, mail, MCP results | Stays fenced as data in the brief, injected news and tool results; the opener prompt carries none of it. |
 
 ## Audit entries
 
