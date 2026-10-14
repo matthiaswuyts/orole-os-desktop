@@ -227,10 +227,10 @@ const agentRevision = 2
 // Turn-taking is patient and never ends the call on silence: the owner hesitates ("uhm") mid-sentence, so eager turn
 // ending cut them off. After turn_timeout seconds of owner silence ElevenLabs sends a "..." user message and the LLM
 // decides what to do (speak, or skip_turn to keep waiting). initial_wait_time keeps an inbound caller from hearing the
-// default 7 s of silence before the opener. cascade_timeout_seconds is how long ElevenLabs waits for the custom LLM's first token
-// before it retries, and after a few retries fails the whole call (the default is 4 s, too short for a bot that runs a
-// tool). max_duration_seconds matches the daemon's own ceiling (maxCallDuration). Field names checked against the
-// ElevenLabs agent configuration docs on 2026-10-14.
+// default 7 s of silence before the opener. cascade_timeout_seconds is how long ElevenLabs waits for the custom LLM's
+// first token before it retries, and after a few retries fails the whole call (the default is 4 s, too short for a bot
+// that runs a tool). max_duration_seconds matches the daemon's own ceiling (maxCallDuration). These fields follow the
+// ElevenLabs agent API reference as researched on 2026-10-14; they are not verified against the live API.
 //
 // The agent language follows the call language (speech recognition and voice): "nl" or "en". Auto starts in Dutch and
 // adds ElevenLabs' language_detection system tool with an English preset, so the agent can switch when the owner
@@ -452,18 +452,16 @@ func (e *ElevenLabs) ConversationOutcome(ctx context.Context, conversationID str
 		return Outcome{}, err
 	}
 	o := Outcome{Status: d.Status, TerminationReason: e.scrub(d.Metadata.TerminationReason)}
+	// metadata.error is {code, error_type, reason}, null, or (defensively) a bare string.
 	var detail struct {
 		ErrorType string `json:"error_type"`
 		Reason    string `json:"reason"`
 	}
-	if raw := d.Metadata.Error; len(raw) > 0 {
-		var text string
-		switch err := json.Unmarshal(raw, &detail); {
-		case err == nil:
-			o.ErrorType, o.ErrorReason = detail.ErrorType, e.scrub(detail.Reason)
-		case json.Unmarshal(raw, &text) == nil:
-			o.ErrorReason = e.scrub(text) // a bare string instead of the usual object
-		}
+	var text string
+	if err := json.Unmarshal(d.Metadata.Error, &detail); err == nil {
+		o.ErrorType, o.ErrorReason = detail.ErrorType, e.scrub(detail.Reason)
+	} else if json.Unmarshal(d.Metadata.Error, &text) == nil {
+		o.ErrorReason = e.scrub(text)
 	}
 	return o, nil
 }

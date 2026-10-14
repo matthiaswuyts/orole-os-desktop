@@ -26,9 +26,11 @@ const (
 	maxCallDuration = 30 * time.Minute
 	urgentRetryWait = 5 * time.Minute
 	maxHistory      = 40
-	// outcomeDelay and outcomeCheckTimeout time the check after a call ends: how long ElevenLabs gets to record the
-	// conversation, and how long the check may take.
+	// outcomeDelay, outcomeRetryDelay and outcomeCheckTimeout time the check after a call ends: how long ElevenLabs gets
+	// to record the conversation, how much longer it gets when the conversation is still open, and how long each
+	// request of the check may take.
 	outcomeDelay        = 10 * time.Second
+	outcomeRetryDelay   = 30 * time.Second
 	outcomeCheckTimeout = 30 * time.Second
 )
 
@@ -129,8 +131,9 @@ type Calls struct {
 	// speechWait is how long to let the voice finish a line before hanging up at the carrier (tests use 0).
 	speechWait func(text string) time.Duration
 	// outcomeAfter is how long after a call ends to wait before asking the voice provider how it recorded it (it needs
-	// a moment); outcomeTimeout bounds that check (see checkOutcome).
-	outcomeAfter, outcomeTimeout time.Duration
+	// a moment), outcomeRetryAfter the wait before a second look when the conversation is not finished then, and
+	// outcomeTimeout bounds each request of that check (see checkOutcome).
+	outcomeAfter, outcomeRetryAfter, outcomeTimeout time.Duration
 	// Retry places the second attempt after an unanswered urgent call. The daemon points it at the policy-checked path
 	// (caps, quiet hours); the default calls Place directly.
 	Retry func(ctx context.Context, req PlaceRequest)
@@ -153,7 +156,8 @@ func NewCalls(store *Store, host Host, dial Dialer, phone Phone, relay Sender, s
 	ctx, cancel := context.WithCancel(context.Background())
 	c := &Calls{store: store, host: host, dial: dial, phone: phone, relay: relay, settings: settings, now: now, log: log,
 		after: time.After, speechWait: speechTime, ackAfter: ackAfter, stillAfter: stillAfter,
-		outcomeAfter: outcomeDelay, outcomeTimeout: outcomeCheckTimeout, baseCtx: ctx, stop: cancel}
+		outcomeAfter: outcomeDelay, outcomeRetryAfter: outcomeRetryDelay, outcomeTimeout: outcomeCheckTimeout,
+		baseCtx: ctx, stop: cancel}
 	c.Retry = func(ctx context.Context, req PlaceRequest) { _, _ = c.Place(ctx, req) }
 	return c
 }
@@ -1291,43 +1295,49 @@ func (c *Calls) finish(ctx context.Context, l *live, status string, durationSecs
 // checkOutcome runs once per ended call, outcomeAfter later (ElevenLabs needs a moment to record the conversation), and
 // asks ElevenLabs how it ended: the status, termination reason and error type and reason. It exists because the voice
 // service can drop a call on its own (for example when the custom LLM is too slow) and nothing on our side shows it.
+// A conversation that is not finished yet (any status but done or failed) is read once more outcomeRetryAfter later.
 // The outcome is logged (provider metadata only, never spoken text) and a call that ElevenLabs marks failed is reported
 // to the owner. The conversation id is looked up by the carrier call SID when the record has none, and then stored.
 // Failures of the check itself are only logged.
 func (c *Calls) checkOutcome(l *live, call CallRecord, botName string) {
-	conv, sid := call.ConversationID, call.ProviderCallID
-	if conv == "" && sid == "" {
+	if call.ConversationID == "" && call.ProviderCallID == "" {
 		return // the call never reached the provider
 	}
-	select {
-	case <-c.after(c.outcomeAfter):
-	case <-c.baseCtx.Done():
+	if !c.pause(c.outcomeAfter) {
 		return
 	}
-	ctx, cancel := context.WithTimeout(c.baseCtx, c.outcomeTimeout)
-	defer cancel()
+	// The ids are read again now, not taken from finish: the record may have gained them in the meantime.
+	c.mu.Lock()
+	conv, sid := l.call.ConversationID, l.call.ProviderCallID
+	near := time.UnixMilli(l.call.StartedAt)
+	if l.call.AnsweredAt > 0 {
+		near = time.UnixMilli(l.call.AnsweredAt)
+	}
+	c.mu.Unlock()
 	if conv == "" {
-		near := time.UnixMilli(call.StartedAt)
-		if call.AnsweredAt > 0 {
-			near = time.UnixMilli(call.AnsweredAt)
-		}
-		found, err := c.dial.FindConversation(ctx, c.settings().AgentID, sid, near)
-		if err != nil || found == "" {
-			c.log.Info("jarvis: call outcome not checked", "call", call.ID, "reason", "no conversation found", "err", err)
+		found, err := c.findConversation(l, sid, near)
+		switch {
+		case err != nil:
+			c.log.Info("jarvis: call outcome not checked", "call", call.ID, "reason", "cannot look up the conversation", "err", err)
+			return
+		case found == "":
+			c.log.Info("jarvis: call outcome not checked", "call", call.ID, "reason", "conversation not found")
 			return
 		}
 		conv = found
-		c.mu.Lock()
-		if l.call.ConversationID == "" {
-			l.call.ConversationID = conv
-		}
-		c.mu.Unlock()
-		c.persist(ctx, l, false)
 	}
-	out, err := c.dial.ConversationOutcome(ctx, conv)
-	if err != nil {
-		c.log.Info("jarvis: call outcome not checked", "call", call.ID, "reason", "cannot read the conversation", "err", err)
+	out, ok := c.readOutcome(call.ID, conv)
+	if !ok {
 		return
+	}
+	if !outcomeFinal(out.Status) {
+		c.log.Info("jarvis: call outcome pending", "call", call.ID, "status", out.Status)
+		if !c.pause(c.outcomeRetryAfter) {
+			return
+		}
+		if out, ok = c.readOutcome(call.ID, conv); !ok {
+			return
+		}
 	}
 	c.log.Info("jarvis: call outcome", "call", call.ID, "status", out.Status, "termination_reason", out.TerminationReason,
 		"error_type", out.ErrorType, "error_reason", out.ErrorReason)
@@ -1342,6 +1352,52 @@ func (c *Calls) checkOutcome(l *live, call CallRecord, botName string) {
 		reason = "no reason was given"
 	}
 	c.host.Notify("Call with "+botName+" dropped", "The voice service ended the call: "+clipRunes(reason, maxTitle), "bot:"+call.BotID, "warning")
+}
+
+// pause waits d on the injectable clock and reports false when the manager is closing first.
+func (c *Calls) pause(d time.Duration) bool {
+	select {
+	case <-c.after(d):
+		return true
+	case <-c.baseCtx.Done():
+		return false
+	}
+}
+
+// outcomeFinal reports whether ElevenLabs is done with a conversation (done or failed); the other statuses (initiated,
+// in-progress, processing) mean its record is still changing.
+func outcomeFinal(status string) bool {
+	return strings.EqualFold(status, "done") || strings.EqualFold(status, "failed")
+}
+
+// readOutcome reads the conversation's outcome within outcomeTimeout; a failure is logged and reported as !ok.
+func (c *Calls) readOutcome(callID, conv string) (Outcome, bool) {
+	ctx, cancel := context.WithTimeout(c.baseCtx, c.outcomeTimeout)
+	defer cancel()
+	out, err := c.dial.ConversationOutcome(ctx, conv)
+	if err != nil {
+		c.log.Info("jarvis: call outcome not checked", "call", callID, "reason", "cannot read the conversation", "err", err)
+		return Outcome{}, false
+	}
+	return out, true
+}
+
+// findConversation looks a call's conversation up by its carrier call SID and stores the id on the call's record. It
+// returns "" without an error when there is none.
+func (c *Calls) findConversation(l *live, sid string, near time.Time) (string, error) {
+	ctx, cancel := context.WithTimeout(c.baseCtx, c.outcomeTimeout)
+	defer cancel()
+	found, err := c.dial.FindConversation(ctx, c.settings().AgentID, sid, near)
+	if err != nil || found == "" {
+		return "", err
+	}
+	c.mu.Lock()
+	if l.call.ConversationID == "" {
+		l.call.ConversationID = found
+	}
+	c.mu.Unlock()
+	c.persist(ctx, l, false)
+	return found, nil
 }
 
 // retry places one more attempt after an unanswered urgent call; the retry itself is not urgent, so it never repeats.

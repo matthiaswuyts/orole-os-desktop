@@ -907,11 +907,12 @@ func (s *Service) noticeOrphan(id string) {
 	s.cfg.Host.Audit("jarvis.webhook.orphaned", id, "allowed", "relay url changed")
 }
 
-// syncAgent re-provisions the agent in the background when it is out of date: its language differs from the chosen call
-// language (an agent from before the setting, or a Configure whose provisioning did not run), or it was provisioned with
-// an older agentRevision (a release changed what the agent should be configured with). It only updates the agent: no
-// number import, no webhook. Until it succeeds, calls keep the agent's language (spokenLanguage). Missing prerequisites
-// (no ElevenLabs key, relay URL or relay secret) skip it quietly: Connect provisions everything later.
+// syncAgent re-provisions the agent in the background when it is out of date: its language differs from the chosen
+// call language (an agent from before the setting, or a Configure whose provisioning did not run), or it was
+// provisioned with an older agentRevision (a release changed what the agent should be configured with). It only
+// updates the agent: no number import, no webhook. Until it succeeds, calls keep the agent's language
+// (spokenLanguage). Missing prerequisites (no ElevenLabs key, relay URL or relay secret) skip it quietly: Connect
+// provisions everything later.
 func (s *Service) syncAgent() {
 	s.mu.Lock()
 	set := s.settings
