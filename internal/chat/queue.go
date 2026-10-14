@@ -31,7 +31,7 @@ type turn struct {
 	automations []string
 	// callID puts the turn in a phone call's thread: the message it answers and its reply carry it (Message.CallID)
 	// and are published as call events only, and the turn announces no chat.run. It runs like any other turn of the
-	// bot's queue. Set for follow-ups of work started on a call; "" otherwise.
+	// bot's queue. submit copies it from the message the turn answers (its only source); "" for chat turns.
 	callID string
 }
 
@@ -154,8 +154,8 @@ func (m *Manager) Send(ctx context.Context, req SendRequest) (Message, error) {
 
 // submit stores msg (a user message of msg.BotID) with the given text and attachments, publishes it
 // and queues turns (each answers the message) behind the bot's active run, or starts the bot's worker
-// when it is idle. The message is stored pending while it waits behind an active run. The turns' call
-// id (all turns answer the same message) puts the message in that call's thread.
+// when it is idle. The message is stored pending while it waits behind an active run. msg.CallID puts
+// the message, and so the turns answering it, in that call's thread.
 //
 // The caller holds lockBot(msg.BotID) and has verified that the bot exists. That lock is what keeps
 // the order of messages and turns identical for one bot, so the SQLite work here runs outside the
@@ -176,15 +176,12 @@ func (m *Manager) submit(ctx context.Context, msg Message, text string, attachme
 	if st != nil {
 		msg.Status = StatusPending
 	}
-	if len(turns) > 0 {
-		msg.CallID = turns[0].callID
-	}
 	if err := m.store.insertUserMessage(ctx, &msg, text, attachmentIDs); err != nil {
 		return Message{}, err
 	}
 	m.publishAny(msg)
 	for i := range turns {
-		turns[i].userMsgID = msg.ID
+		turns[i].userMsgID, turns[i].callID = msg.ID, msg.CallID
 	}
 
 	m.mu.Lock()
@@ -201,6 +198,12 @@ func (m *Manager) submit(ctx context.Context, msg Message, text string, attachme
 	// meanwhile; in the second case the pending message is answered by a fresh worker, which marks it complete.
 	if cur := m.runs[msg.BotID]; cur != nil {
 		cur.queue = append(cur.queue, turns...)
+		if msg.CallID == "" && len(turns) > 0 && !cur.shown {
+			// A chat message waits behind a call thread answer the chat was never told about: show the bot busy
+			// (and stoppable) now. Emitted under m.mu so it precedes everything the worker announces later.
+			cur.shown = true
+			m.emit("chat.run", RunState{BotID: msg.BotID, Running: cur.cancel != nil, Paused: cur.paused})
+		}
 	} else {
 		m.startLocked(msg.BotID, turns...)
 	}

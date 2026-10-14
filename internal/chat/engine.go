@@ -140,7 +140,10 @@ func (m *Manager) runTurn(ctx context.Context, botID string, t turn) {
 	s.checkpoint()
 
 	rc := RunContext{BotID: bot.ID, Bot: bot, MessageID: asst.ID, Actor: "bot:" + bot.ID, Depth: t.depth, Chain: t.chain,
-		Automations: slices.Clone(t.automations), Author: user.Author, Emit: s.upsertTool}
+		Automations: slices.Clone(t.automations), Author: user.Author, Emit: s.upsertTool,
+		// A call thread answer writes into the call's thread but is not spoken: no CallID, so the call tools refuse
+		// and call_owner works after the call; work it starts reports into the same thread.
+		CallThread: t.callID}
 	status, errText := m.executeTurn(ctx, bot, convo, rc, user, t, s)
 	if status == StatusCanceled && m.ctx.Err() != nil {
 		status = StatusIncomplete // the daemon is shutting down, not the user stopping the run

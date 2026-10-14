@@ -254,7 +254,8 @@ type FollowUp struct {
 
 // FollowUpHook is told about every follow-up before the bot's written answer is queued. It returns true when it handed
 // the follow-up to the live call it was started on (to be spoken there): the report is then stored in the call thread
-// and no written answer is queued. It runs without chat locks held and must not block for long.
+// and no written answer is queued. It runs without chat locks held, on the goroutine delivering the report, and must
+// return quickly: anything slow (placing a call, notifying) must run asynchronously after it returns.
 type FollowUpHook func(FollowUp) bool
 
 // QueueItemRef identifies one waiting message of a bot's queue.

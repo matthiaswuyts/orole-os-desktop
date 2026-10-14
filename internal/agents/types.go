@@ -117,8 +117,8 @@ type Session struct {
 	// Owner is the principal that started the session through WithActor ("bot:<id>"); "" for the user.
 	// It decides who may steer the task and who hears about its progress, never tool authority.
 	Owner string `json:"owner,omitempty"`
-	// CallID is the phone call the owning bot was on when it started the session (WithCall); "" otherwise. The
-	// session's reports to its owner go to that call's thread instead of the bot's chat.
+	// CallID is the phone call whose thread the owning bot started the session from (WithCall), or last steered it
+	// from (SetCall); "" otherwise. The session's reports to its owner go to that call's thread instead of the chat.
 	CallID       string `json:"callId,omitempty"`
 	Review       string `json:"review"` // see Review* constants
 	ReviewNote   string `json:"reviewNote"`

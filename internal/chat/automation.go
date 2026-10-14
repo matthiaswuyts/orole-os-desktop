@@ -97,16 +97,22 @@ type TaskReport struct {
 // ReportTask stores r.Text in r.BotID's conversation as a report from code task r.TaskID and queues a
 // turn in which the bot tells the user about it. The bot must exist. A task started on a phone call
 // reports into that call's thread instead of the chat; the follow-up hook is told first and may hand
-// the report to the live call (see FollowUpHook), in which case it is only stored there.
+// the report to the live call (see FollowUpHook), in which case it is only stored there. The store
+// work before and after the hook has its own deadline (storeTimeout): ctx need not carry one.
 func (m *Manager) ReportTask(ctx context.Context, r TaskReport) error {
 	text := clip(strings.TrimSpace(r.Text), MaxMessageTextLen-1024)
 	if text == "" || r.TaskID == "" {
 		return invalidf("A task report needs a task and text.")
 	}
-	if _, err := m.store.getBot(ctx, r.BotID, false); err != nil {
+	check, cancel := context.WithTimeout(ctx, storeTimeout)
+	_, err := m.store.getBot(check, r.BotID, false)
+	cancel()
+	if err != nil {
 		return err
 	}
 	live := m.liveFollowUp(FollowUp{BotID: r.BotID, CallID: r.CallID, Kind: FollowUpTask, From: cmp.Or(r.Title, r.TaskID), Status: r.Status, Text: text})
+	ctx, cancel = context.WithTimeout(ctx, storeTimeout)
+	defer cancel()
 	unlock := m.lockBot(r.BotID)
 	defer unlock()
 	if _, err := m.store.getBot(ctx, r.BotID, false); err != nil {
@@ -117,6 +123,6 @@ func (m *Manager) ReportTask(ctx context.Context, r TaskReport) error {
 		_, err := m.record(ctx, msg, text)
 		return err
 	}
-	_, err := m.submit(ctx, msg, text, nil, turn{extra: taskReportExtra, callID: r.CallID})
+	_, err = m.submit(ctx, msg, text, nil, turn{extra: taskReportExtra})
 	return err
 }

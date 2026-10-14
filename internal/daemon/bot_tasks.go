@@ -266,10 +266,16 @@ func (b botTasks) Get(ctx context.Context, id string, transcript int) (tools.Tas
 	return taskInfo(s, true), lines, nil
 }
 
-func (b botTasks) Send(ctx context.Context, actor, id, text string) (tools.TaskInfo, error) {
+func (b botTasks) Send(ctx context.Context, actor, id, text, callThread string) (tools.TaskInfo, error) {
 	s, err := b.d.Agents.SendMessage(agents.WithActor(ctx, actor), id, text, nil, "", "")
 	if err != nil {
 		return tools.TaskInfo{}, err
+	}
+	// The task reports where its owner last steered it from: that call's thread, or the bot's chat.
+	if tagged, err := b.d.Agents.SetCall(id, callThread); err == nil {
+		s = tagged
+	} else {
+		b.d.Log.Warn("task call thread not updated", "task", id, "err", err)
 	}
 	return taskInfo(s, false), nil
 }
@@ -329,9 +335,8 @@ func (d *Daemon) reportToOwner(topic string, s agents.Session) {
 	}
 	r := chat.TaskReport{BotID: botID, TaskID: s.ID, Title: s.Title, Status: taskReportStatus(topic), Text: taskReportText(topic, s), CallID: s.CallID}
 	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		if err := d.Chat.ReportTask(ctx, r); err != nil {
+		// ReportTask bounds its own store work, before and after the follow-up hook.
+		if err := d.Chat.ReportTask(context.Background(), r); err != nil {
 			d.Log.Warn("task report not delivered", "task", s.ID, "bot", botID, "err", err)
 		}
 	}()

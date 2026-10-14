@@ -2,6 +2,8 @@ package chat
 
 import (
 	"context"
+	"encoding/json"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -74,7 +76,7 @@ func TestHandoffOnACallReportsIntoTheCallThread(t *testing.T) {
 	callee := e.bot("Callee")
 	caller := e.bot("Caller", executive)
 	from := fromBot(caller)
-	from.CallID = "call-1"
+	from.CallID, from.CallThread = "call-1", "call-1" // a voice turn
 
 	if err := e.m.Handoff(context.Background(), from, callee.ID, "what is the answer?"); err != nil {
 		t.Fatal(err)
@@ -136,7 +138,7 @@ func TestFollowUpSpokenOnTheLiveCallIsOnlyStored(t *testing.T) {
 	callee := e.bot("Callee")
 	caller := e.bot("Caller", executive)
 	from := fromBot(caller)
-	from.CallID = "call-2"
+	from.CallID, from.CallThread = "call-2", "call-2" // a voice turn
 
 	if err := e.m.Handoff(context.Background(), from, callee.ID, "look it up"); err != nil {
 		t.Fatal(err)
@@ -261,5 +263,166 @@ func TestCanceledCallFollowUpStaysInTheCallThread(t *testing.T) {
 	}
 	if !canceled {
 		t.Fatal("the canceled follow-up was not published")
+	}
+}
+
+// runStates returns the chat.run payloads published for botID, in order.
+func (e *env) runStates(botID string) []RunState {
+	var out []RunState
+	for _, r := range e.rec.all() {
+		if s, ok := r.payload.(RunState); ok && r.event == "chat.run" && s.BotID == botID {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// The written answer to a call follow-up writes into the call's thread without being on the call (no CallID, so the
+// call tools refuse), and work it hands off reports back into the same thread.
+func TestHandoffFromACallFollowUpStaysInTheCallThread(t *testing.T) {
+	var (
+		mu     sync.Mutex
+		seen   []RunContext
+		e      *env
+		callee Bot
+	)
+	delegate := &fakeTool{id: "delegate", call: func(ctx context.Context, rc RunContext, _ string, _ json.RawMessage) (ToolResult, error) {
+		mu.Lock()
+		seen = append(seen, rc)
+		mu.Unlock()
+		rc.Chain = append(slices.Clone(rc.Chain), rc.BotID)
+		if err := e.m.Handoff(ctx, rc, callee.ID, "check the logs"); err != nil {
+			return ToolResult{}, err
+		}
+		return ToolResult{Text: "handed off"}, nil
+	}}
+	e = newEnv(t, func(_ int, req llm.Request) []llm.Delta {
+		switch last := req.Messages[len(req.Messages)-1]; {
+		case strings.Contains(req.System, "Be Callee."):
+			return []llm.Delta{llmtest.Text("logs are clean")}
+		case last.Role == llm.RoleTool:
+			return []llm.Delta{llmtest.Text("asked Callee")}
+		case strings.Contains(req.System, "code task you started"):
+			return llmtest.Call("c1", "delegate", `{}`)
+		}
+		return []llm.Delta{llmtest.Text("Callee says the logs are clean")}
+	})
+	e.m.AddTools(delegate)
+	callee = e.bot("Callee")
+	caller := e.bot("Caller", executive)
+
+	if err := e.m.ReportTask(context.Background(), TaskReport{BotID: caller.ID, TaskID: "task-1", Title: "Deploy", Status: "finished", Text: "deployed", CallID: "call-5"}); err != nil {
+		t.Fatal(err)
+	}
+	e.until("the callee's report to be answered in the call thread", func() bool {
+		msgs := e.callMessages("call-5")
+		return len(msgs) == 4 && msgs[3].Status == StatusComplete
+	})
+	e.idle(caller.ID)
+	e.idle(callee.ID)
+
+	msgs := e.callMessages("call-5")
+	if msgs[0].Author != TaskPrefix+"task-1" || replyText(msgs[1]) != "asked Callee" || msgs[2].Author != ReportPrefix+callee.ID ||
+		messageText(msgs[2].Parts) != "logs are clean" || replyText(msgs[3]) != "Callee says the logs are clean" {
+		t.Fatalf("call thread: %+v", msgs)
+	}
+	for _, m := range msgs {
+		if m.CallID != "call-5" || m.BotID != caller.ID {
+			t.Fatalf("call thread message outside the thread: %+v", m)
+		}
+	}
+	if h := e.history(caller.ID); len(h) != 0 {
+		t.Fatalf("the caller's chat got the call's follow-ups: %+v", h)
+	}
+	if h := e.history(callee.ID); len(h) != 2 || h[0].CallID != "" {
+		t.Fatalf("callee conversation: %+v", h)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(seen) != 1 || seen[0].CallID != "" || seen[0].CallThread != "call-5" {
+		t.Fatalf("the answering run must write into the call thread without being on the call: %+v", seen)
+	}
+}
+
+// A chat message queued behind a call follow-up's answer shows the bot busy at once (so it can be stopped), then
+// runs like any chat turn; the call answer never appears in chat.run.
+func TestChatMessageBehindACallFollowUpShowsTheBotBusy(t *testing.T) {
+	bp := &blockingProvider{started: make(chan struct{}, 1), release: make(chan struct{}), text: "working"}
+	e := newEnv(t, nil)
+	e.llm.prov = bp
+	b := e.bot("Coder")
+	if err := e.m.ReportTask(context.Background(), TaskReport{BotID: b.ID, TaskID: "task-1", Status: "finished", Text: "done", CallID: "call-6"}); err != nil {
+		t.Fatal(err)
+	}
+	<-bp.started
+	if runs := e.runStates(b.ID); len(runs) != 0 {
+		t.Fatalf("the call follow-up was announced to the chat: %+v", runs)
+	}
+	if got, _ := e.m.Bot(context.Background(), b.ID); got.Running {
+		t.Fatal("the chat sees a bot busy that only answers in a call thread")
+	}
+	e.send(b.ID, "status?")
+	if runs := e.runStates(b.ID); len(runs) != 1 || !runs[0].Running || runs[0].MessageID != "" {
+		t.Fatalf("a chat message waiting behind the call answer must show the bot busy: %+v", runs)
+	}
+	if got, _ := e.m.Bot(context.Background(), b.ID); !got.Running {
+		t.Fatal("the bot must report running while a chat message waits")
+	}
+	close(bp.release)
+	e.idle(b.ID)
+
+	call := e.callMessages("call-6")
+	if len(call) != 2 || call[1].Status != StatusComplete {
+		t.Fatalf("call thread: %+v", call)
+	}
+	chatReply := e.lastReply(b.ID)
+	runs := e.runStates(b.ID)
+	started, stopped := false, 0
+	for _, r := range runs {
+		if r.MessageID == call[1].ID {
+			t.Fatalf("chat.run carried the call answer: %+v", runs)
+		}
+		started = started || (r.Running && r.MessageID == chatReply.ID)
+		if !r.Running {
+			stopped++
+		}
+	}
+	if !started || stopped != 1 || runs[len(runs)-1].Running {
+		t.Fatalf("chat.run: %+v", runs)
+	}
+}
+
+// A call follow-up queued behind a chat turn ends the worker with exactly one Running:false, and its answer never
+// appears in chat.run.
+func TestCallFollowUpBehindAChatTurnStaysOutOfChatRun(t *testing.T) {
+	bp := &blockingProvider{started: make(chan struct{}, 1), release: make(chan struct{}), text: "working"}
+	e := newEnv(t, nil)
+	e.llm.prov = bp
+	b := e.bot("Coder")
+	e.send(b.ID, "do the thing")
+	<-bp.started
+	if err := e.m.ReportTask(context.Background(), TaskReport{BotID: b.ID, TaskID: "task-1", Status: "finished", Text: "done", CallID: "call-7"}); err != nil {
+		t.Fatal(err)
+	}
+	close(bp.release)
+	e.idle(b.ID)
+
+	call := e.callMessages("call-7")
+	if len(call) != 2 || call[1].Status != StatusComplete {
+		t.Fatalf("call thread: %+v", call)
+	}
+	chatReply := e.lastReply(b.ID)
+	runs := e.runStates(b.ID)
+	stopped := 0
+	for _, r := range runs {
+		if r.MessageID == call[1].ID {
+			t.Fatalf("chat.run carried the call answer: %+v", runs)
+		}
+		if !r.Running {
+			stopped++
+		}
+	}
+	if len(runs) < 2 || !runs[0].Running || runs[0].MessageID != chatReply.ID || stopped != 1 || runs[len(runs)-1].Running {
+		t.Fatalf("chat.run: %+v", runs)
 	}
 }

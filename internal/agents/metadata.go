@@ -18,6 +18,15 @@ func (m *Manager) Rename(id, title string) (Session, error) {
 	return s, nil
 }
 
+// SetCall records the phone call whose thread the session reports to ("" = the owning bot's chat), as its
+// owner last steered it from there (see Session.CallID). An unchanged value is not written again.
+func (m *Manager) SetCall(id, callID string) (Session, error) {
+	if s, err := m.Get(id); err != nil || s.CallID == callID {
+		return s, err
+	}
+	return m.mutate(id, func(s *Session) { s.CallID = callID })
+}
+
 // SetPinned keeps a task above the others in its project's list.
 func (m *Manager) SetPinned(id string, pinned bool) (Session, error) {
 	return m.mutate(id, func(s *Session) { s.Pinned = pinned })

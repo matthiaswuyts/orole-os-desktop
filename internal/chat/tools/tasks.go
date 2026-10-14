@@ -74,8 +74,8 @@ type TaskStart struct {
 	Prompt      string `json:"prompt"`
 	Title       string `json:"title"`
 	NewWorktree bool   `json:"newWorktree"`
-	// CallID is the phone call the bot is on when it starts the task (chat.RunContext.CallID): the task's reports go
-	// to that call's thread. The tool sets it from the run; the model cannot (it is not part of the arguments).
+	// CallID is the call thread of the run that starts the task (chat.RunContext.CallThread): the task's reports go
+	// to that thread. The tool sets it from the run; the model cannot (it is not part of the arguments).
 	CallID string `json:"-"`
 }
 
@@ -114,7 +114,9 @@ type TaskRuntime interface {
 	Start(ctx context.Context, actor string, bot chat.Bot, spec TaskStart) (TaskInfo, error)
 	List(ctx context.Context, limit int) ([]TaskInfo, error)
 	Get(ctx context.Context, id string, transcript int) (TaskInfo, []TaskLine, error)
-	Send(ctx context.Context, actor, id, text string) (TaskInfo, error)
+	// Send gives a task the bot started a follow-up. callThread is the call thread of the steering run
+	// (chat.RunContext.CallThread): the task's later reports go there, or to the chat when it is "".
+	Send(ctx context.Context, actor, id, text, callThread string) (TaskInfo, error)
 	Stop(ctx context.Context, actor, id string) (TaskInfo, error)
 }
 
@@ -277,7 +279,7 @@ func (t Tasks) Call(ctx context.Context, rc chat.RunContext, name string, args j
 				return errResult("%s", err)
 			}
 		}
-		in.CallID = rc.CallID
+		in.CallID = rc.CallThread
 		info, err := t.Runtime.Start(ctx, actor, rc.Bot, in)
 		if err != nil {
 			return errResult("the task did not start: %s", err)
@@ -341,7 +343,8 @@ func (t Tasks) Call(ctx context.Context, rc chat.RunContext, name string, args j
 			if err := text("message", in.Message, 100_000, true); err != nil {
 				return errResult("%s", err)
 			}
-			info, err = t.Runtime.Send(ctx, actor, in.ID, in.Message)
+			// The task now reports where it was last steered from: this run's call thread, or the chat.
+			info, err = t.Runtime.Send(ctx, actor, in.ID, in.Message, rc.CallThread)
 		}
 		if err != nil {
 			return errResult("%s", err)

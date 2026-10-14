@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"slices"
 	"strings"
-	"time"
 	"unicode/utf8"
 )
 
@@ -32,8 +31,8 @@ const reportExtra = "A bot you handed a task to has reported back (the last mess
 // When the callee's turn ends, its outcome is stored in the caller's conversation as a report
 // ("report:<calleeID>") and the caller answers it: it tells the user what came back. Meanwhile the caller's
 // system prompt lists the tasks still out, so it can answer questions about their status. A task handed off
-// on a phone call (from.CallID) reports into that call's thread instead of the chat, and the follow-up hook
-// may hand the report to the live call (see FollowUpHook), in which case no written answer follows.
+// by a run in a call's thread (from.CallThread) reports into that thread instead of the chat, and the follow-up
+// hook may hand the report to the live call (see FollowUpHook), in which case no written answer follows.
 //
 // Only executive assistants may hand off: the caller must be flagged Executive in its stored configuration,
 // and chains are depth-limited. from.Chain must hold the delegating run's chain plus the caller.
@@ -72,7 +71,7 @@ func (m *Manager) Handoff(ctx context.Context, from RunContext, calleeID, task s
 			"Do the work, then finish with a concise, self-contained result; you cannot ask follow-up questions.", caller.Name),
 	}
 	task = strings.TrimRight(task, " \t\r\n")
-	h := &handoff{callee: callee.Name, task: oneLine(task, 160), since: m.nowMs(), callID: from.CallID}
+	h := &handoff{callee: callee.Name, task: oneLine(task, 160), since: m.nowMs(), callID: from.CallThread}
 
 	// The callee's bot lock keeps the stored message and its queued turn in the same order as its other messages.
 	unlock := m.lockBot(callee.ID)
@@ -114,16 +113,14 @@ func (m *Manager) awaitReport(callerID string, callee Bot, h *handoff, result <-
 	}
 	closed := m.closed
 	m.mu.Unlock()
-	if closed {
-		return
-	}
-	ctx, cancel := context.WithTimeout(m.ctx, 10*time.Second)
-	defer cancel()
-	if _, err := m.store.getBot(ctx, callerID, false); err != nil {
-		return // the asking bot is gone: nobody to tell
+	if closed || !m.botExists(m.ctx, callerID) {
+		return // nobody to tell
 	}
 	text := clip(reportText(callee, r), MaxMessageTextLen-1024)
+	// The hook runs before the store deadline starts, so a slow hook cannot cost the report its write.
 	live := m.liveFollowUp(FollowUp{BotID: callerID, CallID: h.callID, Kind: FollowUpReport, From: callee.Name, Status: reportStatus(r.status), Text: text})
+	ctx, cancel := context.WithTimeout(m.ctx, storeTimeout)
+	defer cancel()
 	// The report is stored and queued under the caller's bot lock, like any other message to it.
 	unlock := m.lockBot(callerID)
 	defer unlock()
@@ -135,7 +132,7 @@ func (m *Manager) awaitReport(callerID string, callee Bot, h *handoff, result <-
 	if live {
 		_, err = m.record(ctx, msg, text) // the live call tells the owner; the call thread keeps the report
 	} else {
-		_, err = m.submit(ctx, msg, text, nil, turn{extra: reportExtra, automations: automations, callID: h.callID})
+		_, err = m.submit(ctx, msg, text, nil, turn{extra: reportExtra, automations: automations})
 	}
 	if err != nil {
 		m.log.Warn("chat: report not delivered", "from", callee.ID, "to", callerID, "err", err)

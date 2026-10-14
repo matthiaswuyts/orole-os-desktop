@@ -33,8 +33,12 @@ type RunContext struct {
 	Emit func(MsgPart)
 	// Caps of the model serving this run.
 	Caps llm.Caps
-	// CallID is set while the bot speaks on a phone call.
+	// CallID is set while the bot speaks on a phone call (voice turns only): the call tools act on that live call.
 	CallID string
+	// CallThread is the phone call whose thread this run writes into: set on voice turns (with CallID) and on the
+	// written answers to follow-ups of work started on a call (without CallID: that answer is not spoken). Work the
+	// run hands off or starts reports into the same thread. "" for chat runs.
+	CallThread string
 }
 
 // ToolResult is what the model sees plus what the UI persists.

@@ -91,18 +91,23 @@ Bots with Jarvis mode on can speak on the phone (`docs/architecture/jarvis.md`).
   prompt prefix stays stable; the call layer supplies its own history (a connected cue is added when it starts with the
   bot's opener). `RunContext.CallID` is set, which `call_owner` and `switch_bot` check.
 - Callbacks: `OnText` streams the spoken text, `OnTool` is called as a tool starts (the call layer speaks a filler).
-- **Follow-ups of a call stay in the call's thread.** Work a bot starts on a call remembers the call: a handoff keeps
-  `RunContext.CallID` on its pending entry, and a code task records it as `agents.Session.CallID` (set from
-  `agents.WithCall`, kept in the session's JSON like `Owner`). Its report (`report:<calleeId>` / `task:<taskId>`) and
-  the bot's written answer are stored with that call id and published only as `chat.call.message` / `chat.call.delta`;
-  the answering turn runs in the bot's normal queue (tools, memory, history) but announces no `chat.run`, so the chat
-  shows neither it nor a running state (`Bot.Running` counts only workers the chat was told about). The callee's own
+- **Follow-ups of a call stay in the call's thread.** `RunContext.CallThread` is the call whose thread a run writes
+  into: voice turns set it with `CallID`; the written answer to a call follow-up sets only `CallThread` (it is not
+  spoken, so `end_call` / `switch_bot` refuse and `call_owner` works after the call). Work a run starts remembers its
+  `CallThread`: a handoff keeps it on its pending entry, and a code task records it as `agents.Session.CallID` (set
+  from `agents.WithCall`, kept in the session's JSON like `Owner`); `message_task` re-tags the task with the steering
+  run's `CallThread` (`Agents.SetCall`), so a task reports where its owner last steered it ("" = the chat). The report
+  (`report:<calleeId>` / `task:<taskId>`) and the bot's written answer are stored with that call id and published only
+  as `chat.call.message` / `chat.call.delta`; the answering turn runs in the bot's normal queue (tools, memory, history)
+  but announces no `chat.run`, so the chat shows neither it nor a running state (`Bot.Running` counts only workers the
+  chat was told about). A chat message queued behind such a turn announces the worker at once (`chat.run` running), so
+  the bot shows busy and can be stopped. Work that answer starts reports into the same thread. The callee's own
   thread (the task handed to it) is that bot's work and stays in its chat. Before a written answer is queued,
   `SetFollowUpHook(func(FollowUp) bool)` is told about every report and task report, from a call or not
-  (`FollowUp{BotID, CallID, Kind "report"|"task", From, Status, Text}` with `Text` clipped to 2,000 runes); it returns
-  true when it handed a call follow-up to that live call to be spoken, and then the report is only stored in the call
-  thread, with no written answer. A follow-up from chat is always answered in chat. The written answer does not get
-  `RunContext.CallID` (it is not spoken, and the call has usually ended), so work it starts reports to the chat.
+  (`FollowUp{BotID, CallID, Kind "report"|"task", From, Status, Text}` with `Text` clipped to 2,000 runes), before the
+  store deadline starts; it must return quickly and do slow work (dialling) asynchronously. It returns true when it
+  handed a call follow-up to that live call to be spoken, and then the report is only stored in the call thread, with
+  no written answer. A follow-up from chat is always answered in chat.
 - `Compose(ctx, botID, instruction)` asks the model for one short line (the call opener): nothing stored, no tools.
 - `PartCall` is a message part for the phone call card (`ID` call id, `Name` direction `outbound|inbound`, `Status`,
   `Title` reason, `DurationMs`, `Summary` estimated cost). `PostCallCard` inserts a message holding it and

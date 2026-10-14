@@ -150,7 +150,7 @@ func (m *Manager) VoiceTurn(ctx context.Context, req VoiceRequest) (string, erro
 	}
 	// Cue turns deliberately keep Author "user" (the owner is on the line). The cue text is also the memory Recall query,
 	// so cue texts stay short and instruction-like.
-	rc := RunContext{BotID: bot.ID, Bot: bot, MessageID: asst.ID, Actor: "bot:" + bot.ID, Author: "user", CallID: req.CallID, Emit: s.upsertTool}
+	rc := RunContext{BotID: bot.ID, Bot: bot, MessageID: asst.ID, Actor: "bot:" + bot.ID, Author: "user", CallID: req.CallID, CallThread: req.CallID, Emit: s.upsertTool}
 	hist := make([]Message, 0, len(req.History))
 	for _, l := range req.History {
 		hist = append(hist, Message{Role: l.Role, Status: StatusComplete, Parts: []MsgPart{{Type: PartText, Text: l.Text}}})

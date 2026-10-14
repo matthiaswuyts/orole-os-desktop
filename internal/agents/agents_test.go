@@ -337,6 +337,20 @@ func TestTaskStartedOnACallKeepsTheCall(t *testing.T) {
 	if agents.CallFrom(agents.WithCall(context.Background(), "")) != "" {
 		t.Fatal("an empty call id must leave the context without a call")
 	}
+
+	// Steered from the chat, the task reports to the chat again; steered from another call, to that call.
+	for _, call := range []string{"", "call-9"} {
+		got, err := e.m.SetCall(s.ID, call)
+		if err != nil || got.CallID != call {
+			t.Fatalf("SetCall(%q): %q %v", call, got.CallID, err)
+		}
+		if stored, err := e.st.GetSession(s.ID); err != nil || stored.CallID != call {
+			t.Fatalf("SetCall(%q) not persisted: %q %v", call, stored.CallID, err)
+		}
+	}
+	if _, err := e.m.SetCall("missing", "call-1"); err == nil {
+		t.Fatal("SetCall on an unknown task succeeded")
+	}
 }
 
 // A start that names no mode runs in the user's default; a YOLO default is confirmed by the

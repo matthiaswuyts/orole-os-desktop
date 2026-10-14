@@ -45,7 +45,8 @@ func busyf(format string, args ...any) error {
 }
 
 const (
-	maxQueued          = 20 // queued user messages per bot
+	storeTimeout       = 10 * time.Second // bounds the store work of a report delivered in the background
+	maxQueued          = 20               // queued user messages per bot
 	maxDelegationDepth = 2
 	defaultIdleAfter   = 2 * time.Minute
 	catalogTTL         = 5 * time.Minute
@@ -206,6 +207,14 @@ func (m *Manager) SetFollowUpHook(h FollowUpHook) {
 	m.mu.Lock()
 	m.followUp = h
 	m.mu.Unlock()
+}
+
+// botExists reports whether botID is an active bot, giving the lookup storeTimeout.
+func (m *Manager) botExists(ctx context.Context, botID string) bool {
+	ctx, cancel := context.WithTimeout(ctx, storeTimeout)
+	defer cancel()
+	_, err := m.store.getBot(ctx, botID, false)
+	return err == nil
 }
 
 // liveFollowUp tells the follow-up hook about f and reports whether it handed f to f's live call, so no written answer
