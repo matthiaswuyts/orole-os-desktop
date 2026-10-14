@@ -44,6 +44,19 @@ var curatedModels = []TTSModel{
 	{ID: "eleven_turbo_v2_5", Name: "Turbo v2.5 (older)", Description: "Slightly richer than Flash but slower; ElevenLabs now recommends Flash for new projects."},
 }
 
+// multilingualModel is the TTS model used when none is chosen and the call is not in English: ElevenLabs' default for
+// an agent may be an English-only model, which it refuses for a non-English agent.
+const multilingualModel = "eleven_flash_v2_5"
+
+// ttsModel is the model to request for a call language: the chosen one, else multilingualModel unless the call is in
+// English ("" leaves ElevenLabs' default).
+func ttsModel(lang, model string) string {
+	if model == "" && lang != LangEnglish {
+		return multilingualModel
+	}
+	return model
+}
+
 // AgentConfig describes the shared agent. Empty VoiceID/TTSModel are omitted from the request. Language is a call
 // language (LangDutch, LangEnglish, LangAuto); empty means Dutch.
 type AgentConfig struct {
@@ -223,8 +236,8 @@ func agentBody(c AgentConfig) map[string]any {
 	if c.VoiceID != "" {
 		tts["voice_id"] = c.VoiceID
 	}
-	if c.TTSModel != "" {
-		tts["model_id"] = c.TTSModel
+	if m := ttsModel(lang, c.TTSModel); m != "" {
+		tts["model_id"] = m
 	}
 	if len(tts) > 0 {
 		conv["tts"] = tts

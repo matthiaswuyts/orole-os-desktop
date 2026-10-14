@@ -1344,6 +1344,7 @@ func TestDutchCallSpeaksDutch(t *testing.T) {
 		t.Run("lang="+lang, func(t *testing.T) {
 			e := newCallEnv(t)
 			e.settings.CallLanguage = lang
+			e.settings.AgentLanguage = map[string]string{"": LangDutch, LangDutch: LangDutch, LangAuto: LangAuto}[lang]
 			e.host.opener = "not an opener" // fails CheckOpener: the Dutch fallback is used
 			e.host.toolDuringTurn = "list_tasks"
 			call, err := e.c.Place(context.Background(), PlaceRequest{BotID: "b1", Reason: "x"})
@@ -1378,7 +1379,7 @@ func TestDutchCallSpeaksDutch(t *testing.T) {
 
 func TestDutchVerificationAndRefusalLines(t *testing.T) {
 	e := newCallEnv(t)
-	e.settings.CallLanguage = LangDutch
+	e.settings.CallLanguage, e.settings.AgentLanguage = LangDutch, LangDutch
 	call, err := e.c.Place(context.Background(), PlaceRequest{Verify: "123456"})
 	if err != nil {
 		t.Fatal(err)
@@ -1386,5 +1387,39 @@ func TestDutchVerificationAndRefusalLines(t *testing.T) {
 	e.c.HandleFrame(context.Background(), Frame{Type: FrameLLMRequest, ID: "r0", CallID: call.ID})
 	if got := e.relay.text("r0"); got != "Je verificatiecode is 1 2 3 4 5 6. Nog een keer: 1 2 3 4 5 6." {
 		t.Fatalf("verification line %q", got)
+	}
+}
+
+// Until the agent has been re-provisioned to the chosen language, calls keep the agent's language, so what ElevenLabs
+// hears and says matches the bot. An agent from before the setting is English.
+func TestCallsKeepTheProvisionedLanguage(t *testing.T) {
+	e := newCallEnv(t)
+	e.settings.CallLanguage, e.settings.AgentLanguage = LangDutch, ""
+	e.host.toolDuringTurn = "list_tasks"
+	call, err := e.c.Place(context.Background(), PlaceRequest{BotID: "b1", Reason: "x"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.c.HandleFrame(context.Background(), Frame{Type: FrameLLMRequest, ID: "r0", CallID: call.ID})
+	e.c.HandleFrame(context.Background(), llmFrame("r1", call.ID, "what's running?"))
+	if got := e.relay.text("r1"); !strings.HasPrefix(got, "Checking your tasks.") {
+		t.Fatalf("spoken %q, want English until the agent is switched", got)
+	}
+	if turns := e.host.turnList(); turns[0].Language != LangEnglish {
+		t.Fatalf("turn language %q", turns[0].Language)
+	}
+	if d := e.dial.dialed(); len(d) != 1 || d[0].TTSModel != "" {
+		t.Fatalf("English call overrode the model: %+v", d)
+	}
+}
+
+func TestDutchCallOverridesModelWhenNoneChosen(t *testing.T) {
+	e := newCallEnv(t)
+	e.settings.CallLanguage, e.settings.AgentLanguage = LangDutch, LangDutch
+	if _, err := e.c.Place(context.Background(), PlaceRequest{BotID: "b1", Reason: "x"}); err != nil {
+		t.Fatal(err)
+	}
+	if d := e.dial.dialed(); len(d) != 1 || d[0].TTSModel != multilingualModel {
+		t.Fatalf("dialed %+v", d)
 	}
 }

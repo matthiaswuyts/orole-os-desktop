@@ -2054,6 +2054,11 @@ export interface PhoneSettings {
    * daemon's fixed spoken lines.
    */
   callLanguage: string;
+  /**
+   * AgentLanguage is the call language the ElevenLabs agent was last provisioned with, set only by provisioning
+   * (Configure ignores it from the UI). "" with an AgentID is an agent from before the setting existed: English.
+   */
+  agentLanguage: string;
 }
 
 /** PinRequest pins or unpins a bot. */

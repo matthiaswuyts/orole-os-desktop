@@ -99,6 +99,9 @@ type PhoneSettings struct {
 	// Dutch and follows the owner's language). It sets the ElevenLabs agent language, the bot's spoken language and the
 	// daemon's fixed spoken lines.
 	CallLanguage string `json:"callLanguage"`
+	// AgentLanguage is the call language the ElevenLabs agent was last provisioned with, set only by provisioning
+	// (Configure ignores it from the UI). "" with an AgentID is an agent from before the setting existed: English.
+	AgentLanguage string `json:"agentLanguage"`
 }
 
 // Call languages (PhoneSettings.CallLanguage).
@@ -108,7 +111,32 @@ const (
 	LangAuto    = "auto"
 )
 
-// callLanguage is the effective call language; empty means Dutch.
+// spokenLanguage is the language calls are held in right now: the one the agent was provisioned with, so speech
+// recognition, voice and the bot's words match until a re-provision to the chosen language succeeds. Without an agent
+// it is the setting.
+func (s PhoneSettings) spokenLanguage() string {
+	if s.AgentID == "" {
+		return s.callLanguage()
+	}
+	switch s.AgentLanguage {
+	case LangDutch, LangEnglish, LangAuto:
+		return s.AgentLanguage
+	}
+	return LangEnglish
+}
+
+// languageName names a call language for the owner.
+func languageName(lang string) string {
+	switch lang {
+	case LangEnglish:
+		return "English"
+	case LangAuto:
+		return "Auto (Dutch first)"
+	}
+	return "Dutch"
+}
+
+// callLanguage is the chosen call language; empty means Dutch.
 func (s PhoneSettings) callLanguage() string {
 	switch s.CallLanguage {
 	case LangEnglish, LangAuto:

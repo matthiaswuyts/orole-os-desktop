@@ -683,3 +683,76 @@ func TestEventTitleIsFencedAndClipped(t *testing.T) {
 		t.Fatalf("title not fenced: %q", brief)
 	}
 }
+
+// An agent provisioned before the call language existed is English; the default is now Dutch, so Start switches it
+// once in the background (agent update only) and records the provisioned language.
+func TestStartSyncsAgentLanguage(t *testing.T) {
+	srv, reqs := provisionFake(t, map[string]string{"PATCH /v1/convai/agents/ag1": `{}`})
+	legacy := PhoneSettings{RelayURL: "https://relay.example", TwilioNumber: "+3220000000", OwnerNumber: "+32470000000", OwnerVerified: true,
+		AgentID: "ag1", PhoneNumberID: "pn1", PostCallWebhookID: "wh1"}
+	e := newSvcEnv(t, func(c *ServiceConfig) {
+		c.HTTP, c.ElevenLabsURL, c.TwilioURL = srv.Client(), srv.URL, srv.URL
+		c.LoadSettings = func() (PhoneSettings, error) { return legacy, nil }
+	})
+	_ = e.svc.SetSecrets(SecretsInput{ElevenLabs: "k"})
+	_ = e.creds.Set(KeyLLMSecret, []byte("ls"))
+	if got := e.svc.callSettings().spokenLanguage(); got != LangEnglish {
+		t.Fatalf("before the sync calls are %q", got)
+	}
+	e.svc.Start(context.Background())
+	deadline := time.Now().Add(3 * time.Second)
+	for e.svc.Settings().AgentLanguage != LangDutch {
+		if time.Now().After(deadline) {
+			t.Fatalf("agent language not recorded: %+v", e.svc.Settings())
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	var patches []string
+	for _, r := range reqs() {
+		switch {
+		case r.Method == "PATCH" && r.Path == "/v1/convai/agents/ag1":
+			b, _ := json.Marshal(r.Body)
+			patches = append(patches, string(b))
+		case r.Path != "/v1/convai/agents/ag1":
+			t.Errorf("sync made another request: %s %s", r.Method, r.Path)
+		}
+	}
+	if len(patches) != 1 || !strings.Contains(patches[0], `"language":"nl"`) {
+		t.Fatalf("agent updates %v", patches)
+	}
+	if got := e.svc.callSettings().spokenLanguage(); got != LangDutch {
+		t.Fatalf("after the sync calls are %q", got)
+	}
+	if len(e.saved) == 0 || e.saved[len(e.saved)-1].AgentLanguage != LangDutch {
+		t.Fatalf("not persisted: %+v", e.saved)
+	}
+}
+
+func TestStartSyncFailureNotifiesAndKeepsLanguage(t *testing.T) {
+	srv, _ := fakeAPI(t, map[string]string{}) // every request 404s
+	e := newSvcEnv(t, func(c *ServiceConfig) {
+		c.HTTP, c.ElevenLabsURL = srv.Client(), srv.URL
+		c.LoadSettings = func() (PhoneSettings, error) {
+			return PhoneSettings{RelayURL: "https://relay.example", AgentID: "ag1", PhoneNumberID: "pn1"}, nil
+		}
+	})
+	_ = e.svc.SetSecrets(SecretsInput{ElevenLabs: "k"})
+	_ = e.creds.Set(KeyLLMSecret, []byte("ls"))
+	e.svc.Start(context.Background())
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		e.host.mu.Lock()
+		n := strings.Join(e.host.notices, "|")
+		e.host.mu.Unlock()
+		if strings.Contains(n, "Couldn't switch the phone agent to Dutch") {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("no notice: %q", n)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if got := e.svc.callSettings().spokenLanguage(); got != LangEnglish {
+		t.Fatalf("calls switched without the agent: %q", got)
+	}
+}

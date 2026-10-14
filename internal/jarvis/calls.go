@@ -209,7 +209,7 @@ func (c *Calls) Place(ctx context.Context, req PlaceRequest) (CallRecord, error)
 	if req.Verify == "" {
 		brief += "\n\n" + openedNote
 	}
-	lang := s.callLanguage()
+	lang := s.spokenLanguage()
 	l := &live{call: call, botName: bot.Name, brief: brief, lang: lang, opener: make(chan string, 1), done: make(chan struct{}),
 		verify: req.Verify, urgent: req.Urgent, quiet: req.QuietOverride}
 	c.cur = l
@@ -230,7 +230,7 @@ func (c *Calls) Place(ctx context.Context, req PlaceRequest) (CallRecord, error)
 		}
 	}
 	conv, sid, err := c.dial.OutboundCall(ctx, OutboundCall{AgentID: s.AgentID, PhoneNumberID: s.PhoneNumberID, To: s.OwnerNumber, CallID: call.ID,
-		BotID: bot.ID, VoiceID: or2(bot.Config.Jarvis.VoiceID, s.DefaultVoiceID), TTSModel: or2(bot.Config.Jarvis.TTSModel, s.DefaultTTSModel)})
+		BotID: bot.ID, VoiceID: or2(bot.Config.Jarvis.VoiceID, s.DefaultVoiceID), TTSModel: ttsModel(lang, or2(bot.Config.Jarvis.TTSModel, s.DefaultTTSModel))})
 	if err != nil {
 		c.finish(ctx, l, StatusFailed, 0)
 		if req.Verify == "" {
@@ -885,7 +885,7 @@ func (c *Calls) inbound(ctx context.Context, f Frame) {
 	}
 	call := CallRecord{ID: uuid.NewString(), BotID: bot.ID, Direction: Inbound, Reason: "You called", Status: StatusInProgress,
 		StartedAt: c.now().UnixMilli(), AnsweredAt: c.now().UnixMilli(), ProviderCallID: f.CallSID, ConversationID: f.ConversationID}
-	lang := s.callLanguage()
+	lang := s.spokenLanguage()
 	l := &live{call: call, botName: bot.Name, lang: lang, opener: make(chan string, 1), done: make(chan struct{})}
 	c.mu.Lock()
 	if c.cur != nil || c.closed {
@@ -922,7 +922,7 @@ func (c *Calls) inbound(ctx context.Context, f Frame) {
 	if v := or2(bot.Config.Jarvis.VoiceID, s.DefaultVoiceID); v != "" {
 		tts["voice_id"] = v
 	}
-	if m := or2(bot.Config.Jarvis.TTSModel, s.DefaultTTSModel); m != "" {
+	if m := ttsModel(lang, or2(bot.Config.Jarvis.TTSModel, s.DefaultTTSModel)); m != "" {
 		tts["model_id"] = m
 	}
 	ov, _ := json.Marshal(map[string]any{"tts": tts})

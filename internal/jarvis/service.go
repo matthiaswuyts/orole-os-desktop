@@ -123,6 +123,7 @@ type Service struct {
 	cancel      context.CancelFunc
 	started     bool
 	closed      bool
+	syncing     bool           // syncAgentLanguage is running
 	wg          sync.WaitGroup // event, tick and frame goroutines
 
 	relayMu     sync.Mutex
@@ -307,6 +308,7 @@ func (s *Service) Start(ctx context.Context) {
 	base := s.baseCtx
 	s.wg.Add(2)
 	s.mu.Unlock()
+	s.syncAgentLanguage()
 	go func() {
 		defer s.wg.Done()
 		for {
@@ -820,7 +822,7 @@ func (s *Service) Configure(ctx context.Context, in PhoneSettings) (ConfigureRes
 	}
 	cur := s.Settings()
 	in.OwnerNumber, in.OwnerVerified = cur.OwnerNumber, cur.OwnerVerified
-	in.AgentID, in.PhoneNumberID, in.PostCallWebhookID = cur.AgentID, cur.PhoneNumberID, cur.PostCallWebhookID
+	in.AgentID, in.PhoneNumberID, in.PostCallWebhookID, in.AgentLanguage = cur.AgentID, cur.PhoneNumberID, cur.PostCallWebhookID, cur.AgentLanguage
 	if in.TwilioNumber != cur.TwilioNumber {
 		in.PhoneNumberID = "" // a different number has to be imported
 	}
@@ -866,6 +868,7 @@ func (s *Service) Configure(ctx context.Context, in PhoneSettings) (ConfigureRes
 		return ConfigureResult{}, err
 	}
 	s.noticeOrphan(orphan)
+	s.syncAgentLanguage() // only when provisioning above did not already bring the agent to the chosen language
 	return ConfigureResult{Status: s.Status(ctx), WebhookSecret: webhookSecret}, nil
 }
 
@@ -878,6 +881,68 @@ func (s *Service) noticeOrphan(id string) {
 	s.cfg.Host.Notify("Delete the old Jarvis webhook", "The relay URL changed, so ElevenLabs webhook "+id+
 		" is no longer used. Delete it in the ElevenLabs workspace webhook settings.", "", "info")
 	s.cfg.Host.Audit("jarvis.webhook.orphaned", id, "allowed", "relay url changed")
+}
+
+// syncAgentLanguage re-provisions the agent's language in the background when it differs from the chosen call
+// language (an agent from before the setting, or a Configure whose provisioning did not run). It only updates the
+// agent: no number import, no webhook. Until it succeeds, calls keep the agent's language (spokenLanguage). Missing
+// prerequisites (no ElevenLabs key, relay URL or relay secret) skip it quietly: Connect provisions everything later.
+func (s *Service) syncAgentLanguage() {
+	s.mu.Lock()
+	set := s.settings
+	if !s.started || s.closed || s.syncing || set.AgentID == "" || set.AgentLanguage == set.callLanguage() || set.RelayURL == "" {
+		s.mu.Unlock()
+		return
+	}
+	s.syncing = true
+	base := s.baseCtx
+	s.wg.Add(1)
+	s.mu.Unlock()
+	go func() {
+		defer s.wg.Done()
+		defer func() { s.mu.Lock(); s.syncing = false; s.mu.Unlock() }()
+		lang := set.callLanguage()
+		el, err := s.elevenLabs()
+		if err != nil {
+			s.log.Info("jarvis: agent language not synced", "reason", "no ElevenLabs key")
+			return
+		}
+		secret, err := s.cfg.Creds.Get(KeyLLMSecret)
+		if err != nil || len(secret) == 0 {
+			s.log.Info("jarvis: agent language not synced", "reason", "no relay secret")
+			return
+		}
+		ctx, cancel := context.WithTimeout(base, time.Minute)
+		defer cancel()
+		cfg := AgentConfig{RelayURL: strings.TrimRight(set.RelayURL, "/"), LLMSecret: string(secret), VoiceID: set.DefaultVoiceID,
+			TTSModel: set.DefaultTTSModel, Language: lang}
+		if err := el.UpdateAgent(ctx, set.AgentID, cfg); err != nil {
+			if base.Err() == nil {
+				s.log.Warn("jarvis: cannot switch the agent language", "err", err)
+				s.cfg.Host.Notify("Couldn't switch the phone agent to "+languageName(lang), err.Error(), "", "warning")
+			}
+			return
+		}
+		s.cfgMu.Lock()
+		defer s.cfgMu.Unlock()
+		s.mu.Lock()
+		cur := s.settings
+		s.mu.Unlock()
+		if cur.AgentID != set.AgentID || cur.callLanguage() != lang {
+			return // changed meanwhile; that change provisions or syncs itself
+		}
+		cur.AgentLanguage = lang
+		if s.cfg.SaveSettings != nil {
+			if err := s.cfg.SaveSettings(cur); err != nil {
+				s.log.Warn("jarvis: cannot save settings", "err", err)
+				return
+			}
+		}
+		s.mu.Lock()
+		s.settings = cur
+		s.mu.Unlock()
+		s.notifyChanged()
+	}()
 }
 
 // apply saves and adopts settings, records the last provisioning error and reconnects the relay if needed.

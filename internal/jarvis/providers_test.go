@@ -244,7 +244,8 @@ func TestProvisionKeepsWebhookIDUnsetWhenSecretNotStored(t *testing.T) {
 func TestAgentBodyOmitsEmptyVoiceAndModel(t *testing.T) {
 	srv, reqs := provisionFake(t, nil)
 	el := &ElevenLabs{Key: "k", BaseURL: srv.URL, HTTP: srv.Client()}
-	if _, err := el.CreateAgent(context.Background(), AgentConfig{RelayURL: "https://r", LLMSecret: "ls"}); err != nil {
+	// English: ElevenLabs' default model is fine, so nothing is sent.
+	if _, err := el.CreateAgent(context.Background(), AgentConfig{RelayURL: "https://r", LLMSecret: "ls", Language: LangEnglish}); err != nil {
 		t.Fatal(err)
 	}
 	b, _ := json.Marshal(reqs()[0].Body)
@@ -415,4 +416,21 @@ func TestProvisionUpdatesAgentLanguage(t *testing.T) {
 		}
 	}
 	t.Fatal("agent not updated")
+}
+
+// A non-English agent needs a multilingual voice model; with none chosen, Flash v2.5 is sent (create, update and per call).
+func TestNonEnglishCallsGetMultilingualModel(t *testing.T) {
+	for _, lang := range []string{"", LangDutch, LangAuto} {
+		raw, _ := json.Marshal(agentBody(AgentConfig{RelayURL: "https://r", LLMSecret: "s", Language: lang}))
+		if !strings.Contains(string(raw), `"tts":{"model_id":"eleven_flash_v2_5"}`) {
+			t.Errorf("%q: agent body lacks the multilingual model: %s", lang, raw)
+		}
+	}
+	raw, _ := json.Marshal(agentBody(AgentConfig{RelayURL: "https://r", LLMSecret: "s", Language: LangDutch, TTSModel: "eleven_v3_conversational"}))
+	if !strings.Contains(string(raw), `"model_id":"eleven_v3_conversational"`) {
+		t.Errorf("chosen model replaced: %s", raw)
+	}
+	if ttsModel(LangEnglish, "") != "" || ttsModel(LangDutch, "") != multilingualModel || ttsModel(LangAuto, "x") != "x" {
+		t.Error("ttsModel")
+	}
 }

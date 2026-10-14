@@ -206,7 +206,15 @@ when a call starts and sets:
   `language_detection` system tool (`built_in_tools.language_detection`, `params.system_tool_type`
   `language_detection`) with an `en` entry in `conversation_config.language_presets`, so the agent can switch when the
   owner speaks English. Other languages need another preset. Without `auto` the tool is sent as `null` and the presets
-  empty, so switching away from Auto removes them. Saving the setting re-provisions (Connect always updates the agent);
+  empty, so switching away from Auto removes them. A language other than English with no voice model chosen sends
+  `model_id` `eleven_flash_v2_5` (on the agent and per call), because ElevenLabs' default may be an English-only model
+  that it refuses for a non-English agent. Provisioning records the language it gave the agent in `agentLanguage` (not
+  user-editable; an agent from before the setting counts as English). Calls use that **provisioned** language for the
+  bot's words and the fixed lines, so speech recognition, voice and words always match. Saving the setting
+  re-provisions (Connect always updates the agent); on daemon start, and after a save that did not provision, the
+  daemon updates only the agent's language in the background when it differs (no number import, no webhook), and
+  notifies "Couldn't switch the phone agent to Dutch: ..." if that fails. Missing ElevenLabs key, relay URL or relay
+  secret skip that update quietly;
 - the bot's spoken language: `chat.VoiceRequest.Language` adds one line to the voice prompt (`nl`: speak Dutch; `en`:
   speak English; `auto`: answer in the owner's language, Dutch until known);
 - the opener and inbound greeting instructions ("Write it in Dutch"), and the daemon's fixed lines in
