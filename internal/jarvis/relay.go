@@ -20,7 +20,6 @@ const (
 	FrameInboundLookup = "inbound.lookup" // relay -> daemon: inbound call webhook
 	FrameInboundAnswer = "inbound.answer" // daemon -> relay: accept/reject + variables
 	FrameCallStatus    = "call.status"    // relay -> daemon: post-call webhook
-	FrameHangup        = "call.hangup"    // daemon -> relay: end the call after the current turn
 )
 
 var ErrRelayDown = errors.New("jarvis: relay not connected")

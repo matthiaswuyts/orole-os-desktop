@@ -16,6 +16,9 @@ const DEFAULT_IDLE_MS = 20_000; // no frame for this long while the daemon is co
 const DEFAULT_GRACE_MS = 5_000; // daemon socket gone: wait this long, then give up
 const DEFAULT_MAX_MS = 120_000; // absolute cap per request
 const INBOUND_TIMEOUT_MS = 4_000;
+// ElevenLabs is configured with <relay>/llm; depending on the client it appends /chat/completions or
+// /v1/chat/completions, or posts to the bare path. All of them are the same custom-LLM endpoint.
+export const LLM_PATHS = ["/llm/chat/completions", "/llm", "/llm/v1/chat/completions"];
 const enc = new TextEncoder();
 
 function sseChunk(content: string): Uint8Array {
@@ -39,7 +42,7 @@ export class Hub extends DurableObject<HubEnv> {
     if (path === "/daemon") return req.headers.get("Upgrade") === "websocket" ? this.attach() : new Response("expected websocket", { status: 426 });
     let body: any;
     try { body = await req.json(); } catch { return new Response("bad json", { status: 400 }); }
-    if (path === "/llm/chat/completions") return this.llm(body ?? {});
+    if (LLM_PATHS.includes(path)) return this.llm(body ?? {});
     if (path === "/inbound") return this.inbound(body ?? {});
     if (path === "/status") {
       this.send(this.statusFrame(body ?? {}));
@@ -137,6 +140,7 @@ export class Hub extends DurableObject<HubEnv> {
     if (!sock) return new Response("daemon offline", { status: 503 });
     const id = crypto.randomUUID();
     let t: number | null = null;
+    // null: the daemon went away or never answered (503, the daemon is unavailable); a frame: its decision.
     const answer = new Promise<Frame | null>((resolve) => {
       t = setTimeout(() => { this.pending.delete(id); resolve(null); }, INBOUND_TIMEOUT_MS);
       this.pending.set(id, {
@@ -151,9 +155,18 @@ export class Hub extends DurableObject<HubEnv> {
       return new Response("daemon offline", { status: 503 });
     }
     const f = await answer;
+    if (!f) return new Response("daemon offline", { status: 503 });
     // Go omits `accept` when false, so a missing field is a rejection.
-    if (!f || f.accept !== true) return new Response("rejected", { status: 403 });
-    return Response.json({ type: "conversation_initiation_client_data", dynamic_variables: f.vars ?? {}, conversation_config_override: f.overrides ?? {} });
+    if (f.accept !== true) return new Response("rejected", { status: 403 });
+    const vars = f.vars ?? {};
+    // custom_llm_extra_body comes back on every /llm request as elevenlabs_extra_body, which is how a turn
+    // finds its call.
+    return Response.json({
+      type: "conversation_initiation_client_data",
+      dynamic_variables: vars,
+      conversation_config_override: f.overrides ?? {},
+      custom_llm_extra_body: { call_id: vars.call_id ?? "" },
+    });
   }
 
   private statusFrame(body: { data?: { conversation_id?: string; status?: string; metadata?: { call_duration_secs?: number }; conversation_initiation_client_data?: { dynamic_variables?: Record<string, string> } } }): Frame {

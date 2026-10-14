@@ -1,4 +1,4 @@
-import type { HubEnv } from "./hub";
+import { LLM_PATHS, type HubEnv } from "./hub";
 export { Hub } from "./hub";
 
 export interface Env extends HubEnv {
@@ -37,7 +37,9 @@ export default {
     const url = new URL(req.url);
     const hub = env.HUB.get(env.HUB.idFromName("hub"));
     const notConfigured = () => new Response("relay not configured", { status: 503 });
-    switch (url.pathname) {
+    // Each path fails closed on its own secret: a missing secret refuses only the paths that need it.
+    const path = LLM_PATHS.includes(url.pathname) ? "/llm/chat/completions" : url.pathname;
+    switch (path) {
       case "/health":
         return hub.fetch(req);
       case "/daemon":

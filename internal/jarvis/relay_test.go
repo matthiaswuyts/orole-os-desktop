@@ -76,7 +76,7 @@ func TestRelayClientSendWhileDisconnected(t *testing.T) {
 	if rc.Connected() {
 		t.Fatal("connected without Run")
 	}
-	if err := rc.Send(context.Background(), Frame{Type: FrameHangup}); err != ErrRelayDown {
+	if err := rc.Send(context.Background(), Frame{Type: FrameLLMDone}); err != ErrRelayDown {
 		t.Fatalf("err=%v", err)
 	}
 }

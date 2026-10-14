@@ -76,6 +76,28 @@ describe("llm", () => {
   });
 });
 
+describe("llm path aliases", () => {
+  for (const path of ["/llm", "/llm/v1/chat/completions"]) {
+    it(`serves ${path} like /llm/chat/completions`, async () => {
+      expect((await SELF.fetch(`https://relay${path}`, { method: "POST", body: llmBody })).status).toBe(401);
+      const ws = await daemon();
+      ws.addEventListener("message", (e) => {
+        const f = JSON.parse(e.data as string);
+        if (f.type !== "llm.request") return;
+        expect(f.callId).toBe("c1");
+        ws.send(JSON.stringify({ type: "llm.delta", id: f.id, text: "Hi." }));
+        ws.send(JSON.stringify({ type: "llm.done", id: f.id }));
+      });
+      const res = await SELF.fetch(`https://relay${path}`, { method: "POST", headers: { "x-orole-relay": "ls" }, body: llmBody });
+      expect(res.headers.get("content-type")).toContain("text/event-stream");
+      const text = await res.text();
+      expect(text).toContain('"content":"Hi."');
+      expect(text.trim().endsWith("data: [DONE]")).toBe(true);
+      ws.close();
+    });
+  }
+});
+
 describe("inbound", () => {
   it("returns the daemon's answer as conversation initiation data", async () => {
     const ws = await daemon();
@@ -88,10 +110,20 @@ describe("inbound", () => {
       body: JSON.stringify({ caller_id: "+32470000000", called_number: "+3220000000", call_sid: "CA1", agent_id: "ag" }),
     });
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { type: string; dynamic_variables: Record<string, string> };
+    const body = (await res.json()) as { type: string; dynamic_variables: Record<string, string>; custom_llm_extra_body: Record<string, string> };
     expect(body.type).toBe("conversation_initiation_client_data");
     expect(body.dynamic_variables.call_id).toBe("c9");
+    // ElevenLabs echoes this on every /llm request, which is how an inbound turn finds its call.
+    expect(body.custom_llm_extra_body).toEqual({ call_id: "c9" });
     ws.close();
+  });
+  it("returns 503 when the daemon socket drops before answering", async () => {
+    const ws = await daemon();
+    ws.addEventListener("message", (e) => {
+      if (JSON.parse(e.data as string).type === "inbound.lookup") ws.close();
+    });
+    const res = await SELF.fetch("https://relay/inbound", { method: "POST", headers: { "x-orole-relay": "ls" }, body: JSON.stringify({ caller_id: "+1" }) });
+    expect(res.status).toBe(503);
   });
   it("rejects when the daemon refuses", async () => {
     const ws = await daemon();
@@ -148,6 +180,19 @@ describe("fail closed without secrets", () => {
     expect((await hit("/llm/chat/completions", { method: "POST", body: llmBody })).status).toBe(503);
     expect((await hit("/inbound", { method: "POST", body: "{}" })).status).toBe(503);
     expect((await hit("/inbound", { method: "POST", headers: { "x-orole-relay": "" }, body: "{}" })).status).toBe(503);
+  });
+  it("refuses the llm aliases with no secret", async () => {
+    for (const p of ["/llm", "/llm/v1/chat/completions"]) {
+      expect((await hit(p, { method: "POST", headers: { "x-orole-relay": "" }, body: llmBody })).status).toBe(503);
+    }
+  });
+  it("fails closed per path: a missing webhook secret leaves /llm working", async () => {
+    const noWebhook = { ...env, WEBHOOK_SECRET: "" } as unknown as Env;
+    const call = (path: string, init: RequestInit) => worker.fetch(new Request(`https://relay${path}`, init), noWebhook);
+    expect((await call("/status", { method: "POST", headers: { "ElevenLabs-Signature": await sign("{}") }, body: "{}" })).status).toBe(503);
+    const res = await call("/llm", { method: "POST", headers: { "x-orole-relay": "ls" }, body: llmBody });
+    expect(res.status).toBe(200);
+    expect(await res.text()).toContain("data: [DONE]");
   });
   it("refuses /status even with a well-formed signature", async () => {
     const body = "{}";
