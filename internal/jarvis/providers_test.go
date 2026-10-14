@@ -108,7 +108,7 @@ func TestProvisionCreatesAgentAndImportsNumber(t *testing.T) {
 	el := &ElevenLabs{Key: "k", BaseURL: srv.URL, HTTP: srv.Client()}
 	tw := &Twilio{SID: "AC1", Token: "t", BaseURL: srv.URL, HTTP: srv.Client()}
 	var stored string
-	s, err := Provision(context.Background(), el, tw, Settings{RelayURL: "https://relay.example", TwilioNumber: "+3220000000"},
+	s, err := Provision(context.Background(), el, tw, PhoneSettings{RelayURL: "https://relay.example", TwilioNumber: "+3220000000"},
 		ProvisionSecrets{LLMSecret: "ls", TwilioSID: "AC1", TwilioToken: "t", StoreWebhookSecret: func(v string) error { stored = v; return nil }})
 	if err != nil || s.AgentID != "ag1" || s.PhoneNumberID != "pn1" || s.PostCallWebhookID != "wh1" {
 		t.Fatalf("s=%+v err=%v", s, err)
@@ -154,7 +154,7 @@ func TestProvisionIsIdempotent(t *testing.T) {
 	srv, reqs := provisionFake(t, map[string]string{"PATCH /v1/convai/agents/ag1": `{}`})
 	el := &ElevenLabs{Key: "k", BaseURL: srv.URL, HTTP: srv.Client()}
 	tw := &Twilio{SID: "AC1", Token: "t", BaseURL: srv.URL, HTTP: srv.Client()}
-	in := Settings{RelayURL: "https://relay.example", TwilioNumber: "+3220000000", AgentID: "ag1", PhoneNumberID: "pn1", PostCallWebhookID: "wh1"}
+	in := PhoneSettings{RelayURL: "https://relay.example", TwilioNumber: "+3220000000", AgentID: "ag1", PhoneNumberID: "pn1", PostCallWebhookID: "wh1"}
 	if _, err := Provision(context.Background(), el, tw, in, ProvisionSecrets{LLMSecret: "ls"}); err != nil {
 		t.Fatal(err)
 	}
@@ -174,7 +174,7 @@ func TestProvisionRejectsNumberNotInTwilio(t *testing.T) {
 	srv, _ := fakeAPI(t, map[string]string{"GET /2010-04-01/Accounts/AC1/IncomingPhoneNumbers.json": `{"incoming_phone_numbers":[]}`})
 	el := &ElevenLabs{Key: "k", BaseURL: srv.URL, HTTP: srv.Client()}
 	tw := &Twilio{SID: "AC1", Token: "t", BaseURL: srv.URL, HTTP: srv.Client()}
-	if _, err := Provision(context.Background(), el, tw, Settings{RelayURL: "https://r", TwilioNumber: "+1"}, ProvisionSecrets{}); err == nil {
+	if _, err := Provision(context.Background(), el, tw, PhoneSettings{RelayURL: "https://r", TwilioNumber: "+1"}, ProvisionSecrets{}); err == nil {
 		t.Fatal("accepted a number Twilio does not own")
 	}
 }
@@ -197,7 +197,7 @@ func TestProvisionKeepsWebhookIDUnsetWhenSecretNotStored(t *testing.T) {
 		srv, _ := provisionFake(t, nil)
 		el := &ElevenLabs{Key: "k", BaseURL: srv.URL, HTTP: srv.Client()}
 		tw := &Twilio{SID: "AC1", Token: "t", BaseURL: srv.URL, HTTP: srv.Client()}
-		s, err := Provision(context.Background(), el, tw, Settings{RelayURL: "https://relay.example", TwilioNumber: "+3220000000"},
+		s, err := Provision(context.Background(), el, tw, PhoneSettings{RelayURL: "https://relay.example", TwilioNumber: "+3220000000"},
 			ProvisionSecrets{LLMSecret: "ls", TwilioSID: "AC1", TwilioToken: "t", StoreWebhookSecret: store})
 		if err == nil || s.PostCallWebhookID != "" {
 			t.Errorf("%s: id=%q err=%v", name, s.PostCallWebhookID, err)
@@ -229,7 +229,7 @@ func TestProvisionScrubsLLMSecretFromErrors(t *testing.T) {
 	}))
 	defer bad.Close()
 	el := &ElevenLabs{Key: "k", BaseURL: bad.URL, HTTP: bad.Client()}
-	_, err := Provision(context.Background(), el, tw, Settings{RelayURL: "https://r", TwilioNumber: "+3220000000"}, ProvisionSecrets{LLMSecret: "supersecretllm"})
+	_, err := Provision(context.Background(), el, tw, PhoneSettings{RelayURL: "https://r", TwilioNumber: "+3220000000"}, ProvisionSecrets{LLMSecret: "supersecretllm"})
 	if err == nil || strings.Contains(err.Error(), "supersecretllm") {
 		t.Fatalf("err=%v", err)
 	}

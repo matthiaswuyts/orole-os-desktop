@@ -173,7 +173,7 @@ func TestNotificationRuleDoesNotLoopOnOwnNotices(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := d.Jarvis.AddRule(ctx, jarvis.Rule{BotID: b.ID, Trigger: jarvis.NotificationTrigger, Target: "failed", Repeat: true}); err != nil {
+	if _, err := d.Jarvis.AddRule(ctx, jarvis.JarvisRule{BotID: b.ID, Trigger: jarvis.NotificationTrigger, Target: "failed", Repeat: true}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := d.Notify(notifications.Input{Source: "github.ci", Kind: notifications.Failed, Title: "CI failed", Level: notifications.Error}); err != nil {
@@ -232,12 +232,12 @@ func TestJarvisOverIPC(t *testing.T) {
 		t.Fatalf("status %+v err=%v", st, err)
 	}
 	var res jarvis.ConfigureResult
-	err := c.Call(ctx, "jarvis.configure", jarvis.Settings{RelayURL: "http://relay.example"}, &res)
+	err := c.Call(ctx, "jarvis.configure", jarvis.PhoneSettings{RelayURL: "http://relay.example"}, &res)
 	var ie *ipc.Error
 	if !errors.As(err, &ie) || ie.Code != ipc.CodeBadRequest {
 		t.Fatalf("plain http relay: %v", err)
 	}
-	if err := c.Call(ctx, "jarvis.configure", jarvis.Settings{QuietStart: "22:00", QuietEnd: "07:00"}, &res); err != nil || res.Status.Settings.QuietStart != "22:00" {
+	if err := c.Call(ctx, "jarvis.configure", jarvis.PhoneSettings{QuietStart: "22:00", QuietEnd: "07:00"}, &res); err != nil || res.Status.Settings.QuietStart != "22:00" {
 		t.Fatalf("configure res=%+v err=%v", res, err)
 	}
 	if got, _ := d.loadJarvisSettings(); got.QuietStart != "22:00" {
@@ -261,7 +261,7 @@ func TestJarvisOverIPC(t *testing.T) {
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	var rules []jarvis.Rule
+	var rules []jarvis.JarvisRule
 	if err := c.Call(ctx, "jarvis.rules.list", map[string]string{"botId": ""}, &rules); err != nil || len(rules) != 0 {
 		t.Fatalf("rules %v err=%v", rules, err)
 	}

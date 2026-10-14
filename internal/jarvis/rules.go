@@ -7,7 +7,7 @@ import (
 
 // Event is something a rule can fire on. The daemon builds it from task, automation and notification hooks.
 type Event struct {
-	Trigger    Trigger
+	Trigger    JarvisTrigger
 	OwnerBotID string // bot that started the task, if any
 	TargetID   string // task id, automation id, or notification kind
 	Source     string // notification source (e.g. "github.ci")
@@ -15,9 +15,9 @@ type Event struct {
 	Detail     string // untrusted detail (task result, error); fenced before it reaches a model
 }
 
-func Expired(r Rule, nowMs int64) bool { return r.ExpiresAt > 0 && nowMs >= r.ExpiresAt }
+func Expired(r JarvisRule, nowMs int64) bool { return r.ExpiresAt > 0 && nowMs >= r.ExpiresAt }
 
-func Matches(r Rule, ev Event, nowMs int64) bool {
+func Matches(r JarvisRule, ev Event, nowMs int64) bool {
 	if r.Trigger == AtTime || r.Trigger != ev.Trigger || Expired(r, nowMs) {
 		return false
 	}
@@ -40,7 +40,7 @@ func Matches(r Rule, ev Event, nowMs int64) bool {
 }
 
 // NextAt is the next wall-clock occurrence of an at_time rule strictly after `after`, in after's location.
-func NextAt(r Rule, after time.Time) time.Time {
+func NextAt(r JarvisRule, after time.Time) time.Time {
 	if r.Trigger != AtTime {
 		return time.Time{}
 	}

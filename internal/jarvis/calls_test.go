@@ -240,8 +240,8 @@ func newCallEnv(t *testing.T) *callEnv {
 	st, now := testStore(t)
 	*now = time.Date(2026, 10, 14, 12, 0, 0, 0, time.UTC)
 	e := &callEnv{host: newFakeHost(), dial: &fakeDialer{}, relay: &fakeSender{}, store: st, now: now}
-	settings := Settings{OwnerNumber: "+32470000000", OwnerVerified: true, AgentID: "ag", PhoneNumberID: "pn"}
-	e.c = NewCalls(st, e.host, e.dial, e.relay, func() Settings { return settings }, func() time.Time { return *e.now }, slog.Default())
+	settings := PhoneSettings{OwnerNumber: "+32470000000", OwnerVerified: true, AgentID: "ag", PhoneNumberID: "pn"}
+	e.c = NewCalls(st, e.host, e.dial, e.relay, func() PhoneSettings { return settings }, func() time.Time { return *e.now }, slog.Default())
 	t.Cleanup(e.c.Close) // registered after testStore's cleanup, so it runs first
 	return e
 }

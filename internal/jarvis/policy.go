@@ -23,7 +23,7 @@ type Refusal struct{ Reason string }
 
 func (r *Refusal) Error() string { return r.Reason }
 
-func Allow(s Settings, now time.Time, u Usage, a Ask) error {
+func Allow(s PhoneSettings, now time.Time, u Usage, a Ask) error {
 	if u.InCall {
 		return &Refusal{"A call is already in progress."}
 	}
@@ -50,7 +50,7 @@ func minutes(hhmmStr string) (int, bool) {
 }
 
 // InQuietHours reports whether now (in its own location) falls in [QuietStart, QuietEnd), wrapping midnight.
-func InQuietHours(s Settings, now time.Time) bool {
+func InQuietHours(s PhoneSettings, now time.Time) bool {
 	start, ok1 := minutes(s.QuietStart)
 	end, ok2 := minutes(s.QuietEnd)
 	if !ok1 || !ok2 || start == end {

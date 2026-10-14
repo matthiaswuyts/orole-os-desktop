@@ -41,6 +41,7 @@ func main() {
 	mygo.Bind(app.GitHub{L: link})
 	mygo.Bind(app.Files{L: link})
 	mygo.Bind(app.Notifications{L: link})
+	mygo.Bind(app.Jarvis{L: link})
 	mygo.Bind(app.Search{L: link})
 	mygo.Bind(app.Shell{})
 	mygo.Bind(app.Agents{L: link})

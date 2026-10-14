@@ -271,6 +271,8 @@ export interface BotConfig {
   toolAccess?: string;
   /** Tasks overrides the global defaults for code tasks this bot starts; empty fields inherit them. */
   tasks?: BotTaskDefaults;
+  /** Jarvis lets the bot phone the owner and take their calls. */
+  jarvis?: BotJarvis;
   /** grants beyond the private scope */
   memory: ScopeAccess[];
   limits: BotLimits;
@@ -303,6 +305,20 @@ export interface BotInput {
   model: string;
   reasoning: string;
   config: BotConfig;
+}
+
+/**
+ * BotJarvis configures Jarvis mode: the bot may phone the owner and take their calls. Enabling it requires full
+ * permissions, checked by the daemon on save and before every call and action (see internal/jarvis).
+ */
+export interface BotJarvis {
+  enabled?: boolean;
+  /** "When to call me", <= MaxJarvisPolicy */
+  policy?: string;
+  /** ElevenLabs voice; "" = global default */
+  voiceId?: string;
+  /** ElevenLabs TTS model; "" = global default */
+  ttsModel?: string;
 }
 
 /** BotLimits bound a single turn. Zero values select engine defaults. */
@@ -357,6 +373,21 @@ export interface BranchState {
   upstream?: string;
   ahead: number;
   behind: number;
+}
+
+export interface CallRecord {
+  id: string;
+  botId: string;
+  direction: string;
+  ruleId?: string;
+  reason: string;
+  status: string;
+  messageId?: string;
+  startedAt?: number;
+  answeredAt?: number;
+  endedAt?: number;
+  estCostMicros: number;
+  createdAt: number;
 }
 
 /** CallResult is a tool result. It is untrusted data. */
@@ -545,6 +576,15 @@ export interface Config {
    */
   retentionDays: number;
   retentionMaxRuns: number;
+}
+
+/**
+ * ConfigureResult is Configure's outcome. WebhookSecret is set only on the run that created the ElevenLabs
+ * post-call webhook: it is shown once so the owner can `wrangler secret put WEBHOOK_SECRET`.
+ */
+export interface ConfigureResult {
+  status: StatusView;
+  webhookSecret?: string;
 }
 
 /** ConnectRequest carries a pasted API key. The key is never echoed back or logged. */
@@ -1353,6 +1393,21 @@ export interface IssueWrite {
   confirmed: boolean;
 }
 
+export interface JarvisRule {
+  id: string;
+  botId: string;
+  trigger: JarvisTrigger;
+  target: string;
+  repeat: boolean;
+  urgent: boolean;
+  quietOverride: boolean;
+  note: string;
+  expiresAt?: number;
+  createdAt: number;
+}
+
+export type JarvisTrigger = "task_finished" | "task_failed" | "automation_finished" | "automation_failed" | "notification" | "at_time";
+
 /** Job is a job of a workflow run. */
 export interface Job {
   id: number;
@@ -1950,6 +2005,35 @@ export interface PersistentSession {
   id: string;
 }
 
+/** PhoneSettings is the plain (non-secret) global configuration, stored as JSON under settings key "jarvis". */
+export interface PhoneSettings {
+  /** https://<worker>.workers.dev */
+  relayUrl: string;
+  /** E.164 */
+  ownerNumber: string;
+  ownerVerified: boolean;
+  /** E.164 of the Jarvis number */
+  twilioNumber: string;
+  /** ElevenLabs agent, set by provisioning */
+  agentId: string;
+  /** ElevenLabs phone number id, set by provisioning */
+  phoneNumberId: string;
+  /** ElevenLabs workspace webhook id, set by provisioning */
+  postCallWebhookId: string;
+  /** "22:00", "" = no quiet hours */
+  quietStart: string;
+  /** "07:00" */
+  quietEnd: string;
+  /** 0 = default 10 */
+  dailyCap: number;
+  /** 0 = default 2000 */
+  monthlyCapCents: number;
+  /** 0 = default 12 */
+  centsPerMinute: number;
+  defaultVoiceId: string;
+  defaultTtsModel: string;
+}
+
 /** PinRequest pins or unpins a bot. */
 export interface PinRequest {
   id: string;
@@ -2347,6 +2431,12 @@ export interface RegenerateRequest {
   messageId: string;
 }
 
+/** RelaySecrets are shown to the owner once so they can `wrangler secret put` them. */
+export interface RelaySecrets {
+  relayToken: string;
+  llmSecret: string;
+}
+
 export interface Reply {
   threadId: string;
   body: string;
@@ -2567,6 +2657,13 @@ export interface SearchResult2 {
   score: number;
   /** Action: {view:"files", provider:"local", path:"..."} etc. */
   action: Record<string, string>;
+}
+
+/** SecretsInput sets provider credentials; empty fields are left unchanged. */
+export interface SecretsInput {
+  twilioSid?: string;
+  twilioToken?: string;
+  elevenLabsKey?: string;
 }
 
 /** SendRequest sends a user message and starts a run. If a run is active the message is queued by the daemon. */
@@ -2903,6 +3000,22 @@ export interface Status {
   dirty: number;
 }
 
+/** StatusView is what the settings screen shows. It never carries a secret, only whether one is stored. */
+export interface StatusView {
+  settings: PhoneSettings;
+  hasTwilio: boolean;
+  hasElevenLabs: boolean;
+  /** relay token and LLM secret */
+  hasRelaySecrets: boolean;
+  /** post-call HMAC secret from ElevenLabs */
+  hasWebhookSecret: boolean;
+  relayConnected: boolean;
+  verificationPending: boolean;
+  callsToday: number;
+  monthCostMicros: number;
+  lastError?: string;
+}
+
 export interface Step {
   id: string;
   name: string;
@@ -2971,6 +3084,13 @@ export interface SyncState {
   /** "installed" | "outdated" | "missing" | "unsupported" (the "orole" MCP entry) */
   gateway: string;
   error: string;
+}
+
+export interface TTSModel {
+  id: string;
+  name: string;
+  /** "fast" | "expressive" */
+  latency: string;
 }
 
 /**
@@ -3204,6 +3324,11 @@ export interface User {
   html_url: string;
   type: string;
   name?: string;
+}
+
+export interface Voice {
+  id: string;
+  name: string;
 }
 
 /**
@@ -3717,6 +3842,50 @@ export const Notifications = {
   /** Test creates a real notification through the daemon's saved preferences. */
   test(): Promise<Result> {
     return call("Notifications.Test");
+  },
+} as const;
+
+/** Jarvis configures phone calls with bots. Secrets go straight to the daemon's Credential Manager and are never read back. */
+export const Jarvis = {
+  /**
+   * Configure saves the phone settings and provisions the ElevenLabs agent. The result carries the post-call
+   * webhook secret once, on the run that created the webhook.
+   */
+  configure(in_: PhoneSettings): Promise<ConfigureResult> {
+    return call("Jarvis.Configure", in_);
+  },
+  confirmVerification(code: string): Promise<StatusView> {
+    return call("Jarvis.ConfirmVerification", code);
+  },
+  deleteRule(id: string): Promise<void> {
+    return call("Jarvis.DeleteRule", id);
+  },
+  generateRelaySecrets(): Promise<RelaySecrets> {
+    return call("Jarvis.GenerateRelaySecrets");
+  },
+  models(): Promise<TTSModel[]> {
+    return call("Jarvis.Models");
+  },
+  recentCalls(botID: string): Promise<CallRecord[]> {
+    return call("Jarvis.RecentCalls", botID);
+  },
+  rules(botID: string): Promise<JarvisRule[]> {
+    return call("Jarvis.Rules", botID);
+  },
+  setSecrets(in_: SecretsInput): Promise<StatusView> {
+    return call("Jarvis.SetSecrets", in_);
+  },
+  startVerification(number: string): Promise<void> {
+    return call("Jarvis.StartVerification", number);
+  },
+  status(): Promise<StatusView> {
+    return call("Jarvis.Status");
+  },
+  testCall(botID: string): Promise<string> {
+    return call("Jarvis.TestCall", botID);
+  },
+  voices(): Promise<Voice[]> {
+    return call("Jarvis.Voices");
   },
 } as const;
 
@@ -4548,6 +4717,7 @@ export const events = {
   githubChanged: event<GitHubChange>("github:changed"),
   /** GitHubClone reports progress of a clone started with GitHub.Clone. */
   githubClone: event<GitHubCloneEvent>("github:clone"),
+  jarvisChanged: event<StatusView>("jarvis:changed"),
   mcpStatus: event<ServerState>("mcp:status"),
   mcpAuthUrl: event<AuthStart>("mcp:auth-url"),
   mcpAuthDone: event<AuthDone>("mcp:auth-done"),

@@ -42,8 +42,8 @@ type ServiceConfig struct {
 	HTTP  *http.Client
 	// ElevenLabsURL and TwilioURL override the provider API base URLs ("" = production); tests point them at fakes.
 	ElevenLabsURL, TwilioURL string
-	LoadSettings             func() (Settings, error)
-	SaveSettings             func(Settings) error
+	LoadSettings             func() (PhoneSettings, error)
+	SaveSettings             func(PhoneSettings) error
 	// LoadState and SaveState keep daemon-owned runtime state (the last at_time tick) across restarts.
 	LoadState func() (State, error)
 	SaveState func(State) error
@@ -62,16 +62,16 @@ type State struct {
 
 // StatusView is what the settings screen shows. It never carries a secret, only whether one is stored.
 type StatusView struct {
-	Settings            Settings `json:"settings"`
-	HasTwilio           bool     `json:"hasTwilio"`
-	HasElevenLabs       bool     `json:"hasElevenLabs"`
-	HasRelaySecrets     bool     `json:"hasRelaySecrets"`  // relay token and LLM secret
-	HasWebhookSecret    bool     `json:"hasWebhookSecret"` // post-call HMAC secret from ElevenLabs
-	RelayConnected      bool     `json:"relayConnected"`
-	VerificationPending bool     `json:"verificationPending"`
-	CallsToday          int      `json:"callsToday"`
-	MonthCostMicros     int64    `json:"monthCostMicros"`
-	LastError           string   `json:"lastError,omitempty"`
+	Settings            PhoneSettings `json:"settings"`
+	HasTwilio           bool          `json:"hasTwilio"`
+	HasElevenLabs       bool          `json:"hasElevenLabs"`
+	HasRelaySecrets     bool          `json:"hasRelaySecrets"`  // relay token and LLM secret
+	HasWebhookSecret    bool          `json:"hasWebhookSecret"` // post-call HMAC secret from ElevenLabs
+	RelayConnected      bool          `json:"relayConnected"`
+	VerificationPending bool          `json:"verificationPending"`
+	CallsToday          int           `json:"callsToday"`
+	MonthCostMicros     int64         `json:"monthCostMicros"`
+	LastError           string        `json:"lastError,omitempty"`
 }
 
 // SecretsInput sets provider credentials; empty fields are left unchanged.
@@ -107,7 +107,7 @@ type Service struct {
 	cfgMu sync.Mutex // serializes Configure
 
 	mu          sync.Mutex
-	settings    Settings
+	settings    PhoneSettings
 	lastErr     string
 	pendingCode string
 	pendingNum  string
@@ -231,7 +231,7 @@ func (s *Service) elevenLabs() (*ElevenLabs, error) {
 }
 
 // Settings returns the stored settings.
-func (s *Service) Settings() Settings {
+func (s *Service) Settings() PhoneSettings {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.settings
@@ -239,7 +239,7 @@ func (s *Service) Settings() Settings {
 
 // callSettings is what the call manager sees: while a verification call is placed it dials the number being
 // verified, and inbound calls are refused because that number is not yet the owner's.
-func (s *Service) callSettings() Settings {
+func (s *Service) callSettings() PhoneSettings {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	set := s.settings
@@ -456,13 +456,13 @@ func (s *Service) usage(ctx context.Context, botID string) Usage {
 
 // place is the policy-checked way to place a call: rules, the ticker, call_owner, test calls and urgent retries
 // all go through it. During a call the request is folded into it; otherwise caps, quiet hours and the cool-down apply.
-func (s *Service) place(ctx context.Context, req PlaceRequest, ask Ask) (Call, error) {
+func (s *Service) place(ctx context.Context, req PlaceRequest, ask Ask) (CallRecord, error) {
 	if _, in := s.calls.Active(); in {
 		_, err := s.calls.Place(ctx, req) // ErrInjected, or a refusal
-		return Call{}, err
+		return CallRecord{}, err
 	}
 	if err := Allow(s.Settings(), s.now(), s.usage(ctx, req.BotID), ask); err != nil {
-		return Call{}, err
+		return CallRecord{}, err
 	}
 	return s.calls.Place(ctx, req)
 }
@@ -617,14 +617,14 @@ func (s *Service) TestCall(ctx context.Context, botID string) (string, error) {
 	return "Calling you now.", nil
 }
 
-func (s *Service) AddRule(ctx context.Context, r Rule) (Rule, error) {
+func (s *Service) AddRule(ctx context.Context, r JarvisRule) (JarvisRule, error) {
 	if err := validateRule(r); err != nil {
-		return Rule{}, &Refusal{err.Error()}
+		return JarvisRule{}, &Refusal{err.Error()}
 	}
 	return s.store.AddRule(ctx, r)
 }
 
-func (s *Service) Rules(ctx context.Context, botID string) ([]Rule, error) {
+func (s *Service) Rules(ctx context.Context, botID string) ([]JarvisRule, error) {
 	return s.store.Rules(ctx, botID)
 }
 
@@ -636,7 +636,7 @@ func (s *Service) DeleteRule(ctx context.Context, id string) error {
 	return err
 }
 
-func (s *Service) RecentCalls(ctx context.Context, botID string) ([]Call, error) {
+func (s *Service) RecentCalls(ctx context.Context, botID string) ([]CallRecord, error) {
 	return s.store.RecentCalls(ctx, botID, 20)
 }
 
@@ -708,7 +708,7 @@ func (s *Service) GenerateRelaySecrets() (RelaySecrets, error) {
 	return out, nil
 }
 
-func validateSettings(in Settings) (Settings, error) {
+func validateSettings(in PhoneSettings) (PhoneSettings, error) {
 	var err error
 	if in.RelayURL, err = normalizeRelayURL(in.RelayURL); err != nil {
 		return in, err
@@ -731,7 +731,7 @@ func validateSettings(in Settings) (Settings, error) {
 
 // Configure saves the plain settings, provisions ElevenLabs when the relay URL and Jarvis number are set, and
 // reconnects the relay if its URL changed. Owner number, verification and provider ids are never taken from in.
-func (s *Service) Configure(ctx context.Context, in Settings) (ConfigureResult, error) {
+func (s *Service) Configure(ctx context.Context, in PhoneSettings) (ConfigureResult, error) {
 	s.cfgMu.Lock()
 	defer s.cfgMu.Unlock()
 	in, err := validateSettings(in)
@@ -801,7 +801,7 @@ func (s *Service) noticeOrphan(id string) {
 }
 
 // apply saves and adopts settings, records the last provisioning error and reconnects the relay if needed.
-func (s *Service) apply(set Settings, lastErr string) error {
+func (s *Service) apply(set PhoneSettings, lastErr string) error {
 	if s.cfg.SaveSettings != nil {
 		if err := s.cfg.SaveSettings(set); err != nil {
 			return err

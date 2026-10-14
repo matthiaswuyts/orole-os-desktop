@@ -59,7 +59,7 @@ type PlaceRequest struct {
 // live is the in-memory state of the one call in progress. Mutable fields are guarded by Calls.mu;
 // opener, done, verify and urgent are fixed at creation.
 type live struct {
-	call    Call
+	call    CallRecord
 	botName string
 	brief   string
 	inject  []string
@@ -82,7 +82,7 @@ type Calls struct {
 	host     Host
 	dial     Dialer
 	relay    Sender
-	settings func() Settings
+	settings func() PhoneSettings
 	now      func() time.Time
 	log      *slog.Logger
 	after    func(time.Duration) <-chan time.Time // injectable for tests
@@ -102,7 +102,7 @@ type Calls struct {
 	closed bool
 }
 
-func NewCalls(store *Store, host Host, dial Dialer, relay Sender, settings func() Settings, now func() time.Time, log *slog.Logger) *Calls {
+func NewCalls(store *Store, host Host, dial Dialer, relay Sender, settings func() PhoneSettings, now func() time.Time, log *slog.Logger) *Calls {
 	ctx, cancel := context.WithCancel(context.Background())
 	c := &Calls{store: store, host: host, dial: dial, relay: relay, settings: settings, now: now, log: log,
 		after: time.After, baseCtx: ctx, stop: cancel}
@@ -134,11 +134,11 @@ func (c *Calls) spawn(fn func()) {
 	}()
 }
 
-func (c *Calls) Active() (Call, bool) {
+func (c *Calls) Active() (CallRecord, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.cur == nil {
-		return Call{}, false
+		return CallRecord{}, false
 	}
 	return c.cur.call, true
 }
@@ -152,41 +152,41 @@ func (c *Calls) Inject(text string) {
 	}
 }
 
-func (c *Calls) Place(ctx context.Context, req PlaceRequest) (Call, error) {
+func (c *Calls) Place(ctx context.Context, req PlaceRequest) (CallRecord, error) {
 	s := c.settings()
 	if s.AgentID == "" || s.PhoneNumberID == "" || s.OwnerNumber == "" {
-		return Call{}, &Refusal{"Phone calls are not set up yet."}
+		return CallRecord{}, &Refusal{"Phone calls are not set up yet."}
 	}
 	if !c.relay.Connected() {
-		return Call{}, &Refusal{"The relay is not connected."}
+		return CallRecord{}, &Refusal{"The relay is not connected."}
 	}
 	var bot chat.Bot
 	if req.Verify == "" || req.BotID != "" {
 		var err error
 		if bot, err = c.host.Bot(ctx, req.BotID); err != nil {
-			return Call{}, err
+			return CallRecord{}, err
 		}
 	}
 	if req.Verify == "" {
 		if err := c.host.Gate(ctx, bot); err != nil {
-			return Call{}, err
+			return CallRecord{}, err
 		}
 	}
 	c.mu.Lock()
 	if c.closed {
 		c.mu.Unlock()
-		return Call{}, errors.New("jarvis: shutting down")
+		return CallRecord{}, errors.New("jarvis: shutting down")
 	}
 	if c.cur != nil {
 		if c.cur.verify != "" || req.Verify != "" {
 			c.mu.Unlock()
-			return Call{}, &Refusal{"A call is already in progress."}
+			return CallRecord{}, &Refusal{"A call is already in progress."}
 		}
 		c.cur.inject = append(c.cur.inject, bot.Name+": "+req.Reason)
 		c.mu.Unlock()
-		return Call{}, ErrInjected
+		return CallRecord{}, ErrInjected
 	}
-	call := Call{ID: uuid.NewString(), BotID: bot.ID, Direction: Outbound, RuleID: req.RuleID, Reason: req.Reason,
+	call := CallRecord{ID: uuid.NewString(), BotID: bot.ID, Direction: Outbound, RuleID: req.RuleID, Reason: req.Reason,
 		Status: StatusDialing, StartedAt: c.now().UnixMilli()}
 	l := &live{call: call, botName: bot.Name, brief: req.Brief, opener: make(chan string, 1), done: make(chan struct{}),
 		verify: req.Verify, urgent: req.Urgent, quiet: req.QuietOverride}
@@ -197,7 +197,7 @@ func (c *Calls) Place(ctx context.Context, req PlaceRequest) (Call, error) {
 
 	if err := c.store.InsertCall(ctx, &call); err != nil {
 		c.clear(l)
-		return Call{}, err
+		return CallRecord{}, err
 	}
 	c.changed()
 	if req.Verify == "" {
@@ -214,7 +214,7 @@ func (c *Calls) Place(ctx context.Context, req PlaceRequest) (Call, error) {
 		if req.Verify == "" {
 			c.host.Notify(bot.Name+" could not call", err.Error(), "bot:"+bot.ID, "error")
 		}
-		return Call{}, err
+		return CallRecord{}, err
 	}
 	c.mu.Lock()
 	l.call.ConversationID, l.call.ProviderCallID = conv, sid
@@ -260,7 +260,7 @@ func or2(a, b string) string {
 	return b
 }
 
-func (c *Calls) card(call Call) chat.MsgPart {
+func (c *Calls) card(call CallRecord) chat.MsgPart {
 	dur := int64(0)
 	if call.AnsweredAt > 0 && call.EndedAt > 0 {
 		dur = call.EndedAt - call.AnsweredAt
@@ -627,7 +627,7 @@ func (c *Calls) inbound(ctx context.Context, f Frame) {
 		reject("no bot has Jarvis mode on")
 		return
 	}
-	call := Call{ID: uuid.NewString(), BotID: bot.ID, Direction: Inbound, Reason: "You called", Status: StatusInProgress,
+	call := CallRecord{ID: uuid.NewString(), BotID: bot.ID, Direction: Inbound, Reason: "You called", Status: StatusInProgress,
 		StartedAt: c.now().UnixMilli(), AnsweredAt: c.now().UnixMilli(), ProviderCallID: f.CallSID, ConversationID: f.ConversationID}
 	l := &live{call: call, botName: bot.Name, opener: make(chan string, 1), done: make(chan struct{})}
 	c.mu.Lock()
@@ -839,7 +839,7 @@ func (c *Calls) finish(ctx context.Context, l *live, status string, durationSecs
 }
 
 // retry places one more attempt after an unanswered urgent call; the retry itself is not urgent, so it never repeats.
-func (c *Calls) retry(call Call, brief string, quiet bool) {
+func (c *Calls) retry(call CallRecord, brief string, quiet bool) {
 	select {
 	case <-c.after(urgentRetryWait):
 	case <-c.baseCtx.Done():

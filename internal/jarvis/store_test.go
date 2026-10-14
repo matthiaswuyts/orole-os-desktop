@@ -27,14 +27,14 @@ func testStore(t *testing.T) (*Store, *time.Time) {
 func TestRulesRoundTrip(t *testing.T) {
 	s, _ := testStore(t)
 	ctx := context.Background()
-	r, err := s.AddRule(ctx, Rule{BotID: "b1", Trigger: TaskFinished, Target: "any", Note: "deploy"})
+	r, err := s.AddRule(ctx, JarvisRule{BotID: "b1", Trigger: TaskFinished, Target: "any", Note: "deploy"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if r.ID == "" || r.CreatedAt != 1_000_000 {
 		t.Fatalf("rule not stamped: %+v", r)
 	}
-	if _, err := s.AddRule(ctx, Rule{BotID: "b2", Trigger: AtTime, Target: "08:00", Repeat: true}); err != nil {
+	if _, err := s.AddRule(ctx, JarvisRule{BotID: "b2", Trigger: AtTime, Target: "08:00", Repeat: true}); err != nil {
 		t.Fatal(err)
 	}
 	mine, _ := s.Rules(ctx, "b1")
@@ -52,7 +52,7 @@ func TestRulesRoundTrip(t *testing.T) {
 
 func TestAddRuleRejectsBadInput(t *testing.T) {
 	s, _ := testStore(t)
-	for _, r := range []Rule{
+	for _, r := range []JarvisRule{
 		{BotID: "b1", Trigger: "bogus"},
 		{BotID: "b1", Trigger: AtTime, Target: "25:00"},
 		{BotID: "b1", Trigger: TaskFailed, Target: ""},
@@ -68,7 +68,7 @@ func TestCallsSinceSumsCost(t *testing.T) {
 	s, now := testStore(t)
 	ctx := context.Background()
 	for i := 0; i < 3; i++ {
-		c := Call{BotID: "b1", Direction: Outbound, Status: StatusCompleted, EstCostMicros: 100_000}
+		c := CallRecord{BotID: "b1", Direction: Outbound, Status: StatusCompleted, EstCostMicros: 100_000}
 		if err := s.InsertCall(ctx, &c); err != nil {
 			t.Fatal(err)
 		}

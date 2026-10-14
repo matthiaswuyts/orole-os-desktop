@@ -18,7 +18,7 @@ type ProvisionSecrets struct {
 // Provision makes the ElevenLabs side match the settings: one agent pointing at the relay, the Twilio number
 // imported and assigned to it, a post-call webhook, and the workspace inbound webhook pointing at the relay.
 // Safe to run repeatedly; existing agent, number and webhook ids in s are reused.
-func Provision(ctx context.Context, el *ElevenLabs, tw *Twilio, s Settings, sec ProvisionSecrets) (Settings, error) {
+func Provision(ctx context.Context, el *ElevenLabs, tw *Twilio, s PhoneSettings, sec ProvisionSecrets) (PhoneSettings, error) {
 	nums, err := tw.Numbers(ctx)
 	if err != nil {
 		return s, err

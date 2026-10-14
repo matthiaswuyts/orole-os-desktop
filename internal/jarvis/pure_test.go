@@ -34,7 +34,7 @@ func TestCheckGate(t *testing.T) {
 func TestAllowPolicy(t *testing.T) {
 	loc := time.FixedZone("x", 0)
 	at := func(h, m int) time.Time { return time.Date(2026, 10, 14, h, m, 0, 0, loc) }
-	s := Settings{QuietStart: "22:00", QuietEnd: "07:00"}
+	s := PhoneSettings{QuietStart: "22:00", QuietEnd: "07:00"}
 	if err := Allow(s, at(12, 0), Usage{}, Ask{}); err != nil {
 		t.Fatalf("noon: %v", err)
 	}

@@ -140,7 +140,7 @@ func (t jarvisTools) AddRule(ctx context.Context, botID string, r tools.JarvisRu
 	} else if len(have) >= maxJarvisRules {
 		return tools.JarvisRule{}, errors.New("You already have the maximum number of call rules; delete one first.")
 	}
-	got, err := s.AddRule(ctx, jarvis.Rule{BotID: botID, Trigger: jarvis.Trigger(r.Trigger), Target: r.Target, Note: r.Note,
+	got, err := s.AddRule(ctx, jarvis.JarvisRule{BotID: botID, Trigger: jarvis.JarvisTrigger(r.Trigger), Target: r.Target, Note: r.Note,
 		Repeat: r.Repeat, Urgent: r.Urgent, QuietOverride: r.QuietOverride, ExpiresAt: r.ExpiresAt})
 	if err != nil {
 		return tools.JarvisRule{}, err
@@ -201,14 +201,14 @@ func (t jarvisTools) SwitchBot(ctx context.Context, callID, name string) (string
 	return s.SwitchBot(ctx, callID, name)
 }
 
-func toToolRule(r jarvis.Rule) tools.JarvisRule {
+func toToolRule(r jarvis.JarvisRule) tools.JarvisRule {
 	return tools.JarvisRule{ID: r.ID, Trigger: string(r.Trigger), Target: r.Target, Note: r.Note, Repeat: r.Repeat, Urgent: r.Urgent,
 		QuietOverride: r.QuietOverride, ExpiresAt: r.ExpiresAt}
 }
 
-func (d *Daemon) loadJarvisSettings() (jarvis.Settings, error) {
+func (d *Daemon) loadJarvisSettings() (jarvis.PhoneSettings, error) {
 	var raw string
-	var s jarvis.Settings
+	var s jarvis.PhoneSettings
 	err := d.DB.QueryRow(`SELECT value FROM settings WHERE key=?`, jarvis.SettingsKey).Scan(&raw)
 	if errors.Is(err, sql.ErrNoRows) {
 		return s, nil
@@ -248,7 +248,7 @@ func (d *Daemon) saveJarvisState(s jarvis.State) error {
 	return err
 }
 
-func (d *Daemon) saveJarvisSettings(s jarvis.Settings) error {
+func (d *Daemon) saveJarvisSettings(s jarvis.PhoneSettings) error {
 	b, err := json.Marshal(s)
 	if err != nil {
 		return err
@@ -276,7 +276,7 @@ func jarvisErr(err error) error {
 
 // jarvisTaskEvent maps a finished or failed task to a rule event.
 func jarvisTaskEvent(topic string, s agents.Session) (jarvis.Event, bool) {
-	var trig jarvis.Trigger
+	var trig jarvis.JarvisTrigger
 	var what string
 	switch topic {
 	case events.TopicAgentFinished:
@@ -334,7 +334,7 @@ func (d *Daemon) jarvisRun(seen *terminalRuns, r automations.Run) {
 	if d.Jarvis == nil {
 		return
 	}
-	var trig jarvis.Trigger
+	var trig jarvis.JarvisTrigger
 	switch r.Status {
 	case "succeeded":
 		trig = jarvis.AutomationFinished
@@ -390,7 +390,7 @@ func (d *Daemon) registerJarvis() {
 		d.jarvisChanged()
 		return out, nil
 	})
-	handle(d, "jarvis.configure", func(ctx context.Context, p jarvis.Settings) (jarvis.ConfigureResult, error) {
+	handle(d, "jarvis.configure", func(ctx context.Context, p jarvis.PhoneSettings) (jarvis.ConfigureResult, error) {
 		res, err := d.Jarvis.Configure(ctx, p)
 		d.jarvisChanged() // a failed run may still have saved what it created
 		if err != nil {
@@ -427,10 +427,10 @@ func (d *Daemon) registerJarvis() {
 	})
 	handle(d, "jarvis.rules.list", func(ctx context.Context, p struct {
 		BotID string `json:"botId"`
-	}) ([]jarvis.Rule, error) {
+	}) ([]jarvis.JarvisRule, error) {
 		rs, err := d.Jarvis.Rules(ctx, p.BotID)
 		if rs == nil {
-			rs = []jarvis.Rule{}
+			rs = []jarvis.JarvisRule{}
 		}
 		return rs, err
 	})
@@ -446,10 +446,10 @@ func (d *Daemon) registerJarvis() {
 	})
 	handle(d, "jarvis.calls.recent", func(ctx context.Context, p struct {
 		BotID string `json:"botId"`
-	}) ([]jarvis.Call, error) {
+	}) ([]jarvis.CallRecord, error) {
 		cs, err := d.Jarvis.RecentCalls(ctx, p.BotID)
 		if cs == nil {
-			cs = []jarvis.Call{}
+			cs = []jarvis.CallRecord{}
 		}
 		return cs, err
 	})

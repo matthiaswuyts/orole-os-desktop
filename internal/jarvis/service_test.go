@@ -25,7 +25,7 @@ type svcEnv struct {
 	relay *fakeSender
 	creds *credentials.Memory
 	now   *time.Time
-	saved []Settings
+	saved []PhoneSettings
 }
 
 func newSvcEnv(t *testing.T, cfg func(*ServiceConfig)) *svcEnv {
@@ -33,10 +33,10 @@ func newSvcEnv(t *testing.T, cfg func(*ServiceConfig)) *svcEnv {
 	st, now := testStore(t)
 	*now = time.Date(2026, 10, 14, 12, 0, 0, 0, time.UTC)
 	e := &svcEnv{host: newFakeHost(), dial: &fakeDialer{}, relay: &fakeSender{}, creds: credentials.NewMemory(), now: now}
-	initial := Settings{OwnerNumber: "+32470000000", OwnerVerified: true, AgentID: "ag", PhoneNumberID: "pn"}
+	initial := PhoneSettings{OwnerNumber: "+32470000000", OwnerVerified: true, AgentID: "ag", PhoneNumberID: "pn"}
 	c := ServiceConfig{DB: st.db, Creds: e.creds, Host: e.host, Log: slog.Default(), Now: func() time.Time { return *e.now },
-		LoadSettings: func() (Settings, error) { return initial, nil },
-		SaveSettings: func(s Settings) error { e.saved = append(e.saved, s); return nil },
+		LoadSettings: func() (PhoneSettings, error) { return initial, nil },
+		SaveSettings: func(s PhoneSettings) error { e.saved = append(e.saved, s); return nil },
 		dialer:       e.dial, sender: e.relay}
 	if cfg != nil {
 		cfg(&c)
@@ -51,7 +51,7 @@ func newTestService(t *testing.T) (*Service, *fakeHost, *fakeDialer, *fakeSender
 	return e.svc, e.host, e.dial, e.relay, e.now
 }
 
-func (s *Service) edit(f func(*Settings)) {
+func (s *Service) edit(f func(*PhoneSettings)) {
 	s.mu.Lock()
 	f(&s.settings)
 	s.mu.Unlock()
@@ -60,7 +60,7 @@ func (s *Service) edit(f func(*Settings)) {
 func TestRuleEventPlacesOneCallAndDeletesOnceRule(t *testing.T) {
 	svc, _, dial, _, _ := newTestService(t)
 	ctx := context.Background()
-	r, _ := svc.AddRule(ctx, Rule{BotID: "b1", Trigger: TaskFailed, Target: "t1", Note: "deploy"})
+	r, _ := svc.AddRule(ctx, JarvisRule{BotID: "b1", Trigger: TaskFailed, Target: "t1", Note: "deploy"})
 	svc.OnEvent(Event{Trigger: TaskFailed, TargetID: "t1", Title: "deploy-api failed"})
 	svc.wait()
 	if len(dial.dialed()) != 1 {
@@ -75,7 +75,7 @@ func TestRuleEventPlacesOneCallAndDeletesOnceRule(t *testing.T) {
 func TestRepeatRuleKeptAndOtherEventsIgnored(t *testing.T) {
 	svc, _, dial, _, _ := newTestService(t)
 	ctx := context.Background()
-	_, _ = svc.AddRule(ctx, Rule{BotID: "b1", Trigger: AutomationFailed, Target: "any", Repeat: true})
+	_, _ = svc.AddRule(ctx, JarvisRule{BotID: "b1", Trigger: AutomationFailed, Target: "any", Repeat: true})
 	svc.OnEvent(Event{Trigger: AutomationFinished, TargetID: "a1", Title: "nightly succeeded"})
 	svc.wait()
 	if len(dial.dialed()) != 0 {
@@ -93,8 +93,8 @@ func TestRepeatRuleKeptAndOtherEventsIgnored(t *testing.T) {
 
 func TestQuietHoursTurnRuleIntoNotice(t *testing.T) {
 	svc, host, dial, _, _ := newTestService(t)
-	svc.edit(func(s *Settings) { s.QuietStart, s.QuietEnd = "11:00", "13:00" })
-	_, _ = svc.AddRule(context.Background(), Rule{BotID: "b1", Trigger: TaskFailed, Target: "any"})
+	svc.edit(func(s *PhoneSettings) { s.QuietStart, s.QuietEnd = "11:00", "13:00" })
+	_, _ = svc.AddRule(context.Background(), JarvisRule{BotID: "b1", Trigger: TaskFailed, Target: "any"})
 	svc.OnEvent(Event{Trigger: TaskFailed, TargetID: "t1", OwnerBotID: "b1", Title: "x"})
 	svc.wait()
 	if len(dial.dialed()) != 0 || len(host.noticeList()) != 1 {
@@ -106,7 +106,7 @@ func TestMissedAtTimeBecomesNotice(t *testing.T) {
 	svc, host, dial, _, now := newTestService(t)
 	noon := *now
 	*now = noon.Add(-7 * time.Hour) // rule saved at 05:00
-	_, _ = svc.AddRule(context.Background(), Rule{BotID: "b1", Trigger: AtTime, Target: "08:00"})
+	_, _ = svc.AddRule(context.Background(), JarvisRule{BotID: "b1", Trigger: AtTime, Target: "08:00"})
 	*now = noon
 	svc.lastTick = now.Add(-6 * time.Hour) // asleep from 06:00 to 12:00
 	svc.tick(context.Background())
@@ -126,7 +126,7 @@ func TestMissedWhileDownBecomesNoticeAfterStart(t *testing.T) {
 		c.SaveState = func(s State) error { mu.Lock(); saved = append(saved, s); mu.Unlock(); return nil }
 	})
 	*e.now = noon.Add(-7 * time.Hour) // rule saved at 05:00, daemon stopped at 06:00
-	if _, err := e.svc.AddRule(context.Background(), Rule{BotID: "b1", Trigger: AtTime, Target: "08:00"}); err != nil {
+	if _, err := e.svc.AddRule(context.Background(), JarvisRule{BotID: "b1", Trigger: AtTime, Target: "08:00"}); err != nil {
 		t.Fatal(err)
 	}
 	*e.now = noon
@@ -150,7 +150,7 @@ func TestRuleSavedJustAfterItsTimeWaitsForTomorrow(t *testing.T) {
 	svc, host, dial, _, now := newTestService(t)
 	noon := *now
 	*now = noon.Add(10 * time.Second)
-	_, _ = svc.AddRule(context.Background(), Rule{BotID: "b1", Trigger: AtTime, Target: "12:00"})
+	_, _ = svc.AddRule(context.Background(), JarvisRule{BotID: "b1", Trigger: AtTime, Target: "12:00"})
 	svc.lastTick = noon.Add(-10 * time.Second)
 	*now = noon.Add(30 * time.Second)
 	svc.tick(context.Background())
@@ -165,7 +165,7 @@ func TestRuleSavedJustAfterItsTimeWaitsForTomorrow(t *testing.T) {
 
 func TestAtTimeFiresOnTick(t *testing.T) {
 	svc, _, dial, _, now := newTestService(t)
-	_, _ = svc.AddRule(context.Background(), Rule{BotID: "b1", Trigger: AtTime, Target: "12:01", Repeat: true})
+	_, _ = svc.AddRule(context.Background(), JarvisRule{BotID: "b1", Trigger: AtTime, Target: "12:01", Repeat: true})
 	svc.lastTick = *now
 	*now = now.Add(90 * time.Second)
 	svc.tick(context.Background())
@@ -202,7 +202,7 @@ func TestCallOwnerDuringCallIsInjected(t *testing.T) {
 
 func TestRetryGoesThroughPolicy(t *testing.T) {
 	svc, host, dial, _, _ := newTestService(t)
-	svc.edit(func(s *Settings) { s.QuietStart, s.QuietEnd = "11:00", "13:00" })
+	svc.edit(func(s *PhoneSettings) { s.QuietStart, s.QuietEnd = "11:00", "13:00" })
 	svc.calls.Retry(context.Background(), PlaceRequest{BotID: "b1", Reason: "deploy failed"})
 	if len(dial.dialed()) != 0 {
 		t.Fatal("retry ignored quiet hours")
@@ -214,7 +214,7 @@ func TestRetryGoesThroughPolicy(t *testing.T) {
 
 func TestRetryKeepsQuietOverride(t *testing.T) {
 	svc, _, dial, _, _ := newTestService(t)
-	svc.edit(func(s *Settings) { s.QuietStart, s.QuietEnd = "11:00", "13:00" })
+	svc.edit(func(s *PhoneSettings) { s.QuietStart, s.QuietEnd = "11:00", "13:00" })
 	svc.calls.Retry(context.Background(), PlaceRequest{BotID: "b1", Reason: "deploy failed", QuietOverride: true})
 	if len(dial.dialed()) != 1 {
 		t.Fatal("retry of a quiet-override rule blocked by quiet hours")
@@ -269,7 +269,7 @@ func TestChangedOnRelayConnectAndDrop(t *testing.T) {
 	got := make(chan bool, 16)
 	e := newSvcEnv(t, func(c *ServiceConfig) {
 		c.sender = nil
-		c.LoadSettings = func() (Settings, error) { return Settings{RelayURL: srv.URL}, nil }
+		c.LoadSettings = func() (PhoneSettings, error) { return PhoneSettings{RelayURL: srv.URL}, nil }
 		c.Changed = func(v StatusView) { got <- v.RelayConnected }
 	})
 	_ = e.creds.Set(KeyRelayToken, []byte("tok"))
@@ -295,11 +295,11 @@ func TestChangedOnRelayConnectAndDrop(t *testing.T) {
 
 func TestConfigureNoticesOrphanedWebhook(t *testing.T) {
 	e := newSvcEnv(t, func(c *ServiceConfig) {
-		c.LoadSettings = func() (Settings, error) {
-			return Settings{RelayURL: "https://old.example", PostCallWebhookID: "wh-old"}, nil
+		c.LoadSettings = func() (PhoneSettings, error) {
+			return PhoneSettings{RelayURL: "https://old.example", PostCallWebhookID: "wh-old"}, nil
 		}
 	})
-	if _, err := e.svc.Configure(context.Background(), Settings{RelayURL: "https://new.example"}); err != nil {
+	if _, err := e.svc.Configure(context.Background(), PhoneSettings{RelayURL: "https://new.example"}); err != nil {
 		t.Fatal(err)
 	}
 	if n := e.host.noticeList(); len(n) != 1 || !strings.Contains(n[0], "wh-old") {
@@ -396,12 +396,12 @@ func TestConfigureValidatesRelayURL(t *testing.T) {
 	e := newSvcEnv(t, nil)
 	ctx := context.Background()
 	for _, bad := range []string{"http://relay.example", "ws://relay.example", "relay.example", "https://user:pw@relay.example", "https://relay.example?x=1", "http://localhost.evil.com"} {
-		if _, err := e.svc.Configure(ctx, Settings{RelayURL: bad}); err == nil {
+		if _, err := e.svc.Configure(ctx, PhoneSettings{RelayURL: bad}); err == nil {
 			t.Errorf("accepted %q", bad)
 		}
 	}
 	for _, ok := range []string{"https://relay.example.workers.dev/", "http://localhost:8787", "http://127.0.0.1:8787"} {
-		if _, err := e.svc.Configure(ctx, Settings{RelayURL: ok}); err != nil {
+		if _, err := e.svc.Configure(ctx, PhoneSettings{RelayURL: ok}); err != nil {
 			t.Errorf("rejected %q: %v", ok, err)
 		}
 	}
@@ -412,7 +412,7 @@ func TestConfigureValidatesRelayURL(t *testing.T) {
 
 func TestConfigureKeepsServerOwnedFields(t *testing.T) {
 	e := newSvcEnv(t, nil)
-	res, err := e.svc.Configure(context.Background(), Settings{OwnerNumber: "+19999999999", OwnerVerified: true, AgentID: "evil", QuietStart: "22:00", QuietEnd: "07:00"})
+	res, err := e.svc.Configure(context.Background(), PhoneSettings{OwnerNumber: "+19999999999", OwnerVerified: true, AgentID: "evil", QuietStart: "22:00", QuietEnd: "07:00"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -423,7 +423,7 @@ func TestConfigureKeepsServerOwnedFields(t *testing.T) {
 	if len(e.saved) != 1 || e.saved[0] != got {
 		t.Fatalf("saved %+v", e.saved)
 	}
-	if _, err := e.svc.Configure(context.Background(), Settings{QuietStart: "25:00", QuietEnd: "07:00"}); err == nil {
+	if _, err := e.svc.Configure(context.Background(), PhoneSettings{QuietStart: "25:00", QuietEnd: "07:00"}); err == nil {
 		t.Fatal("bad quiet hours accepted")
 	}
 }
@@ -432,10 +432,10 @@ func TestConfigureProvisionsAndReturnsWebhookSecretOnce(t *testing.T) {
 	srv, _ := provisionFake(t, map[string]string{"PATCH /v1/convai/agents/ag1": `{}`})
 	e := newSvcEnv(t, func(c *ServiceConfig) {
 		c.HTTP, c.ElevenLabsURL, c.TwilioURL = srv.Client(), srv.URL, srv.URL
-		c.LoadSettings = func() (Settings, error) { return Settings{}, nil }
+		c.LoadSettings = func() (PhoneSettings, error) { return PhoneSettings{}, nil }
 	})
 	ctx := context.Background()
-	in := Settings{RelayURL: "https://relay.example", TwilioNumber: "+3220000000"}
+	in := PhoneSettings{RelayURL: "https://relay.example", TwilioNumber: "+3220000000"}
 	if _, err := e.svc.Configure(ctx, in); err == nil {
 		t.Fatal("provisioned without credentials")
 	}
@@ -472,11 +472,11 @@ func TestConfigureFailureKeepsCreatedIDs(t *testing.T) {
 	})
 	e := newSvcEnv(t, func(c *ServiceConfig) {
 		c.HTTP, c.ElevenLabsURL, c.TwilioURL = srv2.Client(), srv2.URL, srv2.URL
-		c.LoadSettings = func() (Settings, error) { return Settings{}, nil }
+		c.LoadSettings = func() (PhoneSettings, error) { return PhoneSettings{}, nil }
 	})
 	_ = e.svc.SetSecrets(SecretsInput{TwilioSID: "AC1", TwilioToken: "t", ElevenLabs: "k"})
 	_, _ = e.svc.GenerateRelaySecrets()
-	if _, err := e.svc.Configure(context.Background(), Settings{RelayURL: "https://relay.example", TwilioNumber: "+3220000000"}); err == nil {
+	if _, err := e.svc.Configure(context.Background(), PhoneSettings{RelayURL: "https://relay.example", TwilioNumber: "+3220000000"}); err == nil {
 		t.Fatal("expected failure")
 	}
 	got := e.svc.Settings()
@@ -544,12 +544,12 @@ func TestRelayRestartsOnNewURL(t *testing.T) {
 	a, b := server(&aConns, aClosed), server(&bConns, nil)
 	e := newSvcEnv(t, func(c *ServiceConfig) {
 		c.sender = nil // use the real relay holder
-		c.LoadSettings = func() (Settings, error) { return Settings{RelayURL: a.URL}, nil }
+		c.LoadSettings = func() (PhoneSettings, error) { return PhoneSettings{RelayURL: a.URL}, nil }
 	})
 	_ = e.creds.Set(KeyRelayToken, []byte("tok"))
 	e.svc.Start(context.Background())
 	waitFor(t, func() bool { return e.svc.Status(context.Background()).RelayConnected && aConns.Load() == 1 })
-	if _, err := e.svc.Configure(context.Background(), Settings{RelayURL: b.URL}); err != nil {
+	if _, err := e.svc.Configure(context.Background(), PhoneSettings{RelayURL: b.URL}); err != nil {
 		t.Fatal(err)
 	}
 	select {
@@ -559,7 +559,7 @@ func TestRelayRestartsOnNewURL(t *testing.T) {
 	}
 	waitFor(t, func() bool { return e.svc.Status(context.Background()).RelayConnected && bConns.Load() == 1 })
 	// Unchanged settings keep the connection.
-	if _, err := e.svc.Configure(context.Background(), Settings{RelayURL: b.URL, QuietStart: "22:00", QuietEnd: "07:00"}); err != nil {
+	if _, err := e.svc.Configure(context.Background(), PhoneSettings{RelayURL: b.URL, QuietStart: "22:00", QuietEnd: "07:00"}); err != nil {
 		t.Fatal(err)
 	}
 	time.Sleep(100 * time.Millisecond)
@@ -574,7 +574,7 @@ func TestRelayRestartsOnNewURL(t *testing.T) {
 
 func TestCloseStopsEventHandling(t *testing.T) {
 	svc, _, dial, _, _ := newTestService(t)
-	_, _ = svc.AddRule(context.Background(), Rule{BotID: "b1", Trigger: TaskFailed, Target: "t1"})
+	_, _ = svc.AddRule(context.Background(), JarvisRule{BotID: "b1", Trigger: TaskFailed, Target: "t1"})
 	svc.Start(context.Background())
 	svc.Close()
 	svc.Close() // idempotent

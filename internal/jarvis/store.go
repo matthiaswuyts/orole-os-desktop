@@ -27,7 +27,7 @@ func NewStore(db *sql.DB, now func() time.Time) *Store {
 	return &Store{db: db, now: now}
 }
 
-func validateRule(r Rule) error {
+func validateRule(r JarvisRule) error {
 	if r.BotID == "" {
 		return errors.New("A rule needs a bot.")
 	}
@@ -46,9 +46,9 @@ func validateRule(r Rule) error {
 	return nil
 }
 
-func (s *Store) AddRule(ctx context.Context, r Rule) (Rule, error) {
+func (s *Store) AddRule(ctx context.Context, r JarvisRule) (JarvisRule, error) {
 	if err := validateRule(r); err != nil {
-		return Rule{}, err
+		return JarvisRule{}, err
 	}
 	r.ID = uuid.NewString()
 	r.CreatedAt = s.now().UnixMilli()
@@ -61,7 +61,7 @@ func (s *Store) AddRule(ctx context.Context, r Rule) (Rule, error) {
 	return r, err
 }
 
-func (s *Store) Rules(ctx context.Context, botID string) ([]Rule, error) {
+func (s *Store) Rules(ctx context.Context, botID string) ([]JarvisRule, error) {
 	q := `SELECT id,bot_id,trigger,target,repeat,urgent,quiet_override,note,COALESCE(expires_at,0),created_at FROM jarvis_rules`
 	args := []any{}
 	if botID != "" {
@@ -73,14 +73,14 @@ func (s *Store) Rules(ctx context.Context, botID string) ([]Rule, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []Rule
+	var out []JarvisRule
 	for rows.Next() {
-		var r Rule
+		var r JarvisRule
 		var trig string
 		if err := rows.Scan(&r.ID, &r.BotID, &trig, &r.Target, &r.Repeat, &r.Urgent, &r.QuietOverride, &r.Note, &r.ExpiresAt, &r.CreatedAt); err != nil {
 			return nil, err
 		}
-		r.Trigger = Trigger(trig)
+		r.Trigger = JarvisTrigger(trig)
 		out = append(out, r)
 	}
 	return out, rows.Err()
@@ -100,8 +100,8 @@ func (s *Store) DeleteRule(ctx context.Context, id string) error {
 const callCols = `id,COALESCE(bot_id,''),direction,COALESCE(rule_id,''),reason,status,provider_call_id,conversation_id,message_id,
 	COALESCE(started_at,0),COALESCE(answered_at,0),COALESCE(ended_at,0),est_cost_micros,created_at`
 
-func scanCall(sc interface{ Scan(...any) error }) (Call, error) {
-	var c Call
+func scanCall(sc interface{ Scan(...any) error }) (CallRecord, error) {
+	var c CallRecord
 	err := sc.Scan(&c.ID, &c.BotID, &c.Direction, &c.RuleID, &c.Reason, &c.Status, &c.ProviderCallID, &c.ConversationID,
 		&c.MessageID, &c.StartedAt, &c.AnsweredAt, &c.EndedAt, &c.EstCostMicros, &c.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -124,7 +124,7 @@ func nullInt(v int64) any {
 	return v
 }
 
-func (s *Store) InsertCall(ctx context.Context, c *Call) error {
+func (s *Store) InsertCall(ctx context.Context, c *CallRecord) error {
 	if c.ID == "" {
 		c.ID = uuid.NewString()
 	}
@@ -135,7 +135,7 @@ func (s *Store) InsertCall(ctx context.Context, c *Call) error {
 	return err
 }
 
-func (s *Store) UpdateCall(ctx context.Context, c Call) error {
+func (s *Store) UpdateCall(ctx context.Context, c CallRecord) error {
 	res, err := s.db.ExecContext(ctx, `UPDATE jarvis_calls SET bot_id=?,status=?,provider_call_id=?,conversation_id=?,message_id=?,
 		started_at=?,answered_at=?,ended_at=?,est_cost_micros=? WHERE id=?`, nullStr(c.BotID), c.Status, c.ProviderCallID, c.ConversationID,
 		c.MessageID, nullInt(c.StartedAt), nullInt(c.AnsweredAt), nullInt(c.EndedAt), c.EstCostMicros, c.ID)
@@ -148,17 +148,17 @@ func (s *Store) UpdateCall(ctx context.Context, c Call) error {
 	return nil
 }
 
-func (s *Store) GetCall(ctx context.Context, id string) (Call, error) {
+func (s *Store) GetCall(ctx context.Context, id string) (CallRecord, error) {
 	return scanCall(s.db.QueryRowContext(ctx, `SELECT `+callCols+` FROM jarvis_calls WHERE id=?`, id))
 }
 
-func (s *Store) RecentCalls(ctx context.Context, botID string, limit int) ([]Call, error) {
+func (s *Store) RecentCalls(ctx context.Context, botID string, limit int) ([]CallRecord, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT `+callCols+` FROM jarvis_calls WHERE (?='' OR bot_id=?) ORDER BY created_at DESC LIMIT ?`, botID, botID, limit)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []Call
+	var out []CallRecord
 	for rows.Next() {
 		c, err := scanCall(rows)
 		if err != nil {

@@ -3,18 +3,18 @@
 // outbound WebSocket to a relay, so the daemon never listens on a network interface.
 package jarvis
 
-type Trigger string
+type JarvisTrigger string
 
 const (
-	TaskFinished        Trigger = "task_finished"
-	TaskFailed          Trigger = "task_failed"
-	AutomationFinished  Trigger = "automation_finished"
-	AutomationFailed    Trigger = "automation_failed"
-	NotificationTrigger Trigger = "notification"
-	AtTime              Trigger = "at_time"
+	TaskFinished        JarvisTrigger = "task_finished"
+	TaskFailed          JarvisTrigger = "task_failed"
+	AutomationFinished  JarvisTrigger = "automation_finished"
+	AutomationFailed    JarvisTrigger = "automation_failed"
+	NotificationTrigger JarvisTrigger = "notification"
+	AtTime              JarvisTrigger = "at_time"
 )
 
-func (t Trigger) Valid() bool {
+func (t JarvisTrigger) Valid() bool {
 	switch t {
 	case TaskFinished, TaskFailed, AutomationFinished, AutomationFailed, NotificationTrigger, AtTime:
 		return true
@@ -22,17 +22,17 @@ func (t Trigger) Valid() bool {
 	return false
 }
 
-type Rule struct {
-	ID            string  `json:"id"`
-	BotID         string  `json:"botId"`
-	Trigger       Trigger `json:"trigger"`
-	Target        string  `json:"target"`
-	Repeat        bool    `json:"repeat"`
-	Urgent        bool    `json:"urgent"`
-	QuietOverride bool    `json:"quietOverride"`
-	Note          string  `json:"note"`
-	ExpiresAt     int64   `json:"expiresAt,omitempty"`
-	CreatedAt     int64   `json:"createdAt"`
+type JarvisRule struct {
+	ID            string        `json:"id"`
+	BotID         string        `json:"botId"`
+	Trigger       JarvisTrigger `json:"trigger"`
+	Target        string        `json:"target"`
+	Repeat        bool          `json:"repeat"`
+	Urgent        bool          `json:"urgent"`
+	QuietOverride bool          `json:"quietOverride"`
+	Note          string        `json:"note"`
+	ExpiresAt     int64         `json:"expiresAt,omitempty"`
+	CreatedAt     int64         `json:"createdAt"`
 }
 
 const (
@@ -52,7 +52,7 @@ const (
 	StatusRejected   = "rejected"
 )
 
-type Call struct {
+type CallRecord struct {
 	ID             string `json:"id"`
 	BotID          string `json:"botId"`
 	Direction      string `json:"direction"`
@@ -69,8 +69,8 @@ type Call struct {
 	CreatedAt      int64  `json:"createdAt"`
 }
 
-// Settings is the plain (non-secret) global configuration, stored as JSON under settings key "jarvis".
-type Settings struct {
+// PhoneSettings is the plain (non-secret) global configuration, stored as JSON under settings key "jarvis".
+type PhoneSettings struct {
 	RelayURL          string `json:"relayUrl"`    // https://<worker>.workers.dev
 	OwnerNumber       string `json:"ownerNumber"` // E.164
 	OwnerVerified     bool   `json:"ownerVerified"`
@@ -100,9 +100,9 @@ const (
 	KeyWebhookSecret = "jarvis/relay/webhook"    // ElevenLabs post-call HMAC
 )
 
-func (s Settings) dailyCap() int        { return or(s.DailyCap, 10) }
-func (s Settings) monthlyCapCents() int { return or(s.MonthlyCapCents, 2000) }
-func (s Settings) centsPerMinute() int  { return or(s.CentsPerMinute, 12) }
+func (s PhoneSettings) dailyCap() int        { return or(s.DailyCap, 10) }
+func (s PhoneSettings) monthlyCapCents() int { return or(s.MonthlyCapCents, 2000) }
+func (s PhoneSettings) centsPerMinute() int  { return or(s.CentsPerMinute, 12) }
 
 func or(v, d int) int {
 	if v <= 0 {
