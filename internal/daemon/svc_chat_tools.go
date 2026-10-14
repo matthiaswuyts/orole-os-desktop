@@ -55,6 +55,8 @@ func (d *Daemon) registerChatTools() {
 	if d.Automations != nil {
 		list = append(list, tools.Automations{Runtime: d.Automations})
 	}
+	list = append(list, tools.Jarvis{Runtime: jarvisTools{d}}) // reads d.Jarvis lazily: registerJarvis runs after this
+	m.AddPromptSection(tools.JarvisPrompt)
 	list = append(list, tools.Show{})
 	m.AddPromptSection(func(chat.Bot) string { return tools.ShowPrompt })
 	list = append(list, &tools.Setup{Bots: m})

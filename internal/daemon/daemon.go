@@ -26,6 +26,7 @@ import (
 	"github.com/rayorole/orole-os-desktop/internal/events"
 	"github.com/rayorole/orole-os-desktop/internal/gateway"
 	"github.com/rayorole/orole-os-desktop/internal/ipc"
+	"github.com/rayorole/orole-os-desktop/internal/jarvis"
 	"github.com/rayorole/orole-os-desktop/internal/llm"
 	"github.com/rayorole/orole-os-desktop/internal/llm/manifest"
 	"github.com/rayorole/orole-os-desktop/internal/machines"
@@ -65,7 +66,9 @@ type Daemon struct {
 	Chat *chat.Manager
 	// ChatMemory is the chat memory subsystem attached to Chat (svc_chat_memory.go).
 	ChatMemory *memory.Store
-	Metrics    *systemmetrics.Sampler
+	// Jarvis places and takes the owner's phone calls for bots (svc_jarvis.go).
+	Jarvis  *jarvis.Service
+	Metrics *systemmetrics.Sampler
 	// Skills is the central skill registry and Gateway the MCP gateway hub behind the
 	// `orole-daemon mcp-gateway` processes (svc_skills.go). gatewayExe is this executable.
 	Skills     *skills.Store
@@ -109,6 +112,9 @@ func New(dataDir string, log *slog.Logger) (*Daemon, error) {
 func (d *Daemon) Run(ctx context.Context) error {
 	ln, err := ipc.Listen(d.Endpoint)
 	if err != nil {
+		if d.Jarvis != nil {
+			d.Jarvis.Close()
+		}
 		if d.ChatMemory != nil {
 			d.ChatMemory.Close()
 		}
@@ -143,6 +149,9 @@ func (d *Daemon) Run(ctx context.Context) error {
 			return fmt.Errorf("automations: %w", err)
 		}
 	}
+	if d.Jarvis != nil {
+		d.Jarvis.Start(ctx)
+	}
 	d.notices.reconcile()
 	d.Log.Info("daemon listening", "endpoint", d.Endpoint, "version", oroleos.Version, "pid", os.Getpid(), "go", runtime.Version())
 	errc := make(chan error, 1)
@@ -166,6 +175,9 @@ func (d *Daemon) cleanup(ln interface{ Close() error }) {
 	}
 	if d.agentsShutdown != nil {
 		d.agentsShutdown()
+	}
+	if d.Jarvis != nil {
+		d.Jarvis.Close() // before Chat.Close (voice turns run in chat) and notices.close (it reports there)
 	}
 	d.notices.close() // after the runtimes stopped: drains what they reported last
 	if d.ChatMemory != nil {

@@ -28,6 +28,7 @@ const appEventText = 2000
 type taskEvents struct {
 	bus     *events.Bus
 	owned   func(topic string, s agents.Session)
+	jarvis  func(topic string, s agents.Session)    // finished and failed tasks for Jarvis call rules; nil skips
 	notices *appNotices                             // notification center; nil reports nothing
 	settle  time.Duration                           // 0 publishes agent.finished at once
 	lookup  func(id string) (agents.Session, error) // current state at settle time; nil uses the reported one
@@ -159,6 +160,9 @@ func (t *taskEvents) publish(topic string, s agents.Session, data map[string]any
 		t.notices.task(topic, s)
 		if t.owned != nil && s.Owner != "" {
 			t.owned(topic, s)
+		}
+		if t.jarvis != nil && topic != events.TopicAgentWaiting {
+			t.jarvis(topic, s)
 		}
 	}
 }

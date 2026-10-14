@@ -22,6 +22,7 @@ func (n automationNotifier) Notify(ctx context.Context, p automations.Notificati
 	return res.Notification, nil
 }
 func (d *Daemon) registerAutomations() {
+	finished := newTerminalRuns()
 	e := automations.New(automations.Options{DB: d.DB.DB, Bus: d.Events, Credentials: credentials.New(), Log: d.Log, Audit: d.audit, Notifier: automationNotifier{d}, Authorize: func(ctx context.Context, request policy.Request) error {
 		if d.Policy == nil {
 			return fmt.Errorf("automation policy is unavailable")
@@ -30,6 +31,7 @@ func (d *Daemon) registerAutomations() {
 	}, Changed: func(r automations.Run) {
 		d.IPC.Publish("automations.run", r)
 		d.notices.run(r)
+		d.jarvisRun(finished, r)
 	}})
 	d.Automations = e
 	handle(d, "automations.list", func(ctx context.Context, _ none) ([]automations.Summary, error) { return e.List(ctx) })

@@ -47,6 +47,7 @@ func (d *Daemon) notifyResult(ctx context.Context, in notifications.Input) (noti
 	c, _ := st.Counts(ctx)
 	n := res.Notification
 	d.IPC.Publish("notifications.changed", NotificationEvent{Kind: "created", Notification: &n, Unread: c.Unread, NeedsYou: c.NeedsYou, Sound: res.Sound})
+	d.jarvisNotification(n)
 	return res, nil
 }
 
