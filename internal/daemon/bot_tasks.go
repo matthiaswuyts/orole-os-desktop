@@ -12,6 +12,7 @@ import (
 	"github.com/rayorole/orole-os-desktop/internal/agents"
 	"github.com/rayorole/orole-os-desktop/internal/chat"
 	"github.com/rayorole/orole-os-desktop/internal/chat/tools"
+	"github.com/rayorole/orole-os-desktop/internal/events"
 )
 
 // botTasks lets bots start, watch and steer code tasks through the same agent runtime the
@@ -57,7 +58,7 @@ func (b botTasks) Start(ctx context.Context, actor string, bot chat.Bot, spec to
 	if err != nil {
 		return tools.TaskInfo{}, err
 	}
-	s, err := b.d.Agents.Start(agents.WithActor(ctx, actor), agents.StartSpec{
+	s, err := b.d.Agents.Start(agents.WithCall(agents.WithActor(ctx, actor), spec.CallID), agents.StartSpec{
 		Kind: plan.Harness, ProjectID: p.ID, Machine: p.MachineID, Prompt: spec.Prompt, Title: spec.Title,
 		Model: plan.Model, Reasoning: plan.Reasoning, NewWorktree: spec.NewWorktree,
 		// The mode is always the user's setting, named explicitly so the runtime never swaps it for
@@ -319,20 +320,32 @@ func waitingFor(s agents.Session) string {
 }
 
 // reportToOwner tells the bot that started s what happened. It runs off the agent runtime's
-// publish path: storing the report takes the bot's lock and writes SQLite.
+// publish path: storing the report takes the bot's lock and writes SQLite. A task started on a
+// phone call reports into that call's thread (Session.CallID).
 func (d *Daemon) reportToOwner(topic string, s agents.Session) {
 	botID, ok := strings.CutPrefix(s.Owner, chat.BotPrefix)
 	if !ok || d.Chat == nil {
 		return
 	}
-	text := taskReportText(topic, s)
+	r := chat.TaskReport{BotID: botID, TaskID: s.ID, Title: s.Title, Status: taskReportStatus(topic), Text: taskReportText(topic, s), CallID: s.CallID}
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		if err := d.Chat.ReportTask(ctx, botID, s.ID, text); err != nil {
+		if err := d.Chat.ReportTask(ctx, r); err != nil {
 			d.Log.Warn("task report not delivered", "task", s.ID, "bot", botID, "err", err)
 		}
 	}()
+}
+
+// taskReportStatus is chat.FollowUp.Status for a task topic: "finished", "waiting" or "failed".
+func taskReportStatus(topic string) string {
+	switch topic {
+	case events.TopicAgentFinished:
+		return "finished"
+	case events.TopicAgentWaiting:
+		return "waiting"
+	}
+	return "failed"
 }
 
 // taskReportText is what the owning bot reads when s changed state. A finished task's report

@@ -161,6 +161,28 @@ func TestStartTaskIgnoresTheBotsArgumentForFixedChoices(t *testing.T) {
 	}
 }
 
+// A task started on a phone call carries the call from the run, never from the model's arguments.
+func TestStartTaskOnACallCarriesTheCall(t *testing.T) {
+	f := &fakeTasks{tasks: map[string]TaskInfo{}}
+	tool := Tasks{Runtime: f}
+	onCall := chat.RunContext{BotID: "b1", Bot: coder(), CallID: "call-1"}
+	if res, _ := tool.Call(context.Background(), onCall, toolStartTask, json.RawMessage(`{"projectId":"p1","harness":"claude","prompt":"x"}`)); res.IsError {
+		t.Fatalf("start on a call: %+v", res)
+	}
+	if res, _ := tool.Call(context.Background(), chat.RunContext{BotID: "b1", Bot: coder()}, toolStartTask, json.RawMessage(`{"projectId":"p1","harness":"claude","prompt":"y"}`)); res.IsError {
+		t.Fatalf("start in chat: %+v", res)
+	}
+	if len(f.starts) != 2 || f.starts[0].CallID != "call-1" || f.starts[1].CallID != "" {
+		t.Fatalf("starts: %+v", f.starts)
+	}
+	for _, key := range []string{"CallID", "callId", "-"} {
+		res, _ := tool.Call(context.Background(), chat.RunContext{BotID: "b1", Bot: coder()}, toolStartTask, json.RawMessage(`{"projectId":"p1","harness":"claude","prompt":"z",`+quote(key)+`:"call-x"}`))
+		if !res.IsError || len(f.starts) != 2 {
+			t.Fatalf("the model set the call through %q: %+v", key, res)
+		}
+	}
+}
+
 func TestBotsSteerOnlyTasksTheyStarted(t *testing.T) {
 	f := &fakeTasks{tasks: map[string]TaskInfo{
 		"mine":  {ID: "mine", Title: "Mine", Owner: "bot:b1", Live: true},

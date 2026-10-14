@@ -696,6 +696,7 @@ func (m *Manager) Start(ctx context.Context, spec StartSpec) (Session, error) {
 		Title:     titleFor(spec, a), Task: strings.TrimSpace(spec.Prompt), Mode: mode, Command: strings.TrimSpace(spec.Command),
 		PermissionMode: spec.PermissionMode, Status: StatusIdle, ParentID: spec.ParentID, Group: spec.Group,
 		Pending: []PermissionRequest{}, StartedAt: now, UpdatedAt: now, Chain: events.ChainFrom(ctx), Owner: ActorFrom(ctx),
+		CallID: CallFrom(ctx),
 	}
 	if localMachine(s.Machine) && a.CanResume() && a.Kind() == "claude" {
 		s.AgentSessionID = NewClaudeSessionID()

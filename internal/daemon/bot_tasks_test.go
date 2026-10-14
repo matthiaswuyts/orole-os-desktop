@@ -12,6 +12,7 @@ import (
 	"github.com/rayorole/orole-os-desktop/internal/agents"
 	"github.com/rayorole/orole-os-desktop/internal/chat"
 	"github.com/rayorole/orole-os-desktop/internal/chat/tools"
+	"github.com/rayorole/orole-os-desktop/internal/events"
 )
 
 // A bot's own task settings beat the global ones field by field; what neither sets is the bot's
@@ -128,5 +129,67 @@ func TestBotTaskInYoloWithoutBotYoloIsRefused(t *testing.T) {
 	}
 	if list, err := d.Agents.ListPage(10, 0); err != nil || len(list) != 0 {
 		t.Fatalf("a refused start left sessions: %d %v", len(list), err)
+	}
+}
+
+// A code task a bot started on a phone call reports into that call's thread: the report never reaches the bot's
+// chat, and the follow-up hook hears about it as a task with the topic's status.
+func TestTaskStartedOnACallReportsIntoTheCallThread(t *testing.T) {
+	d, err := New(t.TempDir(), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- d.Run(context.Background()) }()
+	defer func() {
+		d.Shutdown()
+		if err := <-done; err != nil {
+			t.Error(err)
+		}
+	}()
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	b, err := d.Chat.SaveBot(ctx, chat.BotInput{Name: "Coder"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	follow := make(chan chat.FollowUp, 4)
+	d.Chat.SetFollowUpHook(func(f chat.FollowUp) bool { follow <- f; return false })
+
+	d.reportToOwner(events.TopicAgentFailed, agents.Session{ID: "t1", Title: "Fix login", Kind: "claude", Status: agents.StatusFailed,
+		Error: "boom", Owner: chat.BotPrefix + b.ID, CallID: "call-1"})
+	var f chat.FollowUp
+	select {
+	case f = <-follow:
+	case <-ctx.Done():
+		t.Fatal("the follow-up hook was not told")
+	}
+	if f.BotID != b.ID || f.CallID != "call-1" || f.Kind != chat.FollowUpTask || f.From != "Fix login" || f.Status != "failed" || !strings.Contains(f.Text, "boom") {
+		t.Fatalf("follow-up: %+v", f)
+	}
+	var thread []chat.Message
+	for {
+		if thread, err = d.Chat.CallMessages(ctx, "call-1"); err != nil {
+			t.Fatal(err)
+		}
+		if len(thread) > 0 || ctx.Err() != nil {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if len(thread) == 0 || thread[0].Author != chat.TaskPrefix+"t1" || thread[0].CallID != "call-1" {
+		t.Fatalf("call thread: %+v", thread)
+	}
+	page, err := d.Chat.Messages(ctx, chat.MessagesRequest{BotID: b.ID, Limit: 50})
+	if err != nil || len(page.Messages) != 0 {
+		t.Fatalf("the call's task report reached the chat: %+v %v", page.Messages, err)
+	}
+}
+
+func TestTaskReportStatusNamesTheTopic(t *testing.T) {
+	for topic, want := range map[string]string{events.TopicAgentFinished: "finished", events.TopicAgentWaiting: "waiting", events.TopicAgentFailed: "failed"} {
+		if got := taskReportStatus(topic); got != want {
+			t.Errorf("%s: %q, want %q", topic, got, want)
+		}
 	}
 }

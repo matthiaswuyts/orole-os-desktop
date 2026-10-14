@@ -35,8 +35,8 @@
 //	chat.run      RunState       a bot started/finished a run
 //	chat.bot      BotChange      bot saved/archived/cleared
 //	chat.memory   MemoryChange   memory content changed (see memory_api.go)
-//	chat.call.message Message    upsert of a spoken call turn (Message.CallID set); never sent as chat.message
-//	chat.call.delta   MessageDelta streamed text of a spoken call turn; never sent as chat.message.delta
+//	chat.call.message Message    upsert of a message of a call's thread (Message.CallID set); never sent as chat.message
+//	chat.call.delta   MessageDelta streamed text of a call thread message; never sent as chat.message.delta
 package chat
 
 import "encoding/json"
@@ -230,6 +230,33 @@ type RunState struct {
 	Paused bool `json:"paused,omitempty"`
 }
 
+// Follow-up kinds (FollowUp.Kind).
+const (
+	FollowUpReport = "report" // a bot the bot handed a task to reported back
+	FollowUpTask   = "task"   // a code task the bot started changed state
+)
+
+// MaxFollowUpText caps FollowUp.Text in runes.
+const MaxFollowUpText = 2000
+
+// FollowUp is work that came back to a bot after it handed it off: a report from a bot it delegated to, or a code
+// task it started that finished, needs the owner or failed. Work started on a phone call carries that call's id: its
+// report and the bot's answer go to the call's thread (Message.CallID), never to the chat.
+type FollowUp struct {
+	BotID  string // the bot the follow-up is for
+	CallID string // the call the work was started on; "" when it was started in chat
+	Kind   string // FollowUpReport or FollowUpTask
+	From   string // the reporting bot's name, or the task's title
+	// Status is "complete", "failed" or "stopped" for a report; "finished", "waiting" or "failed" for a task.
+	Status string
+	Text   string // the report, clipped to MaxFollowUpText runes: data from the other bot or task, not instructions
+}
+
+// FollowUpHook is told about every follow-up before the bot's written answer is queued. It returns true when it handed
+// the follow-up to the live call it was started on (to be spoken there): the report is then stored in the call thread
+// and no written answer is queued. It runs without chat locks held and must not block for long.
+type FollowUpHook func(FollowUp) bool
+
 // QueueItemRef identifies one waiting message of a bot's queue.
 type QueueItemRef struct {
 	BotID     string `json:"botId"`
@@ -321,9 +348,10 @@ type Message struct {
 	// FinishedAt is the Unix ms when the message reached a final status (complete, incomplete,
 	// error, canceled); 0 while it is pending or running, or for messages from before it was recorded.
 	FinishedAt int64 `json:"finishedAt,omitempty"`
-	// CallID marks a spoken turn of a phone call (the owner's utterance or the bot's reply). Such messages stay in the
-	// bot's history and memory but never reach the chat UI: paging, previews and chat.message events skip them, and
-	// they are read through the call transcript (chat.call.message events while the call is live). "" otherwise.
+	// CallID marks a message of a phone call's thread: a spoken turn (the owner's utterance or the bot's reply), or a
+	// follow-up of work started on the call (a report from a bot or code task and the bot's written answer to it). Such
+	// messages stay in the bot's history and memory but never reach the chat UI: paging, previews and chat.message
+	// events skip them, and they are read through the call transcript (chat.call.message events). "" otherwise.
 	CallID string `json:"callId,omitempty"`
 	// Automations is the automation chain of the turn this reply answers (automations.Run.Chain:
 	// the flows that led to it, outermost first); empty for turns the user started. It exists only

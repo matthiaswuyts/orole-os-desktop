@@ -1,6 +1,7 @@
 package chat
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -83,18 +84,39 @@ const taskReportExtra = "A code task you started changed state (the last message
 	"what they need to do; if it waits for a permission decision or an answer, say exactly what it is asking; only the user " +
 	"can answer it in the task. Do not start new work unless the user asked you to continue on your own."
 
-// ReportTask stores text in botID's conversation as a report from code task taskID and queues a turn
-// in which the bot tells the user about it. The bot must exist; text is the task's state as data.
-func (m *Manager) ReportTask(ctx context.Context, botID, taskID, text string) error {
-	text = clip(strings.TrimSpace(text), MaxMessageTextLen-1024)
-	if text == "" || taskID == "" {
+// TaskReport is a state change of a code task a bot started, for ReportTask.
+type TaskReport struct {
+	BotID  string // the bot that started the task
+	TaskID string
+	Title  string // the task's title (FollowUp.From)
+	Status string // "finished", "waiting" or "failed" (FollowUp.Status)
+	Text   string // the task's state: data, not instructions
+	CallID string // the phone call the task was started on; "" when it was started in chat
+}
+
+// ReportTask stores r.Text in r.BotID's conversation as a report from code task r.TaskID and queues a
+// turn in which the bot tells the user about it. The bot must exist. A task started on a phone call
+// reports into that call's thread instead of the chat; the follow-up hook is told first and may hand
+// the report to the live call (see FollowUpHook), in which case it is only stored there.
+func (m *Manager) ReportTask(ctx context.Context, r TaskReport) error {
+	text := clip(strings.TrimSpace(r.Text), MaxMessageTextLen-1024)
+	if text == "" || r.TaskID == "" {
 		return invalidf("A task report needs a task and text.")
 	}
-	unlock := m.lockBot(botID)
-	defer unlock()
-	if _, err := m.store.getBot(ctx, botID, false); err != nil {
+	if _, err := m.store.getBot(ctx, r.BotID, false); err != nil {
 		return err
 	}
-	_, err := m.submit(ctx, Message{BotID: botID, Role: "user", Author: TaskPrefix + taskID}, text, nil, turn{extra: taskReportExtra})
+	live := m.liveFollowUp(FollowUp{BotID: r.BotID, CallID: r.CallID, Kind: FollowUpTask, From: cmp.Or(r.Title, r.TaskID), Status: r.Status, Text: text})
+	unlock := m.lockBot(r.BotID)
+	defer unlock()
+	if _, err := m.store.getBot(ctx, r.BotID, false); err != nil {
+		return err
+	}
+	msg := Message{BotID: r.BotID, Role: "user", Author: TaskPrefix + r.TaskID, CallID: r.CallID}
+	if live {
+		_, err := m.record(ctx, msg, text)
+		return err
+	}
+	_, err := m.submit(ctx, msg, text, nil, turn{extra: taskReportExtra, callID: r.CallID})
 	return err
 }

@@ -313,6 +313,32 @@ func TestBotActorOwnsItsTaskAndGetsYoloOnlyWhenAllowed(t *testing.T) {
 	}
 }
 
+// A task a bot starts while it is on a phone call remembers the call, in memory and in the store, so its reports reach
+// the call's thread; a task started outside a call has none.
+func TestTaskStartedOnACallKeepsTheCall(t *testing.T) {
+	e := newEnv(t)
+	ctx := agents.WithCall(agents.WithActor(ctx10(t), "bot:b1"), "call-7")
+	s, err := e.m.Start(ctx, agents.StartSpec{Kind: "claude", Dir: t.TempDir(), Prompt: "hello"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.CallID != "call-7" || s.Owner != "bot:b1" {
+		t.Fatalf("call %q, owner %q", s.CallID, s.Owner)
+	}
+	if stored, err := e.st.GetSession(s.ID); err != nil || stored.CallID != "call-7" {
+		t.Fatalf("call not persisted: %q %v", stored.CallID, err)
+	}
+	if got, err := e.m.Get(s.ID); err != nil || got.CallID != "call-7" {
+		t.Fatalf("call not kept on the live session: %q %v", got.CallID, err)
+	}
+	if plain := e.start(t, agents.StartSpec{Prompt: "hi"}); plain.CallID != "" {
+		t.Fatalf("a task started outside a call has call %q", plain.CallID)
+	}
+	if agents.CallFrom(agents.WithCall(context.Background(), "")) != "" {
+		t.Fatal("an empty call id must leave the context without a call")
+	}
+}
+
 // A start that names no mode runs in the user's default; a YOLO default is confirmed by the
 // setting for the user and downgraded to manual for bots the user did not allow YOLO.
 func TestDefaultPermissionModeAppliesToUnnamedStarts(t *testing.T) {

@@ -91,6 +91,18 @@ Bots with Jarvis mode on can speak on the phone (`docs/architecture/jarvis.md`).
   prompt prefix stays stable; the call layer supplies its own history (a connected cue is added when it starts with the
   bot's opener). `RunContext.CallID` is set, which `call_owner` and `switch_bot` check.
 - Callbacks: `OnText` streams the spoken text, `OnTool` is called as a tool starts (the call layer speaks a filler).
+- **Follow-ups of a call stay in the call's thread.** Work a bot starts on a call remembers the call: a handoff keeps
+  `RunContext.CallID` on its pending entry, and a code task records it as `agents.Session.CallID` (set from
+  `agents.WithCall`, kept in the session's JSON like `Owner`). Its report (`report:<calleeId>` / `task:<taskId>`) and
+  the bot's written answer are stored with that call id and published only as `chat.call.message` / `chat.call.delta`;
+  the answering turn runs in the bot's normal queue (tools, memory, history) but announces no `chat.run`, so the chat
+  shows neither it nor a running state (`Bot.Running` counts only workers the chat was told about). The callee's own
+  thread (the task handed to it) is that bot's work and stays in its chat. Before a written answer is queued,
+  `SetFollowUpHook(func(FollowUp) bool)` is told about every report and task report, from a call or not
+  (`FollowUp{BotID, CallID, Kind "report"|"task", From, Status, Text}` with `Text` clipped to 2,000 runes); it returns
+  true when it handed a call follow-up to that live call to be spoken, and then the report is only stored in the call
+  thread, with no written answer. A follow-up from chat is always answered in chat. The written answer does not get
+  `RunContext.CallID` (it is not spoken, and the call has usually ended), so work it starts reports to the chat.
 - `Compose(ctx, botID, instruction)` asks the model for one short line (the call opener): nothing stored, no tools.
 - `PartCall` is a message part for the phone call card (`ID` call id, `Name` direction `outbound|inbound`, `Status`,
   `Title` reason, `DurationMs`, `Summary` estimated cost). `PostCallCard` inserts a message holding it and
@@ -130,7 +142,8 @@ answers ("on it") and stays free for the user. When the callee's turn ends, in a
 asking bot's conversation as a user message with author `report:<calleeId>` and the asking bot answers it with a
 system-prompt addendum to tell the user what came back. The model sees the report fenced as untrusted data, and the UI
 draws it as a collapsed "reported back" card. While a task is out, the asking bot's system prompt lists it (name, task,
-minutes running), so the user can ask for status. Handoff state lives in memory: a daemon restart ends running tasks as
+minutes running), so the user can ask for status. A handoff made on a phone call reports into that call's thread
+instead (see Phone calls). Handoff state lives in memory: a daemon restart ends running tasks as
 `incomplete` and no report is delivered. A user stopping the callee reports "stopped" to the asker. Consolidation
 treats messages authored by another bot as untrusted. Delegation rows carry `MsgPart.botId` of the callee.
 
@@ -181,7 +194,8 @@ immediately never reports early. A failed turn reports `agent.failed` once (neve
 
 When a task a bot owns finishes, needs the user, or fails, `daemon/app_events.go` calls `Manager.ReportTask`: the
 state is stored in the bot's conversation as a user message authored `task:<taskId>`, fenced as "code task report",
-and the bot answers it with an addendum. A finished report carries the task's **complete result** (`Session.Result`,
+and the bot answers it with an addendum (a task started on a phone call reports into that call's thread instead; see
+Phone calls). A finished report carries the task's **complete result** (`Session.Result`,
 up to 32 KiB; `task_status` returns the same, lists stay clipped to 2,000 runes) and the addendum tells the bot to
 relay it as a full overview; waiting and failed reports carry what the task asks, the error and its last message.
 Only the user can answer a task's questions. The report is input for the bot only: the conversation does not draw it

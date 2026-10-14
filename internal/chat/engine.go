@@ -75,6 +75,7 @@ func (m *Manager) buildToolset(bot Bot, caps llm.Caps, draft bool) toolset {
 // runTurn answers one stored user message: it creates (or resets) the assistant message, runs the
 // engine and stores the terminal state. It never returns an error; failures end up on the message.
 // A delegated turn (t.result set) also reports its outcome to the asking bot, whatever happens.
+// A call thread turn (t.callID set) keeps its reply in that call's thread and out of the chat.
 func (m *Manager) runTurn(ctx context.Context, botID string, t turn) {
 	res := handoffResult{status: StatusError, errText: "the task could not be started"}
 	defer func() { t.deliver(res) }()
@@ -90,9 +91,9 @@ func (m *Manager) runTurn(ctx context.Context, botID string, t turn) {
 	if t.responder != "" {
 		if bot, err = m.store.getBot(bg, t.responder, false); err != nil {
 			m.log.Warn("chat: mention skipped", "bot", t.responder, "err", err)
-			gone := Message{ID: newID(), BotID: botID, Role: "assistant", Author: "bot:" + t.responder, Status: StatusError, Error: "The mentioned bot no longer exists.", CreatedAt: m.nowMs()}
+			gone := Message{ID: newID(), BotID: botID, Role: "assistant", Author: "bot:" + t.responder, Status: StatusError, Error: "The mentioned bot no longer exists.", CreatedAt: m.nowMs(), CallID: t.callID}
 			if m.store.insertMessage(bg, &gone) == nil {
-				m.publishMessage(gone)
+				m.publishAny(gone)
 			}
 			return
 		}
@@ -106,7 +107,7 @@ func (m *Manager) runTurn(ctx context.Context, botID string, t turn) {
 		user.FinishedAt, _ = m.store.setStatusAt(bg, user.ID, StatusComplete, "", m.nowMs())
 		user.Status = StatusComplete
 		user.Error = ""
-		m.publishMessage(user)
+		m.publishAny(user)
 	}
 	var asst Message
 	if t.asstID != "" {
@@ -114,7 +115,7 @@ func (m *Manager) runTurn(ctx context.Context, botID string, t turn) {
 			asst, err = m.store.getMessage(bg, t.asstID)
 		}
 	} else {
-		asst = Message{ID: newID(), BotID: botID, Role: "assistant", Author: "bot:" + bot.ID, Status: StatusRunning, CreatedAt: m.nowMs()}
+		asst = Message{ID: newID(), BotID: botID, Role: "assistant", Author: "bot:" + bot.ID, Status: StatusRunning, CreatedAt: m.nowMs(), CallID: t.callID}
 		err = m.store.insertMessage(bg, &asst)
 	}
 	if err != nil {
@@ -127,9 +128,15 @@ func (m *Manager) runTurn(ctx context.Context, botID string, t turn) {
 		return m.store.updateMessage(pc, msg)
 	}
 	asst.Automations = slices.Clone(t.automations)
-	s := newSink(asst, persist, m.publishMessage, m.publishDelta)
+	publish, publishDelta := m.publishMessage, m.publishDelta
+	if t.callID != "" {
+		publish, publishDelta = m.publishCallMessage, m.publishCallDelta
+	}
+	s := newSink(asst, persist, publish, publishDelta)
 	s.clock = m.cfg.Clock
-	m.emit("chat.run", RunState{BotID: botID, Running: true, MessageID: asst.ID})
+	if t.callID == "" {
+		m.emit("chat.run", RunState{BotID: botID, Running: true, MessageID: asst.ID})
+	}
 	s.checkpoint()
 
 	rc := RunContext{BotID: bot.ID, Bot: bot, MessageID: asst.ID, Actor: "bot:" + bot.ID, Depth: t.depth, Chain: t.chain,

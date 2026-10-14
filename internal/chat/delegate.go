@@ -15,6 +15,7 @@ type handoff struct {
 	callee string // the other bot's name
 	task   string // one line
 	since  int64  // Unix milliseconds
+	callID string // the phone call the task was handed off on (its report goes to that call's thread); "" from chat
 }
 
 // reportExtra is the system-prompt addendum of the turn that answers a report.
@@ -30,7 +31,9 @@ const reportExtra = "A bot you handed a task to has reported back (the last mess
 //
 // When the callee's turn ends, its outcome is stored in the caller's conversation as a report
 // ("report:<calleeID>") and the caller answers it: it tells the user what came back. Meanwhile the caller's
-// system prompt lists the tasks still out, so it can answer questions about their status.
+// system prompt lists the tasks still out, so it can answer questions about their status. A task handed off
+// on a phone call (from.CallID) reports into that call's thread instead of the chat, and the follow-up hook
+// may hand the report to the live call (see FollowUpHook), in which case no written answer follows.
 //
 // Only executive assistants may hand off: the caller must be flagged Executive in its stored configuration,
 // and chains are depth-limited. from.Chain must hold the delegating run's chain plus the caller.
@@ -69,7 +72,7 @@ func (m *Manager) Handoff(ctx context.Context, from RunContext, calleeID, task s
 			"Do the work, then finish with a concise, self-contained result; you cannot ask follow-up questions.", caller.Name),
 	}
 	task = strings.TrimRight(task, " \t\r\n")
-	h := &handoff{callee: callee.Name, task: oneLine(task, 160), since: m.nowMs()}
+	h := &handoff{callee: callee.Name, task: oneLine(task, 160), since: m.nowMs(), callID: from.CallID}
 
 	// The callee's bot lock keeps the stored message and its queued turn in the same order as its other messages.
 	unlock := m.lockBot(callee.ID)
@@ -114,19 +117,40 @@ func (m *Manager) awaitReport(callerID string, callee Bot, h *handoff, result <-
 	if closed {
 		return
 	}
-	// The report is stored and queued under the caller's bot lock, like any other message to it.
-	unlock := m.lockBot(callerID)
-	defer unlock()
 	ctx, cancel := context.WithTimeout(m.ctx, 10*time.Second)
 	defer cancel()
 	if _, err := m.store.getBot(ctx, callerID, false); err != nil {
 		return // the asking bot is gone: nobody to tell
 	}
 	text := clip(reportText(callee, r), MaxMessageTextLen-1024)
-	msg := Message{BotID: callerID, Role: "user", Author: ReportPrefix + callee.ID}
-	if _, err := m.submit(ctx, msg, text, nil, turn{extra: reportExtra, automations: automations}); err != nil {
+	live := m.liveFollowUp(FollowUp{BotID: callerID, CallID: h.callID, Kind: FollowUpReport, From: callee.Name, Status: reportStatus(r.status), Text: text})
+	// The report is stored and queued under the caller's bot lock, like any other message to it.
+	unlock := m.lockBot(callerID)
+	defer unlock()
+	if _, err := m.store.getBot(ctx, callerID, false); err != nil {
+		return
+	}
+	msg := Message{BotID: callerID, Role: "user", Author: ReportPrefix + callee.ID, CallID: h.callID}
+	var err error
+	if live {
+		_, err = m.record(ctx, msg, text) // the live call tells the owner; the call thread keeps the report
+	} else {
+		_, err = m.submit(ctx, msg, text, nil, turn{extra: reportExtra, automations: automations, callID: h.callID})
+	}
+	if err != nil {
 		m.log.Warn("chat: report not delivered", "from", callee.ID, "to", callerID, "err", err)
 	}
+}
+
+// reportStatus is FollowUp.Status for a report: "complete", "stopped" or "failed".
+func reportStatus(status string) string {
+	switch status {
+	case StatusComplete:
+		return "complete"
+	case StatusCanceled, StatusIncomplete:
+		return "stopped"
+	}
+	return "failed"
 }
 
 // reportText is what the caller hears when the callee's turn ended.
@@ -166,6 +190,14 @@ func (m *Manager) handoffsNote(botID string) string {
 		fmt.Fprintf(&b, "- %q: %q (started %d min ago)\n", h.callee, h.task, max(0, (now-h.since)/60000))
 	}
 	return strings.TrimRight(b.String(), "\n")
+}
+
+// clipRunes clips s to at most max runes (max > 0), marking a cut with an ellipsis.
+func clipRunes(s string, max int) string {
+	if utf8.RuneCountInString(s) <= max {
+		return s
+	}
+	return string([]rune(s)[:max-1]) + "…"
 }
 
 // oneLine collapses whitespace and clips to max runes.

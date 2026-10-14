@@ -86,6 +86,7 @@ type Manager struct {
 	// automation messages, reports or hand-offs).
 	userSections []func(Bot) string
 	observer     ToolObserver
+	followUp     FollowUpHook                            // see SetFollowUpHook; nil = no follow-up reaches a call
 	builtin      func() []string                         // enabled built-in skill names every bot may use; nil when there is no registry
 	mcpNames     func(context.Context) map[string]string // MCP server id -> display name; nil when there are no integrations
 	runs         map[string]*runState                    // active runs by bot id or "draft:<id>"
@@ -200,6 +201,27 @@ func (m *Manager) SetToolObserver(o ToolObserver) {
 	m.mu.Unlock()
 }
 
+// SetFollowUpHook registers the hook told about every report and task report (one; nil removes it).
+func (m *Manager) SetFollowUpHook(h FollowUpHook) {
+	m.mu.Lock()
+	m.followUp = h
+	m.mu.Unlock()
+}
+
+// liveFollowUp tells the follow-up hook about f and reports whether it handed f to f's live call, so no written answer
+// is needed. Only a follow-up of work started on a call can be handed to that call: one from chat is always answered
+// in chat. The caller holds no chat lock.
+func (m *Manager) liveFollowUp(f FollowUp) bool {
+	m.mu.Lock()
+	h := m.followUp
+	m.mu.Unlock()
+	if h == nil {
+		return false
+	}
+	f.Text = clipRunes(f.Text, MaxFollowUpText)
+	return h(f) && f.CallID != ""
+}
+
 func (m *Manager) toolObserver() ToolObserver {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -299,7 +321,16 @@ func (m *Manager) publishMessage(msg Message) { m.emit("chat.message", msg) }
 
 func (m *Manager) publishDelta(d MessageDelta) { m.emit("chat.message.delta", d) }
 
-// publishCallMessage and publishCallDelta carry the spoken turns of a phone call: the chat timeline never sees them.
+// publishAny publishes msg on the timeline it belongs to: a call thread message (CallID set) only as chat.call.message.
+func (m *Manager) publishAny(msg Message) {
+	if msg.CallID != "" {
+		m.publishCallMessage(msg)
+		return
+	}
+	m.publishMessage(msg)
+}
+
+// publishCallMessage and publishCallDelta carry the messages of a call's thread: the chat timeline never sees them.
 func (m *Manager) publishCallMessage(msg Message) { m.emit("chat.call.message", msg) }
 
 func (m *Manager) publishCallDelta(d MessageDelta) { m.emit("chat.call.delta", d) }
@@ -333,7 +364,7 @@ func (m *Manager) Bots(ctx context.Context) ([]Bot, error) {
 	}
 	m.mu.Lock()
 	for i := range bots {
-		_, bots[i].Running = m.runs[bots[i].ID]
+		bots[i].Running = m.chatRunningLocked(bots[i].ID)
 	}
 	m.mu.Unlock()
 	return bots, nil
@@ -346,9 +377,16 @@ func (m *Manager) Bot(ctx context.Context, id string) (Bot, error) {
 		return Bot{}, err
 	}
 	m.mu.Lock()
-	_, b.Running = m.runs[id]
+	b.Running = m.chatRunningLocked(id)
 	m.mu.Unlock()
 	return b, nil
+}
+
+// chatRunningLocked reports whether the chat sees the bot's worker running: one that so far only answered in a call's
+// thread is not announced to the chat (runState.shown). m.mu must be held.
+func (m *Manager) chatRunningLocked(botID string) bool {
+	st := m.runs[botID]
+	return st != nil && st.shown
 }
 
 // SaveCheck runs before a bot with Jarvis enabled is saved. stored is the bot as saved now (nil when creating). It

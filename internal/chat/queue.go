@@ -29,6 +29,10 @@ type turn struct {
 	result chan<- handoffResult // receives the outcome exactly once; buffered so it never blocks
 	// automations is the automation chain behind this turn (Message.Automations); empty for user turns.
 	automations []string
+	// callID puts the turn in a phone call's thread: the message it answers and its reply carry it (Message.CallID)
+	// and are published as call events only, and the turn announces no chat.run. It runs like any other turn of the
+	// bot's queue. Set for follow-ups of work started on a call; "" otherwise.
+	callID string
 }
 
 // handoffResult is how a delegated turn ended.
@@ -62,6 +66,9 @@ type runState struct {
 	paused bool
 	// wake nudges a worker that is waiting on a paused queue to look again (resume, cancel, a drained queue).
 	wake chan struct{}
+	// shown is set once the chat was told about this worker (a chat turn started, or the queue was paused or
+	// resumed); its end is then announced as well. A worker that only ran call thread turns stays out of the chat.
+	shown bool
 }
 
 // poke wakes the worker if it is waiting. It never blocks and may be called without m.mu.
@@ -147,7 +154,8 @@ func (m *Manager) Send(ctx context.Context, req SendRequest) (Message, error) {
 
 // submit stores msg (a user message of msg.BotID) with the given text and attachments, publishes it
 // and queues turns (each answers the message) behind the bot's active run, or starts the bot's worker
-// when it is idle. The message is stored pending while it waits behind an active run.
+// when it is idle. The message is stored pending while it waits behind an active run. The turns' call
+// id (all turns answer the same message) puts the message in that call's thread.
 //
 // The caller holds lockBot(msg.BotID) and has verified that the bot exists. That lock is what keeps
 // the order of messages and turns identical for one bot, so the SQLite work here runs outside the
@@ -168,10 +176,13 @@ func (m *Manager) submit(ctx context.Context, msg Message, text string, attachme
 	if st != nil {
 		msg.Status = StatusPending
 	}
+	if len(turns) > 0 {
+		msg.CallID = turns[0].callID
+	}
 	if err := m.store.insertUserMessage(ctx, &msg, text, attachmentIDs); err != nil {
 		return Message{}, err
 	}
-	m.publishMessage(msg)
+	m.publishAny(msg)
 	for i := range turns {
 		turns[i].userMsgID = msg.ID
 	}
@@ -197,6 +208,20 @@ func (m *Manager) submit(ctx context.Context, msg Message, text string, attachme
 	return msg, nil
 }
 
+// record stores msg (a user message of msg.BotID) with the given text as complete and publishes it, without a turn to
+// answer it: a follow-up that was handed to the live call it came from. The caller holds lockBot(msg.BotID).
+func (m *Manager) record(ctx context.Context, msg Message, text string) (Message, error) {
+	if m.isClosed() {
+		return Message{}, ErrClosed
+	}
+	msg.ID, msg.Status, msg.CreatedAt = newID(), StatusComplete, m.nowMs()
+	if err := m.store.insertUserMessage(ctx, &msg, text, nil); err != nil {
+		return Message{}, err
+	}
+	m.publishAny(msg)
+	return msg, nil
+}
+
 func dedupe(ids []string) []string {
 	out := make([]string, 0, len(ids))
 	for _, id := range ids {
@@ -219,7 +244,7 @@ func containsString(s []string, v string) bool {
 // startLocked launches the worker for a bot, first answering turns in order. The caller holds m.mu
 // and has verified there is no run.
 func (m *Manager) startLocked(botID string, turns ...turn) {
-	st := &runState{done: make(chan struct{}), wake: make(chan struct{}, 1), queue: turns}
+	st := &runState{done: make(chan struct{}), wake: make(chan struct{}, 1), queue: turns, shown: len(turns) > 0 && turns[0].callID == ""}
 	m.runs[botID] = st
 	m.wg.Add(1)
 	go m.pump(botID, st)
@@ -232,6 +257,7 @@ func (m *Manager) pump(botID string, st *runState) {
 	for {
 		m.mu.Lock()
 		if st.paused && len(st.queue) > 0 && !m.closed && m.ctx.Err() == nil {
+			st.shown = true
 			m.mu.Unlock()
 			m.emit("chat.run", RunState{BotID: botID, Paused: true})
 			select {
@@ -245,12 +271,15 @@ func (m *Manager) pump(botID string, st *runState) {
 			st.queue = nil
 			delete(m.runs, botID)
 			st.cancel, st.active = nil, ""
+			shown := st.shown
 			close(st.done)
 			m.mu.Unlock()
 			for _, t := range left {
 				t.deliver(handoffResult{status: StatusCanceled, errText: "the daemon is shutting down"})
 			}
-			m.emit("chat.run", RunState{BotID: botID})
+			if shown {
+				m.emit("chat.run", RunState{BotID: botID})
+			}
 			if ran {
 				m.armIdle(botID)
 			}
@@ -260,6 +289,9 @@ func (m *Manager) pump(botID string, st *runState) {
 		st.queue = st.queue[1:]
 		ctx, cancel := context.WithCancel(m.ctx)
 		st.cancel, st.active = cancel, t.userMsgID
+		if t.callID == "" {
+			st.shown = true
+		}
 		m.mu.Unlock()
 		m.runTurn(ctx, botID, t)
 		cancel()
@@ -366,7 +398,7 @@ func (m *Manager) PauseQueue(_ context.Context, botID string) error {
 		m.mu.Unlock()
 		return nil
 	}
-	st.paused = true
+	st.paused, st.shown = true, true
 	running := st.cancel != nil
 	m.mu.Unlock()
 	m.emit("chat.run", RunState{BotID: botID, Running: running, Paused: true})
@@ -381,7 +413,7 @@ func (m *Manager) ResumeQueue(_ context.Context, botID string) error {
 		m.mu.Unlock()
 		return nil
 	}
-	st.paused = false
+	st.paused, st.shown = false, true
 	running := st.cancel != nil
 	m.mu.Unlock()
 	st.poke()
@@ -417,8 +449,8 @@ func (m *Manager) CancelQueued(ctx context.Context, botID, messageID string) err
 	return nil
 }
 
-// cancelQueued marks the user message of a turn that will never run as canceled, publishes it and
-// tells the bot waiting on it, if any.
+// cancelQueued marks the user message of a turn that will never run as canceled, publishes it (in
+// its call's thread when it has one) and tells the bot waiting on it, if any.
 func (m *Manager) cancelQueued(ctx context.Context, t turn, reason string) {
 	t.deliver(handoffResult{status: StatusCanceled, errText: "the task was stopped before it started"})
 	if t.userMsgID == "" {
@@ -429,7 +461,7 @@ func (m *Manager) cancelQueued(ctx context.Context, t turn, reason string) {
 		return
 	}
 	if msg, err := m.store.getMessage(ctx, t.userMsgID); err == nil {
-		m.publishMessage(msg)
+		m.publishAny(msg)
 	}
 }
 

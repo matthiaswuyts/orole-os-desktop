@@ -74,6 +74,9 @@ type TaskStart struct {
 	Prompt      string `json:"prompt"`
 	Title       string `json:"title"`
 	NewWorktree bool   `json:"newWorktree"`
+	// CallID is the phone call the bot is on when it starts the task (chat.RunContext.CallID): the task's reports go
+	// to that call's thread. The tool sets it from the run; the model cannot (it is not part of the arguments).
+	CallID string `json:"-"`
 }
 
 // TaskChoices is how the user's settings shape the code tasks one bot starts. Harness, Model and
@@ -274,6 +277,7 @@ func (t Tasks) Call(ctx context.Context, rc chat.RunContext, name string, args j
 				return errResult("%s", err)
 			}
 		}
+		in.CallID = rc.CallID
 		info, err := t.Runtime.Start(ctx, actor, rc.Bot, in)
 		if err != nil {
 			return errResult("the task did not start: %s", err)
