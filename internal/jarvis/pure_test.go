@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 func TestCheckGate(t *testing.T) {
@@ -84,6 +85,44 @@ func TestCheckOpener(t *testing.T) {
 		f := FallbackOpener("Atlas", "the deploy finished", i)
 		if _, ok := CheckOpener("Atlas", f); !ok {
 			t.Errorf("fallback %d fails its own check: %q", i, f)
+		}
+	}
+}
+
+func TestCheckOpenerRejectsEmptyName(t *testing.T) {
+	for _, name := range []string{"", "   ", "\t"} {
+		if _, ok := CheckOpener(name, "Hey, anything here."); ok {
+			t.Errorf("accepted with empty name %q", name)
+		}
+	}
+}
+
+func TestFallbackNonASCIIReason(t *testing.T) {
+	reason := strings.Repeat("échec du déploiement ünd 日本語 ", 10)
+	for i := 0; i < 6; i++ {
+		f := FallbackOpener("Atlas", reason, i)
+		if !utf8.ValidString(f) {
+			t.Errorf("fallback %d is invalid UTF-8: %q", i, f)
+		}
+		if _, ok := CheckOpener("Atlas", f); !ok {
+			t.Errorf("fallback %d fails CheckOpener: %q", i, f)
+		}
+	}
+}
+
+func TestFallbackNewlineAndLongName(t *testing.T) {
+	long := strings.Repeat("B", 300)
+	for i := 0; i < 6; i++ {
+		f := FallbackOpener("Atlas", "the deploy\nfailed\r\n on tests", i)
+		if _, ok := CheckOpener("Atlas", f); !ok {
+			t.Errorf("newline reason, fallback %d fails: %q", i, f)
+		}
+		g := FallbackOpener(long, strings.Repeat("x ", 200), i)
+		if len(g) > maxOpener {
+			t.Errorf("fallback %d over %d bytes: %d", i, maxOpener, len(g))
+		}
+		if _, ok := CheckOpener(long[:maxName], g); !ok {
+			t.Errorf("long name, fallback %d fails: %q", i, g)
 		}
 	}
 }
