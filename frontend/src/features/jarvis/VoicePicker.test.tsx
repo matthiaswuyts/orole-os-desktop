@@ -11,7 +11,7 @@ const voices: Voice[] = [
   { id: "v2", name: "George", description: "Warm · male · British" },
 ];
 const models: TTSModel[] = [
-  { id: "flash", name: "Flash v2.5 — recommended for calls", description: "Fastest and cheapest.", recommended: true },
+  { id: "flash", name: "Flash v2.5", description: "Fastest and cheapest.", recommended: true },
   { id: "turbo", name: "Turbo v2.5 (older)", description: "Slower.", recommended: false },
 ];
 const noop = () => undefined;
@@ -60,7 +60,7 @@ it("keeps an unknown stored model selected, labelled as not recommended", () => 
 
 it("labels the default model option with the default's name", () => {
   render(<ModelPicker id="m" value="" models={models} defaultId="flash" onChange={noop} />);
-  expect(screen.getByRole("combobox")).toHaveTextContent("Default (Flash v2.5 — recommended for calls)");
+  expect(screen.getByRole("combobox")).toHaveTextContent("Default (Flash v2.5)");
 });
 
 it("reports the chosen value", async () => {

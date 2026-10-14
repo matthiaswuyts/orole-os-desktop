@@ -44,7 +44,7 @@ function Picker({ id, value, options, onChange, compact, className }: PickerLook
     <SelectTrigger id={id} size="sm" className={cn(compact ? "w-auto min-w-24 max-w-52 border-0 bg-transparent shadow-none" : "w-52", className)}>
       <SelectValue>{(current: string | null) => { const o = byValue.get(current ?? ""); return o ? <TriggerBody option={o} /> : null; }}</SelectValue>
     </SelectTrigger>
-    <SelectPopup alignItemWithTrigger={false} className="max-h-80">
+    <SelectPopup alignItemWithTrigger={false} align="end" className="max-h-80 w-80 max-w-[calc(100vw-2rem)]">
       {options.map((o) => <SelectItem key={o.value} value={o.value}><OptionBody option={o} /></SelectItem>)}
     </SelectPopup>
   </Select>;

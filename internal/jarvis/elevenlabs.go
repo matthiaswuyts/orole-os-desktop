@@ -39,7 +39,7 @@ type TTSModel struct {
 // curatedModels is the single source for the voice model choices, in display order. Models() offers only the ones
 // the account's /v1/models actually lists.
 var curatedModels = []TTSModel{
-	{ID: "eleven_flash_v2_5", Name: "Flash v2.5 — recommended for calls", Description: "Fastest and cheapest (~75 ms), 32 languages.", Recommended: true},
+	{ID: "eleven_flash_v2_5", Name: "Flash v2.5",Description: "Fastest and cheapest (~75 ms), 32 languages.", Recommended: true},
 	{ID: "eleven_v3_conversational", Name: "v3 Conversational", Description: "Most natural and expressive, built for agents, 70+ languages. A bit slower and pricier."},
 	{ID: "eleven_turbo_v2_5", Name: "Turbo v2.5 (older)", Description: "Slightly richer than Flash but slower; ElevenLabs now recommends Flash for new projects."},
 }

@@ -77,7 +77,7 @@ func TestModelsAreCuratedFilteredAndOrdered(t *testing.T) {
 	if err != nil || len(ms) != 2 {
 		t.Fatalf("models=%+v err=%v", ms, err)
 	}
-	if ms[0].ID != "eleven_flash_v2_5" || !ms[0].Recommended || ms[0].Name != "Flash v2.5 — recommended for calls" || ms[0].Description == "" {
+	if ms[0].ID != "eleven_flash_v2_5" || !ms[0].Recommended || ms[0].Name != "Flash v2.5" || ms[0].Description == "" {
 		t.Errorf("first=%+v", ms[0])
 	}
 	if ms[1].ID != "eleven_turbo_v2_5" || ms[1].Recommended || ms[1].Name != "Turbo v2.5 (older)" {
