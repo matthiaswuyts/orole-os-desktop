@@ -92,9 +92,11 @@ type Manager struct {
 	mcpNames     func(context.Context) map[string]string // MCP server id -> display name; nil when there are no integrations
 	runs         map[string]*runState                    // active runs by bot id or "draft:<id>"
 	handoffs     map[string][]*handoff                   // bot id -> tasks it handed to other bots that have not reported back
-	idle         map[string]*idleJob
-	nonces       nonceCache
-	closed       bool
+	// answerLater holds the message ids of follow-ups AnswerFollowUp was asked to answer before they were stored.
+	answerLater map[string]bool
+	idle        map[string]*idleJob
+	nonces      nonceCache
+	closed      bool
 
 	botMu sync.Map // bot id -> *sync.Mutex, see lockBot
 
@@ -134,13 +136,14 @@ func New(cfg Config) (*Manager, error) {
 		cfg.IdleConsolidateAfter = defaultIdleAfter
 	}
 	m := &Manager{
-		cfg:      cfg,
-		log:      cfg.Log,
-		store:    &store{db: cfg.DB, now: cfg.Clock},
-		runs:     map[string]*runState{},
-		handoffs: map[string][]*handoff{},
-		idle:     map[string]*idleJob{},
-		catalog:  map[string]catalogEntry{},
+		cfg:         cfg,
+		log:         cfg.Log,
+		store:       &store{db: cfg.DB, now: cfg.Clock},
+		runs:        map[string]*runState{},
+		handoffs:    map[string][]*handoff{},
+		answerLater: map[string]bool{},
+		idle:        map[string]*idleJob{},
+		catalog:     map[string]catalogEntry{},
 	}
 	m.ctx, m.cancel = context.WithCancel(context.Background())
 	up, err := newUploads(cfg.DataDir, m.store, cfg.Clock)
@@ -229,6 +232,61 @@ func (m *Manager) liveFollowUp(f FollowUp) bool {
 	}
 	f.Text = clipRunes(f.Text, MaxFollowUpText)
 	return h(f) && f.CallID != ""
+}
+
+// takeAnswerLater reports whether AnswerFollowUp asked for the follow-up message id to be answered before it was stored,
+// and forgets the request. The caller holds lockBot of the message's bot.
+func (m *Manager) takeAnswerLater(id string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	ok := m.answerLater[id]
+	delete(m.answerLater, id)
+	return ok
+}
+
+// AnswerFollowUp queues the bot's written answer to a follow-up the hook handed to its live call (it returned true)
+// that the call never told: the call ended first. The answer goes where it goes for an ended call, into the call's
+// thread, with the usual report or task-report instructions. f is the follow-up as the hook was told it. The hook runs
+// before the follow-up is stored, so its message may not exist yet: it is then answered as soon as it is stored.
+func (m *Manager) AnswerFollowUp(ctx context.Context, f FollowUp) error {
+	if f.MessageID == "" || f.BotID == "" || f.CallID == "" {
+		return invalidf("Only a follow-up of a call can be answered this way.")
+	}
+	unlock := m.lockBot(f.BotID)
+	defer unlock()
+	if m.isClosed() {
+		return ErrClosed
+	}
+	msg, err := m.store.getMessage(ctx, f.MessageID)
+	if errors.Is(err, ErrNotFound) {
+		// Still on its way into the store (awaitReport, ReportTask): it takes this bot lock next and answers it.
+		m.mu.Lock()
+		m.answerLater[f.MessageID] = true
+		m.mu.Unlock()
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	extra := reportExtra
+	switch {
+	case msg.BotID != f.BotID || msg.Role != "user" || msg.CallID != f.CallID:
+		return invalidf("That message is not a follow-up of this call.")
+	case strings.HasPrefix(msg.Author, TaskPrefix):
+		extra = taskReportExtra
+	case !strings.HasPrefix(msg.Author, ReportPrefix):
+		return invalidf("That message is not a follow-up of this call.")
+	}
+	m.mu.Lock()
+	full := m.runs[f.BotID] != nil && len(m.runs[f.BotID].queue) >= maxQueued
+	m.mu.Unlock()
+	if full {
+		return busyf("Too many messages are waiting. Wait for the bot to catch up.")
+	}
+	if !m.enqueue(msg, turn{extra: extra}) {
+		return ErrClosed
+	}
+	return nil
 }
 
 func (m *Manager) toolObserver() ToolObserver {

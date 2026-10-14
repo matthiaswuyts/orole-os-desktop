@@ -110,16 +110,19 @@ func (m *Manager) ReportTask(ctx context.Context, r TaskReport) error {
 	if err != nil {
 		return err
 	}
-	live := m.liveFollowUp(FollowUp{BotID: r.BotID, CallID: r.CallID, Kind: FollowUpTask, From: cmp.Or(r.Title, r.TaskID), Status: r.Status, Text: text})
+	id := newID()
+	live := m.liveFollowUp(FollowUp{BotID: r.BotID, CallID: r.CallID, Kind: FollowUpTask, From: cmp.Or(r.Title, r.TaskID), Status: r.Status, Text: text, MessageID: id})
 	ctx, cancel = context.WithTimeout(ctx, storeTimeout)
 	defer cancel()
 	unlock := m.lockBot(r.BotID)
 	defer unlock()
+	// The call may have ended between the hook and here without telling it: then it is answered after all.
+	answer := m.takeAnswerLater(id)
 	if _, err := m.store.getBot(ctx, r.BotID, false); err != nil {
 		return err
 	}
-	msg := Message{BotID: r.BotID, Role: "user", Author: TaskPrefix + r.TaskID, CallID: r.CallID}
-	if live {
+	msg := Message{ID: id, BotID: r.BotID, Role: "user", Author: TaskPrefix + r.TaskID, CallID: r.CallID}
+	if live && !answer {
 		_, err := m.record(ctx, msg, text)
 		return err
 	}

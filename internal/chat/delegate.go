@@ -117,19 +117,22 @@ func (m *Manager) awaitReport(callerID string, callee Bot, h *handoff, result <-
 		return // nobody to tell
 	}
 	text := clip(reportText(callee, r), MaxMessageTextLen-1024)
+	id := newID()
 	// The hook runs before the store deadline starts, so a slow hook cannot cost the report its write.
-	live := m.liveFollowUp(FollowUp{BotID: callerID, CallID: h.callID, Kind: FollowUpReport, From: callee.Name, Status: reportStatus(r.status), Text: text})
+	live := m.liveFollowUp(FollowUp{BotID: callerID, CallID: h.callID, Kind: FollowUpReport, From: callee.Name, Status: reportStatus(r.status), Text: text, MessageID: id})
 	ctx, cancel := context.WithTimeout(m.ctx, storeTimeout)
 	defer cancel()
 	// The report is stored and queued under the caller's bot lock, like any other message to it.
 	unlock := m.lockBot(callerID)
 	defer unlock()
+	// The call may have ended between the hook and here without telling it: then it is answered after all.
+	answer := m.takeAnswerLater(id)
 	if _, err := m.store.getBot(ctx, callerID, false); err != nil {
 		return
 	}
-	msg := Message{BotID: callerID, Role: "user", Author: ReportPrefix + callee.ID, CallID: h.callID}
+	msg := Message{ID: id, BotID: callerID, Role: "user", Author: ReportPrefix + callee.ID, CallID: h.callID}
 	var err error
-	if live {
+	if live && !answer {
 		_, err = m.record(ctx, msg, text) // the live call tells the owner; the call thread keeps the report
 	} else {
 		_, err = m.submit(ctx, msg, text, nil, turn{extra: reportExtra, automations: automations})

@@ -250,12 +250,16 @@ type FollowUp struct {
 	// Status is "complete", "failed" or "stopped" for a report; "finished", "waiting" or "failed" for a task.
 	Status string
 	Text   string // the report, clipped to MaxFollowUpText runes: data from the other bot or task, not instructions
+	// MessageID is the id the report (or the task's state) is stored under in the bot's conversation. The hook is told
+	// before it is stored; Manager.AnswerFollowUp finds it by this id.
+	MessageID string
 }
 
 // FollowUpHook is told about every follow-up before the bot's written answer is queued. It returns true when it handed
 // the follow-up to the live call it was started on (to be spoken there): the report is then stored in the call thread
-// and no written answer is queued. It runs without chat locks held, on the goroutine delivering the report, and must
-// return quickly: anything slow (placing a call, notifying) must run asynchronously after it returns.
+// and no written answer is queued, unless the call ends without telling it (see Manager.AnswerFollowUp). It runs
+// without chat locks held, on the goroutine delivering the report, and must return quickly: anything slow (placing a
+// call, notifying) must run asynchronously after it returns.
 type FollowUpHook func(FollowUp) bool
 
 // QueueItemRef identifies one waiting message of a bot's queue.

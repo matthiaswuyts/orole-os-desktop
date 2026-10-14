@@ -159,7 +159,8 @@ func (m *Manager) Send(ctx context.Context, req SendRequest) (Message, error) {
 //
 // The caller holds lockBot(msg.BotID) and has verified that the bot exists. That lock is what keeps
 // the order of messages and turns identical for one bot, so the SQLite work here runs outside the
-// global m.mu, which is only held to read and change the in-memory run state.
+// global m.mu, which is only held to read and change the in-memory run state. msg.ID, when set, is the
+// id to store it under (a follow-up's id is chosen before its hook runs); otherwise a new one is made.
 func (m *Manager) submit(ctx context.Context, msg Message, text string, attachmentIDs []string, turns ...turn) (Message, error) {
 	m.mu.Lock()
 	if m.closed {
@@ -172,7 +173,10 @@ func (m *Manager) submit(ctx context.Context, msg Message, text string, attachme
 		return Message{}, busyf("Too many messages are waiting. Wait for the bot to catch up.")
 	}
 	m.mu.Unlock()
-	msg.ID, msg.Status, msg.CreatedAt = newID(), StatusComplete, m.nowMs()
+	if msg.ID == "" {
+		msg.ID = newID()
+	}
+	msg.Status, msg.CreatedAt = StatusComplete, m.nowMs()
 	if st != nil {
 		msg.Status = StatusPending
 	}
@@ -180,22 +184,30 @@ func (m *Manager) submit(ctx context.Context, msg Message, text string, attachme
 		return Message{}, err
 	}
 	m.publishAny(msg)
-	for i := range turns {
-		turns[i].userMsgID, turns[i].callID = msg.ID, msg.CallID
-	}
-
-	m.mu.Lock()
-	if m.closed {
-		m.mu.Unlock()
+	if !m.enqueue(msg, turns...) {
 		// The daemon began shutting down while the message was being stored: it will never run.
 		if err := m.store.setStatus(context.WithoutCancel(ctx), msg.ID, StatusCanceled, "Not sent: Orole was closed before this message was processed."); err != nil {
 			m.log.Warn("chat: cancel message stored during shutdown", "err", err)
 		}
 		return Message{}, ErrClosed
 	}
+	return msg, nil
+}
+
+// enqueue queues turns that answer the stored message msg behind the bot's active run, or starts the bot's worker
+// when it is idle. It reports false when the manager has closed. The caller holds lockBot(msg.BotID).
+func (m *Manager) enqueue(msg Message, turns ...turn) bool {
+	for i := range turns {
+		turns[i].userMsgID, turns[i].callID = msg.ID, msg.CallID
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.closed {
+		return false
+	}
 	m.cancelIdleLocked(msg.BotID)
-	// Only a bot-lock holder starts runs, so a run seen above is either still there or has finished
-	// meanwhile; in the second case the pending message is answered by a fresh worker, which marks it complete.
+	// Only a bot-lock holder starts runs, so a run seen before is either still there or has finished
+	// meanwhile; in the second case a pending message is answered by a fresh worker, which marks it complete.
 	if cur := m.runs[msg.BotID]; cur != nil {
 		cur.queue = append(cur.queue, turns...)
 		if msg.CallID == "" && len(turns) > 0 && !cur.shown {
@@ -209,17 +221,20 @@ func (m *Manager) submit(ctx context.Context, msg Message, text string, attachme
 	} else {
 		m.startLocked(msg.BotID, turns...)
 	}
-	m.mu.Unlock()
-	return msg, nil
+	return true
 }
 
 // record stores msg (a user message of msg.BotID) with the given text as complete and publishes it, without a turn to
-// answer it: a follow-up that was handed to the live call it came from. The caller holds lockBot(msg.BotID).
+// answer it: a follow-up that was handed to the live call it came from. msg.ID, when set, is the id to store it under.
+// The caller holds lockBot(msg.BotID).
 func (m *Manager) record(ctx context.Context, msg Message, text string) (Message, error) {
 	if m.isClosed() {
 		return Message{}, ErrClosed
 	}
-	msg.ID, msg.Status, msg.CreatedAt = newID(), StatusComplete, m.nowMs()
+	if msg.ID == "" {
+		msg.ID = newID()
+	}
+	msg.Status, msg.CreatedAt = StatusComplete, m.nowMs()
 	if err := m.store.insertUserMessage(ctx, &msg, text, nil); err != nil {
 		return Message{}, err
 	}

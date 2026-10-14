@@ -3,6 +3,7 @@ package chat
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"slices"
 	"strings"
 	"sync"
@@ -123,9 +124,124 @@ func TestHandoffOnACallReportsIntoTheCallThread(t *testing.T) {
 	if !strings.Contains(answered.System, "reported back") {
 		t.Fatalf("the answering turn needs the report instructions: %q", answered.System)
 	}
-	want := FollowUp{BotID: caller.ID, CallID: "call-1", Kind: FollowUpReport, From: "Callee", Status: "complete", Text: "callee says 42"}
+	// The follow-up names the id the report was stored under.
+	want := FollowUp{BotID: caller.ID, CallID: "call-1", Kind: FollowUpReport, From: "Callee", Status: "complete", Text: "callee says 42", MessageID: r.ID}
 	if got := fu.all(); len(got) != 1 || got[0] != want {
 		t.Fatalf("follow-ups %+v, want %+v", got, want)
+	}
+}
+
+// A follow-up the hook handed to the live call that the call never told (it ended first) is answered after all, in the
+// call's thread, when the call asks for it: for a report with the report instructions, for a task with the task ones.
+func TestFollowUpTheCallNeverToldIsAnsweredInTheCallThread(t *testing.T) {
+	e := newEnv(t, delegationScript)
+	fu := &followUps{live: true}
+	e.m.SetFollowUpHook(fu.hook)
+	callee := e.bot("Callee")
+	caller := e.bot("Caller", executive)
+	from := fromBot(caller)
+	from.CallID, from.CallThread = "call-4", "call-4"
+	if err := e.m.Handoff(context.Background(), from, callee.ID, "look it up"); err != nil {
+		t.Fatal(err)
+	}
+	e.until("the report in the call thread", func() bool { return len(e.callMessages("call-4")) == 1 })
+	e.idle(caller.ID)
+	e.idle(callee.ID)
+	if n := len(e.fake.Calls()); n != 1 {
+		t.Fatalf("%d model calls before the answer was asked for", n)
+	}
+	got := fu.all()
+	if len(got) != 1 || got[0].MessageID != e.callMessages("call-4")[0].ID {
+		t.Fatalf("follow-ups %+v", got)
+	}
+	if err := e.m.AnswerFollowUp(context.Background(), got[0]); err != nil {
+		t.Fatal(err)
+	}
+	e.until("the report to be answered in the call thread", func() bool {
+		msgs := e.callMessages("call-4")
+		return len(msgs) == 2 && msgs[1].Status == StatusComplete
+	})
+	e.idle(caller.ID)
+	if a := e.callMessages("call-4")[1]; a.Role != "assistant" || a.CallID != "call-4" || replyText(a) != "caller relays it" {
+		t.Fatalf("answer %+v", a)
+	}
+	if h := e.history(caller.ID); len(h) != 0 {
+		t.Fatalf("the answer reached the chat: %+v", h)
+	}
+	calls := e.fake.Calls()
+	if !strings.Contains(calls[len(calls)-1].System, "reported back") {
+		t.Fatalf("the answering turn needs the report instructions: %q", calls[len(calls)-1].System)
+	}
+
+	// A code task's report gets the task instructions.
+	if err := e.m.ReportTask(context.Background(), TaskReport{BotID: caller.ID, TaskID: "task-9", Title: "Fix login", Status: "finished", Text: "done", CallID: "call-4"}); err != nil {
+		t.Fatal(err)
+	}
+	got = fu.all()
+	if err := e.m.AnswerFollowUp(context.Background(), got[len(got)-1]); err != nil {
+		t.Fatal(err)
+	}
+	e.until("the task report to be answered", func() bool {
+		msgs := e.callMessages("call-4")
+		return len(msgs) == 4 && msgs[3].Status == StatusComplete
+	})
+	e.idle(caller.ID)
+	calls = e.fake.Calls()
+	if !strings.Contains(calls[len(calls)-1].System, "A code task you started changed state") {
+		t.Fatalf("the answering turn needs the task instructions: %q", calls[len(calls)-1].System)
+	}
+}
+
+// The call may end between the hook and the store: asked to answer a follow-up that is not stored yet, the manager
+// answers it as soon as it is, instead of only recording it.
+func TestFollowUpAnsweredBeforeItIsStored(t *testing.T) {
+	e := newEnv(t, delegationScript)
+	answerErr := make(chan error, 1)
+	e.m.SetFollowUpHook(func(f FollowUp) bool {
+		answerErr <- e.m.AnswerFollowUp(context.Background(), f) // the call ended right after taking it
+		return true
+	})
+	callee := e.bot("Callee")
+	caller := e.bot("Caller", executive)
+	from := fromBot(caller)
+	from.CallID, from.CallThread = "call-5", "call-5"
+	if err := e.m.Handoff(context.Background(), from, callee.ID, "look it up"); err != nil {
+		t.Fatal(err)
+	}
+	e.until("the report to be answered in the call thread", func() bool {
+		msgs := e.callMessages("call-5")
+		return len(msgs) == 2 && msgs[1].Status == StatusComplete
+	})
+	e.idle(caller.ID)
+	e.idle(callee.ID)
+	if err := <-answerErr; err != nil {
+		t.Fatal(err)
+	}
+	if replyText(e.callMessages("call-5")[1]) != "caller relays it" {
+		t.Fatalf("call thread %+v", e.callMessages("call-5"))
+	}
+	e.m.mu.Lock()
+	left := len(e.m.answerLater)
+	e.m.mu.Unlock()
+	if left != 0 {
+		t.Fatalf("%d answer requests left behind", left)
+	}
+}
+
+// Only a stored follow-up of that very call can be answered this way.
+func TestAnswerFollowUpRefusesOtherMessages(t *testing.T) {
+	e := newEnv(t, delegationScript)
+	b := e.bot("Coder")
+	user := e.send(b.ID, "hi")
+	e.idle(b.ID)
+	for _, f := range []FollowUp{
+		{BotID: b.ID, CallID: "call-6", Kind: FollowUpReport, MessageID: user.ID}, // a chat message
+		{BotID: b.ID, Kind: FollowUpReport, MessageID: user.ID},                   // no call
+		{BotID: b.ID, CallID: "call-6", Kind: FollowUpReport},                     // no message
+	} {
+		if err := e.m.AnswerFollowUp(context.Background(), f); !errors.Is(err, ErrInvalid) {
+			t.Fatalf("%+v: err %v", f, err)
+		}
 	}
 }
 
