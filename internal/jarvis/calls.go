@@ -256,7 +256,7 @@ func (c *Calls) Place(ctx context.Context, req PlaceRequest) (CallRecord, error)
 		}
 	}
 	conv, sid, err := c.dial.OutboundCall(ctx, OutboundCall{AgentID: s.AgentID, PhoneNumberID: s.PhoneNumberID, To: s.OwnerNumber, CallID: call.ID,
-		BotID: bot.ID, VoiceID: or2(bot.Config.Jarvis.VoiceID, s.DefaultVoiceID), TTSModel: ttsModel(lang, or2(bot.Config.Jarvis.TTSModel, s.DefaultTTSModel))})
+		BotID: bot.ID, VoiceID: or2(bot.Config.Jarvis.VoiceID, s.DefaultVoiceID), TTSModel: ttsModel(lang, or2(bot.Config.Jarvis.TTSModel, s.DefaultTTSModel)), Lang: lang})
 	if err != nil {
 		c.finish(ctx, l, StatusFailed, 0)
 		if req.Verify == "" {
@@ -632,6 +632,17 @@ func speechTime(text string) time.Duration {
 // silent ends a turn without a word.
 func (c *Calls) silent(ctx context.Context, f Frame) {
 	_ = c.relay.Send(ctx, Frame{Type: FrameLLMDone, ID: f.ID, CallID: f.CallID})
+}
+
+// skipTool is the ElevenLabs system tool that makes the agent stay silent and wait for the owner.
+const skipTool = "skip_turn"
+
+// skip answers a turn with a skip_turn function call instead of text: the relay streams it as an OpenAI tool call and
+// ElevenLabs executes it, so the agent stays quiet and keeps listening. An empty response would not do: ElevenLabs
+// retries a custom LLM that returns nothing and, after a few attempts, fails the call. The relay must be a version
+// that understands llm.tool (an old one ignores the frame and the request ends empty).
+func (c *Calls) skip(ctx context.Context, f Frame) {
+	_ = c.relay.Send(ctx, Frame{Type: FrameLLMTool, ID: f.ID, CallID: f.CallID, Tool: skipTool, Args: "{}"})
 }
 
 // endUnknown answers a turn for a call that is not live: it says nothing and, if the call is on record with a
@@ -1082,7 +1093,9 @@ func (c *Calls) inbound(ctx context.Context, f Frame) {
 		tts["model_id"] = m
 	}
 	ov, _ := json.Marshal(map[string]any{"tts": tts})
-	_ = c.relay.Send(ctx, Frame{Type: FrameInboundAnswer, ID: f.ID, Accept: true, Vars: map[string]string{"call_id": call.ID, "bot_id": bot.ID}, Overrides: ov})
+	_ = c.relay.Send(ctx, Frame{Type: FrameInboundAnswer, ID: f.ID, Accept: true,
+		// lang rides along so the relay can put it in custom_llm_extra_body (see Hub.inbound), like an outbound call does.
+		Vars: map[string]string{"call_id": call.ID, "bot_id": bot.ID, "lang": relayLang(lang)}, Overrides: ov})
 	c.host.Notify("Incoming call to "+bot.Name, "From your phone number.", "bot:"+bot.ID, "info")
 	c.host.Audit("jarvis.call.started", call.ID, "allowed", "inbound to "+bot.Name)
 	c.spawn(func() { c.monitor(l) })

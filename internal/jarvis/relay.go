@@ -17,6 +17,7 @@ const (
 	FrameLLMDelta      = "llm.delta"      // daemon -> relay: streamed text
 	FrameLLMDone       = "llm.done"       // daemon -> relay: turn finished
 	FrameLLMError      = "llm.error"      // daemon -> relay: turn failed (Text is spoken)
+	FrameLLMTool       = "llm.tool"       // daemon -> relay: answer the turn with a function call (Tool, Args) instead of ending it
 	FrameInboundLookup = "inbound.lookup" // relay -> daemon: inbound call webhook
 	FrameInboundAnswer = "inbound.answer" // daemon -> relay: accept/reject + variables
 	FrameCallStatus    = "call.status"    // relay -> daemon: post-call webhook
@@ -34,6 +35,8 @@ type Frame struct {
 	ID             string            `json:"id,omitempty"`     // request id, echoed in replies
 	CallID         string            `json:"callId,omitempty"` // our call id (ElevenLabs dynamic variable call_id)
 	Text           string            `json:"text,omitempty"`
+	Tool           string            `json:"tool,omitempty"` // llm.tool: the function ElevenLabs should run, e.g. "skip_turn"
+	Args           string            `json:"args,omitempty"` // llm.tool: its arguments as a JSON object string; the relay sends "{}" when empty
 	Messages       []LLMMessage      `json:"messages,omitempty"`
 	Vars           map[string]string `json:"vars,omitempty"`
 	Caller         string            `json:"caller,omitempty"`

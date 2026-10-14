@@ -73,6 +73,18 @@ type AgentConfig struct {
 
 type OutboundCall struct {
 	AgentID, PhoneNumberID, To, CallID, BotID, VoiceID, TTSModel string
+	// Lang is the call language (LangDutch, LangEnglish, LangAuto); the relay learns it as custom_llm_extra_body.lang.
+	Lang string
+}
+
+// relayLang is the language the relay is told about (custom_llm_extra_body.lang and the inbound answer's lang var):
+// "en" for an English call, "nl" for Dutch and for Auto, which starts in Dutch. The relay speaks its own fixed lines
+// (goodbye, lost connection) in that language.
+func relayLang(lang string) string {
+	if lang == LangEnglish {
+		return LangEnglish
+	}
+	return LangDutch
 }
 
 func (e *ElevenLabs) base() string {
@@ -397,7 +409,7 @@ func (e *ElevenLabs) OutboundCall(ctx context.Context, c OutboundCall) (string, 
 		"conversation_initiation_client_data": map[string]any{
 			"dynamic_variables":            map[string]string{"call_id": c.CallID, "bot_id": c.BotID},
 			"conversation_config_override": map[string]any{"tts": tts},
-			"custom_llm_extra_body":        map[string]string{"call_id": c.CallID},
+			"custom_llm_extra_body":        map[string]string{"call_id": c.CallID, "lang": relayLang(c.Lang)},
 		},
 	}, &res)
 	if err != nil {

@@ -1491,6 +1491,59 @@ func TestDutchCallOverridesModelWhenNoneChosen(t *testing.T) {
 	}
 }
 
+// The relay speaks its own lines (goodbye, lost connection) in the call language, learned from custom_llm_extra_body.lang:
+// outbound calls pass it to the dialer, inbound calls put it in the answer's vars (Hub.inbound copies it).
+func TestCallLanguageReachesTheRelay(t *testing.T) {
+	cases := []struct{ setting, agent, want string }{
+		{LangEnglish, LangEnglish, "en"},
+		{LangDutch, LangDutch, "nl"},
+		{LangAuto, LangAuto, "nl"}, // Auto starts in Dutch
+		{"", LangDutch, "nl"},
+		{LangDutch, "", "en"}, // an agent from before the setting existed still speaks English
+	}
+	for _, tc := range cases {
+		t.Run(tc.setting+"/"+tc.agent, func(t *testing.T) {
+			e := newCallEnv(t)
+			e.settings.CallLanguage, e.settings.AgentLanguage = tc.setting, tc.agent
+			if _, err := e.c.Place(context.Background(), PlaceRequest{BotID: "b1", Reason: "x"}); err != nil {
+				t.Fatal(err)
+			}
+			if d := e.dial.dialed(); len(d) != 1 || relayLang(d[0].Lang) != tc.want {
+				t.Fatalf("outbound dialed %+v, want relay lang %q", d, tc.want)
+			}
+			in := newCallEnv(t) // one call at a time: the inbound call gets its own environment
+			in.settings.CallLanguage, in.settings.AgentLanguage = tc.setting, tc.agent
+			in.c.HandleFrame(context.Background(), Frame{Type: FrameInboundLookup, ID: "req-1", Caller: in.settings.OwnerNumber, CallSID: testSID})
+			var answer Frame
+			for _, f := range in.relay.all() {
+				if f.Type == FrameInboundAnswer && f.ID == "req-1" {
+					answer = f
+				}
+			}
+			if !answer.Accept || answer.Vars["lang"] != tc.want || answer.Vars["call_id"] == "" {
+				t.Fatalf("inbound answer %+v, want lang %q", answer, tc.want)
+			}
+		})
+	}
+}
+
+// skip answers a turn with the skip_turn function call (the relay streams it as an OpenAI tool call).
+func TestSkipAnswersWithSkipTurnTool(t *testing.T) {
+	e := newCallEnv(t)
+	e.c.skip(context.Background(), Frame{Type: FrameLLMRequest, ID: "r7", CallID: "call-1"})
+	got := e.relay.all()
+	if len(got) != 1 {
+		t.Fatalf("frames %+v", got)
+	}
+	b, _ := json.Marshal(got[0])
+	if want := `{"type":"llm.tool","id":"r7","callId":"call-1","tool":"skip_turn","args":"{}"}`; string(b) != want {
+		t.Fatalf("frame = %s, want %s", b, want)
+	}
+	if e.relay.done("r7") || e.relay.text("r7") != "" {
+		t.Fatal("skip also spoke or finished the turn")
+	}
+}
+
 func TestSilencePromptIsNotAnswered(t *testing.T) {
 	e := newCallEnv(t)
 	call, _ := e.c.Place(context.Background(), PlaceRequest{BotID: "b1", Reason: "x"})

@@ -11,9 +11,39 @@ The frame protocol lives in `internal/jarvis/relay.go`; JSON field names must ma
 | --- | --- | --- |
 | `GET /daemon` (WebSocket upgrade) | `Authorization: Bearer <RELAY_TOKEN>` | The daemon's persistent connection |
 | `POST /llm/chat/completions` (aliases `/llm`, `/llm/v1/chat/completions`) | header `x-orole-relay: <LLM_SECRET>` | ElevenLabs custom LLM; OpenAI-style SSE reply |
-| `POST /inbound` | header `x-orole-relay: <LLM_SECRET>` | Inbound personalization webhook; returns `conversation_initiation_client_data` (with `custom_llm_extra_body.call_id`), 403 when the daemon refuses the caller, 503 when the daemon is offline or does not answer |
+| `POST /inbound` | header `x-orole-relay: <LLM_SECRET>` | Inbound personalization webhook; returns `conversation_initiation_client_data` (with `custom_llm_extra_body.call_id`, and `lang` when the daemon sends one), 403 when the daemon refuses the caller, 503 when the daemon is offline or does not answer |
 | `POST /status` | `ElevenLabs-Signature: t=<ts>,v0=<hmac_sha256(WEBHOOK_SECRET, "<ts>.<body>")>` | Post-call webhook |
 | `GET /health` | none | `{ "daemon": boolean }`, no secrets |
+
+## Turn frames (daemon -> relay)
+
+A custom-LLM request becomes an `llm.request` frame (`id`, `callId`, `messages`); the daemon answers with frames that
+carry the same `id`, and the relay streams them to ElevenLabs as OpenAI-style SSE:
+
+| Frame | Fields | SSE |
+| --- | --- | --- |
+| `llm.delta` | `text` | a `delta.content` chunk |
+| `llm.done` | | a `finish_reason: "stop"` chunk, `data: [DONE]`, then the stream closes |
+| `llm.error` | `text` (spoken; a short default when empty) | that text, then as `llm.done` |
+| `llm.tool` | `tool` (function name), `args` (a JSON object as a string, default `"{}"`) | a function call (below), then the stream closes |
+
+`llm.tool` answers the turn with a function call instead of ending it. ElevenLabs passes the agent's system tools
+(`end_call`, `skip_turn`, ...) to a custom LLM in the OpenAI `tools` parameter and runs a call that comes back in the
+stream; the daemon uses `skip_turn` to keep the agent silent and waiting for the owner. The relay writes one
+`chat.completion.chunk` whose `choices[0].delta.tool_calls` is
+`[{"index":0,"id":"call_<random>","type":"function","function":{"name":"skip_turn","arguments":"{}"}}]`, then a chunk with an
+empty delta and `finish_reason: "tool_calls"`, then `data: [DONE]`. Text deltas sent before the tool frame stay ahead of
+the call. `args` that is not a JSON object is replaced by `{}`, and a frame without `tool` is ignored.
+
+**The relay must be redeployed (`wrangler deploy`) for this to work.** An old relay ignores `llm.tool`, so the request
+gets no answer: ElevenLabs waits out its cascade timeout and retries, and after a few attempts fails the call. (The
+request itself only ends when the relay's idle timer fires.)
+
+Call language: the daemon puts `lang` (`"nl"` for Dutch and Auto, `"en"` for English) next to `call_id` in
+`custom_llm_extra_body` (outbound calls, in the ElevenLabs outbound-call request; inbound calls, as `vars.lang` in
+`inbound.answer`, which `/inbound` copies). ElevenLabs sends it back on every `/llm` request as
+`elevenlabs_extra_body.lang`, and the relay speaks its own fixed lines (goodbye when the daemon is offline, "lost
+connection", the default failure line) in Dutch when it is `nl`, and in English otherwise or when an older daemon sends none.
 
 ## Deploy
 

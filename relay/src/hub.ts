@@ -1,6 +1,6 @@
 import { DurableObject } from "cloudflare:workers";
 
-type Frame = { type: string; id?: string; callId?: string; text?: string; accept?: boolean; vars?: Record<string, string>; overrides?: unknown; [k: string]: unknown };
+type Frame = { type: string; id?: string; callId?: string; text?: string; tool?: string; args?: string; accept?: boolean; vars?: Record<string, string>; overrides?: unknown; [k: string]: unknown };
 type Pending = { onFrame: (f: Frame) => void; socket: WebSocket; socketGone?: () => void };
 
 export interface HubEnv {
@@ -10,8 +10,20 @@ export interface HubEnv {
   MAX_MS?: string;
 }
 
-const GOODBYE = "Sorry, I can't reach your bots right now. I'll message you instead.";
-const LOST = "Lost connection, I'll message you.";
+// The relay's own spoken lines. The daemon tells it the call language as `lang` in custom_llm_extra_body ("nl" or
+// "en"); anything else, including an old daemon that sends none, gets English.
+const LINES = {
+  en: {
+    goodbye: "Sorry, I can't reach your bots right now. I'll message you instead.",
+    lost: "Lost connection, I'll message you.",
+    failed: "That failed.",
+  },
+  nl: {
+    goodbye: "Sorry, ik kan je bots nu niet bereiken. Ik stuur je een bericht.",
+    lost: "De verbinding is weggevallen, ik stuur je een bericht.",
+    failed: "Dat is mislukt.",
+  },
+};
 const DEFAULT_IDLE_MS = 20_000; // no frame for this long while the daemon is connected -> give up
 const DEFAULT_GRACE_MS = 5_000; // daemon socket gone: wait this long, then give up
 const DEFAULT_MAX_MS = 120_000; // absolute cap per request
@@ -21,10 +33,32 @@ const INBOUND_TIMEOUT_MS = 4_000;
 export const LLM_PATHS = ["/llm/chat/completions", "/llm", "/llm/v1/chat/completions"];
 const enc = new TextEncoder();
 
-function sseChunk(content: string): Uint8Array {
-  return enc.encode(`data: ${JSON.stringify({ id: "c", object: "chat.completion.chunk", choices: [{ index: 0, delta: { content }, finish_reason: null }] })}\n\n`);
+function sseEvent(delta: object, finishReason: string | null): string {
+  return `data: ${JSON.stringify({ id: "c", object: "chat.completion.chunk", choices: [{ index: 0, delta, finish_reason: finishReason }] })}\n\n`;
 }
-const sseDone = enc.encode(`data: ${JSON.stringify({ id: "c", object: "chat.completion.chunk", choices: [{ index: 0, delta: {}, finish_reason: "stop" }] })}\n\ndata: [DONE]\n\n`);
+function sseChunk(content: string): Uint8Array {
+  return enc.encode(sseEvent({ content }, null));
+}
+const sseDone = enc.encode(`${sseEvent({}, "stop")}data: [DONE]\n\n`);
+
+// A function call in the OpenAI streaming format, which ElevenLabs executes (for example its skip_turn system tool):
+// one chunk whose delta.tool_calls holds the complete call (index, id, type, function.name, function.arguments as a
+// JSON string), then a chunk with finish_reason "tool_calls" and an empty delta, then [DONE].
+function sseTool(name: string, args: string): Uint8Array {
+  const call = { index: 0, id: `call_${crypto.randomUUID().replaceAll("-", "").slice(0, 24)}`, type: "function", function: { name, arguments: args } };
+  return enc.encode(`${sseEvent({ tool_calls: [call] }, null)}${sseEvent({}, "tool_calls")}data: [DONE]\n\n`);
+}
+
+// The arguments of a tool call must be a JSON object string; anything else becomes "{}".
+function toolArgs(raw: unknown): string {
+  if (typeof raw !== "string" || raw === "") return "{}";
+  try {
+    const v = JSON.parse(raw);
+    return v !== null && typeof v === "object" && !Array.isArray(v) ? raw : "{}";
+  } catch {
+    return "{}";
+  }
+}
 
 function ms(v: string | undefined, d: number): number {
   const n = Number(v);
@@ -89,6 +123,7 @@ export class Hub extends DurableObject<HubEnv> {
     const headers = { "content-type": "text/event-stream", "cache-control": "no-cache" };
     const id = crypto.randomUUID();
     const callId = body.elevenlabs_extra_body?.call_id ?? "";
+    const lines = body.elevenlabs_extra_body?.lang === "nl" ? LINES.nl : LINES.en;
     const idleMs = ms(this.env.IDLE_MS, DEFAULT_IDLE_MS);
     const graceMs = ms(this.env.GRACE_MS, DEFAULT_GRACE_MS);
     const maxMs = ms(this.env.MAX_MS, DEFAULT_MAX_MS);
@@ -97,14 +132,16 @@ export class Hub extends DurableObject<HubEnv> {
     let grace: number | null = null;
     let cap: number | null = null;
     let done = false;
-    const finish = async (spoken?: string) => {
+    // Ends the stream: an optional last spoken line, or a function call instead of the normal stop. Text deltas
+    // written earlier are queued ahead of either, so they stay before the tool call.
+    const finish = async (spoken?: string, tool?: { name: string; args: string }) => {
       if (done) return;
       done = true;
       clearTimeout(idle); clearTimeout(grace); clearTimeout(cap);
       this.pending.delete(id);
       try {
         if (spoken) await w.write(sseChunk(spoken));
-        await w.write(sseDone);
+        await w.write(tool ? sseTool(tool.name, tool.args) : sseDone);
         await w.close();
       } catch { /* client went away */ }
     };
@@ -112,24 +149,26 @@ export class Hub extends DurableObject<HubEnv> {
     const sock = this.daemon;
     const sent = sock !== null && this.send({ type: "llm.request", id, callId, messages: (body.messages ?? []).map(({ role, content }) => ({ role, content })) });
     if (!sent || !sock) {
-      void finish(GOODBYE);
+      void finish(lines.goodbye);
       return new Response(readable, { headers });
     }
-    const armIdle = () => { clearTimeout(idle); idle = setTimeout(() => void finish(LOST), idleMs); };
+    const armIdle = () => { clearTimeout(idle); idle = setTimeout(() => void finish(lines.lost), idleMs); };
     armIdle();
-    cap = setTimeout(() => void finish(LOST), maxMs);
+    cap = setTimeout(() => void finish(lines.lost), maxMs);
     this.pending.set(id, {
       socket: sock,
       socketGone: () => {
         clearTimeout(idle);
-        if (grace === null) grace = setTimeout(() => void finish(LOST), graceMs);
+        if (grace === null) grace = setTimeout(() => void finish(lines.lost), graceMs);
       },
       onFrame: (f) => {
         if (done) return;
         armIdle();
         if (f.type === "llm.delta" && f.text) void w.write(sseChunk(f.text)).catch(() => {});
         else if (f.type === "llm.done") void finish();
-        else if (f.type === "llm.error") void finish(f.text || "That failed.");
+        // A tool frame without a function name is ignored: the idle timer ends the request with the lost line.
+        else if (f.type === "llm.tool" && f.tool) void finish(undefined, { name: f.tool, args: toolArgs(f.args) });
+        else if (f.type === "llm.error") void finish(f.text || lines.failed);
       },
     });
     return new Response(readable, { headers });
@@ -160,12 +199,15 @@ export class Hub extends DurableObject<HubEnv> {
     if (f.accept !== true) return new Response("rejected", { status: 403 });
     const vars = f.vars ?? {};
     // custom_llm_extra_body comes back on every /llm request as elevenlabs_extra_body, which is how a turn
-    // finds its call.
+    // finds its call (call_id) and learns the call language for the relay's own spoken lines (lang, when the daemon
+    // sent one).
+    const extra: Record<string, string> = { call_id: vars.call_id ?? "" };
+    if (vars.lang) extra.lang = vars.lang;
     return Response.json({
       type: "conversation_initiation_client_data",
       dynamic_variables: vars,
       conversation_config_override: f.overrides ?? {},
-      custom_llm_extra_body: { call_id: vars.call_id ?? "" },
+      custom_llm_extra_body: extra,
     });
   }
 

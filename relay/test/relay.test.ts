@@ -23,6 +23,39 @@ const llmBody = JSON.stringify({
   elevenlabs_extra_body: { call_id: "c1" },
 });
 
+const dutchBody = JSON.stringify({
+  model: "bot",
+  stream: true,
+  messages: [{ role: "user", content: "wat draait er?" }],
+  elevenlabs_extra_body: { call_id: "c1", lang: "nl" },
+});
+
+type Chunk = { object: string; choices: { index: number; delta: Record<string, any>; finish_reason: string | null }[] };
+
+// The SSE body as its events: parsed chunks, and the literal "[DONE]".
+function sseEvents(text: string): (Chunk | "[DONE]")[] {
+  return text.split("\n\n").filter((e) => e.trim() !== "").map((e) => {
+    expect(e.startsWith("data: ")).toBe(true);
+    const data = e.slice("data: ".length);
+    return data === "[DONE]" ? "[DONE]" : (JSON.parse(data) as Chunk);
+  });
+}
+
+// A daemon that answers every llm.request with the given frames (their id is filled in).
+async function answeringDaemon(frames: Record<string, unknown>[]) {
+  const ws = await daemon();
+  ws.addEventListener("message", (e) => {
+    const f = JSON.parse(e.data as string);
+    if (f.type !== "llm.request") return;
+    for (const r of frames) ws.send(JSON.stringify({ ...r, id: f.id }));
+  });
+  return ws;
+}
+
+async function llm(body = llmBody) {
+  return SELF.fetch("https://relay/llm/chat/completions", { method: "POST", headers: { "x-orole-relay": "ls" }, body });
+}
+
 describe("auth", () => {
   it("rejects a daemon without the token", async () => {
     const res = await SELF.fetch("https://relay/daemon", { headers: { Upgrade: "websocket", Authorization: "Bearer nope" } });
@@ -56,6 +89,20 @@ describe("llm", () => {
     expect(text.toLowerCase()).not.toContain("orole");
   });
 
+  it("speaks the goodbye in Dutch when the call language is nl", async () => {
+    const text = await (await llm(dutchBody)).text();
+    expect(text).toContain("Sorry, ik kan je bots nu niet bereiken. Ik stuur je een bericht.");
+    expect(text).not.toContain("can't reach");
+    expect(text.trim().endsWith("data: [DONE]")).toBe(true);
+  });
+
+  it("speaks English for an unknown or missing language", async () => {
+    for (const lang of ["en", "xx", undefined]) {
+      const body = JSON.stringify({ messages: [], elevenlabs_extra_body: { call_id: "c1", lang } });
+      expect(await (await llm(body)).text()).toContain("can't reach your bots right now");
+    }
+  });
+
   it("forwards a turn to the daemon and streams its deltas as SSE", async () => {
     const ws = await daemon();
     ws.addEventListener("message", (e) => {
@@ -73,6 +120,84 @@ describe("llm", () => {
     expect(text).toContain('"content":"are running."');
     expect(text.trim().endsWith("data: [DONE]")).toBe(true);
     ws.close();
+  });
+});
+
+describe("llm tool calls", () => {
+  it("streams an llm.tool frame as an OpenAI tool call after the text sent before it", async () => {
+    const ws = await answeringDaemon([
+      { type: "llm.delta", text: "One moment. " },
+      { type: "llm.tool", callId: "c1", tool: "skip_turn", args: "{}" },
+    ]);
+    const res = await llm();
+    expect(res.headers.get("content-type")).toContain("text/event-stream");
+    const text = await res.text();
+    const events = sseEvents(text);
+    expect(events).toHaveLength(4);
+    const [say, call, finish, done] = events as [Chunk, Chunk, Chunk, "[DONE]"];
+    expect(say.choices[0].delta).toEqual({ content: "One moment. " });
+    expect(say.choices[0].finish_reason).toBeNull();
+    // One complete call in a single delta: index 0, a call_ id, type function, the arguments as a JSON string.
+    expect(call.object).toBe("chat.completion.chunk");
+    expect(call.choices[0].finish_reason).toBeNull();
+    expect(call.choices[0].delta.content).toBeUndefined();
+    expect(call.choices[0].delta.tool_calls).toEqual([
+      { index: 0, id: expect.stringMatching(/^call_[0-9a-f]{24}$/), type: "function", function: { name: "skip_turn", arguments: "{}" } },
+    ]);
+    // Then the finish chunk: empty delta and finish_reason tool_calls, never "stop"; then [DONE], and nothing after.
+    expect(finish.choices[0]).toEqual({ index: 0, delta: {}, finish_reason: "tool_calls" });
+    expect(done).toBe("[DONE]");
+    expect(text).not.toContain('"finish_reason":"stop"');
+    expect(text.endsWith("data: [DONE]\n\n")).toBe(true);
+    ws.close();
+  });
+
+  it("answers with just the tool call when no text came first", async () => {
+    const ws = await answeringDaemon([{ type: "llm.tool", tool: "skip_turn" }]);
+    const events = sseEvents(await (await llm()).text());
+    expect(events).toHaveLength(3);
+    expect((events[0] as Chunk).choices[0].delta.tool_calls).toMatchObject([{ index: 0, type: "function", function: { name: "skip_turn", arguments: "{}" } }]);
+    expect((events[1] as Chunk).choices[0].finish_reason).toBe("tool_calls");
+    expect(events[2]).toBe("[DONE]");
+    ws.close();
+  });
+
+  it("passes JSON object arguments through and replaces anything else with {}", async () => {
+    const run = async (args: unknown) => {
+      const ws = await answeringDaemon([{ type: "llm.tool", tool: "end_call", args }]);
+      const events = sseEvents(await (await llm()).text());
+      ws.close();
+      return (events[0] as Chunk).choices[0].delta.tool_calls![0].function.arguments;
+    };
+    expect(await run('{"reason":"done"}')).toBe('{"reason":"done"}');
+    for (const bad of ["", "not json", "[1]", "null", "7", 5, null]) expect(await run(bad)).toBe("{}");
+  });
+
+  it("gives every call its own id", async () => {
+    const ws = await answeringDaemon([{ type: "llm.tool", tool: "skip_turn" }]);
+    const ids = new Set<string>();
+    for (let i = 0; i < 3; i++) ids.add(((sseEvents(await (await llm()).text())[0] as Chunk).choices[0].delta.tool_calls![0] as { id: string }).id);
+    expect(ids.size).toBe(3);
+    ws.close();
+  });
+
+  it("ignores frames after the tool call and a tool frame without a name", async () => {
+    const ws = await answeringDaemon([
+      { type: "llm.tool", tool: "skip_turn" },
+      { type: "llm.delta", text: "late" },
+      { type: "llm.done" },
+    ]);
+    const text = await (await llm()).text();
+    expect(text).not.toContain("late");
+    expect(sseEvents(text)).toHaveLength(3);
+    ws.close();
+
+    // A nameless tool frame does not end the request: the idle timer does, with the lost line.
+    const ws2 = await answeringDaemon([{ type: "llm.tool", tool: "" }]);
+    const lost = await (await llm()).text();
+    expect(lost).toContain("Lost connection");
+    expect(lost).not.toContain("tool_calls");
+    ws2.close();
   });
 });
 
@@ -115,6 +240,19 @@ describe("inbound", () => {
     expect(body.dynamic_variables.call_id).toBe("c9");
     // ElevenLabs echoes this on every /llm request, which is how an inbound turn finds its call.
     expect(body.custom_llm_extra_body).toEqual({ call_id: "c9" });
+    ws.close();
+  });
+  it("puts the call language in custom_llm_extra_body when the daemon sends one", async () => {
+    const ws = await daemon();
+    ws.addEventListener("message", (e) => {
+      const f = JSON.parse(e.data as string);
+      if (f.type === "inbound.lookup") ws.send(JSON.stringify({ type: "inbound.answer", id: f.id, accept: true, vars: { call_id: "c9", bot_id: "b1", lang: "nl" } }));
+    });
+    const res = await SELF.fetch("https://relay/inbound", { method: "POST", headers: { "x-orole-relay": "ls" }, body: JSON.stringify({ caller_id: "+32470000000" }) });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { dynamic_variables: Record<string, string>; custom_llm_extra_body: Record<string, string> };
+    expect(body.custom_llm_extra_body).toEqual({ call_id: "c9", lang: "nl" });
+    expect(body.dynamic_variables).toMatchObject({ call_id: "c9", bot_id: "b1" });
     ws.close();
   });
   it("returns 503 when the daemon socket drops before answering", async () => {
@@ -208,6 +346,29 @@ describe("bounded pending turns", () => {
     const text = await res.text();
     expect(text).toContain("Lost connection");
     expect(text).toContain("data: [DONE]");
+    ws.close();
+  });
+  it("speaks LOST in Dutch when the call language is nl", async () => {
+    const ws = await daemon();
+    const text = await (await llm(dutchBody)).text();
+    expect(text).toContain("De verbinding is weggevallen, ik stuur je een bericht.");
+    expect(text).not.toContain("Lost connection");
+    expect(text).toContain("data: [DONE]");
+    ws.close();
+  });
+  it("speaks LOST in Dutch when the socket closes mid-turn", async () => {
+    const ws = await daemon();
+    ws.addEventListener("message", (e) => {
+      if (JSON.parse(e.data as string).type === "llm.request") ws.close();
+    });
+    const text = await (await llm(dutchBody)).text();
+    expect(text).toContain("De verbinding is weggevallen");
+    expect(text).toContain("data: [DONE]");
+  });
+  it("speaks the failure line in the call language when llm.error has no text", async () => {
+    const ws = await answeringDaemon([{ type: "llm.error" }]);
+    expect(await (await llm(dutchBody)).text()).toContain("Dat is mislukt.");
+    expect(await (await llm()).text()).toContain("That failed.");
     ws.close();
   });
   it("speaks LOST when the socket closes mid-turn", async () => {

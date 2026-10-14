@@ -80,3 +80,23 @@ func TestRelayClientSendWhileDisconnected(t *testing.T) {
 		t.Fatalf("err=%v", err)
 	}
 }
+
+// The relay (relay/src/hub.ts) reads llm.tool by these exact field names.
+func TestToolFrameJSONShape(t *testing.T) {
+	b, err := json.Marshal(Frame{Type: FrameLLMTool, ID: "r1", CallID: "c1", Tool: "skip_turn", Args: "{}"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := `{"type":"llm.tool","id":"r1","callId":"c1","tool":"skip_turn","args":"{}"}`; string(b) != want {
+		t.Fatalf("frame = %s, want %s", b, want)
+	}
+	var back Frame
+	if err := json.Unmarshal(b, &back); err != nil || back.Tool != "skip_turn" || back.Args != "{}" || back.Type != "llm.tool" {
+		t.Fatalf("round trip %+v err=%v", back, err)
+	}
+	// Other frames never carry the tool fields.
+	b, _ = json.Marshal(Frame{Type: FrameLLMDone, ID: "r1"})
+	if strings.Contains(string(b), "tool") || strings.Contains(string(b), "args") {
+		t.Fatalf("done frame carries tool fields: %s", b)
+	}
+}

@@ -58,9 +58,26 @@ func TestElevenLabsOutboundCallSendsVariablesAndVoice(t *testing.T) {
 		t.Error("api key header missing")
 	}
 	b, _ := json.Marshal(r.Body)
-	for _, want := range []string{`"to_number":"+32470000000"`, `"agent_phone_number_id":"pn"`, `"call_id":"c1"`, `"bot_id":"b1"`, `"custom_llm_extra_body":{"call_id":"c1"}`, `"voice_id":"v1"`, `"model_id":"eleven_flash_v2_5"`} {
+	for _, want := range []string{`"to_number":"+32470000000"`, `"agent_phone_number_id":"pn"`, `"call_id":"c1"`, `"bot_id":"b1"`, `"custom_llm_extra_body":{"call_id":"c1","lang":"nl"}`, `"voice_id":"v1"`, `"model_id":"eleven_flash_v2_5"`} {
 		if !strings.Contains(string(b), want) {
 			t.Errorf("body lacks %s: %s", want, b)
+		}
+	}
+}
+
+// ElevenLabs echoes custom_llm_extra_body on every /llm request; the relay reads lang from it to speak its own lines in
+// the call language. English is "en"; Dutch, Auto (which starts in Dutch) and an unset language are "nl".
+func TestElevenLabsOutboundCallExtraBodyCarriesLanguage(t *testing.T) {
+	for lang, want := range map[string]string{LangEnglish: "en", LangDutch: "nl", LangAuto: "nl", "": "nl"} {
+		srv, reqs := fakeAPI(t, map[string]string{"POST /v1/convai/twilio/outbound-call": `{"success":true,"conversation_id":"conv1","callSid":"CA1"}`})
+		el := &ElevenLabs{Key: "k", BaseURL: srv.URL, HTTP: srv.Client()}
+		if _, _, err := el.OutboundCall(context.Background(), OutboundCall{AgentID: "ag", PhoneNumberID: "pn", To: "+32470000000", CallID: "c1", BotID: "b1", Lang: lang}); err != nil {
+			t.Fatal(err)
+		}
+		init, _ := reqs()[0].Body["conversation_initiation_client_data"].(map[string]any)
+		extra, _ := init["custom_llm_extra_body"].(map[string]any)
+		if len(extra) != 2 || extra["call_id"] != "c1" || extra["lang"] != want {
+			t.Errorf("lang %q: custom_llm_extra_body = %v, want call_id c1 and lang %q", lang, extra, want)
 		}
 	}
 }
