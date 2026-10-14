@@ -1,4 +1,5 @@
-import { SELF } from "cloudflare:test";
+import { SELF, env } from "cloudflare:test";
+import worker, { type Env } from "../src/index";
 import { describe, expect, it } from "vitest";
 
 async function daemon() {
@@ -130,5 +131,48 @@ describe("status", () => {
     expect(res.status).toBe(200);
     expect(await got).toMatchObject({ type: "call.status", callId: "c9", conversationId: "conv1", status: "done", durationSecs: 42 });
     ws.close();
+  });
+});
+
+describe("fail closed without secrets", () => {
+  const unset = { ...env, RELAY_TOKEN: "", LLM_SECRET: "", WEBHOOK_SECRET: "" } as unknown as Env;
+  const hit = (path: string, init: RequestInit) => worker.fetch(new Request(`https://relay${path}`, init), unset);
+
+  it("refuses /daemon with empty or 'Bearer undefined' tokens", async () => {
+    for (const Authorization of ["Bearer ", "Bearer undefined", ""]) {
+      const res = await hit("/daemon", { headers: { Upgrade: "websocket", Authorization } });
+      expect(res.status).toBe(503);
+    }
+  });
+  it("refuses /llm and /inbound with no header", async () => {
+    expect((await hit("/llm/chat/completions", { method: "POST", body: llmBody })).status).toBe(503);
+    expect((await hit("/inbound", { method: "POST", body: "{}" })).status).toBe(503);
+    expect((await hit("/inbound", { method: "POST", headers: { "x-orole-relay": "" }, body: "{}" })).status).toBe(503);
+  });
+  it("refuses /status even with a well-formed signature", async () => {
+    const body = "{}";
+    const res = await hit("/status", { method: "POST", headers: { "ElevenLabs-Signature": await sign(body) }, body });
+    expect(res.status).toBe(503);
+  });
+});
+
+describe("bounded pending turns", () => {
+  it("speaks LOST when the daemon stays connected but silent", async () => {
+    const ws = await daemon();
+    const res = await SELF.fetch("https://relay/llm/chat/completions", { method: "POST", headers: { "x-orole-relay": "ls" }, body: llmBody });
+    const text = await res.text();
+    expect(text).toContain("Lost connection");
+    expect(text).toContain("data: [DONE]");
+    ws.close();
+  });
+  it("speaks LOST when the socket closes mid-turn", async () => {
+    const ws = await daemon();
+    ws.addEventListener("message", (e) => {
+      if (JSON.parse(e.data as string).type === "llm.request") ws.close();
+    });
+    const res = await SELF.fetch("https://relay/llm/chat/completions", { method: "POST", headers: { "x-orole-relay": "ls" }, body: llmBody });
+    const text = await res.text();
+    expect(text).toContain("Lost connection");
+    expect(text).toContain("data: [DONE]");
   });
 });

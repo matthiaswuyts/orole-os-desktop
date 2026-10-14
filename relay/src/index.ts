@@ -1,6 +1,7 @@
+import type { HubEnv } from "./hub";
 export { Hub } from "./hub";
 
-export interface Env {
+export interface Env extends HubEnv {
   HUB: DurableObjectNamespace;
   RELAY_TOKEN: string;
   LLM_SECRET: string;
@@ -8,6 +9,7 @@ export interface Env {
 }
 
 function safeEqual(a: string, b: string): boolean {
+  if (!a || !b) return false;
   const x = new TextEncoder().encode(a);
   const y = new TextEncoder().encode(b);
   if (x.length !== y.length) return false;
@@ -34,17 +36,21 @@ export default {
   async fetch(req: Request, env: Env): Promise<Response> {
     const url = new URL(req.url);
     const hub = env.HUB.get(env.HUB.idFromName("hub"));
+    const notConfigured = () => new Response("relay not configured", { status: 503 });
     switch (url.pathname) {
       case "/health":
         return hub.fetch(req);
       case "/daemon":
+        if (!env.RELAY_TOKEN) return notConfigured();
         if (!safeEqual(req.headers.get("Authorization") ?? "", `Bearer ${env.RELAY_TOKEN}`)) return new Response("unauthorized", { status: 401 });
         return hub.fetch(req);
       case "/llm/chat/completions":
       case "/inbound":
+        if (!env.LLM_SECRET) return notConfigured();
         if (req.method !== "POST" || !safeEqual(req.headers.get("x-orole-relay") ?? "", env.LLM_SECRET)) return new Response("unauthorized", { status: 401 });
         return hub.fetch(req);
       case "/status": {
+        if (!env.WEBHOOK_SECRET) return notConfigured();
         if (req.method !== "POST") return new Response("unauthorized", { status: 401 });
         const body = await req.text();
         if (!(await validSignature(req.headers.get("ElevenLabs-Signature"), body, env.WEBHOOK_SECRET))) return new Response("unauthorized", { status: 401 });

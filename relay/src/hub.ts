@@ -1,10 +1,21 @@
 import { DurableObject } from "cloudflare:workers";
 
 type Frame = { type: string; id?: string; callId?: string; text?: string; accept?: boolean; vars?: Record<string, string>; overrides?: unknown; [k: string]: unknown };
-type Pending = { onFrame: (f: Frame) => void };
+type Pending = { onFrame: (f: Frame) => void; socket: WebSocket; socketGone?: () => void };
+
+export interface HubEnv {
+  // Optional timer overrides in milliseconds (tests use short values).
+  IDLE_MS?: string;
+  GRACE_MS?: string;
+  MAX_MS?: string;
+}
 
 const GOODBYE = "Sorry, I can't reach your bots right now. I'll message you instead.";
 const LOST = "Lost connection, I'll message you.";
+const DEFAULT_IDLE_MS = 20_000; // no frame for this long while the daemon is connected -> give up
+const DEFAULT_GRACE_MS = 5_000; // daemon socket gone: wait this long, then give up
+const DEFAULT_MAX_MS = 120_000; // absolute cap per request
+const INBOUND_TIMEOUT_MS = 4_000;
 const enc = new TextEncoder();
 
 function sseChunk(content: string): Uint8Array {
@@ -12,8 +23,13 @@ function sseChunk(content: string): Uint8Array {
 }
 const sseDone = enc.encode(`data: ${JSON.stringify({ id: "c", object: "chat.completion.chunk", choices: [{ index: 0, delta: {}, finish_reason: "stop" }] })}\n\ndata: [DONE]\n\n`);
 
+function ms(v: string | undefined, d: number): number {
+  const n = Number(v);
+  return v && Number.isFinite(n) && n > 0 ? n : d;
+}
+
 // Hub holds the one daemon socket and the in-flight request table. It persists nothing.
-export class Hub extends DurableObject {
+export class Hub extends DurableObject<HubEnv> {
   private daemon: WebSocket | null = null;
   private pending = new Map<string, Pending>();
 
@@ -36,17 +52,27 @@ export class Hub extends DurableObject {
     const pair = new WebSocketPair();
     const [client, server] = [pair[0], pair[1]];
     server.accept();
-    this.daemon?.close(4000, "replaced");
+    const old = this.daemon;
     this.daemon = server;
+    if (old) {
+      this.dropSocket(old);
+      try { old.close(4000, "replaced"); } catch { /* already closed */ }
+    }
     server.addEventListener("message", (e) => {
       let f: Frame;
       try { f = JSON.parse(e.data as string); } catch { return; }
       if (f.id) this.pending.get(f.id)?.onFrame(f);
     });
-    const gone = () => { if (this.daemon === server) this.daemon = null; };
+    const gone = () => this.dropSocket(server);
     server.addEventListener("close", gone);
     server.addEventListener("error", gone);
     return new Response(null, { status: 101, webSocket: client });
+  }
+
+  // The socket is gone: clear it if current, and start the grace period for every request it carried.
+  private dropSocket(sock: WebSocket) {
+    if (this.daemon === sock) this.daemon = null;
+    for (const p of [...this.pending.values()]) if (p.socket === sock) p.socketGone?.();
   }
 
   private send(f: Frame): boolean {
@@ -60,7 +86,18 @@ export class Hub extends DurableObject {
     const headers = { "content-type": "text/event-stream", "cache-control": "no-cache" };
     const id = crypto.randomUUID();
     const callId = body.elevenlabs_extra_body?.call_id ?? "";
+    const idleMs = ms(this.env.IDLE_MS, DEFAULT_IDLE_MS);
+    const graceMs = ms(this.env.GRACE_MS, DEFAULT_GRACE_MS);
+    const maxMs = ms(this.env.MAX_MS, DEFAULT_MAX_MS);
+
+    let idle: number | null = null;
+    let grace: number | null = null;
+    let cap: number | null = null;
+    let done = false;
     const finish = async (spoken?: string) => {
+      if (done) return;
+      done = true;
+      clearTimeout(idle); clearTimeout(grace); clearTimeout(cap);
       this.pending.delete(id);
       try {
         if (spoken) await w.write(sseChunk(spoken));
@@ -68,33 +105,48 @@ export class Hub extends DurableObject {
         await w.close();
       } catch { /* client went away */ }
     };
-    const sent = this.send({ type: "llm.request", id, callId, messages: (body.messages ?? []).map(({ role, content }) => ({ role, content })) });
-    if (!sent) {
+
+    const sock = this.daemon;
+    const sent = sock !== null && this.send({ type: "llm.request", id, callId, messages: (body.messages ?? []).map(({ role, content }) => ({ role, content })) });
+    if (!sent || !sock) {
       void finish(GOODBYE);
       return new Response(readable, { headers });
     }
-    // If the daemon socket drops mid-turn, wait 5 s for it to come back, then give up.
-    let timer: number | null = null;
-    const arm = () => { clearTimeout(timer); timer = setTimeout(() => { if (!this.daemon) void finish(LOST); else arm(); }, 5000); };
-    arm();
+    const armIdle = () => { clearTimeout(idle); idle = setTimeout(() => void finish(LOST), idleMs); };
+    armIdle();
+    cap = setTimeout(() => void finish(LOST), maxMs);
     this.pending.set(id, {
+      socket: sock,
+      socketGone: () => {
+        clearTimeout(idle);
+        if (grace === null) grace = setTimeout(() => void finish(LOST), graceMs);
+      },
       onFrame: (f) => {
-        arm();
+        if (done) return;
+        armIdle();
         if (f.type === "llm.delta" && f.text) void w.write(sseChunk(f.text)).catch(() => {});
-        else if (f.type === "llm.done") { clearTimeout(timer); void finish(); }
-        else if (f.type === "llm.error") { clearTimeout(timer); void finish(f.text || "That failed."); }
+        else if (f.type === "llm.done") void finish();
+        else if (f.type === "llm.error") void finish(f.text || "That failed.");
       },
     });
     return new Response(readable, { headers });
   }
 
   private async inbound(body: { caller_id?: string; called_number?: string; call_sid?: string }): Promise<Response> {
+    const sock = this.daemon;
+    if (!sock) return new Response("daemon offline", { status: 503 });
     const id = crypto.randomUUID();
+    let t: number | null = null;
     const answer = new Promise<Frame | null>((resolve) => {
-      const t = setTimeout(() => { this.pending.delete(id); resolve(null); }, 4000);
-      this.pending.set(id, { onFrame: (f) => { if (f.type === "inbound.answer") { clearTimeout(t); this.pending.delete(id); resolve(f); } } });
+      t = setTimeout(() => { this.pending.delete(id); resolve(null); }, INBOUND_TIMEOUT_MS);
+      this.pending.set(id, {
+        socket: sock,
+        socketGone: () => { clearTimeout(t); this.pending.delete(id); resolve(null); },
+        onFrame: (f) => { if (f.type === "inbound.answer") { clearTimeout(t); this.pending.delete(id); resolve(f); } },
+      });
     });
     if (!this.send({ type: "inbound.lookup", id, caller: body.caller_id ?? "", called: body.called_number ?? "", callSid: body.call_sid ?? "" })) {
+      clearTimeout(t);
       this.pending.delete(id);
       return new Response("daemon offline", { status: 503 });
     }
