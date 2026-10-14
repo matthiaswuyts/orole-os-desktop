@@ -2136,7 +2136,24 @@ func TestNewsOnSilenceIsToldInACueTurn(t *testing.T) {
 	}
 }
 
-func TestHesitationIsHeldAndJoinedToTheRest(t *testing.T) {
+// startHesitation sends a hesitation as request id in the background and returns once its turn waits for the rest of
+// the sentence (its buffer chunk went out); wait returns once that request has been handled.
+func (e *callEnv) startHesitation(t *testing.T, callID, id, utter string) (wait func()) {
+	t.Helper()
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		e.c.HandleFrame(context.Background(), llmFrame(id, callID, utter))
+	}()
+	t.Cleanup(wg.Wait)
+	waitFor(t, func() bool { return len(e.relay.stream(id)) > 0 })
+	return wg.Wait
+}
+
+// The rest of a sentence the owner trailed off on supersedes the waiting turn, silently, and is answered with the held
+// words in front unless it repeats them.
+func TestHesitationIsJoinedToTheRest(t *testing.T) {
 	for _, c := range []struct{ name, first, rest, want string }{
 		{"continuation only", "geef me een, uhm-", "de planning van vandaag", "geef me een, uhm- de planning van vandaag"},
 		{"repeated full sentence", "geef me een, uhm-", "Geef me een, uhm, de planning van vandaag.", "Geef me een, uhm, de planning van vandaag."},
@@ -2145,15 +2162,17 @@ func TestHesitationIsHeldAndJoinedToTheRest(t *testing.T) {
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			e := newCallEnv(t)
+			e.c.hesitationWait = 2 * time.Second // the rest arrives long before
 			call := e.openCall(t)
-			e.c.HandleFrame(context.Background(), llmFrame("r1", call.ID, c.first))
-			if !e.relay.skipped("r1") || e.relay.text("r1") != "" || len(e.host.turnList()) != 0 {
-				t.Fatalf("hesitation answered: spoke %q, turns %d", e.relay.text("r1"), len(e.host.turnList()))
-			}
+			wait := e.startHesitation(t, call.ID, "r1", c.first)
 			e.c.HandleFrame(context.Background(), llmFrame("r2", call.ID, c.rest))
+			wait()
 			turns := e.host.turnList()
 			if len(turns) != 1 || turns[0].Text != c.want {
 				t.Fatalf("turns %+v, want text %q", turns, c.want)
+			}
+			if e.relay.text("r1") != "" || e.relay.skipped("r1") || e.relay.done("r1") {
+				t.Fatalf("superseded wait spoke %q (skipped %v, done %v)", e.relay.text("r1"), e.relay.skipped("r1"), e.relay.done("r1"))
 			}
 			if e.relay.text("r2") != e.host.reply {
 				t.Fatalf("spoke %q", e.relay.text("r2"))
@@ -2167,46 +2186,114 @@ func TestHesitationIsHeldAndJoinedToTheRest(t *testing.T) {
 	}
 }
 
-// A hesitation followed by silence is answered as it stands.
-func TestHeldHesitationIsAnsweredOnSilence(t *testing.T) {
+// With nothing more from the owner, the hesitation turn answers the held words itself once the wait is over, and the
+// words are spent: a later utterance stands alone.
+func TestHesitationIsAnsweredAfterTheWait(t *testing.T) {
 	e := newCallEnv(t)
+	e.c.hesitationWait = 20 * time.Millisecond
 	call := e.openCall(t)
+	began := time.Now()
 	e.c.HandleFrame(context.Background(), llmFrame("r1", call.ID, "can you check the, uhm"))
-	e.c.HandleFrame(context.Background(), llmFrame("r2", call.ID, "..."))
+	if waited := time.Since(began); waited < e.c.hesitationWait {
+		t.Fatalf("answered after %v", waited)
+	}
 	turns := e.host.turnList()
 	if len(turns) != 1 || turns[0].Text != "can you check the, uhm" || turns[0].Cue {
 		t.Fatalf("turns %+v", turns)
 	}
-	if e.relay.text("r2") != e.host.reply {
-		t.Fatalf("spoke %q", e.relay.text("r2"))
+	if e.relay.text("r1") != e.host.reply || e.relay.skipped("r1") || e.relay.stream("r1")[0] != bufferChunk {
+		t.Fatalf("stream %q", e.relay.stream("r1"))
+	}
+	e.c.HandleFrame(context.Background(), llmFrame("r2", call.ID, "what's running?"))
+	if got := e.host.turnList()[1].Text; got != "what's running?" {
+		t.Fatalf("a spent hesitation was prepended: %q", got)
 	}
 }
 
+// A silence prompt during the wait is taken over by the waiting turn, which then answers in it.
+func TestSilenceDuringAHesitationIsAdopted(t *testing.T) {
+	e := newCallEnv(t)
+	h := &recHandler{}
+	e.c.log = slog.New(h)
+	e.c.hesitationWait = 500 * time.Millisecond
+	call := e.openCall(t)
+	wait := e.startHesitation(t, call.ID, "r1", "geef me de, uhm")
+	e.c.HandleFrame(context.Background(), llmFrame("r2", call.ID, "..."))
+	wait()
+	if turns := e.host.turnList(); len(turns) != 1 || turns[0].Text != "geef me de, uhm" {
+		t.Fatalf("turns %+v", turns)
+	}
+	if !e.relay.done("r1") || e.relay.text("r1") != "" || e.relay.text("r2") != e.host.reply {
+		t.Fatalf("r1 done %v spoke %q; r2 heard %q", e.relay.done("r1"), e.relay.text("r1"), e.relay.text("r2"))
+	}
+	if got, want := requestKinds(t, h), []string{kindOpener, kindHesitation, kindSilenceAdopted}; !slices.Equal(got, want) {
+		t.Fatalf("kinds %v, want %v", got, want)
+	}
+}
+
+// While a hesitation turn waits it sends only buffer chunks; the acknowledgement counts from the end of the wait.
+func TestHesitationWaitSendsOnlyBuffers(t *testing.T) {
+	e := newCallEnv(t)
+	e.c.hesitationWait, e.c.ackAfter, e.c.bufferEvery, e.c.stillAfter = 60*time.Millisecond, 30*time.Millisecond, 10*time.Millisecond, time.Hour
+	e.host.release = make(chan struct{})
+	call := e.openCall(t)
+	began := time.Now()
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		e.c.HandleFrame(context.Background(), llmFrame("r1", call.ID, "check my tasks and"))
+	}()
+	waitFor(t, func() bool { return e.relay.text("r1") != "" })
+	if waited := time.Since(began); waited < e.c.hesitationWait+e.c.ackAfter {
+		t.Fatalf("acknowledged after %v", waited)
+	}
+	st := e.relay.stream("r1")
+	i := slices.IndexFunc(st, func(s string) bool { return s != bufferChunk })
+	if i < 2 || !slices.Contains(english.acks, strings.TrimSpace(st[i])) {
+		t.Fatalf("stream %q", st)
+	}
+	close(e.host.release)
+	wg.Wait()
+}
+
 func TestNeverHeld(t *testing.T) {
+	lastKind := func(t *testing.T, h *recHandler) string {
+		k := requestKinds(t, h)
+		return k[len(k)-1]
+	}
 	t.Run("first turn", func(t *testing.T) {
 		e := newCallEnv(t)
+		h := &recHandler{}
+		e.c.log = slog.New(h)
 		e.c.HandleFrame(context.Background(), Frame{Type: FrameInboundLookup, ID: "i1", Caller: "+32470000000", CallSID: testSID})
 		call, _ := e.c.Active()
 		e.c.HandleFrame(context.Background(), llmFrame("r0", call.ID, "what is on my calendar and"))
-		if turns := e.host.turnList(); len(turns) != 1 || turns[0].Text != "what is on my calendar and" {
-			t.Fatalf("turns %+v", turns)
+		if turns := e.host.turnList(); len(turns) != 1 || turns[0].Text != "what is on my calendar and" || lastKind(t, h) != kindOpener {
+			t.Fatalf("turns %+v kinds %v", turns, requestKinds(t, h))
 		}
 	})
-	t.Run("bare greeting", func(t *testing.T) {
-		e := newCallEnv(t)
-		call := e.openCall(t)
-		e.c.HandleFrame(context.Background(), llmFrame("r1", call.ID, "Hallo, met Ray, eh"))
-		if turns := e.host.turnList(); len(turns) != 1 || turns[0].Text != "Hallo, met Ray, eh" || e.relay.skipped("r1") {
-			t.Fatalf("turns %+v", turns)
-		}
-	})
+	for _, utter := range []string{"Hallo, met Ray, eh", "Bedoel je de?"} {
+		t.Run(utter, func(t *testing.T) {
+			e := newCallEnv(t)
+			h := &recHandler{}
+			e.c.log = slog.New(h)
+			call := e.openCall(t)
+			e.c.HandleFrame(context.Background(), llmFrame("r1", call.ID, utter))
+			if turns := e.host.turnList(); len(turns) != 1 || turns[0].Text != utter || lastKind(t, h) != kindNew {
+				t.Fatalf("turns %+v kinds %v", turns, requestKinds(t, h))
+			}
+		})
+	}
 }
 
 func TestHesitates(t *testing.T) {
 	for in, want := range map[string]bool{
 		"geef me een, uhm-": true, "geef me een, uhm": true, "en dan—": true, "ik wil…": true, "Hmm.": true,
-		"check the": true, "so": true, "Wat is het?": true, "ik wil de": true,
-		"wat draait er?": false, "check my tasks": false, "uhm, what's running": false, "nee": false, "": false,
+		"check the": true, "ik wil de": true, "check my tasks and": true, "omdat-": true, "ik wil weten of": true,
+		"Wat is het?": false, "ik weet het": false, "laat maar": false, "I think so": false, "dus": false, "or": false,
+		"like": false, "Bedoel je de?": false, "Is it the?": false, "wat draait er?": false, "check my tasks": false,
+		"uhm, what's running": false, "nee": false, "": false,
 	} {
 		if got := hesitates(in); got != want {
 			t.Errorf("hesitates(%q) = %v", in, got)
@@ -2218,8 +2305,12 @@ func TestIsClosing(t *testing.T) {
 	for in, want := range map[string]bool{
 		"nee, bedankt": true, "Nee hoor.": true, "dat was het": true, "Dank je wel!": true, "Dag!": true, "laat maar": true,
 		"no thanks, that's all": true, "That’s all": true, "goodbye": true, "nothing else": true, "please hang up": true,
+		"Ik ben klaar.": true, "Klaar!": true, "dat was alles": true, "Dat is het.": true, "laat het maar": true,
+		"Oké, bedankt": true, "goed zo": true, "tot straks!": true, "slaapwel": true, "That's it.": true, "that is it": true,
+		"leave it": true, "I'm done": true, "we’re done": true, "all good": true, "see you": true, "Good night!": true,
 		"wat staat er vandaag gepland": false, "I know what's running": false, "what now": false, "is it done": false,
-		"neem de tijd": false, "": false,
+		"neem de tijd": false, "": false, "nee?": false, "is that all?": false, "ben je klaar?": false,
+		"klaarblijkelijk niet": false, "is it all good?": false,
 	} {
 		if got := isClosing(in); got != want {
 			t.Errorf("isClosing(%q) = %v", in, got)
@@ -2257,6 +2348,64 @@ func TestEndCallNeedsAClosing(t *testing.T) {
 	waitFor(t, func() bool { return e.phone.hungUp(testSID) })
 }
 
+// An accepted end_call belongs to its turn: a later turn does not hang up.
+func TestEndCallBelongsToItsTurn(t *testing.T) {
+	endOn := func(e *callEnv, utter string) chan error {
+		errc := make(chan error, 1)
+		e.host.onTurn = func(r chat.VoiceRequest) {
+			if r.Text == utter {
+				a, _ := e.c.Active()
+				errc <- e.c.EndAfterReply(a.ID)
+			}
+		}
+		return errc
+	}
+	t.Run("barge-in", func(t *testing.T) {
+		e := newCallEnv(t)
+		e.c.ackAfter = time.Hour
+		errc := endOn(e, "nee, bedankt")
+		call, release, wait := e.heldTurn(t, "r1", "nee, bedankt")
+		if err := <-errc; err != nil {
+			t.Fatalf("end_call refused: %v", err)
+		}
+		var wg sync.WaitGroup
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			e.c.HandleFrame(context.Background(), llmFrame("r2", call.ID, "wacht, nog één ding: wat draait er?"))
+		}()
+		waitFor(t, func() bool { return len(e.host.turnList()) == 2 })
+		release()
+		wait()
+		wg.Wait()
+		if e.phone.hungUp(testSID) || e.relay.text("r2") != e.host.reply {
+			t.Fatalf("hung up %v, r2 heard %q", e.phone.hungUp(testSID), e.relay.text("r2"))
+		}
+	})
+	t.Run("deadline then yes", func(t *testing.T) {
+		e := newCallEnv(t)
+		e.c.ackAfter, e.c.stillAfter, e.c.turnDeadline = time.Hour, 30*time.Millisecond, 30*time.Millisecond
+		utter := "nee bedankt, maar check eerst mijn taken"
+		errc := endOn(e, utter)
+		call, _, wait := e.heldTurn(t, "r1", utter)
+		if err := <-errc; err != nil {
+			t.Fatalf("end_call refused: %v", err)
+		}
+		wait() // the deadline ends the turn
+		if got := strings.TrimSpace(e.relay.text("r1")); !strings.HasSuffix(got, english.tooLong) || e.phone.hungUp(testSID) {
+			t.Fatalf("owner heard %q, hung up %v", got, e.phone.hungUp(testSID))
+		}
+		e.c.turnDeadline, e.c.stillAfter = time.Hour, time.Hour
+		e.host.mu.Lock()
+		e.host.release = nil
+		e.host.mu.Unlock()
+		e.c.HandleFrame(context.Background(), llmFrame("r2", call.ID, "ja"))
+		if e.phone.hungUp(testSID) || e.relay.text("r2") != e.host.reply {
+			t.Fatalf("hung up %v, r2 heard %q", e.phone.hungUp(testSID), e.relay.text("r2"))
+		}
+	})
+}
+
 // A reply with no words ends with skip_turn: an empty answer is retried by ElevenLabs and fails the call.
 func TestEmptyReplyIsSkipped(t *testing.T) {
 	e := newCallEnv(t)
@@ -2278,6 +2427,24 @@ func TestEmptyReplyIsSkipped(t *testing.T) {
 	}
 }
 
+// Words said to an earlier request do not count for the one a retry moved the turn to: if it gets none, it is skipped.
+func TestRetargetedRequestWithoutWordsIsSkipped(t *testing.T) {
+	e := newCallEnv(t)
+	e.c.ackAfter = time.Hour
+	e.host.reply = ""
+	e.host.onTurn = func(r chat.VoiceRequest) { r.OnTool("list_tasks") }
+	call, release, wait := e.heldTurn(t, "r1", "check my tasks")
+	e.c.HandleFrame(context.Background(), llmFrame("r2", call.ID, "check my tasks")) // ElevenLabs re-sends it
+	release()
+	wait()
+	if strings.TrimSpace(e.relay.text("r1")) != "Checking your tasks." || e.relay.skipped("r1") || !e.relay.done("r1") {
+		t.Fatalf("r1 heard %q (skipped %v)", e.relay.text("r1"), e.relay.skipped("r1"))
+	}
+	if e.relay.text("r2") != "" || !e.relay.skipped("r2") || !e.relay.done("r2") {
+		t.Fatalf("r2 heard %q (skipped %v)", e.relay.text("r2"), e.relay.skipped("r2"))
+	}
+}
+
 func TestBufferChunkGoesOutFirst(t *testing.T) {
 	e := newCallEnv(t)
 	call := e.openCall(t)
@@ -2291,9 +2458,9 @@ func TestBufferChunkGoesOutFirst(t *testing.T) {
 	}
 }
 
-// heldTurn opens a call and starts a model turn for "check my tasks" (request id) that runs until release is called
-// or the turn is canceled; wait returns once that request has been handled.
-func (e *callEnv) heldTurn(t *testing.T, id string) (call CallRecord, release func(), wait func()) {
+// heldTurn opens a call and starts a model turn for utter (request id) that runs until release is called or the turn
+// is canceled; wait returns once that request has been handled.
+func (e *callEnv) heldTurn(t *testing.T, id, utter string) (call CallRecord, release func(), wait func()) {
 	t.Helper()
 	e.host.release = make(chan struct{})
 	e.host.started = make(chan struct{}, 1)
@@ -2302,7 +2469,7 @@ func (e *callEnv) heldTurn(t *testing.T, id string) (call CallRecord, release fu
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		e.c.HandleFrame(context.Background(), llmFrame(id, call.ID, "check my tasks"))
+		e.c.HandleFrame(context.Background(), llmFrame(id, call.ID, utter))
 	}()
 	<-e.host.started
 	var once sync.Once
@@ -2325,7 +2492,7 @@ func count(xs []string, x string) int {
 func TestBufferKeepsASilentTurnAlive(t *testing.T) {
 	e := newCallEnv(t)
 	e.c.ackAfter, e.c.stillAfter, e.c.bufferEvery = time.Hour, time.Hour, 10*time.Millisecond
-	_, release, wait := e.heldTurn(t, "r1")
+	_, release, wait := e.heldTurn(t, "r1", "check my tasks")
 	waitFor(t, func() bool { return count(e.relay.stream("r1"), bufferChunk) >= 3 })
 	if got := e.relay.text("r1"); got != "" {
 		t.Fatalf("buffers spoke %q", got)
@@ -2341,7 +2508,7 @@ func TestAckAfterAckAfter(t *testing.T) {
 	e := newCallEnv(t)
 	e.c.ackAfter, e.c.stillAfter, e.c.bufferEvery = 40*time.Millisecond, time.Hour, time.Hour
 	began := time.Now()
-	_, release, wait := e.heldTurn(t, "r1")
+	_, release, wait := e.heldTurn(t, "r1", "check my tasks")
 	waitFor(t, func() bool { return e.relay.text("r1") != "" })
 	if waited := time.Since(began); waited < e.c.ackAfter {
 		t.Fatalf("acknowledged after %v", waited)
@@ -2356,7 +2523,7 @@ func TestAckAfterAckAfter(t *testing.T) {
 func TestStillLinesAreCapped(t *testing.T) {
 	e := newCallEnv(t)
 	e.c.ackAfter, e.c.stillAfter, e.c.bufferEvery = time.Hour, 5*time.Millisecond, time.Hour
-	_, release, wait := e.heldTurn(t, "r1")
+	_, release, wait := e.heldTurn(t, "r1", "check my tasks")
 	stills := func() int {
 		n := 0
 		for _, s := range e.relay.stream("r1") {
@@ -2380,37 +2547,79 @@ func TestStillLinesAreCapped(t *testing.T) {
 
 func TestTurnDeadlineSpeaksTooLong(t *testing.T) {
 	e := newCallEnv(t)
-	e.c.ackAfter, e.c.stillAfter, e.c.bufferEvery, e.c.turnDeadline = time.Hour, time.Hour, time.Hour, 30*time.Millisecond
+	// The deadline waits for stillAfter without words: the filler goes out long before that.
+	e.c.ackAfter, e.c.stillAfter, e.c.bufferEvery, e.c.turnDeadline = time.Hour, 250*time.Millisecond, time.Hour, 30*time.Millisecond
 	e.host.onTurn = func(r chat.VoiceRequest) {
 		if r.Text == "check my tasks" {
 			r.OnTool("start_task")
 		}
 	}
-	call, _, wait := e.heldTurn(t, "r1")
+	call, _, wait := e.heldTurn(t, "r1", "check my tasks")
 	wait() // the deadline ends the turn without a release
-	if got := strings.TrimSpace(e.relay.text("r1")); got != "Starting that coding task now. This is taking longer than expected. I'll keep at it and let you know." || !e.relay.done("r1") {
+	got := strings.TrimSpace(e.relay.text("r1"))
+	if !strings.HasPrefix(got, "Starting that coding task now.") || !strings.HasSuffix(got, "This is taking too long on the phone. Shall I run it as a background task instead?") || !e.relay.done("r1") {
 		t.Fatalf("owner heard %q", got)
 	}
-	// The next turn learns what was asked and what already ran.
+	// The next turn learns what was asked and what already ran, so a "yes" can start it in the background.
 	e.c.turnDeadline = time.Hour
 	e.host.mu.Lock()
 	e.host.release = nil
 	e.host.mu.Unlock()
-	e.c.HandleFrame(context.Background(), llmFrame("r2", call.ID, "what happened?"))
+	e.c.HandleFrame(context.Background(), llmFrame("r2", call.ID, "ja"))
 	turns := e.host.turnList()
 	h := turns[len(turns)-1].History
-	if len(h) < 2 || h[len(h)-2].Text != "check my tasks" || !strings.Contains(h[len(h)-1].Text, "took too long") || !strings.Contains(h[len(h)-1].Text, "start_task") {
+	if len(h) < 2 || h[len(h)-2].Text != "check my tasks" {
 		t.Fatalf("history %+v", h)
+	}
+	note := h[len(h)-1].Text
+	for _, want := range []string{`"check my tasks"`, "background task", "start_task", "ask_bot", "These tools already ran: start_task"} {
+		if !strings.Contains(note, want) {
+			t.Fatalf("note %q lacks %q", note, want)
+		}
 	}
 }
 
 func TestTurnDeadlineDutch(t *testing.T) {
 	e := newCallEnv(t)
 	e.settings.CallLanguage, e.settings.AgentLanguage = LangDutch, LangDutch
-	e.c.ackAfter, e.c.stillAfter, e.c.bufferEvery, e.c.turnDeadline = time.Hour, time.Hour, time.Hour, 30*time.Millisecond
-	_, _, wait := e.heldTurn(t, "r1")
+	e.c.ackAfter, e.c.stillAfter, e.c.bufferEvery, e.c.turnDeadline = time.Hour, 30*time.Millisecond, time.Hour, 30*time.Millisecond
+	_, _, wait := e.heldTurn(t, "r1", "check my tasks")
 	wait()
-	if got := strings.TrimSpace(e.relay.text("r1")); got != "Dit duurt langer dan verwacht. Ik werk verder en laat het je weten." {
+	if got := strings.TrimSpace(e.relay.text("r1")); got != "Dit duurt te lang voor aan de telefoon. Zal ik het als taak op de achtergrond laten doen?" {
+		t.Fatalf("owner heard %q", got)
+	}
+}
+
+// talk makes VoiceTurn speak a word every 10 ms, n times, before its reply.
+func talk(n int) func(chat.VoiceRequest) {
+	return func(r chat.VoiceRequest) {
+		for range n {
+			r.OnText("word ")
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+}
+
+// The deadline never cuts into an answer that is still being spoken.
+func TestTurnDeadlineWaitsForAQuietMoment(t *testing.T) {
+	e := newCallEnv(t)
+	e.c.ackAfter, e.c.stillAfter, e.c.turnDeadline = time.Hour, 150*time.Millisecond, 20*time.Millisecond
+	e.host.onTurn = talk(20)
+	call := e.openCall(t)
+	e.c.HandleFrame(context.Background(), llmFrame("r1", call.ID, "tell me everything"))
+	if got := e.relay.text("r1"); strings.Contains(got, english.tooLong) || !strings.HasSuffix(got, e.host.reply) {
+		t.Fatalf("owner heard %q", got)
+	}
+}
+
+// turnCap ends a turn even while it talks.
+func TestTurnCapEndsAnyTurn(t *testing.T) {
+	e := newCallEnv(t)
+	e.c.ackAfter, e.c.stillAfter, e.c.turnDeadline, e.c.turnCap = time.Hour, time.Hour, time.Hour, 60*time.Millisecond
+	e.host.onTurn = talk(30)
+	call := e.openCall(t)
+	e.c.HandleFrame(context.Background(), llmFrame("r1", call.ID, "tell me everything"))
+	if got := strings.TrimSpace(e.relay.text("r1")); !strings.HasSuffix(got, english.tooLong) || !e.relay.done("r1") {
 		t.Fatalf("owner heard %q", got)
 	}
 }
@@ -2419,7 +2628,9 @@ func TestTurnDeadlineDutch(t *testing.T) {
 func TestSilenceDuringATurnIsAdopted(t *testing.T) {
 	e := newCallEnv(t)
 	e.c.ackAfter = time.Hour
-	call, release, wait := e.heldTurn(t, "r1")
+	h := &recHandler{}
+	e.c.log = slog.New(h)
+	call, release, wait := e.heldTurn(t, "r1", "check my tasks")
 	e.c.HandleFrame(context.Background(), llmFrame("r2", call.ID, "..."))
 	release()
 	wait()
@@ -2431,6 +2642,9 @@ func TestSilenceDuringATurnIsAdopted(t *testing.T) {
 	}
 	if st := e.relay.stream("r2"); len(st) == 0 || st[0] != bufferChunk {
 		t.Fatalf("adopted request did not get a buffer chunk first: %q", st)
+	}
+	if got, want := requestKinds(t, h), []string{kindOpener, kindNew, kindSilenceAdopted}; !slices.Equal(got, want) {
+		t.Fatalf("kinds %v, want %v", got, want)
 	}
 }
 
@@ -2467,6 +2681,7 @@ func TestRequestKindsAreLoggedWithoutText(t *testing.T) {
 	e := newCallEnv(t)
 	h := &recHandler{}
 	e.c.log = slog.New(h)
+	e.c.hesitationWait = 10 * time.Millisecond
 	call := e.openCall(t)
 	for i, u := range []string{"what is running zebra", "...", "geef me een giraffe, uhm-", "...", "and the pelican"} {
 		e.c.HandleFrame(context.Background(), llmFrame(fmt.Sprintf("r%d", i+1), call.ID, u))
@@ -2476,7 +2691,7 @@ func TestRequestKindsAreLoggedWithoutText(t *testing.T) {
 		}
 	}
 	got := requestKinds(t, h, "zebra", "giraffe", "pelican", "walrus", "Two tasks")
-	want := []string{kindOpener, kindNew, kindSilence, kindHesitation, kindPending, kindNews, kindNew}
+	want := []string{kindOpener, kindNew, kindSilence, kindHesitation, kindSilence, kindNews, kindNew}
 	if !slices.Equal(got, want) {
 		t.Fatalf("kinds %v, want %v", got, want)
 	}
@@ -2499,7 +2714,7 @@ func TestRetryAndBargeInKinds(t *testing.T) {
 	e.c.ackAfter = time.Hour
 	h := &recHandler{}
 	e.c.log = slog.New(h)
-	call, release, wait := e.heldTurn(t, "r1")
+	call, release, wait := e.heldTurn(t, "r1", "check my tasks")
 	e.c.HandleFrame(context.Background(), llmFrame("r2", call.ID, "check my tasks")) // ElevenLabs re-sends it
 	var wg sync.WaitGroup
 	wg.Add(1)
