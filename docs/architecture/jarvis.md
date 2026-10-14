@@ -19,8 +19,8 @@ call does not survive a daemon restart.**
 |---|---|---|
 | Relay | `relay/` (TypeScript Worker + one Durable Object `Hub`) | Authenticates provider requests, turns them into frames for the daemon's one WebSocket, writes the daemon's reply as OpenAI-style SSE. Stores nothing. |
 | `internal/jarvis` | daemon | Gate, rules, policy, call state machine, relay client, Twilio and ElevenLabs clients, provisioning, openers, inbound check, call records. |
-| `internal/chat/voice.go` | daemon | `VoiceTurn`, `Compose`, `PostCallCard`, `UpdateCallCard` (and `Manager.CallMessages`). |
-| `internal/chat/tools/jarvis.go` | daemon | Bot tools `jarvis_rule_add`, `jarvis_rule_list`, `jarvis_rule_delete`, `call_owner`, `switch_bot`, `end_call`. |
+| `internal/chat/voice.go` | daemon | `VoiceTurn` (spoken and cue turns), `Compose`, `PostCallCard`, `UpdateCallCard` (and `Manager.CallMessages`). The chat queue and delegation keep follow-ups of a call in the call's thread (`chat.md`). |
+| `internal/chat/tools/jarvis.go` | daemon | Bot tools `jarvis_rule_add`, `jarvis_rule_list`, `jarvis_rule_delete`, `call_owner`, `switch_bot`, `end_call` (see Bot tools). |
 | `internal/daemon/svc_jarvis.go` | daemon | IPC methods, event hooks, the save check, audit and notifications. |
 | `internal/app/jarvis.go` | desktop | Stateless MyGo service forwarding to the daemon. |
 | `frontend/src/features/jarvis/` | UI | Settings > Phone, the bot's Phone calls page, the call card and the call pane. |
@@ -64,12 +64,23 @@ and confirms it. The daemon evaluates rules against events, so no model has to n
 | `automation_finished`, `automation_failed` | an automation id, or `any` | automation run results (`succeeded`; `failed`/`uncertain`) |
 | `notification` | notification kind, optionally `kind:source` (the source equals it or continues with `.` or `/`: `github` matches `github.ci`, not `githubber`) | the notifications store (Jarvis's own notices are ignored) |
 | `at_time` | `HH:MM` local wall-clock time | the daemon's 20 s ticker |
+| `bot_reported` | the name of a bot the rule's bot handed work to (case-insensitive), or `any` | a bot the rule's bot handed work to reported back (`Service.OnFollowUp`, see Follow-ups of a call). The event's source is the callee's name and the rule matches only for the bot that handed the work out. Reports only: code tasks reach rules through `task_finished` / `task_failed`. |
 
 Rule fields: `repeat` (default: deleted after it fires), `expiresAt`, `urgent` (one retry after 5 minutes if
 unanswered), `quietOverride` (call during quiet hours), `note` (at most 280 characters, given to the bot on the call).
 A bot keeps at most 50 rules and sees only its own. The bot may also decide by itself with `call_owner(reason, urgent)`;
 its prompt carries the owner's "When to call me" policy text. Rules are listed and deleted in the bot's Phone calls
-page or with `jarvis_rule_list` / `jarvis_rule_delete`.
+page or with `jarvis_rule_list` / `jarvis_rule_delete`. The voice prompt tells a bot that the owner's "call me back when
+it is done" is a rule: `bot_reported` for work it handed to another bot, `task_finished` for a code task.
+
+Bot tools (`internal/chat/tools/jarvis.go`), offered only to bots with Jarvis on:
+
+| Tool | What it does |
+|---|---|
+| `jarvis_rule_add`, `jarvis_rule_list`, `jarvis_rule_delete` | Save, list and delete this bot's call rules. The trigger is one of the six above (`bot_reported` takes a bot name or `any` as its target). |
+| `call_owner(reason, urgent)` | Phone the owner now because something matches their "When to call me" policy. Refused on a call, in quiet hours, over a cap or within the cool-down; the refusal is returned to the bot. |
+| `switch_bot(name)` | On a call only: put the owner through to another bot. |
+| `end_call` | On a call only: hang up once this reply has been spoken. The daemon refuses it ("The owner has not said they are done. Ask whether there is anything else instead.") unless the owner's words in the turn being answered are a closing, see Ending a call. |
 
 The ticker resumes from a persisted timestamp (settings key `jarvis.state`). An `at_time` that fell due while the daemon
 was down, or by more than two minutes, becomes a notification ("<bot> missed a scheduled call"), never a late call.
@@ -91,13 +102,14 @@ that was turned away. Each call has a `jarvis_calls` row and one `PartCall` card
 rewritten at the end). The card carries the direction (outbound or inbound), status, reason, duration and estimated
 cost. The spoken turns are user and assistant messages in the bot's thread, with tool, task and research parts attached
 as if typed, but tagged with the call id (`messages.call_id`): the bot keeps them in its history and memory, while the
-chat UI never shows them (see `chat.md`). The card is the call's only entry in the thread; it is drawn like the bot's
+chat UI never shows them (see `chat.md`), nor the later reports of work started on the call and the bot's written
+answers to them (see Follow-ups of a call). The card is the call's only entry in the thread; it is drawn like the bot's
 text bubble and clicking it (or Enter/Space on it) opens the **call pane** beside the conversation
 (`frontend/src/features/jarvis/CallPane.tsx`): a header with the direction (Called you, You called, Missed call), the
 bot, the start time, duration, estimated cost and status, then the transcript in order, the owner's lines and the
-bot's, with tool, delegation and code-task activity as compact rows (a task row opens the task pane). It loads
-`jarvis.calls.transcript {callId}` -> `{call: CallRecord, messages: Message[]}` (owner-only; no provider ids or
-secrets) and, while the call is live, follows the `chat:call-message` and `chat:call-delta` events, refreshing the
+bot's, with tool, delegation and code-task activity as compact rows (a task row opens the task pane) and the follow-ups
+as collapsed items. It loads `jarvis.calls.transcript {callId}` -> `{call: CallRecord, messages: Message[]}`
+(owner-only; no provider ids or secrets) and, while the call is live, follows the `chat:call-message` and `chat:call-delta` events, refreshing the
 header when the call's card changes. After "put me through" (`switch_bot`) the turns are stored in the new bot's thread
 with the same call id: the header keeps the bot that started the call, each bot line is labelled with its own bot and a
 "Handed to <bot>" line marks the change. Only the live state ("Call in progress", "<bot> is answering") is announced to
@@ -110,8 +122,9 @@ part, or any regenerate while the bot is answering on a call. Calls made before 
 1. The brief is built: trigger, rule note, event detail. Untrusted text (event titles, task output, rule notes, call
    reasons) is fenced as data, and titles and reasons are clipped to 200 characters.
 2. `Place` records the call, posts the card and calls ElevenLabs' Twilio outbound-call API with dynamic variables
-   `call_id` and `bot_id`, `custom_llm_extra_body` `{call_id}` and per-call overrides for voice and TTS model. The Twilio
-   call SID it returns is kept for hang-up and polling.
+   `call_id` and `bot_id`, `custom_llm_extra_body` `{call_id, lang}` (`lang` is `nl` for Dutch and Auto, `en` for English;
+   the relay needs it for its own fixed lines) and per-call overrides for voice and TTS model. The Twilio call SID it
+   returns is kept for hang-up and polling.
 3. While the phone rings, `Compose` asks the bot's model for the **opener**: a **name-only greeting** ("Hey, it's
    Atlas. Got a minute?") that does not say why it is calling, because the call may reach voicemail. The instruction
    carries no reason and no context, only the call language. `CheckOpener` requires the bot's name, forbids "Orole", caps length at 240
@@ -139,18 +152,50 @@ part, or any regenerate while the bot is answering on a call. Calls made before 
    gets a notification ("<bot> tried to call"). Only an `urgent` call retries (once, after 5 minutes, through the same
    policy checks). The call counts as answered (`in_progress`, `answeredAt`) at the first non-empty utterance that is
    not a voicemail prompt. The agent still carries ElevenLabs' `end_call` and `voicemail_detection` tools, but nothing
-   relies on them, and the voice prompt says to say nothing about the reason to voicemail.
+   relies on them (the daemon hangs up through Twilio itself), and the voice prompt says to say nothing about the reason
+   to voicemail. The third system tool, `skip_turn`, is used (see Turn settings of the voice agent).
 
 ### Inbound
 
 ElevenLabs' personalization webhook reaches the relay's `/inbound`, which asks the daemon (`inbound.lookup`). The caller
 id must equal the **verified** owner number, otherwise the call is rejected, nothing is spoken and
 `jarvis.inbound.rejected` is audited. The executive bot (else the first bot passing the gate) answers with a fresh
-greeting containing its name. The answer returns `custom_llm_extra_body` `{call_id}`, so ElevenLabs sends the call id
-on every inbound `/llm` request, and the Twilio call SID from the lookup is kept for polling and hang-up. The owner is
-notified of every accepted inbound call. "Put me through to <bot>" calls `switch_bot`: model, tools, policy and history
+greeting containing its name. The answer returns `custom_llm_extra_body` `{call_id, lang}`, so ElevenLabs sends the call
+id and the call language on every inbound `/llm` request, and the Twilio call SID from the lookup is kept for polling and
+hang-up. ElevenLabs asks for the greeting 1 s after the call connects (the agent's `initial_wait_time`), not after its
+default 7 s. The owner is notified of every accepted inbound call. "Put me through to <bot>" calls `switch_bot`: model, tools, policy and history
 are swapped from the next sentence and the new bot introduces itself. The **voice stays the first bot's** (ElevenLabs
 fixes it when the call starts) and the call card stays in the first bot's chat.
+
+### Turn settings of the voice agent
+
+The first test calls (2026-10-14) were ended by ElevenLabs itself: the conversation had `status: failed`,
+`termination_reason: "custom_llm generation failed"` and `metadata.error` `llm_error` ("custom_llm_error: LLM Cascade
+Error: TimeoutError"). Each time our stream had gone quiet, either no first token for about 4 s or one short sentence
+and then about 5 s of nothing while a tool ran. ElevenLabs gives a custom LLM `cascade_timeout_seconds` to start
+answering (default **4**), retries on timeouts, errors and **empty responses** (the duplicate requests seen about 4 s
+apart) and fails the call after a few attempts. The agent was also set to `eager` turn-taking, which ended the owner's
+turn on a hesitation ("geef me een, uhm-"), and with an empty `first_message` ElevenLabs waits `initial_wait_time`,
+which falls back to `turn_timeout` (default 7 s): an inbound caller would hear 7 s of silence before the opener.
+`agentBody` (`internal/jarvis/elevenlabs.go`) therefore sets:
+
+| Field | Value | Why |
+|---|---|---|
+| `turn.turn_eagerness` | `patient` | Do not end the owner's turn on a pause. |
+| `turn.turn_timeout` | 10 s | After 10 s of owner silence ElevenLabs sends the user message "..." (the silence prompt). |
+| `turn.initial_wait_time` | 1 s | The opener comes 1 s after pickup instead of after the default 7 s. |
+| `turn.speculative_turn` | `false` | No generation before the owner's turn has ended. |
+| `turn.silence_end_call_timeout` | -1 | ElevenLabs never ends a call for silence; the daemon decides (see Silences). |
+| `turn.soft_timeout_config` | `{timeout_seconds: -1}` | No filler line from ElevenLabs while the LLM thinks; the daemon speaks its own. |
+| `agent.prompt.cascade_timeout_seconds` | 15 (the maximum) | How long the custom LLM may take for its first chunk. |
+| `conversation.max_duration_seconds` | 1800 | Matches the daemon's 30-minute ceiling. |
+| `built_in_tools.skip_turn` | system tool | ElevenLabs passes system tools to a custom LLM in the OpenAI `tools` parameter; the daemon answers a turn with a `skip_turn` call when it has nothing to say, so the agent stays silent and keeps listening. |
+
+The fields follow the ElevenLabs agent API reference; `docs/development/jarvis-e2e.md` step 0 lists what to confirm on a
+live call. `agentRevision` (2 for these settings) numbers the shape of `agentBody`; provisioning records it in
+`PhoneSettings.AgentRevision`. When it is behind (and when the language differs), the daemon updates the agent once in
+the background on its next start (see Settings and secrets), so an existing agent picks up a release's changes. The relay
+must be redeployed for `skip_turn` and the Dutch relay lines (see Relay protocol).
 
 ### A spoken turn
 
@@ -160,32 +205,84 @@ llm.delta -> SSE -> ElevenLabs TTS`.
 - The daemon uses only the newest user utterance of the request and keeps its own per-call history (last 40 lines),
   so prompt prefixes stay identical between turns.
 - `VoiceTurn` runs under its own run key (`call:<id>`), so a call never waits behind the bot's chat queue. It uses the
-  voice prompt (`voiceStyle`), the cheapest reasoning level the model offers, no attachments or compaction, and limits
-  of at most 6 steps and 10 tool calls (never above the bot's own limits).
+  voice prompt (`voiceStyle`, the bot's own name and the call language), the cheapest reasoning level the model offers,
+  no attachments or compaction, and limits of at most 6 steps and 10 tool calls (never above the bot's own limits). The
+  brief and a list of the tasks the bot handed to other bots that have not reported back go in as the run's addendum, so
+  it can answer "how is that going?".
+
+`Calls.turn` gives every request after the voicemail check one **kind** and logs it as `jarvis: request` with the call
+id, the kind and the message count (never any text):
+
+| Kind | The request | What happens |
+|---|---|---|
+| `opener` | The first of the call | The opener is spoken (see Outbound). |
+| `new` | An utterance, nothing running | A model turn answers it. |
+| `bargein` | An utterance while a model turn runs | That turn is cancelled; this one is answered. |
+| `retry` | ElevenLabs re-sent the running turn's request (same utterance and message count) | The running turn carries on in the new request. |
+| `silence_adopted` | The silence prompt while a turn is answering or waiting on a hesitation | That turn carries on in the new request. |
+| `silence` | The silence prompt with nothing to say | `skip_turn`, "Are you still there?" or the goodbye. |
+| `hesitation` | An utterance that trails off | The turn waits about 2.5 s, then answers; a continuation in that time is answered together with it (see Hesitations). |
+| `news` | The silence prompt while news waits | A cue turn tells the news. |
+| `verify` | A later request on a verification call | Ended at once. |
+
 - **Fillers.** When the model starts a tool, a scripted line for that tool ("Checking your automations.", in Dutch "Ik kijk even naar je automatiseringen.") is streamed
   immediately, then the model's continuation.
-- **Keep-alive.** A turn that has said nothing after 1.5 s says it is on it ("One moment, I'm on it.", in Dutch
-  "Momentje, ik ben ermee bezig."); the tool filler right after it is skipped. During a long tool run with 12 s of
-  silence it says a "still working" line, at most 3 times per turn. Speaking early also matters for ElevenLabs: it
-  re-sends a request when no text arrives in about 4 s.
-- **Retries and silences.** A request that repeats the in-flight turn's utterance with the same number of messages is
-  ElevenLabs retrying, not a barge-in: the running turn adopts it (the rest of the reply goes to the new request; the
-  old one is closed) instead of restarting. A user message with no words ("...", ElevenLabs' prompt after a silence)
-  is a pause: nothing is said and the model is not asked.
-- **Ending.** The voice style asks the bot to check whether there is anything else once it is done, and when the owner
-  is done to say a short goodbye and call `end_call`. The call is hung up through Twilio once that reply has been
+- **Keep-alive.** ElevenLabs fails the call when the custom LLM goes quiet, so a model turn first streams a buffer chunk,
+  `"... "` (the documented way to buy time; it is not spoken as words and does not count as the bot speaking), before
+  the gate and the model run, and again whenever nothing at all went out for 3 s. A turn with no words after 1.5 s says
+  it is on it ("One moment, I'm on it.", in Dutch "Momentje, ik ben ermee bezig."); the tool filler right after it is
+  skipped. With 12 s without words (a long tool run) it says a "still working" line, at most 3 times per turn. A turn
+  that has said nothing for a while after about a minute (never mid-answer; hard cap 100 s) is cancelled: the bot says "This is taking too long on the phone. Shall I run it as a
+  background task instead?" (Dutch "Dit duurt te lang voor aan de telefoon. Zal ik het als taak op de achtergrond laten
+  doen?") and the history notes what was asked and which tools already ran, so the next turn can pick it up. Work that
+  was already handed off (a started code task, a handoff) carries on; the cancelled model turn does not.
+- **Silences.** After `turn_timeout` (10 s) of owner silence ElevenLabs sends a user message "..." and waits for the
+  agent to decide. A running turn carries on in the new request (`silence_adopted`). Otherwise, if news is waiting, a cue turn
+  tells it (`news`: the instruction "(Nobody spoke. News came in while you were talking: tell the owner briefly, then ask
+  if there is anything else.)" is stored with the author `cue`, so it is in the bot's history but not in the call
+  transcript). Otherwise the daemon counts silence prompts in a row: the 1st and 2nd are answered with `skip_turn`, the
+  3rd says "Are you still there?" (Dutch "Ben je er nog?"), the 4th to 8th skip again, and the 9th says "I can't hear
+  you anymore, so I'll hang up. Call me back anytime." (Dutch "Ik hoor je niet meer, dus ik hang op. Bel me gerust
+  terug.") and hangs up: after about 30 s and 90 s of silence. Any utterance resets the count. `skip_turn` is a function
+  call returned in the stream (relay frame `llm.tool`), not an empty response, which ElevenLabs would retry.
+- **Hesitations.** The owner's turn can still end mid-sentence ("geef me een, uhm"). An utterance trails off when it ends
+  with a dash or "…", or when its last word is a hesitation (uh, uhm, um, uhh, hmm, eh, ehm, euh, eeh) or a connector that
+  cannot end a sentence (Dutch: en, of, want, omdat, zoals, een, de; English: and, because, the, a), unless it ends with
+  a question mark. The list is short on purpose: "het", "maar" or "so" can end a sentence ("laat maar", "I think so"),
+  and the owner would wait for an answer that is held back. The first turn and bare greetings are never held. Such a
+  request (`hesitation`) is not answered at once and does not use `skip_turn`: the turn waits about 2.5 s, streaming
+  buffer chunks so ElevenLabs keeps the request open, and then answers the held words. If the owner carries on within
+  that time, ElevenLabs sends a new request that supersedes the waiting turn, and the held words and the new ones are
+  answered together as one utterance (a continuation that repeats the held words is not doubled).
+- **Retries and barge-in.** A request that repeats the in-flight turn's utterance with the same number of messages is
+  ElevenLabs retrying, not a barge-in: the running turn adopts it (the rest of the reply goes to the new request, which
+  gets a buffer chunk at once; the old one is closed) instead of restarting. A new utterance cancels the in-flight turn,
+  waits for its run slot, and the cancelled turn speaks no more. It leaves only a one-line note in the call history
+  naming the tools it already started, so the next turn knows a task may already be running.
+- **No empty answers.** A turn that ends without having said a word (the voicemail path, for example) answers with
+  `skip_turn` instead of an empty response, because ElevenLabs retries an empty custom-LLM response and, after a few
+  attempts, fails the call. A later request on a verification call and a request for an unknown call end with `llm.done`
+  only.
+- **Ending a call.** The voice style asks the bot to check whether there is anything else once it is done, and to end
+  the call only when the owner clearly says they are done: a short goodbye and `end_call` in the same reply. The daemon
+  enforces it: `end_call` is refused ("The owner has not said they are done. Ask whether there is anything else
+  instead.") unless the owner's words that the running turn answers contain a closing, matched as whole words or phrases:
+  Dutch `nee`, `dat was het`, `dat is alles`, `bedankt`, `dankje`, `dank je`, `merci`, `dag`, `doei`, `tot later`,
+  `tot ziens`, `salut`, `ciao`, `nee hoor`, `niks`, `laat maar`, `ophangen`, `hang op`; English `no`, `that's all`,
+  `that is all`, `thanks`, `thank you`, `bye`, `goodbye`, `talk later`, `nothing`, `hang up`. So the bot cannot hang up on
+  a question, a cue turn or by itself. When it is allowed, the call is hung up through Twilio once that reply has been
   spoken (the bot's own goodbye, or "Okay, talk later!" if it said none).
-- **Barge-in.** A new request for the same call cancels the in-flight turn, waits for its run slot, and the cancelled turn
-  speaks no more. It leaves only a one-line note in the call history naming the tools it already started, so the next
-  turn knows a task may already be running.
 - **Approvals.** A tool whose policy decision is `ask` fails at once ("Needs your approval in the app — not available
   on a call.") instead of waiting for an approval nobody can give mid-call.
 - **Unknown call.** A request for a call that is not live, or with no call id, gets an empty reply (nothing spoken);
   if the call is on record with a Twilio SID it is hung up.
 - **Sanitizer.** Streamed speech passes through a filter that replaces "Orole" and "Orole OS" with "the app" (across chunk
   boundaries), because tool text names the app.
-- **Long work.** Code tasks and research are started and the bot says so; it does not wait. Completion notifications and
-  matching rules apply as usual; a rule that fires during the call is injected as news.
+- **Long work and news.** Code tasks and research are started and the bot says so; it does not wait. A rule that fires
+  during the call, a report from a bot the call's bot handed work to, and a code task started on the call reaching a
+  result are folded into the call as news: the next turn's brief carries them, fenced, and on the next silence prompt a
+  cue turn tells them unprompted. News that no finished turn has seen when the call ends is posted as a notification.
+  Completion notifications and matching rules apply as usual.
 - Model or tool errors are spoken briefly ("That failed: ...") and the call continues.
 
 ### Ending
@@ -199,14 +296,59 @@ refusal has been spoken (it waits for an estimate of the speaking time first), o
 turn of a call that already ended. Ending is idempotent. It records duration and estimated cost (`centsPerMinute`,
 default 12), updates the card, audits `jarvis.call.ended`, notifies on no-answer or voicemail and posts undelivered news.
 
+**Call outcome.** After every call that reached the provider, the daemon asks ElevenLabs how it recorded the
+conversation (`GET /v1/convai/conversations/{id}`), 10 s after the call ended; a conversation that is not finished yet is
+read once more 30 s later. The conversation id comes from the call record; for an inbound call that has none, the daemon
+lists the agent's latest conversations and takes the one whose `metadata.phone_call.call_sid` equals the call's Twilio
+SID (started within 120 s of the call). It logs `jarvis: call outcome` with the call id, `status`, `termination_reason`,
+`error_type` and `error_reason`: provider metadata, never transcript text. When the status is `failed` the owner gets one
+notification, "Call with <bot> dropped" ("The voice service ended the call: <reason>", level warning, opens the bot), so
+a call ElevenLabs gave up on is no longer silent. It is skipped for a call our own record already ended as unanswered or
+voicemail (the owner was told) and for verification calls. The check is best effort: a failure is logged and nothing else.
+
+### Follow-ups of a call
+
+Nothing that comes out of a call appears in the bot's main chat thread. The owner's words, the bot's replies, their
+tool and delegation items, and everything that arrives later live in the call's thread (messages with `call_id`) and
+are read in the call pane. The call card is the call's only entry in the chat. That includes:
+
+- the report of a bot the call's bot handed work to (`ask_bot` on the call): a user message authored `report:<botId>`,
+  then the bot's written answer to it;
+- the report of a code task started on the call (`task:<taskId>`) and the answer to it. A task remembers the call it was
+  started on (`agents.Session.CallID`), and `message_task` from another call, or from chat, moves where it reports next;
+- anything those answers start (they run with the thread's call id as `RunContext.CallThread`, which is not a live call:
+  `end_call` and `switch_bot` refuse, `call_owner` works).
+
+The callee bot's own thread (the task handed to it) is that bot's work and stays in its chat. Chat delivers every report
+to `Service.OnFollowUp` (the chat manager's follow-up hook) before it queues the written answer:
+
+1. **The call is live** and belongs to the bot (or is the call the follow-up came from): the follow-up is told on the
+   call as news. The reason is "<status>: <text>", clipped to 500 runes and fenced when it reaches the model; the label
+   is the callee's name, or "A code task" for tasks, whose titles (written by a bot) only appear inside the fence. When
+   the follow-up came from this very call, the bot says it on the phone and **no written answer** is queued; the report
+   is only stored in the call thread. A follow-up that came from chat during a live call is also told on the phone but is
+   still answered in chat.
+2. **The call is not live** and the follow-up is a bot's report: it is an event for `bot_reported` rules. A matching rule
+   (callee name or `any`, for the bot that handed the work out) places a call with the report in the brief, through the
+   usual checks (quiet hours, daily and monthly caps, no call in progress). Code task follow-ups do not fire rules here:
+   they already reach `task_finished` and `task_failed` rules through task events.
+3. **The follow-up carries a call id and was not told on that call** (it ended): the owner gets a notification titled
+   "<name> reported back" (or "<name> failed", "<name> stopped", "<name> is waiting for you" for a task), "From your call
+   with <bot>. Open the call to read it.", which opens the bot. The written answer lands in the call thread, which
+   raises no chat notification of its own.
+
+The call pane draws these as they arrive, also after hang-up (the header stays Ended): a report as the chat's collapsed
+"<bot> reported back" card, a task as a collapsed "Code task update" with an "Open the task" button, any other author as
+a collapsed item with a friendly label, and cue messages not at all.
+
 ## Speed design
 
 Target: first audio at most 300 ms after pickup (cached opener), reply start at most 1.2 s after the owner stops
 speaking. The opener is written during ringing and ElevenLabs' first message is empty; the daemon-to-relay socket is
 persistent; everything streams; reasoning is minimal and replies are short; the voice prompt and brief are stable for
 provider prompt caching; tools get instant fillers; the default TTS model is the lowest-latency one. Per-turn timings
-(`first_audio_ms`, `total_ms`) are written to `logs/daemon.log` as `jarvis: turn` lines. Spoken or transcribed text is
-never logged.
+(`first_audio_ms`, `total_ms`) are written to `logs/daemon.log` as `jarvis: turn` lines, and each request's kind as
+`jarvis: request` lines. Spoken or transcribed text is never logged.
 
 ## Settings and secrets
 
@@ -225,19 +367,23 @@ when a call starts and sets:
   empty, so switching away from Auto removes them. A language other than English with no voice model chosen sends
   `model_id` `eleven_flash_v2_5` (on the agent and per call), because ElevenLabs' default may be an English-only model
   that it refuses for a non-English agent. Provisioning records the language it gave the agent in `agentLanguage` (not
-  user-editable; an agent from before the setting counts as English). Calls use that **provisioned** language for the
-  bot's words and the fixed lines, so speech recognition, voice and words always match. Saving the setting
-  re-provisions (Connect always updates the agent); on daemon start, and after a save that did not provision, the
-  daemon updates only the agent's language in the background when it differs (no number import, no webhook), and
-  notifies "Couldn't switch the phone agent to Dutch: ..." if that fails. Missing ElevenLabs key, relay URL or relay
+  user-editable; an agent from before the setting counts as English) and the shape of the agent in `agentRevision`
+  (see Turn settings of the voice agent). Calls use that **provisioned** language for the bot's words and the fixed
+  lines, so speech recognition, voice and words always match. Saving the setting re-provisions (Connect always updates
+  the agent); on daemon start, and after a save that did not provision, the daemon updates only the agent in the
+  background (`syncAgent`: no number import, no webhook) when its language differs or its revision is behind, and
+  notifies "Couldn't update the phone agent" with the error if that fails. Missing ElevenLabs key, relay URL or relay
   secret skip that update quietly;
 - the bot's spoken language: `chat.VoiceRequest.Language` adds one line to the voice prompt (`nl`: speak Dutch; `en`:
   speak English; `auto`: answer in the owner's language, Dutch until known);
 - the opener and inbound greeting instructions ("Write it in Dutch"), and the daemon's fixed lines in
   `internal/jarvis/lang.go`: the name-only fallback openers, the inbound fallback greeting, the verification-code line,
   tool fillers, "I can't do that right now", the gate refusal prefix and the error prefix. `auto` uses the Dutch lines.
-  The gate's reason and a provider error text stay English. The relay's two lines ("Sorry, I can't reach your bots
-  right now..." and "Lost connection, I'll message you.") stay English: the relay does not know the call language.
+  The gate's reason and a provider error text stay English. The relay's own lines (the goodbye when the daemon is
+  offline, "Lost connection, I'll message you." and its default failure line) follow the call language: the daemon sends
+  `lang` (`nl` for Dutch and Auto, `en` for English) in the call's `custom_llm_extra_body` next to `call_id`, ElevenLabs
+  returns it on every `/llm` request, and the relay speaks Dutch for `nl` and English otherwise (an older daemon sends
+  none).
 
 Greeting and request detection (step 4 above) knows Dutch: greetings such as "hallo", "ja", "met <name>",
 "goedemiddag", and request words and phrases such as "wat", "wie", "hoe", "waarom", "kun", "kan", "check", "start",
@@ -284,7 +430,8 @@ optional: until it is set on the relay, post-call webhooks are rejected and call
 ElevenLabs poll instead (the setup checklist marks it "optional").
 
 Connect (`Configure`) validates the settings and provisions ElevenLabs idempotently: the agent (custom LLM URL
-`<relay>/llm`, secret header, empty first message, voicemail tool), the Twilio number imported and assigned to it, and
+`<relay>/llm`, secret header, empty first message, the turn settings above, the `end_call`, `skip_turn` and
+`voicemail_detection` tools), the Twilio number imported and assigned to it, and
 a post-call webhook. Verifying the owner number places a call that reads a six-digit code, entered in the app (10
 minutes, 5 attempts).
 
@@ -307,13 +454,18 @@ names in `internal/jarvis/relay.go` and `relay/src/hub.ts` must match exactly.
 | Direction | Frame | Meaning |
 |---|---|---|
 | relay -> daemon | `llm.request` | A custom-LLM turn: request `id`, `callId` (from `elevenlabs_extra_body.call_id`), `messages` |
-| daemon -> relay | `llm.delta` / `llm.done` / `llm.error` | Streamed text for that request; `llm.error` text is spoken |
+| daemon -> relay | `llm.delta` / `llm.done` / `llm.error` | Streamed text for that request; `llm.error` text is spoken. A delta of `"... "` is the buffer chunk that keeps ElevenLabs waiting |
+| daemon -> relay | `llm.tool` | Answers the request with a function call (`tool`, `args` as a JSON string), used for `skip_turn`: the relay streams it as an OpenAI tool call (`delta.tool_calls`, a chunk with `finish_reason: "tool_calls"`, `[DONE]`) after any text already sent and ends the request. The daemon follows it with `llm.done`, which the relay ignores |
 | relay -> daemon | `inbound.lookup` | Inbound webhook: `caller`, `called`, `callSid` (no conversation id: ElevenLabs has not created one yet) |
-| daemon -> relay | `inbound.answer` | `accept`, `vars`, `overrides` (voice and model), or `accept:false`; the relay adds `custom_llm_extra_body` `{call_id}` |
+| daemon -> relay | `inbound.answer` | `accept`, `vars`, `overrides` (voice and model), or `accept:false`; the relay adds `custom_llm_extra_body` `{call_id}` and, when `vars` carries it, `lang` |
 | relay -> daemon | `call.status` | Post-call webhook: `status`, `conversationId`, `durationSecs` |
 
 There is no hang-up frame: the daemon hangs up through Twilio itself. The custom-LLM endpoint answers on
 `/llm/chat/completions` and on the aliases `/llm` and `/llm/v1/chat/completions`.
+
+**The relay must be redeployed (`bunx wrangler@4 deploy` in `relay/`) after updating the app.** An old relay ignores
+`llm.tool` but ends the request at once on the `llm.done` that follows it, so every `skip_turn` becomes an empty answer:
+ElevenLabs retries it and, after a few attempts, fails the call. An old relay also speaks its own lines in English.
 
 Provider authentication at the relay: the daemon socket by bearer token; the `/llm` paths and `/inbound` by the
 `x-orole-relay` header (constant-time compare); `/status` by the `ElevenLabs-Signature` HMAC (timestamp within 30
@@ -327,7 +479,10 @@ the in-flight request.
 | Situation | Behaviour |
 |---|---|
 | Daemon offline or relay socket down | No outbound calls ("The relay is not connected."). Inbound: `/inbound` answers 503 and nothing is spoken (also when the daemon socket drops or does not answer within 4 s); a refused caller gets 403. A turn on `/llm` with no daemon speaks one goodbye line. Scheduled calls missed meanwhile become notifications. The bot's Phone calls page keeps the Jarvis switch and rules usable; only Test call waits for the relay. |
-| Socket drops mid-call | The relay waits 5 s, then speaks "Lost connection, I'll message you." and ends the turn. |
+| Socket drops mid-call | The relay waits 5 s, then speaks "Lost connection, I'll message you." (Dutch: "De verbinding is weggevallen, ik stuur je een bericht.") and ends the turn. |
+| ElevenLabs ends the call itself (for example the custom LLM timed out) | The outcome check about 10 s after the call logs the provider's reason and notifies "Call with <bot> dropped". |
+| A turn runs for about a minute without finishing | The turn is cancelled and the bot offers to run the work as a background task; work already handed off continues. |
+| The relay was not redeployed | `skip_turn` is not understood and answers are empty; ElevenLabs retries and drops the call (see Relay protocol). |
 | Model or tool error | Spoken briefly, recorded in the chat, the call continues. |
 | Provider error placing a call | The call is `failed`; notification with the provider's error. |
 | Caps, quiet hours, cool-down | No call; notification with the reason. |
