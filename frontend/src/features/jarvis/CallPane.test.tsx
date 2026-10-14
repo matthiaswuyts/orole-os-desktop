@@ -132,6 +132,90 @@ it("announces only the live state, not the transcript", async () => {
   expect(screen.getByRole("status")).toHaveTextContent("Atlas is answering");
 });
 
+const from = (author: string, id: string, seq: number, text: string): Message => ({ ...msg(id, seq, "user", [{ type: "text", text }]), author });
+
+it("draws a bot's report as the collapsed reported-back card and opens it on click", async () => {
+  const t = transcript();
+  t.messages.push(from("report:b2", "r1", 3, "Nova found two failing tests."));
+  api.transcript.mockResolvedValueOnce(t);
+  render(<CallPane callId="c1" botId="b1" onClose={vi.fn()} />);
+  expect(await screen.findByText("Nova reported back")).toBeInTheDocument();
+  const card = document.querySelector("[data-slot=chat-report]") as HTMLDetailsElement;
+  expect(card.open).toBe(false);
+  expect(card).toHaveTextContent("Nova found two failing tests.");
+  expect(document.querySelector("[data-slot=chat-user]")).toHaveTextContent("what happened?");
+  expect(document.querySelectorAll("[data-slot=chat-user]")).toHaveLength(1);
+  fireEvent.click(within(card).getByText("Nova reported back"));
+  expect(card.open).toBe(true);
+});
+
+it("names an unknown reporting bot generically", async () => {
+  const t = transcript();
+  t.messages.push(from("report:gone", "r1", 3, "Done."));
+  api.transcript.mockResolvedValueOnce(t);
+  render(<CallPane callId="c1" botId="b1" onClose={vi.fn()} />);
+  expect(await screen.findByText("Another bot reported back")).toBeInTheDocument();
+});
+
+it("shows a code task update collapsed and opens its task", async () => {
+  const t = transcript();
+  t.messages.push(from("task:t42", "k1", 3, "The task finished: 12 tests pass."));
+  api.transcript.mockResolvedValueOnce(t);
+  render(<CallPane callId="c1" botId="b1" onClose={vi.fn()} />);
+  const update = (await screen.findByText("Code task update")).closest("[data-slot=call-task-update]") as HTMLElement;
+  const details = update.querySelector("details")!;
+  expect(details.open).toBe(false);
+  expect(update).toHaveTextContent("The task finished: 12 tests pass.");
+  expect(update.closest("[data-slot=chat-user]")).toBeNull();
+  fireEvent.click(within(update).getByText("Code task update"));
+  expect(details.open).toBe(true);
+  fireEvent.click(within(update).getByRole("button", { name: "Open the task" }));
+  expect(useChat.getState().pane).toEqual({ kind: "task", id: "t42" });
+});
+
+it("offers no task button when the task update names no task", async () => {
+  const t = transcript();
+  t.messages.push(from("task:", "k1", 3, "An update."));
+  api.transcript.mockResolvedValueOnce(t);
+  render(<CallPane callId="c1" botId="b1" onClose={vi.fn()} />);
+  expect(await screen.findByText("Code task update")).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Open the task" })).toBeNull();
+});
+
+it("draws cues as nothing and any other author as a collapsed item with its label", async () => {
+  const t = transcript();
+  t.messages.push(from("cue", "q1", 3, "Tell the owner the build is done."), from("automation:a1", "x1", 4, "Nightly backup finished."), from("", "e1", 5, "Plain words."));
+  api.transcript.mockResolvedValueOnce(t);
+  render(<CallPane callId="c1" botId="b1" onClose={vi.fn()} />);
+  expect(await screen.findByText("Message from automation:a1")).toBeInTheDocument();
+  expect(screen.queryByText(/Tell the owner/)).toBeNull();
+  const generic = document.querySelector("[data-slot=call-followup]")!;
+  expect(generic.querySelector("details")!.open).toBe(false);
+  expect(generic).toHaveTextContent("Nightly backup finished.");
+  // An empty author is the owner's own line.
+  expect(screen.getByText("Plain words.").closest("[data-slot=chat-user]")).not.toBeNull();
+  // The cue gets no (empty) list item: the owner's line, the bot's, the automation's and the plain words remain.
+  expect(within(screen.getByRole("list", { name: "Transcript" })).getAllByRole("listitem")).toHaveLength(4);
+});
+
+it("shows follow-ups that arrive after the call ended and keeps the call ended", async () => {
+  render(<CallPane callId="c1" botId="b1" onClose={vi.fn()} />);
+  await screen.findByRole("list", { name: "Transcript" });
+  const meta = screen.getByText("Duration").closest("dl")!;
+  act(() => {
+    bus.emit("chatCallMessage", from("report:b2", "r1", 3, "Nova is done."));
+    bus.emit("chatCallMessage", msg("a2", 4, "assistant", [{ type: "text", text: "Nova says it is done." }], "running"));
+  });
+  expect(screen.getByText("Nova reported back")).toBeInTheDocument();
+  expect(screen.getByText("Nova says it is done.")).toBeInTheDocument();
+  expect(within(meta).getByText("Ended")).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: "Called you · Atlas" })).toBeInTheDocument();
+  // The call is over, so an answer being written is not announced as the call going on.
+  expect(screen.getByRole("status")).toHaveTextContent("");
+  act(() => bus.emit("chatCallMessage", msg("a2", 4, "assistant", [{ type: "text", text: "Nova says it is done." }])));
+  expect(within(meta).getByText("Ended")).toBeInTheDocument();
+});
+
 it("says the transcript needs the desktop app outside it", () => {
   backend.inDesktop = false;
   render(<CallPane callId="c1" botId="b1" onClose={vi.fn()} />);

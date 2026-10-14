@@ -1,12 +1,12 @@
-import { ChevronLeftIcon, CodeIcon, UsersIcon, WrenchIcon } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { ChevronLeftIcon, CodeIcon, MessageSquareIcon, UsersIcon, WrenchIcon } from "lucide-react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { errText } from "@/features/agents/format";
 import { Bubble } from "@/features/chat/parts/Bubble";
-import { UserBubble } from "@/features/chat/parts/MessageBubble";
+import { ChatMessageView, UserBubble } from "@/features/chat/parts/MessageBubble";
 import { isActive, messageText, stepState, toolLabel } from "@/features/chat/parts/format";
 import { inDesktop } from "@/lib/backend";
-import { events, Jarvis, type CallRecord, type Message, type MsgPart } from "@/mygo";
+import { events, Jarvis, type Bot, type CallRecord, type Message, type MsgPart } from "@/mygo";
 import { useChat } from "@/stores/chat";
 import { applyDelta, upsert } from "@/stores/chatMessages";
 import { callLook, callPart, clock, costText } from "./callFormat";
@@ -23,7 +23,10 @@ const startedAt = (call: CallRecord) => new Date(call.startedAt || call.createdA
  * One phone call beside the conversation: who rang, when, how long, the estimated cost and its status, then the spoken
  * transcript (the owner's lines and the bot's, with what the bot did while talking). The spoken turns live in the bot's
  * history but not in the thread; they come from jarvis.calls.transcript, and while the call is on, from the
- * chat:call-message / chat:call-delta events. The header refreshes when the call's card in the chat changes.
+ * chat:call-message / chat:call-delta events. The follow-ups of work started on the call (a report from a bot, a code
+ * task's update and the bot's written answer to it) join the same thread, also after the call ended: they arrive through
+ * the same events and the header keeps saying how the call ended. The header refreshes when the call's card in the chat
+ * changes.
  */
 export function CallPane({ callId, botId, onClose }: { callId: string; botId: string; onClose: () => void }) {
   const bots = useChat((s) => s.bots);
@@ -85,6 +88,8 @@ export function CallPane({ callId, botId, onClose }: { callId: string; botId: st
   const look = call ? callLook(callPart(call)) : null;
   const answering = messages.find((m) => m.role !== "user" && isActive(m.status));
   const liveText = !look?.live ? "" : answering ? `${nameOf(answering.botId)} is answering` : "Call in progress";
+  // Cues are the daemon's own prompts and lines without words have nothing to show: neither gets an empty list item.
+  const shown = messages.filter((m) => m.role !== "user" || (m.author !== "cue" && !!messageText(m)));
   const durationMs = call?.answeredAt && call.endedAt ? call.endedAt - call.answeredAt : 0;
   return <section aria-labelledby="side-pane-title" data-slot="call-pane" className="flex h-full min-w-0 flex-col">
     <header className="flex shrink-0 items-start gap-2 border-b px-3 py-2">
@@ -106,15 +111,15 @@ export function CallPane({ callId, botId, onClose }: { callId: string; botId: st
     <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto p-3">
       {error ? <p role="alert" className="m-auto p-6 text-center text-sm text-muted-foreground">{error}</p>
         : !call ? <p role="status" className="m-auto p-6 text-center text-sm text-muted-foreground">Loading the call…</p>
-          : messages.length === 0 ? <p className="m-auto p-6 text-center text-sm text-muted-foreground">{look?.live ? "Nothing has been said yet." : "No transcript for this call."}</p>
+          : shown.length === 0 ? <p className="m-auto p-6 text-center text-sm text-muted-foreground">{look?.live ? "Nothing has been said yet." : "No transcript for this call."}</p>
             : <ol aria-label="Transcript" className="flex flex-col gap-2">
-              {messages.map((message, i) => {
+              {shown.map((message, i) => {
                 const speaker = message.role === "user" ? null : message.botId;
-                const previous = messages.slice(0, i).findLast((m) => m.role !== "user")?.botId ?? call.botId;
+                const previous = shown.slice(0, i).findLast((m) => m.role !== "user")?.botId ?? call.botId;
                 return <li key={message.id} className="flex min-w-0 flex-col gap-1">
                   {speaker && speaker !== previous && <span data-slot="call-handoff" className="px-1 text-center text-xs text-muted-foreground">Handed to {nameOf(speaker)}</span>}
                   {speaker && multiBot && <span data-slot="call-speaker" className="px-1 text-xs font-medium text-muted-foreground">{nameOf(speaker)}</span>}
-                  <Turn message={message} botName={nameOf(message.botId)} />
+                  <Turn message={message} botName={nameOf(message.botId)} bots={bots} />
                 </li>;
               })}
             </ol>}
@@ -122,12 +127,9 @@ export function CallPane({ callId, botId, onClose }: { callId: string; botId: st
   </section>;
 }
 
-/** One spoken turn: the owner's line, or the bot's line with what it did while answering. */
-function Turn({ message, botName }: { message: Message; botName: string }) {
-  if (message.role === "user") {
-    const text = messageText(message);
-    return text ? <UserBubble><span className="sr-only">You: </span><span className="selectable whitespace-pre-wrap">{text}</span></UserBubble> : null;
-  }
+/** One turn: the owner's line, what reached the bot as input (a report, a code task update), or the bot's line with what it did while answering. */
+function Turn({ message, botName, bots }: { message: Message; botName: string; bots: readonly Bot[] }) {
+  if (message.role === "user") return <Incoming message={message} bots={bots} />;
   const active = isActive(message.status);
   const rows = message.parts.map((part, i) => <Activity key={i} part={part} active={active} botName={botName} />);
   return <>
@@ -136,6 +138,42 @@ function Turn({ message, botName }: { message: Message; botName: string }) {
     {message.status === "error" && <span className="px-1 text-xs text-destructive-foreground">{message.error || "The reply failed."}</span>}
     {message.status === "canceled" && <span className="px-1 text-xs text-muted-foreground">Interrupted</span>}
   </>;
+}
+
+/**
+ * A user-role message of the thread, drawn by who wrote it: the owner's words as their bubble, a bot's report as the
+ * collapsed "reported back" card of the main chat, a code task's update as a collapsed item with a button to the task,
+ * anything else as a collapsed item with the author's label. Cues are the daemon's own prompts and never shown.
+ */
+function Incoming({ message, bots }: { message: Message; bots: readonly Bot[] }) {
+  const author = message.author;
+  const text = messageText(message);
+  if (!text || author === "cue") return null;
+  if (!author || author === "user") return <UserBubble><span className="sr-only">You: </span><span className="selectable whitespace-pre-wrap">{text}</span></UserBubble>;
+  if (author.startsWith("report:")) return <ChatMessageView message={message} botName="" botAvatar="" bots={bots} className="max-w-full" />;
+  if (author.startsWith("task:")) {
+    const taskId = author.slice(5);
+    return <FollowUp slot="call-task-update" icon={<CodeIcon aria-hidden className="size-4 shrink-0" />} label="Code task update" text={text}
+      action={taskId && <button type="button" data-slot="call-task-open" onClick={() => useChat.getState().openTaskPane(taskId)}
+        className="mt-1.5 w-fit rounded-md text-xs text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring">Open the task</button>} />;
+  }
+  const from = author.startsWith("bot:") ? bots.find((b) => b.id === author.slice(4))?.name ?? "Another bot" : author;
+  return <FollowUp slot="call-followup" icon={<MessageSquareIcon aria-hidden className="size-4 shrink-0" />} label={`Message from ${from}`} text={text} />;
+}
+
+/** A compact collapsed item for input that reached the bot after the words were spoken; the text opens on click, like the main chat's report card. */
+function FollowUp({ slot, icon, label, text, action }: { slot: string; icon: ReactNode; label: string; text: string; action?: ReactNode }) {
+  return <div data-slot={slot} className="flex w-full min-w-0 flex-col rounded-xl border bg-card/50 px-3 py-2">
+    <details className="group">
+      <summary className="flex cursor-pointer list-none items-center gap-2 rounded-md text-xs text-muted-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring">
+        {icon}
+        <span className="min-w-0 flex-1 truncate">{label}</span>
+        <span className="group-open:hidden">Show</span><span className="hidden group-open:inline">Hide</span>
+      </summary>
+      <p className="selectable mt-2 min-w-0 whitespace-pre-wrap break-words border-s-2 ps-3 text-sm leading-relaxed">{text}</p>
+    </details>
+    {action}
+  </div>;
 }
 
 /** A part of a bot turn: spoken text as a bubble, tool, task and delegation activity as one compact line. */

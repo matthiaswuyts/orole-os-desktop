@@ -24,6 +24,9 @@ export function describeRule(rule: JarvisRule): string {
       text = `On ${kind} notifications${source ? ` from ${source}` : ""}`;
       break;
     }
+    case "bot_reported":
+      text = any ? "When any bot you handed work to reports back" : `When ${rule.target} reports back`;
+      break;
     case "at_time":
       text = rule.repeat ? `Every day at ${rule.target}` : `At ${rule.target}`;
       break;

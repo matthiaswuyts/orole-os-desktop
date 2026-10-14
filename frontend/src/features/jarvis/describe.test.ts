@@ -13,6 +13,8 @@ describe("describeRule", () => {
     ["one automation fails", { trigger: "automation_failed", target: "auto-1234-xyz" }, "When automation auto-123 fails"],
     ["notification kind", { trigger: "notification", target: "mail" }, "On mail notifications"],
     ["notification kind and source", { trigger: "notification", target: "mail:Gmail" }, "On mail notifications from Gmail"],
+    ["any bot reports back", { trigger: "bot_reported" }, "When any bot you handed work to reports back"],
+    ["one bot reports back", { trigger: "bot_reported", target: "Code Assistant" }, "When Code Assistant reports back"],
     ["daily time", { trigger: "at_time", target: "09:30" }, "Every day at 09:30"],
     ["one-off time", { trigger: "at_time", target: "09:30", repeat: false }, "At 09:30 · once"],
     ["suffixes", { trigger: "task_failed", repeat: false, quietOverride: true, urgent: true }, "When any task I start fails · once · even in quiet hours · urgent"],
