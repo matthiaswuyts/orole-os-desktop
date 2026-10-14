@@ -549,6 +549,7 @@ func (c *Calls) turn(ctx context.Context, f Frame) {
 	}
 	verify := l.verify != ""
 	sid := l.call.ProviderCallID
+	outbound := l.call.Direction == Outbound
 	if !verify && l.call.Direction == Outbound && !l.reasonGiven && utter != "" && IsVoicemail(utter) {
 		// An answering machine, possibly after a greeting that passed as a person answering: say nothing more (cancel
 		// a turn that is still speaking), end the call, and report it as unanswered.
@@ -608,6 +609,11 @@ func (c *Calls) turn(ctx context.Context, f Frame) {
 			return
 		}
 		greeting := utter == "" || bareGreeting(utter)
+		if outbound {
+			// Before the reason, a first reply that asks for nothing may be the start of a machine greeting
+			// ("Hey, it's Ray."): speak only the opener and wait for the next utterance.
+			greeting = utter == "" || !asksSomething(utter)
+		}
 		c.mu.Lock()
 		if utter != "" && greeting {
 			l.history = append(l.history, chat.VoiceLine{Role: "user", Text: utter})
@@ -756,6 +762,16 @@ var requestWords = map[string]bool{
 	"check": true, "start": true, "tell": true, "wat": true, "wie": true, "hoe": true, "waarom": true,
 }
 
+// asksSomething reports whether an utterance contains a question word or a request verb.
+func asksSomething(utter string) bool {
+	for _, w := range strings.FieldsFunc(strings.ToLower(utter), func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsDigit(r) }) {
+		if requestWords[w] {
+			return true
+		}
+	}
+	return false
+}
+
 // bareGreeting reports whether an utterance only answers the phone: every word is a greeting or filler word, apart
 // from a name in "met <name>", "this is <name>" or "<name> speaking", and no word asks or requests anything.
 func bareGreeting(utter string) bool {
@@ -763,10 +779,8 @@ func bareGreeting(utter string) bool {
 	if len(words) == 0 || len(words) > 6 {
 		return false
 	}
-	for _, w := range words {
-		if requestWords[w] {
-			return false
-		}
+	if asksSomething(utter) {
+		return false
 	}
 	// name reports whether words[i:] is a name of one or two words that ends the utterance.
 	name := func(i int) bool { n := len(words) - i; return n == 1 || n == 2 }
@@ -792,10 +806,12 @@ func bareGreeting(utter string) bool {
 // voicemailPhrases are answering-machine prompts (English, Dutch, French, German), lower case.
 var voicemailPhrases = []string{
 	"leave a message", "after the tone", "after the beep", "voicemail", "voice mail", "mailbox", "is not available",
-	"can't take your call", "cannot take your call",
-	"spreek een bericht in", "na de piep", "niet bereikbaar",
+	"can't take your call", "cannot take your call", "not available right now", "can't come to the phone",
+	"you've reached", "you have reached",
+	"spreek een bericht in", "na de piep", "niet bereikbaar", "u bent verbonden met",
 	"laissez un message", "après le bip", "apres le bip", "messagerie",
-	"nach dem signalton", "hinterlassen sie",
+	"vous êtes bien sur", "vous etes bien sur",
+	"nach dem signalton", "hinterlassen sie", "ist nicht erreichbar",
 }
 
 // IsVoicemail reports whether an utterance heard before anyone answered sounds like an answering machine.
@@ -805,6 +821,10 @@ func IsVoicemail(utter string) bool {
 		if strings.Contains(u, p) {
 			return true
 		}
+	}
+	// "Sie haben <name> erreicht"
+	if i := strings.Index(u, "haben "); i >= 0 && strings.Contains(u[i:], " erreicht") {
+		return true
 	}
 	return false
 }

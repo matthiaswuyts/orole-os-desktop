@@ -365,7 +365,8 @@ any call.
 **Opener and voicemail.** The opener is a name-only greeting; it never states the reason (§6.1 step 4's templates
 are replaced). The reason comes in the first model turn after the owner answers. The first turn always speaks the
 opener: a bare greeting from the owner (only greeting or filler words, no question or request) gets only the opener,
-anything else gets the opener and the answer. Until the reason has been given (the first model turn has completed),
+anything else gets the opener and the answer (on an outbound call only if the first reply asks something; otherwise
+it may be a machine greeting and gets only the opener). Until the reason has been given (the first model turn has completed),
 each utterance of an outbound call is checked for answering-machine phrases (EN, NL, FR, DE), also after a greeting
 counted as an answer, since a machine greeting can arrive in pieces; a match cancels any turn still speaking and ends
 the call silently as `voicemail` (§6.1 step 6: ElevenLabs' `voicemail_detection` stays configured but nothing relies on it). A

@@ -110,19 +110,23 @@ attached as if typed.
    from a name in "met <name>", "this is <name>" or "<name> speaking", and no question word or request verb such as
    "what", "who", "can", "check", "start", "wat", "hoe") is recorded in the call history and gets only the opener;
    anything else, however short ("ok, what's running?", "yes, start it"), is a real request and gets the opener and
-   the answer in the same response.
-5. **Voicemail.** On an outbound call, every utterance is checked for answering-machine phrases (English, Dutch,
-   French and German: "leave a message", "after the tone", "spreek een bericht in", "na de piep", "laissez un message",
-   "nach dem Signalton", "mailbox" and so on) until the reason has been given, that is until the first model turn has
-   completed. A machine greeting often arrives in pieces ("Hi, this is Ray." ... "Please leave a message after the
-   tone."), and the first piece passes as someone answering, so the check does not stop at the answer. On a match the
-   daemon cancels a turn that is still speaking, says nothing more, hangs up through Twilio and ends the call as
-   `voicemail`, even if it had already counted as answered. After the reason has been given, the word "voicemail" is
-   just conversation (the owner may ask about their own voicemail) and never ends the call. The owner gets a notification ("<bot> tried to call"). Only an `urgent` call retries (once,
-   after 5 minutes, through the same policy checks). The call counts as answered (`in_progress`, `answeredAt`) at the
-   first non-empty utterance that is not a voicemail prompt. The agent still carries ElevenLabs' `end_call` and
-   `voicemail_detection` tools, but nothing relies on them, and the voice prompt says to say nothing about the reason to
-   voicemail.
+   the answer in the same response. On an **outbound** call the first reply gets that answer only if it contains a
+   question word or request verb: anything else ("Hey, it's Ray.", "Hello, Ray here", "Ja?") may be the start of a
+   machine greeting, so it gets only the opener and the bot waits for the next utterance before giving the reason.
+   Inbound calls answer any real request at once.
+5. **Voicemail.** On an outbound call, every utterance is checked for answering-machine phrases (English, Dutch, French
+   and German: "leave a message", "after the tone", "you've reached", "not available right now", "spreek een bericht
+   in", "na de piep", "u bent verbonden met", "laissez un message", "vous êtes bien sur", "nach dem Signalton", "ist
+   nicht erreichbar", "Sie haben ... erreicht", "mailbox" and so on) until the reason has been given, that is until the
+   first model turn has completed. A machine greeting often arrives in pieces ("Hi, this is Ray." ... "Please leave a
+   message after the tone."), and the first piece passes as someone answering, so the check does not stop at the
+   answer. On a match the daemon cancels a turn that is still speaking, says nothing more, hangs up through Twilio and
+   ends the call as `voicemail`, even if it had already counted as answered. After the reason has been given, the word
+   "voicemail" is just conversation (the owner may ask about their own voicemail) and never ends the call. The owner
+   gets a notification ("<bot> tried to call"). Only an `urgent` call retries (once, after 5 minutes, through the same
+   policy checks). The call counts as answered (`in_progress`, `answeredAt`) at the first non-empty utterance that is
+   not a voicemail prompt. The agent still carries ElevenLabs' `end_call` and `voicemail_detection` tools, but nothing
+   relies on them, and the voice prompt says to say nothing about the reason to voicemail.
 
 ### Inbound
 
