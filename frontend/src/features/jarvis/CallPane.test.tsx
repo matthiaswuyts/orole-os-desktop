@@ -19,7 +19,8 @@ vi.mock("@/mygo", () => ({
   Jarvis: api,
   events: new Proxy({}, { get: (_target, name: string) => bus.event(name) }),
 }));
-vi.mock("@/lib/backend", () => ({ inDesktop: true }));
+const backend = vi.hoisted(() => ({ inDesktop: true }));
+vi.mock("@/lib/backend", () => backend);
 
 import { useChat } from "@/stores/chat";
 import { SidePane } from "@/features/chat/SidePane";
@@ -41,7 +42,8 @@ const transcript = (): CallTranscript => ({
 beforeEach(() => {
   vi.clearAllMocks();
   bus.handlers.clear();
-  useChat.setState({ bots: [{ id: "b1", name: "Atlas" } as never], pane: { kind: "call", id: "c1" }, settingsOpen: false });
+  backend.inDesktop = true;
+  useChat.setState({ bots: [{ id: "b1", name: "Atlas" } as never, { id: "b2", name: "Nova" } as never], pane: { kind: "call", id: "c1" }, settingsOpen: false });
   api.transcript.mockResolvedValue(transcript());
 });
 afterEach(cleanup);
@@ -102,4 +104,37 @@ it("opens beside the conversation when the call card is clicked", async () => {
   fireEvent.click(screen.getByRole("button", { name: /Called you/ }));
   expect(await screen.findByRole("heading", { name: "Called you · Atlas" })).toBeInTheDocument();
   expect(document.querySelector("[data-slot=side-pane] [data-slot=call-pane]")).not.toBeNull();
+});
+
+it("names the bot of each line after a hand-over and keeps the starting bot in the header", async () => {
+  const t = transcript();
+  t.messages.push(msg("u2", 3, "user", [{ type: "text", text: "put me through to Nova" }]),
+    { ...msg("a2", 4, "assistant", [{ type: "text", text: "Nova here." }]), botId: "b2", author: "bot:b2" });
+  api.transcript.mockResolvedValueOnce(t);
+  render(<CallPane callId="c1" botId="b1" onClose={vi.fn()} />);
+  expect(await screen.findByRole("heading", { name: "Called you · Atlas" })).toBeInTheDocument();
+  const items = within(screen.getByRole("list", { name: "Transcript" })).getAllByRole("listitem");
+  expect(items[1]).toHaveTextContent(/^Atlas/);
+  expect(within(items[1]!).queryByText(/Handed to/)).toBeNull();
+  expect(items[3]).toHaveTextContent("Handed to Nova");
+  expect(items[3]).toHaveTextContent("Nova here.");
+});
+
+it("announces only the live state, not the transcript", async () => {
+  const live = transcript();
+  live.call = { ...live.call, status: "in_progress", endedAt: 0 };
+  api.transcript.mockResolvedValueOnce(live);
+  render(<CallPane callId="c1" botId="b1" onClose={vi.fn()} />);
+  await screen.findByRole("list", { name: "Transcript" });
+  expect(screen.getByRole("status")).toHaveTextContent("Call in progress");
+  expect(document.querySelector("[aria-live]")).toBeNull();
+  act(() => bus.emit("chatCallMessage", msg("a9", 9, "assistant", [], "running")));
+  expect(screen.getByRole("status")).toHaveTextContent("Atlas is answering");
+});
+
+it("says the transcript needs the desktop app outside it", () => {
+  backend.inDesktop = false;
+  render(<CallPane callId="c1" botId="b1" onClose={vi.fn()} />);
+  expect(screen.getByText("Call transcripts are available in the desktop app.")).toBeInTheDocument();
+  expect(api.transcript).not.toHaveBeenCalled();
 });

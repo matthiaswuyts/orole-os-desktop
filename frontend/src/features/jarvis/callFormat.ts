@@ -7,13 +7,18 @@ export function clock(ms: number): string {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 }
 
+/** An estimated call cost as the daemon's card writes it: "est. $0.15" (1 USD = 1,000,000 micros). */
+export function costText(micros: number): string {
+  return `est. $${(micros / 1e6).toFixed(2)}`;
+}
+
 /** A stored call as the same card part the daemon puts in chat (internal/jarvis Calls.card). */
 export function callPart(call: CallRecord): MsgPart {
   const durationMs = call.answeredAt && call.endedAt ? call.endedAt - call.answeredAt : 0;
   return {
     type: "call", id: call.id, name: call.direction, status: call.status, title: call.reason,
     ...(durationMs > 0 ? { durationMs } : {}),
-    ...(call.estCostMicros > 0 ? { summary: `est. $${(call.estCostMicros / 1e6).toFixed(2)}` } : {}),
+    ...(call.estCostMicros > 0 ? { summary: costText(call.estCostMicros) } : {}),
   };
 }
 

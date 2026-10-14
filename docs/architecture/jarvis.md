@@ -98,7 +98,12 @@ bot, the start time, duration, estimated cost and status, then the transcript in
 bot's, with tool, delegation and code-task activity as compact rows (a task row opens the task pane). It loads
 `jarvis.calls.transcript {callId}` -> `{call: CallRecord, messages: Message[]}` (owner-only; no provider ids or
 secrets) and, while the call is live, follows the `chat:call-message` and `chat:call-delta` events, refreshing the
-header when the call's card changes. Calls made before this change keep their turns in the thread.
+header when the call's card changes. After "put me through" (`switch_bot`) the turns are stored in the new bot's thread
+with the same call id: the header keeps the bot that started the call, each bot line is labelled with its own bot and a
+"Handed to <bot>" line marks the change. Only the live state ("Call in progress", "<bot> is answering") is announced to
+screen readers, not the growing transcript. Outside the desktop app the pane says transcripts need it. A call card is
+not a reply: the thread offers no Regenerate, Answer or Copy on it, and `chat.regenerate` refuses a message with a call
+part, or any regenerate while the bot is answering on a call. Calls made before this change keep their turns in the thread.
 
 ### Outbound
 

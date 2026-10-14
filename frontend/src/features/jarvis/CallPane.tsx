@@ -9,7 +9,7 @@ import { inDesktop } from "@/lib/backend";
 import { events, Jarvis, type CallRecord, type Message, type MsgPart } from "@/mygo";
 import { useChat } from "@/stores/chat";
 import { applyDelta, upsert } from "@/stores/chatMessages";
-import { callLook, callPart, clock } from "./callFormat";
+import { callLook, callPart, clock, costText } from "./callFormat";
 
 const STATUS: Record<string, string> = {
   queued: "Queued", dialing: "Dialing", in_progress: "On the line", completed: "Ended", no_answer: "No answer",
@@ -26,7 +26,8 @@ const startedAt = (call: CallRecord) => new Date(call.startedAt || call.createdA
  * chat:call-message / chat:call-delta events. The header refreshes when the call's card in the chat changes.
  */
 export function CallPane({ callId, botId, onClose }: { callId: string; botId: string; onClose: () => void }) {
-  const botName = useChat((s) => s.bots.find((b) => b.id === botId)?.name ?? "Bot");
+  const bots = useChat((s) => s.bots);
+  const nameOf = (id: string) => bots.find((b) => b.id === id)?.name ?? "Bot";
   const [call, setCall] = useState<CallRecord | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -68,7 +69,22 @@ export function CallPane({ callId, botId, onClose }: { callId: string; botId: st
     return () => { current = false; offMessage(); offDelta(); offCard(); };
   }, [callId]);
 
+  if (!inDesktop) {
+    return <section aria-labelledby="side-pane-title" data-slot="call-pane" className="flex h-full min-w-0 flex-col">
+      <header className="flex h-10 shrink-0 items-center gap-2 border-b px-3">
+        <Button type="button" variant="ghost" size="icon-xs" aria-label="Close call pane" onClick={onClose}><ChevronLeftIcon aria-hidden /></Button>
+        <h2 id="side-pane-title" tabIndex={-1} className="truncate text-sm font-medium outline-none">Phone call</h2>
+      </header>
+      <p className="m-auto p-6 text-center text-sm text-muted-foreground">Call transcripts are available in the desktop app.</p>
+    </section>;
+  }
+
+  // The header names the bot that started the call; after "put me through" later lines name their own bot.
+  const botName = nameOf(call?.botId || botId);
+  const multiBot = !!call && messages.some((m) => m.role !== "user" && m.botId !== call.botId);
   const look = call ? callLook(callPart(call)) : null;
+  const answering = messages.find((m) => m.role !== "user" && isActive(m.status));
+  const liveText = !look?.live ? "" : answering ? `${nameOf(answering.botId)} is answering` : "Call in progress";
   const durationMs = call?.answeredAt && call.endedAt ? call.endedAt - call.answeredAt : 0;
   return <section aria-labelledby="side-pane-title" data-slot="call-pane" className="flex h-full min-w-0 flex-col">
     <header className="flex shrink-0 items-start gap-2 border-b px-3 py-2">
@@ -79,20 +95,28 @@ export function CallPane({ callId, botId, onClose }: { callId: string; botId: st
         {call && <dl data-slot="call-meta" className="flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-muted-foreground tabular-nums">
           <div className="flex gap-1"><dt className="sr-only">Started</dt><dd>{startedAt(call)}</dd></div>
           <div className="flex gap-1"><dt>Duration</dt><dd>{durationMs > 0 ? clock(durationMs) : "–"}</dd></div>
-          <div className="flex gap-1"><dt>Cost</dt><dd>{call.estCostMicros > 0 ? `est. $${(call.estCostMicros / 1e6).toFixed(2)}` : "–"}</dd></div>
+          <div className="flex gap-1"><dt>Cost</dt><dd>{call.estCostMicros > 0 ? costText(call.estCostMicros) : "–"}</dd></div>
           <div className="flex gap-1"><dt className="sr-only">Status</dt><dd>{STATUS[call.status] ?? call.status}</dd></div>
         </dl>}
         {call?.reason && <p className="selectable break-words text-xs text-muted-foreground">{call.reason}</p>}
       </div>
     </header>
-    <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto p-3" aria-live="polite">
+    {/* Only the live state is announced; the transcript itself is not read out as it grows. */}
+    <p role="status" className="sr-only">{liveText}</p>
+    <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto p-3">
       {error ? <p role="alert" className="m-auto p-6 text-center text-sm text-muted-foreground">{error}</p>
         : !call ? <p role="status" className="m-auto p-6 text-center text-sm text-muted-foreground">Loading the call…</p>
           : messages.length === 0 ? <p className="m-auto p-6 text-center text-sm text-muted-foreground">{look?.live ? "Nothing has been said yet." : "No transcript for this call."}</p>
             : <ol aria-label="Transcript" className="flex flex-col gap-2">
-              {messages.map((message) => <li key={message.id} className="flex min-w-0 flex-col gap-1">
-                <Turn message={message} botName={botName} />
-              </li>)}
+              {messages.map((message, i) => {
+                const speaker = message.role === "user" ? null : message.botId;
+                const previous = messages.slice(0, i).findLast((m) => m.role !== "user")?.botId ?? call.botId;
+                return <li key={message.id} className="flex min-w-0 flex-col gap-1">
+                  {speaker && speaker !== previous && <span data-slot="call-handoff" className="px-1 text-center text-xs text-muted-foreground">Handed to {nameOf(speaker)}</span>}
+                  {speaker && multiBot && <span data-slot="call-speaker" className="px-1 text-xs font-medium text-muted-foreground">{nameOf(speaker)}</span>}
+                  <Turn message={message} botName={nameOf(message.botId)} />
+                </li>;
+              })}
             </ol>}
     </div>
   </section>;
