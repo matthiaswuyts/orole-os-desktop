@@ -9,7 +9,7 @@ import { Failure, Loading } from "@/features/mcp/shared";
 import { SettingsSection } from "@/features/settings/SettingsSection";
 import { inDesktop } from "@/lib/backend";
 import { useJarvis } from "./store";
-import { ModelPicker, VoicePicker } from "./VoicePicker";
+import { LanguagePicker, ModelPicker, VoicePicker } from "./VoicePicker";
 
 /** One labelled control row. */
 function Row({ label, htmlFor, hint, children }: { label: string; htmlFor?: string; hint?: string; children: ReactNode }) {
@@ -266,13 +266,14 @@ function OwnerSection({ status }: { status: StatusView }) {
 
 function CallsSection({ status }: { status: StatusView }) {
   const s = status.settings;
-  const ids = { start: useId(), end: useId(), daily: useId(), monthly: useId(), voice: useId(), model: useId() };
+  const ids = { start: useId(), end: useId(), daily: useId(), monthly: useId(), voice: useId(), model: useId(), language: useId() };
   const [quietStart, setQuietStart] = useState(s.quietStart ?? "");
   const [quietEnd, setQuietEnd] = useState(s.quietEnd ?? "");
   const [dailyCap, setDailyCap] = useState(s.dailyCap ? String(s.dailyCap) : "");
   const [monthlyDollars, setMonthlyDollars] = useState(s.monthlyCapCents ? String(s.monthlyCapCents / 100) : "");
   const [voiceId, setVoiceId] = useState(s.defaultVoiceId ?? "");
   const [ttsModel, setTtsModel] = useState(s.defaultTtsModel ?? "");
+  const [language, setLanguage] = useState(s.callLanguage || "nl");
   const [voices, setVoices] = useState<Voice[]>([]);
   const [models, setModels] = useState<TTSModel[]>([]);
   const [lookupError, setLookupError] = useState<string | null>(null);
@@ -296,6 +297,7 @@ function CallsSection({ status }: { status: StatusView }) {
       monthlyCapCents: Math.max(0, Math.round((Number(monthlyDollars) || 0) * 100)),
       defaultVoiceId: voiceId,
       defaultTtsModel: ttsModel,
+      callLanguage: language,
     };
     const result = await action.run(() => Jarvis.configure(next));
     if (result) useJarvis.getState().apply(result.status);
@@ -315,6 +317,9 @@ function CallsSection({ status }: { status: StatusView }) {
       </Row>
       <Row label="Monthly cost cap ($)" htmlFor={ids.monthly}>
         <Input id={ids.monthly} type="number" min={0} step="0.01" size="sm" className="w-32" value={monthlyDollars} onChange={(event) => setMonthlyDollars(event.target.value)} />
+      </Row>
+      <Row label="Call language" htmlFor={ids.language} hint="What you and your bots speak on a call">
+        <LanguagePicker id={ids.language} value={language} onChange={setLanguage} />
       </Row>
       <Row label="Default voice" htmlFor={ids.voice}>
         <VoicePicker id={ids.voice} value={voiceId} voices={voices} defaultId="" onChange={setVoiceId} />

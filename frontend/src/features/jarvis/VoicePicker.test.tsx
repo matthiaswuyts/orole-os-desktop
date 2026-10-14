@@ -1,7 +1,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, it } from "vitest";
 import type { TTSModel, Voice } from "@/mygo";
-import { ModelPicker, VoicePicker } from "./VoicePicker";
+import { LanguagePicker, ModelPicker, VoicePicker } from "./VoicePicker";
 import { voiceGradient } from "./voices";
 
 afterEach(cleanup);
@@ -72,4 +72,13 @@ it("reports the chosen value", async () => {
   fireEvent.mouseUp(option);
   fireEvent.click(option);
   await waitFor(() => expect(picked).toEqual(["v2"]));
+});
+
+it("offers Dutch, English and Auto as call languages, with what Auto does", () => {
+  render(<LanguagePicker id="l" value="nl" onChange={noop} />);
+  expect(screen.getByRole("combobox")).toHaveTextContent("Nederlands");
+  fireEvent.click(screen.getByRole("combobox"));
+  expect(screen.getByRole("option", { name: /Nederlands/ })).toBeInTheDocument();
+  expect(screen.getByRole("option", { name: /English/ })).toBeInTheDocument();
+  expect(screen.getByRole("option", { name: /Auto.*Starts in Dutch and switches if you speak another language/ })).toBeInTheDocument();
 });

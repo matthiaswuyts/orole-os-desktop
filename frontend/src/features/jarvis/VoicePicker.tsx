@@ -2,7 +2,7 @@ import { Badge } from "@/components/ui/badge";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 import type { TTSModel, Voice } from "@/mygo";
-import { modelOptions, voiceGradient, voiceOptions, type Option } from "./voices";
+import { CALL_LANGUAGES, modelOptions, voiceGradient, voiceOptions, type Option } from "./voices";
 
 export function VoiceAvatar({ id, size }: { id: string; size: "sm" | "md" }) {
   return <span aria-hidden="true" data-slot="voice-avatar" style={{ backgroundImage: voiceGradient(id) }}
@@ -52,6 +52,11 @@ function Picker({ id, value, options, onChange, compact, className }: PickerLook
 
 export function VoicePicker({ voices, defaultId, ...look }: PickerLook & { voices: Voice[]; defaultId: string }) {
   return <Picker {...look} options={voiceOptions(voices, look.value, defaultId)} />;
+}
+
+/** The language calls are held in. */
+export function LanguagePicker(look: PickerLook) {
+  return <Picker {...look} options={CALL_LANGUAGES} />;
 }
 
 export function ModelPicker({ models, defaultId, ...look }: PickerLook & { models: TTSModel[]; defaultId: string }) {

@@ -126,3 +126,13 @@ it("shows a daemon error", async () => {
   render(<PhoneSettings />);
   expect((await screen.findAllByRole("alert"))[0]).toHaveTextContent("daemon offline");
 });
+
+it("saves the call language, Dutch unless chosen otherwise", async () => {
+  api.status.mockResolvedValue(ready);
+  api.configure.mockResolvedValue({ status: ready });
+  render(<PhoneSettings />);
+  const language = await screen.findByRole("combobox", { name: "Call language" });
+  expect(language).toHaveTextContent("Nederlands");
+  fireEvent.click(screen.getByRole("button", { name: "Save" }));
+  await waitFor(() => expect(api.configure).toHaveBeenCalledWith(expect.objectContaining({ callLanguage: "nl" })));
+});

@@ -48,3 +48,10 @@ export function modelOptions(models: TTSModel[], value: string, defaultId: strin
   if (value && !options.some((o) => o.value === value)) options.push({ value, title: `${value} (not recommended)` });
   return options;
 }
+
+/** The call languages of Settings › Phone (PhoneSettings.callLanguage; "" is stored as Dutch). */
+export const CALL_LANGUAGES: Option[] = [
+  { value: "nl", title: "Nederlands", description: "Calls are in Dutch" },
+  { value: "en", title: "English", description: "Calls are in English" },
+  { value: "auto", title: "Auto", description: "Starts in Dutch and switches if you speak another language" },
+];
