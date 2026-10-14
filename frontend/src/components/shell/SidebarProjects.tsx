@@ -12,6 +12,7 @@ import { countNeedsYou, groupTasksByProject, openProjectTasks, openTask } from "
 import { sessionTitle } from "@/features/agents/format";
 import type { PendingLaunch } from "@/features/tasks/pendingLaunch";
 import { RenameTaskDialog } from "@/features/tasks/RenameTaskDialog";
+import { DeleteTaskDialog } from "@/features/tasks/DeleteTask";
 import { Badge } from "@/components/ui/badge";
 import { ContextMenu, ContextMenuItem, ContextMenuPopup, ContextMenuSeparator, ContextMenuTrigger } from "@/components/ui/context-menu";
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "@/components/ui/menu";
@@ -157,11 +158,7 @@ function TaskRow({ session }: { session: Session }) {
       (cause: unknown) => toastManager.add({ type: "error", title: session.pinned ? "Could not unpin the task" : "Could not pin the task", description: errText(cause) }),
     );
   };
-  // A running task is stopped first: the daemon only deletes tasks that are not running.
-  const remove = async () => {
-    if (session.live) await Agents.stop(session.id);
-    await Agents.remove(session.id);
-  };
+
   return (
     <li>
       <ContextMenu>
@@ -184,9 +181,7 @@ function TaskRow({ session }: { session: Session }) {
         </ContextMenuPopup>
       </ContextMenu>
       {renaming && <RenameTaskDialog session={session} open onOpenChange={setRenaming} />}
-      <ConfirmDialog open={deleting} onOpenChange={setDeleting} title={`Delete ${title}?`} confirmLabel="Delete task" onConfirm={remove}>
-        <p>{session.live ? "This task is running. It will be stopped, then " : "The task, "}its conversation and scratch files are deleted. Files and branches in your project stay on disk.</p>
-      </ConfirmDialog>
+      {deleting && <DeleteTaskDialog session={session} open onOpenChange={setDeleting} />}
     </li>
   );
 }

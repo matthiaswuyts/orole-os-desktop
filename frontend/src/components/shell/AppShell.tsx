@@ -62,7 +62,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           <div className="flex min-h-0 min-w-0 flex-1 flex-col">
             <header className="titlebar-drag flex h-8 shrink-0 items-center gap-2 border-b pl-2" style={{ height: "var(--titlebar-h)", paddingRight: "var(--mygo-titlebar-inset-right, 0.5rem)" }}>
               {!sidebarOpen && <Tooltip><TooltipTrigger render={<button type="button" aria-label="Show sidebar" onClick={toggleSidebar} className="titlebar-nodrag inline-flex size-6 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground" />}><PanelLeftOpen className="size-3.5" /></TooltipTrigger><TooltipPopup side="bottom"><span className="flex items-center gap-2">Show sidebar <KbdGroup aria-label="Ctrl+B"><Kbd>Ctrl</Kbd><Kbd>B</Kbd></KbdGroup></span></TooltipPopup></Tooltip>}
-              {activeTask ? <TaskHeader key={activeTask.id} kind={activeTask.kind} title={sessionTitle(activeTask)} /> : launch ? <TaskHeader key={launch.id} kind={launch.kind} title={launch.title} /> : bot ? <BotTitle key={bot.id} bot={bot} /> : <>
+              {activeTask ? <TaskHeader key={activeTask.id} kind={activeTask.kind} title={sessionTitle(activeTask)} session={activeTask} /> : launch ? <TaskHeader key={launch.id} kind={launch.kind} title={launch.title} /> : bot ? <BotTitle key={bot.id} bot={bot} /> : <>
                 {view !== "home" && view !== "new-task" && <h1 className="font-medium text-sm">{n.label}</h1>}
                 {view !== "home" && view !== "new-task" && n.blurb && <span className="truncate text-muted-foreground text-xs">{n.blurb}</span>}
               </>}
