@@ -147,6 +147,8 @@ interface State {
   detect: (refresh: boolean) => Promise<void>;
   /** Applies a session returned by a call without waiting for its event. */
   upsert: (s: Session) => void;
+  /** Drops a deleted session now, without waiting for its removal event; an open task page falls back to the board. */
+  drop: (id: string) => void;
   /** Subscribes to daemon events once (reference counted). Returns the disposer. */
   init: () => () => void;
 }
@@ -172,6 +174,7 @@ export const useAgents = create<State>((set, get) => ({
   openId: null,
   setProjectFilter: (projectFilter) => set({ projectFilter }),
   setOpenId: (openId) => set({ openId }),
+  drop: (id) => set((s) => ({ sessions: removeSession(s.sessions, id), openId: s.openId === id ? null : s.openId })),
   launches: {},
   launchDraft: null,
   addLaunch: (launch) => set((s) => ({ launches: { ...s.launches, [launch.id]: launch }, launchDraft: null })),

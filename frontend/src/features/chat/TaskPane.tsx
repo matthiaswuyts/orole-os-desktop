@@ -1,5 +1,6 @@
 import { ChevronLeftIcon, SquareArrowOutUpRightIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { DeleteTaskButton } from "@/features/tasks/DeleteTask";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "@/components/ui/tooltip";
 import { sessionTitle } from "@/features/agents/format";
@@ -25,6 +26,7 @@ export function TaskPane({ taskId, ready, onClose }: { taskId: string; ready: bo
         </TooltipTrigger>
         <TooltipPopup>Open task page</TooltipPopup>
       </Tooltip>
+      {session && <DeleteTaskButton session={session} />}
     </header>
     <div className="flex min-h-0 flex-1 flex-col">
       {session && ready
