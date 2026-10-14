@@ -142,7 +142,7 @@ func NewService(cfg ServiceConfig) *Service {
 		s.sender = s.holder
 	}
 	s.calls = NewCalls(s.store, cfg.Host, dial, s.sender, s.callSettings, cfg.Now, s.log)
-	s.calls.Retry = func(ctx context.Context, req PlaceRequest) { _, _ = s.fire(ctx, req, Ask{}) }
+	s.calls.Retry = func(ctx context.Context, req PlaceRequest) { s.fire(ctx, req, Ask{}) }
 	return s
 }
 
@@ -408,25 +408,28 @@ func (s *Service) usage(ctx context.Context, botID string) Usage {
 	return Usage{Today: today, MonthCostMicros: cost, LastBotCallMs: last, InCall: in}
 }
 
-// fire is the policy-checked way to place a call: rules, the ticker, call_owner and urgent retries all go
-// through it. During a call the request is folded into it; otherwise caps, quiet hours and the cool-down apply.
-// A refused rule call becomes a notification so the owner still hears about it.
-func (s *Service) fire(ctx context.Context, req PlaceRequest, ask Ask) (Call, error) {
+// place is the policy-checked way to place a call: rules, the ticker, call_owner, test calls and urgent retries
+// all go through it. During a call the request is folded into it; otherwise caps, quiet hours and the cool-down apply.
+func (s *Service) place(ctx context.Context, req PlaceRequest, ask Ask) (Call, error) {
 	if _, in := s.calls.Active(); in {
 		_, err := s.calls.Place(ctx, req) // ErrInjected, or a refusal
 		return Call{}, err
 	}
-	err := Allow(s.Settings(), s.now(), s.usage(ctx, req.BotID), ask)
-	var call Call
-	if err == nil {
-		call, err = s.calls.Place(ctx, req)
+	if err := Allow(s.Settings(), s.now(), s.usage(ctx, req.BotID), ask); err != nil {
+		return Call{}, err
 	}
+	return s.calls.Place(ctx, req)
+}
+
+// fire is place for calls nobody is waiting on (rules, the ticker, retries): a refusal becomes a notification
+// so the owner still hears about it.
+func (s *Service) fire(ctx context.Context, req PlaceRequest, ask Ask) {
+	_, err := s.place(ctx, req, ask)
 	var r *Refusal
 	var g *GateError
-	if !ask.Judgement && (errors.As(err, &r) || errors.As(err, &g)) {
+	if errors.As(err, &r) || errors.As(err, &g) {
 		s.cfg.Host.Notify(s.botName(ctx, req.BotID)+" did not call", req.Reason+" ("+err.Error()+")", "bot:"+req.BotID, "info")
 	}
-	return call, err
 }
 
 func (s *Service) botName(ctx context.Context, id string) string {
@@ -468,7 +471,7 @@ func (s *Service) OnEvent(ev Event) {
 			if d := clipRunes(ev.Detail, maxEventDetail); d != "" {
 				brief += "\nDetails:\n" + chat.Fence("event detail", d)
 			}
-			_, _ = s.fire(ctx, PlaceRequest{BotID: r.BotID, Reason: ev.Title, Brief: brief, RuleID: r.ID, Urgent: r.Urgent},
+			s.fire(ctx, PlaceRequest{BotID: r.BotID, Reason: ev.Title, Brief: brief, RuleID: r.ID, Urgent: r.Urgent},
 				Ask{QuietOverride: r.QuietOverride})
 		}
 	}()
@@ -526,7 +529,7 @@ func (s *Service) tick(ctx context.Context) {
 			if r.Note != "" {
 				brief += "\nThe owner's note for this rule: " + chat.Fence("rule note", r.Note)
 			}
-			_, _ = s.fire(ctx, PlaceRequest{BotID: r.BotID, Reason: reason, Brief: brief, RuleID: r.ID, Urgent: r.Urgent},
+			s.fire(ctx, PlaceRequest{BotID: r.BotID, Reason: reason, Brief: brief, RuleID: r.ID, Urgent: r.Urgent},
 				Ask{QuietOverride: r.QuietOverride})
 		}()
 	}
@@ -534,7 +537,7 @@ func (s *Service) tick(ctx context.Context) {
 
 // CallOwner is the call_owner tool: a bot's own judgement, so the cool-down applies.
 func (s *Service) CallOwner(ctx context.Context, botID, reason string, urgent bool) (string, error) {
-	_, err := s.fire(ctx, PlaceRequest{BotID: botID, Reason: reason, Brief: "Why you are calling: " + reason, Urgent: urgent}, Ask{Judgement: true})
+	_, err := s.place(ctx, PlaceRequest{BotID: botID, Reason: reason, Brief: "Why you are calling: " + reason, Urgent: urgent}, Ask{Judgement: true})
 	if errors.Is(err, ErrInjected) {
 		return "You are already on a call; the owner will hear this there.", nil
 	}
@@ -546,7 +549,7 @@ func (s *Service) CallOwner(ctx context.Context, botID, reason string, urgent bo
 
 // TestCall places a call the owner asked for from settings: caps apply, quiet hours and the cool-down do not.
 func (s *Service) TestCall(ctx context.Context, botID string) (string, error) {
-	_, err := s.fire(ctx, PlaceRequest{BotID: botID, Reason: "a test call you started from settings",
+	_, err := s.place(ctx, PlaceRequest{BotID: botID, Reason: "a test call you started from settings",
 		Brief: "This is a test call the owner started from settings. Introduce yourself and ask if they can hear you."},
 		Ask{QuietOverride: true})
 	if errors.Is(err, ErrInjected) {
