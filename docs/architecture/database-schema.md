@@ -1,7 +1,7 @@
 # Database schema
 
 SQLite via `modernc.org/sqlite` (pure Go, no cgo). File: `<data dir>/orole.db`. The SQL in `migrations/*.sql`
-is authoritative; this page summarises it. Migrations present in this tree: `0001`, `0010`, `0020`, `0030`, `0050`, and the chat series `0096`-`0109`.
+is authoritative; this page summarises it. Migrations present in this tree: `0001`, `0010`, `0020`, `0030`, `0050`, and the chat series `0096`-`0110`.
 
 ## Connection and migrations
 
@@ -36,6 +36,7 @@ prefixes (0010, 0020, ...) so concurrent work does not collide; `DB.Version()` i
 | `automations.created_by`; `automation_proposals(id, bot_id, name, replaces, base_version, rationale, definition, status, automation_id, created_at, decided_at)` + index `(bot_id, status)` | 0105 | who created an automation (`user` or `bot:<id>`, set on insert only); automations a bot drafted in chat, inert until the user approves the card (`pending \| approved \| rejected \| replaced`) |
 | `automation_signals(bot_id FK cascade, key, label, count, days, last_day, first_at, last_at, offered_at, offers, dismissed_until)`, primary key `(bot_id, key)` | 0106 | requests a bot noticed the user repeating (same tool call on separate days) that it may offer to automate; rate-limited and silenced once answered |
 | `messages.finished_at` | 0107 | Unix ms when a chat message reached a final status (`complete \| incomplete \| error \| canceled`), set once; 0 while pending/running and for messages finished before 0107 (the UI's "Thought for" duration) |
+| `messages.call_id` + partial index `idx_messages_call(call_id, seq) WHERE call_id <> ''` | 0110 | the Jarvis call a spoken turn belongs to; `''` for every other message (and calls before 0110). Such messages are in the bot's model history and memory but excluded from chat paging, previews and chat events; `jarvis.calls.transcript` reads them by call id |
 
 Tables for agents, MCP, policy and notifications exist ahead of the daemon services that use them; see
 `daemon.md` for what is actually registered.

@@ -47,9 +47,12 @@ func TestVoiceTurnStreamsAndStores(t *testing.T) {
 	if spoken.String() != reply {
 		t.Fatalf("streamed %q", spoken.String())
 	}
-	h := e.history(b.ID)
-	if len(h) != 2 || h[0].Role != "user" || replyText(h[1]) != reply {
-		t.Fatalf("history %+v", h)
+	if h := e.history(b.ID); len(h) != 0 {
+		t.Fatalf("spoken turns leaked into the chat page: %+v", h)
+	}
+	h := e.callMessages("c1")
+	if len(h) != 2 || h[0].Role != "user" || replyText(h[1]) != reply || h[0].CallID != "c1" || h[1].CallID != "c1" {
+		t.Fatalf("call transcript %+v", h)
 	}
 	if !strings.Contains(e.lastRequest().System, "you asked me to call") {
 		t.Error("brief missing from the system prompt")
@@ -122,7 +125,7 @@ func TestVoiceTurnRunsWhileChatTurnBusy(t *testing.T) {
 	}
 	unblock()
 	e.idle(b.ID)
-	h := e.history(b.ID)
+	h := append(e.history(b.ID), e.callMessages("c1")...)
 	if len(h) != 4 {
 		t.Fatalf("want 4 messages, got %d", len(h))
 	}
@@ -334,7 +337,7 @@ func TestArchiveAndClearStopVoiceTurn(t *testing.T) {
 				t.Errorf("%d runs left", n)
 			}
 			if name == "clear" {
-				if h := e.history(b.ID); len(h) != 0 {
+				if h := append(e.history(b.ID), e.callMessages("c1")...); len(h) != 0 {
 					t.Errorf("orphan messages after clear: %+v", h)
 				}
 			} else if _, err := e.m.VoiceTurn(context.Background(), VoiceRequest{BotID: b.ID, CallID: "c2", Text: "hi"}); err == nil {
@@ -380,5 +383,98 @@ func TestVoiceTurnPolicyAskFailsAtOnce(t *testing.T) {
 	}
 	if !strings.Contains(e.lastRequest().System, "say nothing about the reason") {
 		t.Fatal("voice prompt lacks the voicemail rule")
+	}
+}
+
+func (e *env) callMessages(callID string) []Message {
+	e.t.Helper()
+	msgs, err := e.m.CallMessages(context.Background(), callID)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	return msgs
+}
+
+// Spoken turns stay in the bot's history and memory but never reach the chat UI: not the page, the bot preview,
+// regenerate, or the chat.message events; the call transcript returns them in order.
+func TestCallTurnsHiddenFromChatButInHistory(t *testing.T) {
+	e := newEnv(t, textScript("typed reply", "spoken reply one", "spoken reply two", "next typed reply"))
+	b := e.bot("Atlas")
+	e.send(b.ID, "typed hello")
+	e.idle(b.ID)
+	if _, err := e.m.PostCallCard(context.Background(), b.ID, MsgPart{ID: "c1", Name: "outbound", Status: "in_progress"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, said := range []string{"first spoken", "second spoken"} {
+		if _, err := e.m.VoiceTurn(context.Background(), VoiceRequest{BotID: b.ID, CallID: "c1", Text: said}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	page := e.history(b.ID)
+	if len(page) != 3 || page[2].Parts[0].Type != PartCall {
+		t.Fatalf("chat page = %+v, want the typed exchange and the call card", page)
+	}
+	got, err := e.m.Bot(context.Background(), b.ID)
+	if err != nil || got.LastMessage == nil || got.LastMessage.Text != "" || got.LastMessage.Role != "assistant" {
+		t.Fatalf("preview = %+v (err %v), want the call card", got.LastMessage, err)
+	}
+	bots, err := e.m.Bots(context.Background())
+	if err != nil || len(bots) != 1 || bots[0].LastMessage == nil || strings.Contains(bots[0].LastMessage.Text, "spoken") {
+		t.Fatalf("list preview = %+v (err %v)", bots, err)
+	}
+	if err := e.m.Regenerate(context.Background(), RegenerateRequest{BotID: b.ID, MessageID: e.callMessages("c1")[3].ID}); err == nil {
+		t.Error("regenerated a spoken reply")
+	}
+	for _, r := range e.rec.all() {
+		if m, ok := r.payload.(Message); ok && r.event == "chat.message" && m.CallID != "" {
+			t.Fatalf("spoken turn published as chat.message: %+v", m)
+		}
+		if d, ok := r.payload.(MessageDelta); ok && r.event == "chat.message.delta" {
+			for _, m := range e.callMessages("c1") {
+				if m.ID == d.MessageID {
+					t.Fatal("spoken turn streamed as chat.message.delta")
+				}
+			}
+		}
+	}
+	var callEvents int
+	for _, r := range e.rec.all() {
+		if m, ok := r.payload.(Message); ok && r.event == "chat.call.message" && m.CallID == "c1" {
+			callEvents++
+		}
+	}
+	if callEvents == 0 {
+		t.Error("no chat.call.message events")
+	}
+
+	tr := e.callMessages("c1")
+	want := []string{"first spoken", "spoken reply one", "second spoken", "spoken reply two"}
+	if len(tr) != len(want) {
+		t.Fatalf("transcript has %d messages", len(tr))
+	}
+	for i, w := range want {
+		if replyText(tr[i]) != w || (i > 0 && tr[i].Seq <= tr[i-1].Seq) {
+			t.Fatalf("transcript[%d] = %q (seq %d)", i, replyText(tr[i]), tr[i].Seq)
+		}
+	}
+
+	// The model still sees the call in the next typed turn.
+	e.send(b.ID, "what did we discuss?")
+	e.idle(b.ID)
+	var all strings.Builder
+	for _, m := range e.lastRequest().Messages {
+		for _, p := range m.Parts {
+			all.WriteString(p.Text + "|")
+		}
+	}
+	for _, w := range want {
+		if !strings.Contains(all.String(), w) {
+			t.Errorf("model history misses %q: %s", w, all.String())
+		}
+	}
+	tail, err := e.m.store.tail(context.Background(), b.ID, 0, 1<<62, 0, 100)
+	if err != nil || len(tail.msgs) != 9 {
+		t.Fatalf("history tail = %d messages (err %v), want all 9", len(tail.msgs), err)
 	}
 }

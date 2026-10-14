@@ -35,6 +35,8 @@
 //	chat.run      RunState       a bot started/finished a run
 //	chat.bot      BotChange      bot saved/archived/cleared
 //	chat.memory   MemoryChange   memory content changed (see memory_api.go)
+//	chat.call.message Message    upsert of a spoken call turn (Message.CallID set); never sent as chat.message
+//	chat.call.delta   MessageDelta streamed text of a spoken call turn; never sent as chat.message.delta
 package chat
 
 import "encoding/json"
@@ -319,6 +321,10 @@ type Message struct {
 	// FinishedAt is the Unix ms when the message reached a final status (complete, incomplete,
 	// error, canceled); 0 while it is pending or running, or for messages from before it was recorded.
 	FinishedAt int64 `json:"finishedAt,omitempty"`
+	// CallID marks a spoken turn of a phone call (the owner's utterance or the bot's reply). Such messages stay in the
+	// bot's history and memory but never reach the chat UI: paging, previews and chat.message events skip them, and
+	// they are read through the call transcript (chat.call.message events while the call is live). "" otherwise.
+	CallID string `json:"callId,omitempty"`
 	// Automations is the automation chain of the turn this reply answers (automations.Run.Chain:
 	// the flows that led to it, outermost first); empty for turns the user started. It exists only
 	// in the process, on the published snapshots of a reply, so bot.message events stay chain-bounded.

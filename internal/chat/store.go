@@ -31,6 +31,7 @@ const (
 	maxToolCallsLimit  = 100
 	maxTaskChoiceLen   = 200
 	previewRunes       = 160
+	maxCallMessages    = 1000
 )
 
 var (
@@ -123,10 +124,10 @@ func (s *store) listBots(ctx context.Context) ([]Bot, error) {
 	return bots, nil
 }
 
-// previews returns the latest message of every bot.
+// previews returns the latest visible message of every bot (spoken call turns are not shown).
 func (s *store) previews(ctx context.Context) (map[string]MessagePreview, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT bot_id, role, text, parts, created_at FROM messages
-		WHERE (bot_id, seq) IN (SELECT bot_id, MAX(seq) FROM messages GROUP BY bot_id)`)
+		WHERE (bot_id, seq) IN (SELECT bot_id, MAX(seq) FROM messages WHERE call_id='' GROUP BY bot_id)`)
 	if err != nil {
 		return nil, err
 	}
@@ -146,7 +147,7 @@ func (s *store) previews(ctx context.Context) (map[string]MessagePreview, error)
 func (s *store) preview(ctx context.Context, botID string) (*MessagePreview, error) {
 	var role, text, parts string
 	var at int64
-	err := s.db.QueryRowContext(ctx, `SELECT role, text, parts, created_at FROM messages WHERE bot_id=? ORDER BY seq DESC LIMIT 1`, botID).Scan(&role, &text, &parts, &at)
+	err := s.db.QueryRowContext(ctx, `SELECT role, text, parts, created_at FROM messages WHERE bot_id=? AND call_id='' ORDER BY seq DESC LIMIT 1`, botID).Scan(&role, &text, &parts, &at)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -430,7 +431,7 @@ func (s *store) archiveBot(ctx context.Context, id string) error {
 
 // ---- messages ----
 
-const msgCols = `id, bot_id, seq, role, author, parts, status, usage, error, model, created_at, finished_at`
+const msgCols = `id, bot_id, seq, role, author, parts, status, usage, error, model, created_at, finished_at, call_id`
 
 // finalStatus reports whether a message in this status will not change any more.
 func finalStatus(status string) bool {
@@ -444,7 +445,7 @@ func finalStatus(status string) bool {
 func scanMessage(r scanner) (Message, error) {
 	var m Message
 	var parts, usage string
-	if err := r.Scan(&m.ID, &m.BotID, &m.Seq, &m.Role, &m.Author, &parts, &m.Status, &usage, &m.Error, &m.Model, &m.CreatedAt, &m.FinishedAt); err != nil {
+	if err := r.Scan(&m.ID, &m.BotID, &m.Seq, &m.Role, &m.Author, &parts, &m.Status, &usage, &m.Error, &m.Model, &m.CreatedAt, &m.FinishedAt, &m.CallID); err != nil {
 		return Message{}, err
 	}
 	m.Parts = RawParts(parts)
@@ -500,7 +501,7 @@ func encodeUsage(u *MessageUsage) string {
 const insertMessageSQL = `INSERT INTO messages(` + msgCols + `, text)
 	SELECT ?, ?, max(COALESCE((SELECT MAX(seq) FROM messages WHERE bot_id = ?), 0),
 	                 COALESCE((SELECT upto_seq FROM memory_consolidation WHERE bot_id = ?), 0)) + 1,
-	       ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+	       ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
 	RETURNING seq`
 
 type execer interface {
@@ -517,7 +518,7 @@ func insertMessage(ctx context.Context, q execer, m *Message) error {
 	}
 	return q.QueryRowContext(ctx, insertMessageSQL,
 		m.ID, m.BotID, m.BotID, m.BotID,
-		m.Role, m.Author, encodeParts(m.Parts), m.Status, encodeUsage(m.Usage), m.Error, m.Model, m.CreatedAt, m.FinishedAt,
+		m.Role, m.Author, encodeParts(m.Parts), m.Status, encodeUsage(m.Usage), m.Error, m.Model, m.CreatedAt, m.FinishedAt, m.CallID,
 		textProjection(m.Parts),
 	).Scan(&m.Seq)
 }
@@ -596,8 +597,10 @@ func (s *store) getMessage(ctx context.Context, id string) (Message, error) {
 	return m, err
 }
 
+// lastMessage and userMessageBefore see only visible messages: a spoken call turn can be neither
+// regenerated nor answered from the chat.
 func (s *store) lastMessage(ctx context.Context, botID string) (Message, error) {
-	m, err := scanMessage(s.db.QueryRowContext(ctx, `SELECT `+msgCols+` FROM messages WHERE bot_id=? ORDER BY seq DESC LIMIT 1`, botID))
+	m, err := scanMessage(s.db.QueryRowContext(ctx, `SELECT `+msgCols+` FROM messages WHERE bot_id=? AND call_id='' ORDER BY seq DESC LIMIT 1`, botID))
 	if errors.Is(err, sql.ErrNoRows) {
 		return Message{}, notFoundf("This conversation has no messages.")
 	}
@@ -606,7 +609,7 @@ func (s *store) lastMessage(ctx context.Context, botID string) (Message, error) 
 
 // userMessageBefore returns the latest user message with seq below seq.
 func (s *store) userMessageBefore(ctx context.Context, botID string, seq int64) (Message, error) {
-	m, err := scanMessage(s.db.QueryRowContext(ctx, `SELECT `+msgCols+` FROM messages WHERE bot_id=? AND role='user' AND seq<? ORDER BY seq DESC LIMIT 1`, botID, seq))
+	m, err := scanMessage(s.db.QueryRowContext(ctx, `SELECT `+msgCols+` FROM messages WHERE bot_id=? AND role='user' AND call_id='' AND seq<? ORDER BY seq DESC LIMIT 1`, botID, seq))
 	if errors.Is(err, sql.ErrNoRows) {
 		return Message{}, notFoundf("There is no message to answer.")
 	}
@@ -626,7 +629,7 @@ func (s *store) pageMessages(ctx context.Context, req MessagesRequest) (MessageP
 		limit = 50
 	}
 	limit = min(limit, 200)
-	rows, err := s.db.QueryContext(ctx, `SELECT `+msgCols+` FROM messages WHERE bot_id=? AND (?=0 OR seq<?) ORDER BY seq DESC LIMIT ?`,
+	rows, err := s.db.QueryContext(ctx, `SELECT `+msgCols+` FROM messages WHERE bot_id=? AND call_id='' AND (?=0 OR seq<?) ORDER BY seq DESC LIMIT ?`,
 		req.BotID, req.BeforeSeq, req.BeforeSeq, limit+1)
 	if err != nil {
 		return MessagePage{}, err
@@ -650,6 +653,24 @@ func (s *store) pageMessages(ctx context.Context, req MessagesRequest) (MessageP
 	slices.Reverse(msgs)
 	page.Messages = msgs
 	return page, nil
+}
+
+// callMessages returns the spoken turns of one call in order (at most maxCallMessages).
+func (s *store) callMessages(ctx context.Context, callID string) ([]Message, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT `+msgCols+` FROM messages WHERE call_id=? ORDER BY seq LIMIT ?`, callID, maxCallMessages)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Message{}
+	for rows.Next() {
+		m, err := scanMessage(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
 }
 
 // clearConversation deletes messages, the summary and the bot's sent attachments (except files kept

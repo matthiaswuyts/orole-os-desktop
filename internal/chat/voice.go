@@ -53,8 +53,10 @@ type VoiceRequest struct {
 }
 
 // VoiceTurn answers one spoken utterance with the bot's own model and tools. It runs under its own run key, so a
-// phone call never waits behind the bot's chat queue, and it stores the utterance and reply in the bot's thread like
-// a typed exchange (message sequence numbers are assigned atomically by the store, so the two interleave safely).
+// phone call never waits behind the bot's chat queue, and it stores the utterance and reply in the bot's thread
+// tagged with the call id (message sequence numbers are assigned atomically by the store, so the two interleave
+// safely). The bot reads them back as history and memory; the chat UI never shows them (see Message.CallID), and
+// their snapshots are published as chat.call.message / chat.call.delta instead of chat.message.
 // It returns everything the bot said, as streamed to OnText. When ctx is canceled (the owner interrupts) the partial
 // reply is returned with the context error.
 func (m *Manager) VoiceTurn(ctx context.Context, req VoiceRequest) (string, error) {
@@ -105,12 +107,13 @@ func (m *Manager) VoiceTurn(ctx context.Context, req VoiceRequest) (string, erro
 	bg := context.WithoutCancel(ctx)
 	now := m.nowMs()
 	user := Message{ID: newID(), BotID: bot.ID, Role: "user", Author: "user", Status: StatusComplete, CreatedAt: now, FinishedAt: now,
-		Parts: []MsgPart{{Type: PartText, Text: req.Text}}}
+		CallID: req.CallID, Parts: []MsgPart{{Type: PartText, Text: req.Text}}}
 	if err := m.store.insertMessage(bg, &user); err != nil {
 		return "", err
 	}
-	m.publishMessage(user)
-	asst := Message{ID: newID(), BotID: bot.ID, Role: "assistant", Author: "bot:" + bot.ID, Status: StatusRunning, CreatedAt: m.nowMs(), Parts: []MsgPart{}}
+	m.publishCallMessage(user)
+	asst := Message{ID: newID(), BotID: bot.ID, Role: "assistant", Author: "bot:" + bot.ID, Status: StatusRunning, CreatedAt: m.nowMs(),
+		CallID: req.CallID, Parts: []MsgPart{}}
 	if err := m.store.insertMessage(bg, &asst); err != nil {
 		return "", err
 	}
@@ -119,7 +122,7 @@ func (m *Manager) VoiceTurn(ctx context.Context, req VoiceRequest) (string, erro
 		defer cancel()
 		return m.store.updateMessage(pc, msg)
 	}
-	s := newSink(asst, persist, m.publishMessage, m.publishDelta)
+	s := newSink(asst, persist, m.publishCallMessage, m.publishCallDelta)
 	s.clock = m.cfg.Clock
 	s.checkpoint()
 	var spoken strings.Builder

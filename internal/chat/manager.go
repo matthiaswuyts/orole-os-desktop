@@ -299,6 +299,11 @@ func (m *Manager) publishMessage(msg Message) { m.emit("chat.message", msg) }
 
 func (m *Manager) publishDelta(d MessageDelta) { m.emit("chat.message.delta", d) }
 
+// publishCallMessage and publishCallDelta carry the spoken turns of a phone call: the chat timeline never sees them.
+func (m *Manager) publishCallMessage(msg Message) { m.emit("chat.call.message", msg) }
+
+func (m *Manager) publishCallDelta(d MessageDelta) { m.emit("chat.call.delta", d) }
+
 func (m *Manager) publishBot(id, action string) {
 	m.emit("chat.bot", BotChange{ID: id, Action: action})
 }
@@ -518,6 +523,14 @@ func (m *Manager) Messages(ctx context.Context, req MessagesRequest) (MessagePag
 		return MessagePage{}, err
 	}
 	return m.store.pageMessages(ctx, req)
+}
+
+// CallMessages returns the spoken turns of a phone call in order (see Message.CallID).
+func (m *Manager) CallMessages(ctx context.Context, callID string) ([]Message, error) {
+	if callID == "" {
+		return []Message{}, nil
+	}
+	return m.store.callMessages(ctx, callID)
 }
 
 // Clear stops the bot's run and deletes its conversation, summary and sent attachments. Memory is kept.

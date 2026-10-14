@@ -76,7 +76,15 @@ Bots with Jarvis mode on can speak on the phone (`docs/architecture/jarvis.md`).
 - `VoiceTurn(ctx, VoiceRequest)` answers one spoken utterance with the bot's own model and tools. It runs under its own
   run key `call:<callId>`, so a call never waits behind the bot's chat queue (a second concurrent turn for the same call
   gets "busy"; the call layer cancels the old turn first, which is how barge-in works). The utterance and the reply are
-  stored in the bot's thread like a typed exchange.
+  stored in the bot's thread with `Message.CallID` (column `messages.call_id`, migration 0110) set to the call id.
+- **Spoken turns are hidden from the chat UI but not from the bot.** Everything the chat UI reads skips messages with a
+  call id: `chat.messages.list` paging, the bot list preview and `lastMessage` (so unread and "awaiting an answer" ignore
+  them), regenerate, and the `chat.message` / `chat.message.delta` events (so they never notify, raise `bot.message` or
+  reach the thread search, which runs over the loaded page). Their snapshots go out as `chat.call.message` (a `Message`
+  with `callId`) and `chat.call.delta` (a `MessageDelta`) instead, forwarded to the desktop as `chat:call-message` /
+  `chat:call-delta` for the call pane. The model's history (`tail`, `transcript`), the rolling summary, memory
+  consolidation and `search_history` still include them, so the bot remembers the call. `CallMessages(ctx, callID)`
+  returns them in order for `jarvis.calls.transcript`. Calls made before 0110 keep their turns in the thread (no backfill).
 - Voice options: `voiceStyle` replaces `chatStyle` (spoken, one to three sentences, no markdown, never name the app);
   reasoning is the cheapest level the model offers (`none`, `minimal` or `low`); no attachments or compaction; at most 6
   steps and 10 tool calls, never above the bot's own limits; the call brief is passed as the run-specific addendum so the
@@ -86,7 +94,8 @@ Bots with Jarvis mode on can speak on the phone (`docs/architecture/jarvis.md`).
 - `Compose(ctx, botID, instruction)` asks the model for one short line (the call opener): nothing stored, no tools.
 - `PartCall` is a message part for the phone call card (`ID` call id, `Name` direction `outbound|inbound`, `Status`,
   `Title` reason, `DurationMs`, `Summary` estimated cost). `PostCallCard` inserts a message holding it and
-  `UpdateCallCard` rewrites it when the call ends.
+  `UpdateCallCard` rewrites it when the call ends. The card is an ordinary visible message: it is the call's place in the
+  thread, and clicking it opens the call pane (`ChatPane` kind `call`) with the transcript.
 - `SetSaveCheck(f)`: a hook run by `SaveBot` before a bot saved with `Jarvis.Enabled` is stored; the daemon installs the
   permission gate there, and a failing check refuses the save with the failing condition. Jarvis tools are offered only
   to bots with Jarvis on, and their prompt section carries the owner's call policy as fenced data.
