@@ -1,23 +1,24 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogDescription, DialogFooter, DialogHeader, DialogPanel, DialogPopup, DialogTitle } from "@/components/ui/dialog";
-import { Field, FieldLabel } from "@/components/ui/field";
+import { Field, FieldDescription, FieldLabel } from "@/components/ui/field";
 import { Fieldset } from "@/components/ui/fieldset";
 import { Input } from "@/components/ui/input";
 import { Failure } from "@/features/mcp/shared";
 import { nameFromUrl } from "./directory";
 
 /**
- * Name and server URL, nothing else. Sign-in is detected after adding: a server that asks for
- * OAuth opens the browser, an open one just connects. Pre-registered client IDs and scopes live
- * under Manage for the few servers that need them.
+ * Name, server URL and an optional access token. Without a token, sign-in is detected after
+ * adding: a server that asks for OAuth opens the browser, an open one just connects. With a token,
+ * the server is registered with that static bearer token (kept in Windows Credential Manager) and
+ * no browser sign-in happens. Pre-registered client IDs and scopes live under Manage.
  */
 export function CustomConnectorDialog({ open, busy, error, onClose, onAdd }: {
   open: boolean;
   busy: boolean;
   error: string | null;
   onClose: () => void;
-  onAdd: (name: string, url: string) => void;
+  onAdd: (name: string, url: string, token: string) => void;
 }) {
   const [url, setUrl] = useState("");
   return (
@@ -31,12 +32,17 @@ export function CustomConnectorDialog({ open, busy, error, onClose, onAdd }: {
           event.preventDefault();
           const data = new FormData(event.currentTarget);
           const address = String(data.get("url")).trim();
-          onAdd(String(data.get("name")).trim() || nameFromUrl(address) || address, address);
+          onAdd(String(data.get("name")).trim() || nameFromUrl(address) || address, address, String(data.get("token")).trim());
         }}>
           <DialogPanel>
             <Fieldset className="flex flex-col gap-4" disabled={busy}>
               <Field><FieldLabel htmlFor="connector-name">Name</FieldLabel><Input id="connector-name" name="name" placeholder={nameFromUrl(url) || "My Connector"} autoComplete="off" /></Field>
               <Field><FieldLabel htmlFor="connector-url">Server URL</FieldLabel><Input id="connector-url" name="url" type="url" required placeholder="https://mcp.example.com/mcp" autoComplete="off" autoFocus value={url} onChange={(event) => setUrl(event.target.value)} /></Field>
+              <Field>
+                <FieldLabel htmlFor="connector-token">Access token (optional)</FieldLabel>
+                <Input id="connector-token" name="token" type="password" autoComplete="off" />
+                <FieldDescription>For servers that use a fixed bearer token instead of browser sign-in. Stored in Windows Credential Manager. Leave empty to sign in through your browser.</FieldDescription>
+              </Field>
               <Failure error={error} />
             </Fieldset>
           </DialogPanel>

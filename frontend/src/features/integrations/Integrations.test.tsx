@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ServerState } from "@/mygo";
 
 const api = vi.hoisted(() => ({
-  list: vi.fn(), add: vi.fn(), startAuth: vi.fn(), cancelAuth: vi.fn(), catalog: vi.fn(), diagnostics: vi.fn(), setToolPermission: vi.fn(), remove: vi.fn(),
+  list: vi.fn(), add: vi.fn(), startAuth: vi.fn(), cancelAuth: vi.fn(), catalog: vi.fn(), diagnostics: vi.fn(), setToolPermission: vi.fn(), remove: vi.fn(), update: vi.fn(),
   github: vi.fn(),
 }));
 
@@ -11,7 +11,7 @@ vi.mock("@/lib/backend", () => ({ inDesktop: true, previewKey: "integrations-tes
 vi.mock("@/mygo", () => {
   const event = { on: () => () => {} };
   return {
-    MCP: { list: api.list, add: api.add, startAuth: api.startAuth, cancelAuth: api.cancelAuth, catalog: api.catalog, diagnostics: api.diagnostics, setToolPermission: api.setToolPermission, remove: api.remove },
+    MCP: { list: api.list, add: api.add, startAuth: api.startAuth, cancelAuth: api.cancelAuth, catalog: api.catalog, diagnostics: api.diagnostics, setToolPermission: api.setToolPermission, remove: api.remove, update: api.update },
     GitHub: { status: api.github },
     events: {
       mcpStatus: event, daemonState: event, githubChanged: event,
@@ -125,6 +125,31 @@ describe("Integrations", () => {
     fireEvent.change(await screen.findByLabelText("Server URL"), { target: { value: "https://mcp.example.com/mcp" } });
     fireEvent.click(screen.getByRole("button", { name: "Add connector" }));
     await waitFor(() => expect(api.add).toHaveBeenCalledWith(expect.objectContaining({ name: "Example", url: "https://mcp.example.com/mcp" })));
+  });
+
+  it("adds a custom connector with an access token as a bearer server and never opens browser sign-in", async () => {
+    api.add.mockResolvedValue(server({ id: "c2", name: "Canvas", url: "https://canvas.example.com/mcp", authKind: "bearer", status: "connecting", authorized: false }));
+    render(<Integrations />);
+    fireEvent.click(await screen.findByRole("button", { name: /Custom connector/ }));
+    fireEvent.change(await screen.findByLabelText("Server URL"), { target: { value: "https://canvas.example.com/mcp" } });
+    fireEvent.change(screen.getByLabelText("Access token (optional)"), { target: { value: " tok-123 " } });
+    fireEvent.click(screen.getByRole("button", { name: "Add connector" }));
+    await waitFor(() => expect(api.add).toHaveBeenCalledWith(expect.objectContaining({ url: "https://canvas.example.com/mcp", authKind: "bearer", bearerToken: "tok-123" })));
+    expect(api.startAuth).not.toHaveBeenCalled();
+  });
+
+  it("replaces a rejected bearer token from Manage instead of offering browser sign-in", async () => {
+    api.list.mockResolvedValue([server({ authKind: "bearer", status: "auth_required", authorized: false })]);
+    api.update.mockResolvedValue(server({ authKind: "bearer" }));
+    render(<Integrations />);
+    await screen.findByRole("button", { name: "Manage" });
+    expect(screen.queryByRole("button", { name: "Sign in" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Manage" }));
+    expect(screen.queryByRole("button", { name: "Sign in" })).toBeNull();
+    fireEvent.change(await screen.findByLabelText("Access token"), { target: { value: "new-token" } });
+    fireEvent.click(screen.getByRole("button", { name: "Replace token" }));
+    await waitFor(() => expect(api.update).toHaveBeenCalledWith("s1", { bearerToken: "new-token" }));
+    expect(api.startAuth).not.toHaveBeenCalled();
   });
 
   it("shows a failed add instead of swallowing it", async () => {

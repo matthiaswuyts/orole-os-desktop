@@ -9,6 +9,7 @@ notes. See `docs/development/updates.md`.
 ## Unreleased
 
 ### Added
+- A custom connector can now be added with an access token, for MCP servers that use a fixed bearer token instead of browser sign-in. The token is kept in Windows Credential Manager. On such a server's page, Sign in is replaced by a field to swap in a new token.
 - Bots can use integrations and tools without asking you first. Under Settings › Bot tools, choose Ask me first, Look things up without asking, Read and change without asking, or Everything without asking (deleting and sending included). Each bot can override this on its new Permissions page. If you set a tool to "Always ask" or "Block" on an integration's page, that still wins, and everything a bot does without asking is recorded in the audit log.
 - Settings › Bot code tasks sets the agent, model, effort and permission mode for code tasks your bots start. Agent, model and effort can each be "Auto", which lets the bot choose what fits the job. Any value you fix is used as-is, whatever the bot asks for. Each bot can override these on its Permissions page.
 

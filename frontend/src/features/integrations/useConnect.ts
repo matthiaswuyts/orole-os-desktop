@@ -7,6 +7,8 @@ export interface ConnectOptions {
   local?: boolean;
   /** User-supplied OAuth client (Google). The secret goes to the credential store, never back to the UI. */
   client?: { id: string; secret: string; scopes: string };
+  /** Static bearer token: stored in the credential store, no browser sign-in. */
+  token?: string;
 }
 
 /**
@@ -14,16 +16,18 @@ export interface ConnectOptions {
  * server that is not connected gets authorization started straight away (the shell opens the
  * browser at the vendor's consent page); a server that needs no sign-in just ends up connected.
  * A server with a user-supplied client always signs in: it answers unauthenticated requests, so
- * "connected" does not mean authorized.
+ * "connected" does not mean authorized. A server added with a static token never signs in: a
+ * rejected token shows up as "needs sign-in" and is replaced from the details page.
  * Registration is kept when sign-in fails so the error stays inspectable on the details page.
  */
 export async function connectServer(name: string, url: string, options: ConnectOptions = {}): Promise<{ id: string; signingIn: boolean }> {
-  const { local, client } = options;
+  const { local, client, token } = options;
   const added = await MCP.add({
-    name, url, adapter: "", authKind: local ? "none" : "oauth",
-    oauthClientId: client?.id ?? "", scopes: client?.scopes ?? "", ...(client?.secret ? { clientSecret: client.secret } : {}),
+    name, url, adapter: "", authKind: local ? "none" : token ? "bearer" : "oauth",
+    oauthClientId: client?.id ?? "", scopes: client?.scopes ?? "",
+    ...(client?.secret ? { clientSecret: client.secret } : {}), ...(token ? { bearerToken: token } : {}),
   });
-  if (local) return { id: added.id, signingIn: false };
+  if (local || token) return { id: added.id, signingIn: false };
   let state = added;
   for (let attempt = 0; attempt < 25 && state.status === "connecting"; attempt++) {
     const { promise, resolve } = Promise.withResolvers<void>();

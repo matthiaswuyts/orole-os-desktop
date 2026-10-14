@@ -56,6 +56,7 @@ export function ServerSettings({ server, connector, changed, onRemoved }: {
   const shown = showAll ? tools : tools.slice(0, COLLAPSED_TOOLS);
   const signedIn = server.status === "connected";
   const waiting = authStarted && !signedIn;
+  const bearer = server.authKind === "bearer";
 
   return (
     <section aria-label={server.name} className="flex max-w-2xl min-w-0 flex-col gap-5">
@@ -66,7 +67,7 @@ export function ServerSettings({ server, connector, changed, onRemoved }: {
           <div className="flex items-center gap-2 text-muted-foreground">{connector?.category && <span>{connector.category}</span>}<Badge variant={status.variant}>{status.label}</Badge></div>
         </div>
         <div className="flex flex-wrap gap-2">
-          {waiting
+          {bearer ? null : waiting
             ? <Button variant="outline" className="rounded-full" disabled={busy} onClick={() => void run(async () => { await MCP.cancelAuth(server.id); setAuthStarted(false); })}>Cancel sign-in</Button>
             : <Button variant={signedIn ? "outline" : "default"} className="rounded-full" disabled={busy || !server.enabled} onClick={() => void run(async () => { await MCP.startAuth(server.id); setAuthStarted(true); })}>{signedIn ? "Reauthenticate" : "Sign in"}</Button>}
           <Button variant="outline" className="rounded-full" disabled={busy} onClick={() => setRemove(true)}>Disconnect</Button>
@@ -77,6 +78,17 @@ export function ServerSettings({ server, connector, changed, onRemoved }: {
       <Failure error={error ?? server.lastError ?? null} />
 
       {connector?.about && <p className="max-w-prose text-base text-muted-foreground">{connector.about}</p>}
+      {bearer && <form key={server.id} onSubmit={(event) => {
+        event.preventDefault();
+        const form = event.currentTarget;
+        const token = String(new FormData(form).get("token")).trim();
+        void run(async () => { await MCP.update(server.id, { bearerToken: token }); form.reset(); });
+      }}>
+        <Fieldset disabled={busy} className="flex flex-col gap-3">
+          <Field><FieldLabel htmlFor={`token-${server.id}`}>Access token</FieldLabel><Input id={`token-${server.id}`} name="token" type="password" required autoComplete="off" /><FieldDescription>This server uses a fixed bearer token instead of browser sign-in. The stored token is never shown; enter a new one to replace it.</FieldDescription></Field>
+          <Button type="submit" size="sm" variant={signedIn ? "outline" : "default"} className="self-start">Replace token</Button>
+        </Fieldset>
+      </form>}
 
       {signedIn && <div className="flex flex-col gap-3">
         <Failure error={catalog.error} retry={catalog.reload} />
@@ -121,7 +133,7 @@ export function ServerSettings({ server, connector, changed, onRemoved }: {
         <div className="flex flex-col gap-5 border-t p-3">
           <label className="flex items-center justify-between gap-3"><span>Enabled</span><Switch aria-label={`Enable ${server.name}`} checked={server.enabled} disabled={busy} onCheckedChange={(enabled) => void run(() => MCP.enable(server.id, enabled))} /></label>
 
-          <form key={`${server.id}:${server.oauthClientId}:${server.scopes}`} onSubmit={(event) => { event.preventDefault(); const data = new FormData(event.currentTarget); void run(() => MCP.update(server.id, { oauthClientId: String(data.get("clientId")).trim(), scopes: String(data.get("scopes")).trim() })); }}>
+          {!bearer && <form key={`${server.id}:${server.oauthClientId}:${server.scopes}`} onSubmit={(event) => { event.preventDefault(); const data = new FormData(event.currentTarget); void run(() => MCP.update(server.id, { oauthClientId: String(data.get("clientId")).trim(), scopes: String(data.get("scopes")).trim() })); }}>
             <Fieldset disabled={busy} className="flex flex-col gap-3">
               <p className="font-medium">OAuth client</p>
               <p className="text-muted-foreground">Only needed for the few servers that do not register clients automatically. Leave empty otherwise.</p>
@@ -133,7 +145,7 @@ export function ServerSettings({ server, connector, changed, onRemoved }: {
                 {server.authorized && <Button type="button" size="sm" variant="ghost" onClick={() => void run(() => MCP.signOut(server.id))}>Sign out</Button>}
               </div>
             </Fieldset>
-          </form>
+          </form>}
           {discovery && <JsonData value={discovery} />}
 
           {tools.length > 0 && <div className="flex flex-col gap-2">

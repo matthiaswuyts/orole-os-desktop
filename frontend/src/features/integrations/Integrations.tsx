@@ -118,7 +118,7 @@ export function Integrations() {
       <Row key={server.id} icon={<BrandLogo logo={entry?.logo} />} name={server.name}
         description={pending ? "Finish signing in in your browser…" : server.lastError || entry?.description || new URL(server.url).host}
         badge={<Badge variant={state.variant}>{state.label}</Badge>}>
-        {server.status === "auth_required" && !pending && <Button size="sm" className={pill} disabled={connect.busy === server.id} onClick={() => signIn(server)}>Sign in</Button>}
+        {server.status === "auth_required" && server.authKind !== "bearer" && !pending && <Button size="sm" className={pill} disabled={connect.busy === server.id} onClick={() => signIn(server)}>Sign in</Button>}
         {pending && <Button size="sm" variant="outline" className={pill} onClick={() => void connect.run(server.id, () => MCP.cancelAuth(server.id))}>Cancel</Button>}
         <Button size="sm" variant="secondary" className={pill} onClick={() => setOpen(server.id)}>Manage</Button>
       </Row>,
@@ -153,8 +153,8 @@ export function Integrations() {
       })}
       {needle && !connectedRows.length && !available.length && <p className="text-muted-foreground">No integration matches “{query}”. Use Custom connector to add any MCP server by URL.</p>}
       <CustomConnectorDialog open={custom} busy={connect.busy === "custom"} error={connect.error} onClose={() => setCustom(false)}
-        onAdd={(name, url) => void connect.run("custom", async () => {
-          const { id, signingIn } = await connectServer(name, url);
+        onAdd={(name, url, token) => void connect.run("custom", async () => {
+          const { id, signingIn } = await connectServer(name, url, token ? { token } : {});
           if (signingIn) setWaiting((current) => new Set(current).add(id));
           setCustom(false);
         })} />
