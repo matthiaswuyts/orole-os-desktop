@@ -71,19 +71,20 @@ type Call struct {
 
 // Settings is the plain (non-secret) global configuration, stored as JSON under settings key "jarvis".
 type Settings struct {
-	RelayURL        string `json:"relayUrl"`    // https://<worker>.workers.dev
-	OwnerNumber     string `json:"ownerNumber"` // E.164
-	OwnerVerified   bool   `json:"ownerVerified"`
-	TwilioNumber    string `json:"twilioNumber"`    // E.164 of the Jarvis number
-	AgentID         string `json:"agentId"`         // ElevenLabs agent, set by provisioning
-	PhoneNumberID   string `json:"phoneNumberId"`   // ElevenLabs phone number id, set by provisioning
-	QuietStart      string `json:"quietStart"`      // "22:00", "" = no quiet hours
-	QuietEnd        string `json:"quietEnd"`        // "07:00"
-	DailyCap        int    `json:"dailyCap"`        // 0 = default 10
-	MonthlyCapCents int    `json:"monthlyCapCents"` // 0 = default 2000
-	CentsPerMinute  int    `json:"centsPerMinute"`  // 0 = default 12
-	DefaultVoiceID  string `json:"defaultVoiceId"`
-	DefaultTTSModel string `json:"defaultTtsModel"`
+	RelayURL          string `json:"relayUrl"`    // https://<worker>.workers.dev
+	OwnerNumber       string `json:"ownerNumber"` // E.164
+	OwnerVerified     bool   `json:"ownerVerified"`
+	TwilioNumber      string `json:"twilioNumber"`      // E.164 of the Jarvis number
+	AgentID           string `json:"agentId"`           // ElevenLabs agent, set by provisioning
+	PhoneNumberID     string `json:"phoneNumberId"`     // ElevenLabs phone number id, set by provisioning
+	PostCallWebhookID string `json:"postCallWebhookId"` // ElevenLabs workspace webhook id, set by provisioning
+	QuietStart        string `json:"quietStart"`        // "22:00", "" = no quiet hours
+	QuietEnd          string `json:"quietEnd"`          // "07:00"
+	DailyCap          int    `json:"dailyCap"`          // 0 = default 10
+	MonthlyCapCents   int    `json:"monthlyCapCents"`   // 0 = default 2000
+	CentsPerMinute    int    `json:"centsPerMinute"`    // 0 = default 12
+	DefaultVoiceID    string `json:"defaultVoiceId"`
+	DefaultTTSModel   string `json:"defaultTtsModel"`
 }
 
 // SettingsKey is the settings table key for Settings.
