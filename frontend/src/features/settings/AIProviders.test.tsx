@@ -54,11 +54,9 @@ const row = (name: string) => screen.getByRole("listitem", { name });
 const cli = (over: Partial<CliruntimeStatus> & { id: string; name: string }): CliruntimeStatus => ({ installed: false, updateAvailable: false, auth: "unknown", installable: true, ...over });
 
 describe("AI providers settings", () => {
-  it("shows unconnected providers and where keys live", async () => {
+  it("shows unconnected providers", async () => {
     seed([openrouter, openai]);
     render(<AIProviders />);
-    expect(screen.getByText(/Windows Credential Manager/)).toBeInTheDocument();
-    expect(screen.getByText(/directly from this computer to the provider; there is no Orole server in between/)).toBeInTheDocument();
     for (const name of ["OpenRouter", "OpenAI"]) {
       expect(within(row(name)).getByText("Not connected")).toBeInTheDocument();
       expect(within(row(name)).getByRole("button", { name: "Connect" })).toBeEnabled();
@@ -229,7 +227,7 @@ describe("account CLIs", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Download" }));
     await waitFor(() => expect(bridge.cliInstall).toHaveBeenCalledWith("codex"));
     const signIn = await screen.findByRole("button", { name: "Sign in" });
-    expect(within(row("ChatGPT")).getByText(/v0\.162\.1 · Not signed in · Orole's copy/)).toBeInTheDocument();
+    expect(within(row("ChatGPT")).getByText("v0.162.1 · Not signed in")).toBeInTheDocument();
     fireEvent.click(signIn);
     expect(await within(row("ChatGPT")).findByRole("alert")).toHaveTextContent("could not sign in ChatGPT: browser closed");
   });

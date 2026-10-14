@@ -114,9 +114,6 @@ export function AIProviders() {
 
   return (
     <div className="flex min-w-0 flex-col gap-5">
-      <p className="rounded-lg border bg-muted/40 p-3 text-muted-foreground">
-        Bots and Code use the accounts and keys you connect here. Sign in with a plan you already pay for, or add an API key. API keys are stored in Windows Credential Manager, never in Orole's database or logs. Requests go directly from this computer to the provider; there is no Orole server in between.
-      </p>
       <AccountProviders />
       {!ready && (error ? <Failure error={error} retry={() => void useLLM.getState().load()} /> : <Loading>Loading providers…</Loading>)}
       {ready && (

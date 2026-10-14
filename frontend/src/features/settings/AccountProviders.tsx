@@ -7,20 +7,14 @@ import { Failure, Loading } from "@/features/mcp/shared";
 import type { CliruntimeStatus as Status } from "@/mygo";
 import { useCLIRuntimes, useCLIRuntimesSync } from "@/stores/cliRuntimes";
 
-/** What to tell the user about using a subscription through a vendor's CLI, by provider. */
-const NOTES: Record<string, string> = {
-  claude: "Uses your Claude plan through Anthropic's own CLI. Anthropic limits subscription sign-in to ordinary personal use.",
-  codex: "Uses your ChatGPT plan through OpenAI's own Codex CLI.",
-  grok: "Uses your Grok account through x.ai's own CLI.",
-};
-
 /** One line under the name: what is installed and who is signed in. */
 function subtitle(s: Status): string {
   if (!s.installed) return s.installable ? "Not installed on this computer" : "Not available for this computer";
   const parts = [s.version ? `v${s.version}` : "Installed"];
   if (s.auth === "signed_in") parts.push(s.account || "Signed in");
   else if (s.auth === "signed_out") parts.push("Not signed in");
-  parts.push(s.source === "managed" ? "Orole's copy" : s.source === "override" ? "Custom path" : "Your installed copy");
+  if (s.source === "override") parts.push("Custom path");
+  else if (s.source !== "managed") parts.push("Your installed copy");
   return parts.join(" · ");
 }
 
@@ -71,7 +65,6 @@ function AccountRow({ s }: { s: Status }) {
       )}
       {problem && <p role="alert" className="selectable break-words text-destructive-foreground text-xs">{problem}</p>}
       {s.problem && !problem && <p className="text-muted-foreground text-xs">Could not {s.problem}.</p>}
-      <p className="text-muted-foreground text-xs">{NOTES[s.id]}</p>
     </li>
   );
 }
