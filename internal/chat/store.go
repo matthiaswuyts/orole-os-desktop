@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 )
 
@@ -28,6 +29,7 @@ const (
 	maxToolParamsBytes = 4 << 10
 	maxStepsLimit      = 25
 	maxToolCallsLimit  = 100
+	maxTaskChoiceLen   = 200
 	previewRunes       = 160
 )
 
@@ -322,6 +324,24 @@ func (s *store) validateConfig(ctx context.Context, selfID string, c BotConfig) 
 	}
 	if c.Limits.MaxToolCalls < 0 || c.Limits.MaxToolCalls > maxToolCallsLimit {
 		return c, invalidf("Max tool calls must be between 1 and %d (or 0 for the default).", maxToolCallsLimit)
+	}
+
+	switch c.ToolAccess {
+	case "", ToolAccessAsk, ToolAccessRead, ToolAccessWrite, ToolAccessAll:
+	default:
+		return c, invalidf("Tool access must be ask, read, write or all (or empty for the global setting).")
+	}
+	for _, f := range []struct{ label, value string }{
+		{"harness", c.Tasks.Harness}, {"model", c.Tasks.Model}, {"reasoning level", c.Tasks.Reasoning},
+	} {
+		if len(f.value) > maxTaskChoiceLen || !utf8.ValidString(f.value) || strings.ContainsFunc(f.value, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }) {
+			return c, invalidf("Code task %s is not valid.", f.label)
+		}
+	}
+	switch c.Tasks.PermissionMode {
+	case "", "manual", "auto", "yolo":
+	default:
+		return c, invalidf("Code task permission mode must be manual, auto or yolo (or empty for the global setting).")
 	}
 	return normalizeConfig(c), nil
 }

@@ -8,10 +8,20 @@ notes. See `docs/development/updates.md`.
 
 ## Unreleased
 
+### Added
+- Bots can use integrations and tools without asking you first. Under Settings › Bot tools, choose Ask me first, Look things up without asking, Read and change without asking, or Everything without asking (deleting and sending included). Each bot can override this on its new Permissions page. If you set a tool to "Always ask" or "Block" on an integration's page, that still wins, and everything a bot does without asking is recorded in the audit log.
+- Settings › Bot code tasks sets the agent, model, effort and permission mode for code tasks your bots start. Agent, model and effort can each be "Auto", which lets the bot choose what fits the job. Any value you fix is used as-is, whatever the bot asks for. Each bot can override these on its Permissions page.
+
+### Changed
+- The permission mode of a bot's code task now always comes from your settings (the bot's own setting, then Bot code tasks, then your default mode). The bot can no longer choose Manual itself. If your setting is Yolo but "Bots may use Yolo" is off, the task doesn't start and the bot tells you why, instead of quietly starting in Manual.
+- Bot approvals now also show up in Home › Needs you and as a count on the bot in the sidebar, so a bot no longer waits on a chat you aren't looking at. Settings › Remembered approvals lists every rule you saved for a bot.
+
 ### Fixed
 - Orole Drive, Orole Mail and other MCP servers that only speak the 2026-07-28 protocol now connect after sign-in instead of retrying with "Unsupported protocol version: 2025-06-18". Orole OS still starts with the older handshake, which some servers need, and switches to 2026-07-28 when a server rejects it.
 - Windows Codex downloads now include the code-mode host and sandbox resources from the hash-verified official npm platform package. Incomplete managed installations can be repaired by downloading again. The Codex agent picker uses the same managed runtime as Settings and chat.
 - Connecting an MCP server that accepts OAuth client ID metadata documents but not dynamic registration (such as Orole Drive and Orole Mail) no longer fails with "the authorization server offers no way to register this client". Orole OS now signs in with its own published client document, `https://orole.be/oauth/orole-os.json`, so you don't have to enter a client ID. A client ID you set on the server still takes priority.
+- "Always allow this bot" on a bot's integration, Mail or Drive approval now remembers that tool. Before, it only allowed it once and asked again next time. It is hidden for destructive actions, because those can't be remembered.
+- When you don't answer a bot's approval within 5 minutes, the bot tells you it timed out instead of reporting a vague denial.
 
 ## 0.3.1-dev - 2026-10-13
 

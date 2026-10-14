@@ -42,6 +42,9 @@ func (d *Daemon) registerChat() {
 		return
 	}
 	d.Chat = m
+	if d.Policy != nil {
+		d.Policy.SetAutoApprove(d.botAutoApproveHook(m))
+	}
 	if d.Automations != nil {
 		d.Automations.SetBotMessenger(botAutomation{d: d})
 	}

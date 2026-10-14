@@ -8,7 +8,9 @@
 //
 // Defaults: read -> allow, write/destructive -> ask, unclassified -> deny.
 // Effects derived from untrusted server annotations (Request.FromHint) never
-// unlock more than "ask": annotations are hints, not proof.
+// unlock more than "ask": annotations are hints, not proof. An AutoApprove hook
+// (SetAutoApprove) may turn a default "ask" into "allow" for an actor up to an
+// effect the user chose; explicit per-tool permissions and stored rules always win.
 package policy
 
 import (
@@ -20,6 +22,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -82,7 +85,7 @@ type Request struct {
 // Evaluation is the result of Decide: a decision with its provenance.
 type Evaluation struct {
 	Decision Decision `json:"decision"`
-	// Source is "rule:<id>", "mcp_permission", or "default".
+	// Source is "rule:<id>", "mcp_permission", "default" or SourceAutoApprove.
 	Source string `json:"source"`
 	Reason string `json:"reason"`
 }
@@ -133,6 +136,15 @@ var (
 // DefaultApprovalTimeout is how long an unanswered approval stays open.
 const DefaultApprovalTimeout = 5 * time.Minute
 
+// SourceAutoApprove is the Evaluation.Source of a default "ask" the AutoApprove hook allowed.
+const SourceAutoApprove = "auto-approve"
+
+// AutoApprove reports the highest effect actor may perform without being asked when no explicit
+// per-tool permission or stored rule applies, and a reason naming the setting that grants it (it is
+// written to the audit log). EffectUnknown grants nothing. It must fail closed (EffectUnknown) when
+// the setting cannot be read, and must not call back into the Engine.
+type AutoApprove func(ctx context.Context, actor string) (max Effect, reason string)
+
 const (
 	maxDetail   = 2000
 	maxPending  = 100
@@ -157,6 +169,17 @@ type Engine struct {
 
 	mu      sync.Mutex
 	pending map[string]*pendingEntry
+
+	autoApprove atomic.Pointer[AutoApprove]
+}
+
+// SetAutoApprove installs (or, with nil, removes) the AutoApprove hook. Safe to call at any time.
+func (e *Engine) SetAutoApprove(f AutoApprove) {
+	if f == nil {
+		e.autoApprove.Store(nil)
+		return
+	}
+	e.autoApprove.Store(&f)
 }
 
 // New returns an Engine. pub may be nil (no events); log may be nil.
@@ -202,7 +225,24 @@ func (e *Engine) Decide(ctx context.Context, req Request) (Evaluation, error) {
 	if best != nil {
 		return Evaluation{best.Decision, fmt.Sprintf("rule:%d", best.ID), "matched stored rule"}, nil
 	}
-	return defaultFor(req), nil
+	return e.applyAutoApprove(ctx, req, defaultFor(req)), nil
+}
+
+// applyAutoApprove turns a default "ask" into "allow" when the hook grants req's (known) effect to
+// its actor. Explicit decisions never reach here, and a default "deny" (unknown effect) stays.
+func (e *Engine) applyAutoApprove(ctx context.Context, req Request, ev Evaluation) Evaluation {
+	hook := e.autoApprove.Load()
+	if hook == nil || ev.Decision != Ask || ev.Source != "default" || req.Effect.rank() == 0 {
+		return ev
+	}
+	limit, reason := (*hook)(ctx, req.Actor)
+	if limit.rank() == 0 || req.Effect.rank() > limit.rank() {
+		return ev
+	}
+	if reason == "" {
+		reason = "allowed without asking by setting"
+	}
+	return Evaluation{Allow, SourceAutoApprove, reason}
 }
 
 func defaultFor(req Request) Evaluation {
@@ -275,7 +315,11 @@ func (e *Engine) Check(ctx context.Context, req Request) (Decision, error) {
 	}
 	switch ev.Decision {
 	case Allow:
-		e.audit(req, "allowed", ev.Source)
+		detail := ev.Source
+		if ev.Source == SourceAutoApprove {
+			detail += ": " + ev.Reason
+		}
+		e.audit(req, "allowed", detail)
 		return Allow, nil
 	case Deny:
 		e.audit(req, "denied", ev.Source+": "+ev.Reason)

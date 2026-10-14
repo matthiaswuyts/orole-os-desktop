@@ -1,13 +1,45 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import type { HarnessOption, LaunchOptions } from "@/mygo";
 
-const api = vi.hoisted(() => ({ all: vi.fn(), set: vi.fn(), rules: vi.fn(), deleteRule: vi.fn() }));
+const api = vi.hoisted(() => ({ all: vi.fn(), set: vi.fn(), rules: vi.fn(), deleteRule: vi.fn(), bots: vi.fn(), options: vi.fn() }));
 vi.mock("@/lib/backend", () => ({ inDesktop: true }));
-vi.mock("@/mygo", () => ({ Settings: { all: api.all, set: api.set }, Policy: { rules: api.rules, deleteRule: api.deleteRule } }));
+vi.mock("@/mygo", () => ({
+  Settings: { all: api.all, set: api.set }, Policy: { rules: api.rules, deleteRule: api.deleteRule }, Chat: { bots: api.bots }, Agents: { options: api.options },
+}));
+import { useDaemon } from "@/stores/daemon";
+import { useHarnessOptionsCache } from "@/stores/harnessOptions";
 import { AgentSafetySettings } from "./AgentSafetySettings";
 
-beforeEach(() => { vi.clearAllMocks(); api.set.mockResolvedValue(undefined); api.rules.mockResolvedValue([]); api.deleteRule.mockResolvedValue(undefined); });
+const codex: HarnessOption = {
+  id: "codex", name: "Codex", available: true, executable: "codex", version: "1", reasoning: ["low", "high"], customModel: true, modes: ["structured"], structured: true,
+  interactive: false, unavailableReason: "", permissionModes: [],
+  models: [{ id: "model-a", name: "Model A", reasoning: ["low", "high"], default: true }, { id: "model-b", name: "Model B", reasoning: [], default: false }],
+};
+const options: LaunchOptions = { machine: "local", harnesses: [codex, { ...codex, id: "custom", name: "Custom command" }], projects: [], directories: [], worktree: true, unavailableReason: "" };
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  api.set.mockResolvedValue(undefined); api.rules.mockResolvedValue([]); api.deleteRule.mockResolvedValue(undefined); api.bots.mockResolvedValue([]); api.options.mockResolvedValue(options);
+  useDaemon.setState({ link: "connected", connectEpoch: 0 });
+  useHarnessOptionsCache.setState({ machines: {} });
+});
 afterEach(cleanup);
+
+/** Opens a Base UI select by its accessible name and picks an option (the popup ignores clicks while it animates in). */
+async function pick(combobox: string | RegExp, option: string | RegExp) {
+  const trigger = screen.getByRole("combobox", { name: combobox });
+  await waitFor(() => expect(trigger).not.toHaveAttribute("data-disabled"));
+  fireEvent.pointerDown(trigger, { button: 0, pointerType: "mouse" });
+  fireEvent.mouseDown(trigger, { button: 0 });
+  const item = await screen.findByRole("option", { name: option });
+  const { promise: settled, resolve } = Promise.withResolvers<void>();
+  setTimeout(resolve, 400);
+  await settled;
+  fireEvent.pointerUp(item, { button: 0, pointerType: "mouse" });
+  fireEvent.mouseUp(item, { button: 0 });
+  fireEvent.click(item);
+}
 
 it("allows YOLO until the daemon setting turns it off, and writes the setting back", async () => {
   api.all.mockResolvedValue({});
@@ -84,20 +116,52 @@ it("keeps bots off Yolo and shows Manual while Yolo is turned off, even with a s
   expect(screen.getByText(/Needs Yolo mode allowed above/)).toBeInTheDocument();
 });
 
-it("lists remembered bot approvals and removes one through the daemon", async () => {
+it("lists every remembered bot rule by bot name and removes one through the daemon", async () => {
   api.all.mockResolvedValue({});
+  api.bots.mockResolvedValue([{ id: "atlas", name: "Atlas" }]);
   api.rules.mockResolvedValue([
     { id: 3, actor: "bot:atlas", action: "agent.start", resource: "*", maxEffect: "write", decision: "allow", note: "", createdAt: 1 },
     { id: 4, actor: "bot:atlas", action: "agent.prompt", resource: "*", maxEffect: "write", decision: "allow", note: "", createdAt: 1 },
     { id: 5, actor: "user", action: "mail.send", resource: "mail/x", maxEffect: "write", decision: "allow", note: "", createdAt: 1 },
-    { id: 6, actor: "bot:atlas", action: "mail.send", resource: "mail/x", maxEffect: "write", decision: "allow", note: "", createdAt: 1 },
+    { id: 6, actor: "bot:atlas", action: "mcp.tool.call", resource: "mcp/linear/create_issue", maxEffect: "write", decision: "allow", note: "", createdAt: 1 },
   ]);
   render(<AgentSafetySettings />);
   const remove = await screen.findAllByRole("button", { name: "Remove" });
-  expect(remove).toHaveLength(2);
-  expect(screen.queryByText(/mail\.send/)).toBeNull();
+  expect(remove).toHaveLength(3);
+  expect(screen.queryByText(/mail\/x/)).toBeNull();
+  expect(await screen.findByText(/mcp\/linear\/create_issue/)).toBeInTheDocument();
+  expect(screen.getAllByText("Atlas")).toHaveLength(3);
   fireEvent.click(remove[0]!);
   await waitFor(() => expect(api.deleteRule).toHaveBeenCalledWith(3));
-  await waitFor(() => expect(screen.getAllByRole("button", { name: "Remove" })).toHaveLength(1));
+  await waitFor(() => expect(screen.getAllByRole("button", { name: "Remove" })).toHaveLength(2));
   expect(screen.getByText(/agent\.prompt/)).toBeInTheDocument();
+});
+
+it("writes the bot tool level into the whole setting", async () => {
+  api.all.mockResolvedValue({ agents: { botAutoApprove: true, futureKey: 7 } });
+  render(<AgentSafetySettings />);
+  await pick("Without asking, bots may", /^Everything without asking/);
+  await waitFor(() => expect(api.set).toHaveBeenCalledWith("agents", { botAutoApprove: true, futureKey: 7, botToolAccess: "all" }));
+});
+
+it("sets the code-task agent, then a model of that agent, keeping every other key", async () => {
+  api.all.mockResolvedValue({ agents: { defaultPermissionMode: "auto", futureKey: 7, botTasks: { permissionMode: "manual" } } });
+  render(<AgentSafetySettings />);
+  const model = await screen.findByRole("combobox", { name: "Model" });
+  expect(model).toHaveAttribute("data-disabled");
+  await pick("Agent", "Codex");
+  await waitFor(() => expect(api.set).toHaveBeenCalledWith("agents", { defaultPermissionMode: "auto", futureKey: 7, botTasks: { permissionMode: "manual", harness: "codex", model: "auto", reasoning: "auto" } }));
+  await pick("Model", "Model B");
+  await waitFor(() => expect(api.set).toHaveBeenLastCalledWith("agents", expect.objectContaining({ futureKey: 7, botTasks: { permissionMode: "manual", harness: "codex", model: "model-b", reasoning: "auto" } })));
+  expect(screen.queryByRole("option", { name: "Custom command" })).toBeNull();
+});
+
+it("names the inherited default mode and keeps Yolo unavailable to bots until both Yolo switches allow it", async () => {
+  api.all.mockResolvedValue({ agents: { defaultPermissionMode: "auto" } });
+  render(<AgentSafetySettings />);
+  const mode = await screen.findByRole("combobox", { name: "Permission mode" });
+  await waitFor(() => expect(mode).toHaveTextContent("Same as my default (Auto)"));
+  fireEvent.pointerDown(mode, { button: 0, pointerType: "mouse" });
+  fireEvent.mouseDown(mode, { button: 0 });
+  expect(await screen.findByRole("option", { name: /Yolo.*Bots may use Yolo/ })).toHaveAttribute("aria-disabled", "true");
 });

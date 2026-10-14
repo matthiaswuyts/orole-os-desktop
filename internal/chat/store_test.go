@@ -91,10 +91,28 @@ func TestBotValidation(t *testing.T) {
 		{"private scope grant", BotInput{Name: "x", Config: BotConfig{Memory: []ScopeAccess{{Scope: "bot:abc", Read: true}}}}},
 		{"negative steps", BotInput{Name: "x", Config: BotConfig{Limits: BotLimits{MaxSteps: -1}}}},
 		{"too many calls", BotInput{Name: "x", Config: BotConfig{Limits: BotLimits{MaxToolCalls: 1000}}}},
+		{"unknown tool access", BotInput{Name: "x", Config: BotConfig{ToolAccess: "everything"}}},
+		{"capitalised tool access", BotInput{Name: "x", Config: BotConfig{ToolAccess: "Write"}}},
+		{"unknown task permission mode", BotInput{Name: "x", Config: BotConfig{Tasks: BotTaskDefaults{PermissionMode: "bypass"}}}},
+		{"task harness with space", BotInput{Name: "x", Config: BotConfig{Tasks: BotTaskDefaults{Harness: "claude code"}}}},
+		{"task model with control char", BotInput{Name: "x", Config: BotConfig{Tasks: BotTaskDefaults{Model: "m\x00"}}}},
+		{"long task reasoning", BotInput{Name: "x", Config: BotConfig{Tasks: BotTaskDefaults{Reasoning: strings.Repeat("r", 201)}}}},
 	}
 	for _, c := range cases {
 		if _, err := e.m.SaveBot(ctx, c.in); !errors.Is(err, ErrInvalid) {
 			t.Errorf("%s: want ErrInvalid, got %v", c.name, err)
+		}
+	}
+}
+
+func TestBotTrustSettingsAccepted(t *testing.T) {
+	e := newEnv(t, nil)
+	ctx := context.Background()
+	tasks := BotTaskDefaults{Harness: TaskChoiceAuto, Model: "claude-opus-4.1", Reasoning: "high", PermissionMode: "auto"}
+	for _, level := range []string{"", ToolAccessAsk, ToolAccessRead, ToolAccessWrite, ToolAccessAll} {
+		b, err := e.m.SaveBot(ctx, BotInput{Name: "x" + level, Config: BotConfig{ToolAccess: level, Tasks: tasks}})
+		if err != nil || b.Config.ToolAccess != level || b.Config.Tasks != tasks {
+			t.Fatalf("level %q: %+v %v", level, b.Config, err)
 		}
 	}
 }
@@ -123,6 +141,8 @@ func TestImportExportIsPortable(t *testing.T) {
 			Executive:  true,
 			Memory:     []ScopeAccess{{Scope: ScopeUser, Read: true}},
 			Limits:     BotLimits{MaxSteps: 3},
+			ToolAccess: ToolAccessAll,
+			Tasks:      BotTaskDefaults{Harness: "codex", PermissionMode: "yolo"},
 		}
 	})
 	e.send(src.ID, "secret conversation")
@@ -135,7 +155,8 @@ func TestImportExportIsPortable(t *testing.T) {
 	if exp.Version != 1 || exp.Bot.ID != "" || exp.Bot.Name != "Src" || len(exp.Bot.Config.Tools) != 1 || exp.Bot.Config.Limits.MaxSteps != 3 {
 		t.Fatalf("export: %+v", exp)
 	}
-	if len(exp.Bot.Config.MCPServers)+len(exp.Bot.Config.Skills)+len(exp.Bot.Config.Memory) != 0 || exp.Bot.Config.Executive {
+	if len(exp.Bot.Config.MCPServers)+len(exp.Bot.Config.Skills)+len(exp.Bot.Config.Memory) != 0 || exp.Bot.Config.Executive ||
+		exp.Bot.Config.ToolAccess != "" || exp.Bot.Config.Tasks != (BotTaskDefaults{}) {
 		t.Fatalf("export leaks local grants: %+v", exp.Bot.Config)
 	}
 
@@ -143,11 +164,13 @@ func TestImportExportIsPortable(t *testing.T) {
 	exp.Bot.ID = src.ID
 	exp.Bot.Config.MCPServers = []string{"danger"}
 	exp.Bot.Config.Executive = true
+	exp.Bot.Config.ToolAccess = ToolAccessAll
+	exp.Bot.Config.Tasks = BotTaskDefaults{Harness: "codex", PermissionMode: "yolo"}
 	imp, err := e.m.ImportBot(ctx, exp)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if imp.ID == src.ID || len(imp.Config.MCPServers) != 0 || imp.Config.Executive {
+	if imp.ID == src.ID || len(imp.Config.MCPServers) != 0 || imp.Config.Executive || imp.Config.ToolAccess != "" || imp.Config.Tasks != (BotTaskDefaults{}) {
 		t.Fatalf("import: %+v", imp)
 	}
 	if h := e.history(imp.ID); len(h) != 0 {

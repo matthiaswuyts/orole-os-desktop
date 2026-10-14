@@ -88,14 +88,41 @@ type BotConfig struct {
 	Executive  bool      `json:"executive,omitempty"` // an executive assistant may ask every other bot (ask_bot)
 	// CodeTasks lets the bot start, watch and steer code tasks: coding agents that run commands and edit files on
 	// this PC. Every start and message still goes through the shared permission policy as "bot:<id>".
-	CodeTasks bool          `json:"codeTasks,omitempty"`
-	Memory    []ScopeAccess `json:"memory"` // grants beyond the private scope
-	Limits    BotLimits     `json:"limits"`
+	CodeTasks bool `json:"codeTasks,omitempty"`
+	// ToolAccess overrides the global "Bot tools" setting for this bot: how much it may do through
+	// integrations and tools without asking (one of the ToolAccess* values; "" = the global setting).
+	ToolAccess string `json:"toolAccess,omitempty"`
+	// Tasks overrides the global defaults for code tasks this bot starts; empty fields inherit them.
+	Tasks  BotTaskDefaults `json:"tasks,omitzero"`
+	Memory []ScopeAccess   `json:"memory"` // grants beyond the private scope
+	Limits BotLimits       `json:"limits"`
 	// Setup marks a freshly created bot that still has to learn its purpose: it is offered the setup
 	// tools (ask_user, save_profile) until it saves its own instructions.
 	Setup bool `json:"setup,omitempty"`
 	// Pinned keeps the bot at the top of the bot list. It is changed only by PinBot: saving a bot never touches it.
 	Pinned bool `json:"pinned,omitempty"`
+}
+
+// Bot tool access levels: what a bot may do through integrations and tools without asking. Each
+// level includes the ones before it. Explicit per-tool or stored "ask"/"deny" decisions still win.
+const (
+	ToolAccessAsk   = "ask"   // every non-read action asks (the policy defaults)
+	ToolAccessRead  = "read"  // actions declared read-only run without asking
+	ToolAccessWrite = "write" // reads and changes run without asking
+	ToolAccessAll   = "all"   // everything, including destructive actions, runs without asking
+)
+
+// TaskChoiceAuto in a BotTaskDefaults harness, model or reasoning field lets the bot choose per task.
+const TaskChoiceAuto = "auto"
+
+// BotTaskDefaults configures the code tasks a bot starts. In the global setting an empty field
+// means TaskChoiceAuto (permission mode: the user's default mode); in a bot's own config an empty
+// field inherits the global value. PermissionMode is never chosen by the bot.
+type BotTaskDefaults struct {
+	Harness        string `json:"harness,omitempty"`
+	Model          string `json:"model,omitempty"`
+	Reasoning      string `json:"reasoning,omitempty"`
+	PermissionMode string `json:"permissionMode,omitempty"` // manual | auto | yolo
 }
 
 // Bot is a contact: identity, brain settings and live status.

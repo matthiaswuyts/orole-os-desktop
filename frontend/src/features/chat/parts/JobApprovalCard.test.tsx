@@ -55,6 +55,22 @@ describe("job approval card", () => {
     expect(await screen.findByRole("status")).toHaveTextContent("Always allowed");
   });
 
+  it("always on an integration call asks the daemon to remember that exact request, without task rules", async () => {
+    render(<JobApprovalCard request={{ ...request, action: "mcp.tool.call", resource: "mcp/linear/create_issue", fromHint: true }} requester="Atlas" />);
+    fireEvent.click(screen.getByRole("button", { name: "Always" }));
+    await waitFor(() => expect(bridge.resolve).toHaveBeenCalledWith("job-1", true, true));
+    expect(bridge.addRule).not.toHaveBeenCalled();
+    expect(await screen.findByRole("status")).toHaveTextContent("Always allowed");
+  });
+
+  it("allowing an integration call once does not remember it, and a destructive one offers no Always", async () => {
+    render(<JobApprovalCard request={{ ...request, action: "mail.trash", effect: "destructive", canRemember: false }} requester="Atlas" />);
+    expect(screen.queryByRole("button", { name: "Always" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Allow once" }));
+    await waitFor(() => expect(bridge.resolve).toHaveBeenCalledWith("job-1", true, false));
+    expect(bridge.addRule).not.toHaveBeenCalled();
+  });
+
   it("denies without a rule and offers no Always when the daemon cannot remember", async () => {
     render(<JobApprovalCard request={{ ...request, canRemember: false }} requester="Atlas" />);
     expect(screen.queryByRole("button", { name: "Always" })).toBeNull();

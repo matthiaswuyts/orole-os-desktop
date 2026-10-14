@@ -1,4 +1,4 @@
-import { BookOpenIcon, CpuIcon, GaugeIcon, PencilIcon, PlugIcon, ScrollTextIcon, UsersIcon, WrenchIcon, XIcon } from "lucide-react";
+import { BookOpenIcon, CpuIcon, GaugeIcon, PencilIcon, PlugIcon, ScrollTextIcon, ShieldIcon, UsersIcon, WrenchIcon, XIcon } from "lucide-react";
 import { useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { BotAvatar } from "@/components/shell/BotAvatar";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -16,10 +16,11 @@ import { ModelPicker } from "./builder/ModelPicker";
 import { useModelOptions, type Option } from "./builder/modelOptions";
 import { IntegrationsPage, SkillsPage, ToolsPage } from "./builder/ToolsTab";
 import { MemoriesPage, ownScope, useBotMemory } from "./panel/MemoriesPage";
+import { PermissionsPage } from "./panel/PermissionsPage";
 import { AutomationIdeas } from "./panel/AutomationIdeas";
 import { ControlRow, Group, NavRow, PageHeader, SwitchRow } from "./panel/rows";
 
-type Page = "main" | "memories" | "skills" | "tools" | "integrations";
+type Page = "main" | "memories" | "skills" | "tools" | "integrations" | "permissions";
 
 /** How long a change waits for further typing before it is saved. */
 const SAVE_DELAY_MS = 600;
@@ -126,6 +127,7 @@ function PanelBody({ bot }: { bot: Bot }) {
         <Group title="Does">
           <NavRow icon={WrenchIcon} label="Tools" value={`${form.tools.length} on`} onOpen={() => setPage("tools")} />
           <NavRow icon={PlugIcon} label="Integrations" invalid={!!problems.mcpServers} value={problems.mcpServers ? "Too many" : `${form.mcpServers.length} on`} onOpen={() => setPage("integrations")} />
+          <NavRow icon={ShieldIcon} label="Permissions" value={form.toolAccess || form.taskHarness || form.taskModel || form.taskReasoning || form.taskPermissionMode ? "Own settings" : "Global settings"} onOpen={() => setPage("permissions")} />
         </Group>
         <Group title="Works with">
           <SwitchRow icon={UsersIcon} label="Leads the team" hint="Hands work to your other bots and talks with them to get it done." checked={form.executive} onChange={(executive) => patch({ executive })} />
@@ -147,6 +149,10 @@ function PanelBody({ bot }: { bot: Bot }) {
       {page === "integrations" && <>
         <PageHeader title="Integrations" onBack={back} />
         <IntegrationsPage form={form} dispatch={dispatch} problems={problems} />
+      </>}
+      {page === "permissions" && <>
+        <PageHeader title="Permissions" onBack={back} />
+        <PermissionsPage form={form} patch={patch} />
       </>}
     </div>
   </div>;

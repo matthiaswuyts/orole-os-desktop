@@ -424,8 +424,9 @@ func (m *Manager) ArchiveBot(ctx context.Context, id string) error {
 }
 
 // ExportBot returns the portable form of a bot: settings and instructions, never memory, messages
-// or secrets. Grants that name local resources (delegates, memory scopes, MCP tools, skills) are
-// left out: an imported file must not be able to grant itself access.
+// or secrets. Grants that name local resources (delegates, memory scopes, MCP tools, skills) and
+// trust settings (tool access, code task defaults) are left out: an imported file must not be able
+// to grant itself access.
 func (m *Manager) ExportBot(ctx context.Context, id string) (BotExport, error) {
 	b, err := m.store.getBot(ctx, id, false)
 	if err != nil {
@@ -454,6 +455,8 @@ func portableInput(in BotInput) BotInput {
 	in.Config.Executive = false
 	in.Config.CodeTasks = false
 	in.Config.Memory = nil
+	in.Config.ToolAccess = ""
+	in.Config.Tasks = BotTaskDefaults{}
 	return in
 }
 

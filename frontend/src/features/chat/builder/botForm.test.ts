@@ -74,6 +74,17 @@ describe("toInput", () => {
     const input = toInput(formFromBot(saved), "b1");
     expect(input).toMatchObject({ id: "b1", reasoning: "low", config: { ...saved.config } });
   });
+
+  it("round-trips tool access and code-task overrides, sending only the overrides", () => {
+    const saved = bot("b1", { config: config({ codeTasks: true, toolAccess: "read", tasks: { harness: "codex", model: "auto", permissionMode: "auto" } }) });
+    const form = formFromBot(saved);
+    expect(form).toMatchObject({ toolAccess: "read", taskHarness: "codex", taskModel: "auto", taskReasoning: "", taskPermissionMode: "auto" });
+    expect(toInput(form, "b1").config).toMatchObject({ toolAccess: "read", tasks: { harness: "codex", model: "auto", permissionMode: "auto" } });
+    expect(toInput(form, "b1").config.tasks).not.toHaveProperty("reasoning");
+    const inherited = toInput({ ...form, toolAccess: "", taskHarness: "", taskModel: "", taskPermissionMode: "" }, "b1").config;
+    expect(inherited).not.toHaveProperty("toolAccess");
+    expect(inherited).not.toHaveProperty("tasks");
+  });
 });
 
 describe("formReducer", () => {
@@ -81,6 +92,8 @@ describe("formReducer", () => {
     const a = valid({ skills: ["x", "y"] });
     expect(fingerprint(a)).toBe(fingerprint(valid({ skills: ["y", "x"] })));
     expect(fingerprint(a)).not.toBe(fingerprint(valid({ skills: ["x"] })));
+    expect(fingerprint(a)).not.toBe(fingerprint({ ...a, toolAccess: "all" }));
+    expect(fingerprint(a)).not.toBe(fingerprint({ ...a, taskPermissionMode: "manual" }));
   });
 });
 
@@ -102,6 +115,13 @@ describe("parseBotExport", () => {
     if (!parsed.ok) throw new Error(parsed.error);
     expect(parsed.value.bot.config.mcpServers).toEqual(["srv", "other"]);
     expect(parsed.value.bot.config.skills).toEqual(["s"]);
+  });
+
+  it("never takes tool access or code-task settings from a file", () => {
+    const parsed = parseBotExport(doc({ bot: { name: "Imported", config: { codeTasks: true, toolAccess: "all", tasks: { permissionMode: "yolo" } } } }));
+    if (!parsed.ok) throw new Error(parsed.error);
+    expect(parsed.value.bot.config).not.toHaveProperty("toolAccess");
+    expect(parsed.value.bot.config).not.toHaveProperty("tasks");
   });
 
   it("rejects other versions, missing names and malformed input", () => {

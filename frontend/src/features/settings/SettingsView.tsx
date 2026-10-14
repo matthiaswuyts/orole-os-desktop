@@ -17,6 +17,7 @@ import { NotificationSettings } from "@/features/notifications/NotificationSetti
 import { AutomationSettings } from "@/features/automations/AutomationSettings";
 import { SoundSettings } from "@/features/settings/SoundSettings";
 import { AgentSafetySettings } from "@/features/settings/AgentSafetySettings";
+import { SettingsSection } from "@/features/settings/SettingsSection";
 import { UpdateSettings } from "@/features/settings/UpdateSettings";
 import { useUI } from "@/stores/ui";
 import { SkillsView } from "@/features/skills/SkillsView";
@@ -32,16 +33,6 @@ const SECTIONS: Section[] = [
   { id: "notifications", label: "Alerts & automations", icon: Bell },
   { id: "system", label: "System", icon: Settings2 },
 ];
-
-export function SettingsSection({ title, description, children, id }: { title: string; description?: string; children: ReactNode; id?: string }) {
-  return (
-    <section id={id} className="mb-5 scroll-mt-2">
-      <h2 className={cn("text-sm font-medium", !description && "mb-2")}>{title}</h2>
-      {description && <p className="mb-2 text-muted-foreground">{description}</p>}
-      <div className="divide-y rounded-lg border bg-card">{children}</div>
-    </section>
-  );
-}
 
 /** A titled block whose content draws its own container. */
 function Group({ id, title, children }: { id: string; title: string; children: ReactNode }) {
@@ -184,7 +175,7 @@ function System() {
   return (
     <>
       <Group id="settings-updates" title="Updates"><UpdateSettings /></Group>
-      <SettingsSection id="settings-task-permissions" title="Task permissions" description="Manual, Auto and Yolo are chosen per task; the default here applies when nobody picked one."><AgentSafetySettings /></SettingsSection>
+      <AgentSafetySettings />
       <div id="settings-diagnostics" className="scroll-mt-2"><Diagnostics /><AutostartPanel /></div>
     </>
   );

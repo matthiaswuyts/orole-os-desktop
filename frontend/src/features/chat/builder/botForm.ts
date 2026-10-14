@@ -1,4 +1,4 @@
-import type { Bot, BotConfig, BotExport, BotInput, BotTool, ScopeAccess } from "@/mygo";
+import type { Bot, BotConfig, BotExport, BotInput, BotTaskDefaults, BotTool, ScopeAccess } from "@/mygo";
 
 /** Limits mirrored from the daemon (internal/chat/api.go, store.go). The daemon validates again. */
 export const LIMITS = {
@@ -34,12 +34,20 @@ export interface FormState {
   executive: boolean;
   /** May start, watch and steer code tasks (coding agents on this PC). */
   codeTasks: boolean;
+  /** Overrides the global "Bot tools" level (ToolAccess); "" uses the global setting. */
+  toolAccess: string;
+  /** Code-task overrides: "" uses the global setting, "auto" lets the bot choose (not for the permission mode). */
+  taskHarness: string;
+  taskModel: string;
+  taskReasoning: string;
+  taskPermissionMode: string;
 }
 
 /** A new bot starts with every built-in tool on; each can be switched off in its settings. */
 export const initialForm = (): FormState => ({
   name: "", avatar: "", color: "", description: "", instructions: "", model: "", reasoning: "",
   tools: Object.values(TOOL_IDS), mcpServers: [], skills: [], memory: [], maxSteps: "", maxToolCalls: "", executive: false, codeTasks: false,
+  toolAccess: "", taskHarness: "", taskModel: "", taskReasoning: "", taskPermissionMode: "",
 });
 
 export type Action =
@@ -84,6 +92,8 @@ export function formFromInput(bot: Pick<BotInput, "name" | "avatar" | "color" | 
     maxSteps: limit(config.limits?.maxSteps), maxToolCalls: limit(config.limits?.maxToolCalls),
     executive: config.executive ?? false,
     codeTasks: config.codeTasks ?? false,
+    toolAccess: config.toolAccess ?? "",
+    taskHarness: config.tasks?.harness ?? "", taskModel: config.tasks?.model ?? "", taskReasoning: config.tasks?.reasoning ?? "", taskPermissionMode: config.tasks?.permissionMode ?? "",
   };
 }
 
@@ -94,6 +104,9 @@ const integer = (text: string): number => (/^\d+$/.test(text.trim()) ? Number(te
 /** The payload for Chat.saveBot / Chat.draftSend. Pass an empty id to create. */
 export function toInput(form: FormState, id: string): BotInput {
   const { provider, model } = splitModel(form.model);
+  // Empty fields inherit the global defaults, so only the overrides are sent.
+  const overrides = Object.entries({ harness: form.taskHarness, model: form.taskModel, reasoning: form.taskReasoning, permissionMode: form.taskPermissionMode }).filter(([, value]) => value);
+  const tasks: BotTaskDefaults | undefined = overrides.length > 0 ? Object.fromEntries(overrides) : undefined;
   return {
     id,
     name: form.name.trim(),
@@ -111,6 +124,8 @@ export function toInput(form: FormState, id: string): BotInput {
       limits: { maxSteps: integer(form.maxSteps), maxToolCalls: integer(form.maxToolCalls) },
       ...(form.executive ? { executive: true } : {}),
       ...(form.codeTasks ? { codeTasks: true } : {}),
+      ...(form.toolAccess ? { toolAccess: form.toolAccess } : {}),
+      ...(tasks ? { tasks } : {}),
     },
   };
 }

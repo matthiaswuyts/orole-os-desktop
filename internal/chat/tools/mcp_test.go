@@ -308,7 +308,7 @@ func TestMCPCallPolicyOutcomes(t *testing.T) {
 		want string
 	}{
 		{"denied", fmt.Errorf("mcp: %w", policy.ErrDenied), "not approved"},
-		{"approval timeout", policy.ErrApprovalTimeout, "not approved"},
+		{"approval timeout", fmt.Errorf("mcp: %w", policy.ErrApprovalTimeout), "did not answer the approval request for this tool call within 5 minutes"},
 		{"disconnected", mcp.ErrNotConnected, "not available"},
 		{"disabled", mcp.ErrDisabled, "not available"},
 		{"vanished tool", mcp.ErrNoSuchTool, "not available"},

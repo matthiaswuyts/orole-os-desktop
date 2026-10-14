@@ -40,11 +40,19 @@ export function usePolicyPending(): PolicyPending {
 /** Bot requests are decided inline in that bot's conversation, not in the global dialog. */
 export const isBotActor = (actor: string) => actor.startsWith("bot:");
 
-/** What a bot's held request would do, in the user's words. */
-export function botRequestTitle(action: string): string {
-  switch (action) {
-    case "agent.start": return "Start a code task";
-    case "agent.prompt": return "Send a follow-up to a task";
-    default: return action;
-  }
+const MAIL_DRIVE: Record<string, string> = {
+  "mail.send": "Send an email", "mail.new": "Send an email", "mail.reply": "Reply to an email", "mail.trash": "Move an email to Trash",
+  "drive.share": "Share a Drive file", "drive.trash": "Move a Drive file to Trash",
+};
+
+/** What a bot's held request (or a remembered rule) would do, in the user's words; the resource names the integration tool. */
+export function botRequestTitle(action: string, resource = ""): string {
+  if (action === "agent.start") return "Start a code task";
+  if (action === "agent.prompt") return "Send a follow-up to a task";
+  const named = MAIL_DRIVE[action];
+  if (named) return named;
+  // "mcp/<server>/<tool>" for integrations, "chat/<bot>/<tool>" for built-in tools.
+  const tool = /^(?:mcp|chat)\/[^/]+\/(.+)$/.exec(resource)?.[1];
+  if ((action === "mcp.tool.call" || action === "chat.tool.call") && tool) return `Use ${tool.replaceAll("_", " ")}`;
+  return action;
 }

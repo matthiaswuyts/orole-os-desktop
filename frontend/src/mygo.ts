@@ -272,6 +272,13 @@ export interface BotConfig {
    * this PC. Every start and message still goes through the shared permission policy as "bot:<id>".
    */
   codeTasks?: boolean;
+  /**
+   * ToolAccess overrides the global "Bot tools" setting for this bot: how much it may do through
+   * integrations and tools without asking (one of the ToolAccess* values; "" = the global setting).
+   */
+  toolAccess?: string;
+  /** Tasks overrides the global defaults for code tasks this bot starts; empty fields inherit them. */
+  tasks?: BotTaskDefaults;
   /** grants beyond the private scope */
   memory: ScopeAccess[];
   limits: BotLimits;
@@ -312,6 +319,19 @@ export interface BotLimits {
   maxSteps: number;
   /** total tool calls per turn incl. hosted (default 20) */
   maxToolCalls: number;
+}
+
+/**
+ * BotTaskDefaults configures the code tasks a bot starts. In the global setting an empty field
+ * means TaskChoiceAuto (permission mode: the user's default mode); in a bot's own config an empty
+ * field inherits the global value. PermissionMode is never chosen by the bot.
+ */
+export interface BotTaskDefaults {
+  harness?: string;
+  model?: string;
+  reasoning?: string;
+  /** manual | auto | yolo */
+  permissionMode?: string;
 }
 
 /**

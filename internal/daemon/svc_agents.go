@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"cmp"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -117,15 +118,19 @@ func (d *Daemon) projectTaskDirectory(ctx context.Context, projectID, machine, d
 // task's own Claude or ChatGPT account to name a new task (names chosen by the harness itself
 // still apply). DefaultPermissionMode is the mode a task starts in when none is chosen ("" =
 // manual). BotYolo lets bots start tasks in YOLO (only while YOLO is on). BotAutoApprove lets
-// bots start and steer tasks without an approval; stored deny rules still apply. Absent means
-// every option stays on and the defaults ask. ok is false when the stored value cannot be
-// read or parsed; callers fail closed.
+// bots start and steer tasks without an approval; stored deny rules still apply. BotToolAccess is
+// how much bots may do through integrations and tools without asking (chat.ToolAccess*; "" = ask),
+// overridable per bot. BotTasks are the harness, model, reasoning and permission mode of code tasks
+// bots start (chat.BotTaskDefaults), overridable per bot. Absent means every option stays on and
+// the defaults ask. ok is false when the stored value cannot be read or parsed; callers fail closed.
 type agentSettings struct {
-	YoloDisabled          bool   `json:"yoloDisabled"`
-	AITitlesDisabled      bool   `json:"aiTitlesDisabled"`
-	DefaultPermissionMode string `json:"defaultPermissionMode"`
-	BotYolo               bool   `json:"botYolo"`
-	BotAutoApprove        bool   `json:"botAutoApprove"`
+	YoloDisabled          bool                 `json:"yoloDisabled"`
+	AITitlesDisabled      bool                 `json:"aiTitlesDisabled"`
+	DefaultPermissionMode string               `json:"defaultPermissionMode"`
+	BotYolo               bool                 `json:"botYolo"`
+	BotAutoApprove        bool                 `json:"botAutoApprove"`
+	BotToolAccess         string               `json:"botToolAccess"`
+	BotTasks              chat.BotTaskDefaults `json:"botTasks"`
 }
 
 func (d *Daemon) agentSettings() (v agentSettings, ok bool) {
@@ -165,6 +170,33 @@ func (d *Daemon) defaultPermissionMode() string {
 func (d *Daemon) botAutoApprove() bool {
 	v, ok := d.agentSettings()
 	return ok && v.BotAutoApprove
+}
+
+// botTaskDefaults is what the code tasks of a bot with its own overrides own run with (see
+// resolveBotTaskDefaults). Unreadable settings count as empty: only own and the fallbacks apply.
+func (d *Daemon) botTaskDefaults(own chat.BotTaskDefaults) chat.BotTaskDefaults {
+	v, ok := d.agentSettings()
+	if !ok {
+		v = agentSettings{}
+	}
+	return resolveBotTaskDefaults(v, own)
+}
+
+// resolveBotTaskDefaults resolves each field of a bot's code-task settings: harness, model and
+// reasoning are the bot's own value, else the global bot-task value, else chat.TaskChoiceAuto;
+// the permission mode is the bot's, else the global bot-task mode, else the user's default mode,
+// else manual. A mode other than manual, auto or yolo fails closed to manual.
+func resolveBotTaskDefaults(v agentSettings, own chat.BotTaskDefaults) chat.BotTaskDefaults {
+	mode := cmp.Or(own.PermissionMode, v.BotTasks.PermissionMode, v.DefaultPermissionMode)
+	if mode != agents.PermAuto && mode != agents.PermYolo {
+		mode = agents.PermManual
+	}
+	return chat.BotTaskDefaults{
+		Harness:        cmp.Or(own.Harness, v.BotTasks.Harness, chat.TaskChoiceAuto),
+		Model:          cmp.Or(own.Model, v.BotTasks.Model, chat.TaskChoiceAuto),
+		Reasoning:      cmp.Or(own.Reasoning, v.BotTasks.Reasoning, chat.TaskChoiceAuto),
+		PermissionMode: mode,
+	}
 }
 
 // aiTitlesEnabled reports whether a task may be named through its harness's own account;

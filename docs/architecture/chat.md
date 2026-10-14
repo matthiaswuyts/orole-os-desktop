@@ -111,12 +111,28 @@ in a registered local project. The runtime passes `agents.WithActor(ctx, "bot:<i
 `Session.Owner` and the agent runtime asks the shared policy as that actor. `agent.start` and `agent.prompt` are
 `write` effects (the task's own permission mode guards what it does), so the approval can be remembered: the
 conversation shows the held request inline (`parts/JobApprovalCard.tsx`, Allow once / Always allow this bot / Deny;
-"always" stores `bot:<id>` + `agent.start|agent.prompt` + `*` allow rules, listed under Settings › Task permissions)
-and the global approval dialog skips `bot:` actors. The `agents` setting `botAutoApprove` answers an `Ask` for those
-two actions without asking (stored deny rules still apply). A start that names no mode runs in the setting's
-`defaultPermissionMode`; a bot may use YOLO only with `botYolo` on (a YOLO default falls back to manual for a bot
-without it). Bots may read any task but message or stop only tasks they own. Task text (activity, last message,
-result, transcript) reaches the model as fenced untrusted data.
+"always" stores `bot:<id>` + `agent.start|agent.prompt` + `*` allow rules for task requests and an exact
+actor/action/resource rule for any other rememberable request; bot rules are listed under Settings › Remembered
+approvals) and the global approval dialog skips `bot:` actors (they show in the bot's chat, the Home "Needs you" widget
+and as a count on the bot in the rail). The `agents` setting `botAutoApprove` answers an `Ask` for those two actions
+without asking (stored deny rules still apply).
+
+Code tasks a bot starts use `agents.botTasks` (`chat.BotTaskDefaults`: harness, model, reasoning, permissionMode),
+overridden per bot by `BotConfig.tasks` (an empty field inherits). For harness, model and reasoning, `auto` (also the
+fallback) lets the bot choose per task; a fixed value is left out of the `start_task` schema and enforced by
+`daemon/bot_tasks.go`, which ignores the bot's argument. The permission mode is never the bot's: bot setting →
+`botTasks.permissionMode` → `defaultPermissionMode` → manual, passed explicitly to the manager so it never silently
+falls back. A YOLO mode still needs `botYolo`; otherwise the start fails with that reason. Bots may read any task but
+message or stop only tasks they own. Task text (activity, last message, result, transcript) reaches the model as fenced
+untrusted data.
+
+**Bot tool access.** `agents.botToolAccess` (`ask` | `read` | `write` | `all`), overridden per bot by
+`BotConfig.toolAccess`, is installed as the policy engine's auto-approve hook (`daemon/bot_access.go`). It only turns
+a *default* `Ask` into `Allow` for a `bot:<id>` actor whose level covers the request's effect (`read` includes reads
+declared by the server's own annotations; `all` includes destructive). Explicit per-tool permissions and stored rules
+(ask or deny) always win, unknown effects stay denied, `bot:draft` and unknown bots always ask, and every such allow is
+audited as `auto-approve`. `toolAccess` and `tasks` are never exported or imported. A bot whose approval times out
+(5 min) is told so in the tool result.
 
 A task is finished when a turn ended **and no background agent of it is still running**. Harness subagent
 lifecycle events (`EvSubagent`: omp `subagent_lifecycle`, Claude `task_started`/`task_notification`, Codex collab

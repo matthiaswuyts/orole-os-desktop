@@ -172,7 +172,7 @@ export function ToolsPage({ form, dispatch }: { form: FormState; dispatch: Dispa
   return (
     <div className="flex flex-col gap-3">
       <div className="overflow-hidden rounded-xl border bg-card/60">
-        <SwitchRow icon={SquareTerminalIcon} label="Runs code tasks" hint="Starts coding agents in your projects, follows their progress and tells you when they finish or need you. You approve each start in chat unless you allowed this bot always." checked={form.codeTasks} onChange={(codeTasks) => dispatch({ type: "patch", patch: { codeTasks } })} />
+        <SwitchRow icon={SquareTerminalIcon} label="Runs code tasks" hint="Starts coding agents in your projects, follows their progress and tells you when they finish or need you. Your settings decide whether a start waits for your approval, and which agent, model and permission mode it uses." checked={form.codeTasks} onChange={(codeTasks) => dispatch({ type: "patch", patch: { codeTasks } })} />
       </div>
       {tools.error && (
         <Alert variant="error"><AlertDescription className="flex items-center justify-between gap-2"><span className="selectable break-words">{tools.error}</span><Button size="xs" variant="outline" onClick={tools.reload}>Retry</Button></AlertDescription></Alert>

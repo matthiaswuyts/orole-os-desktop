@@ -399,3 +399,99 @@ func TestMatch(t *testing.T) {
 		}
 	}
 }
+
+func TestAutoApproveOnlyLiftsDefaultAsk(t *testing.T) {
+	e, db, _ := newEngine(t)
+	ctx := context.Background()
+	db.Exec(`INSERT INTO mcp_servers(id,name,url,created_at) VALUES('s','S','http://x',1)`)
+	db.Exec(`INSERT INTO mcp_permissions(server_id,tool,decision) VALUES('s','ask','ask'),('s','deny','deny')`)
+	for _, r := range []Rule{
+		{Actor: "bot:b", Action: "rule.ask", Decision: Ask},
+		{Actor: "bot:b", Action: "rule.deny", Decision: Deny},
+	} {
+		if _, err := e.AddRule(ctx, r); err != nil {
+			t.Fatal(err)
+		}
+	}
+	levels := map[string]Effect{"none": EffectUnknown, "read": EffectRead, "write": EffectWrite, "all": EffectDestructive}
+	var level string
+	e.SetAutoApprove(func(_ context.Context, actor string) (Effect, string) {
+		if actor != "bot:b" {
+			return EffectUnknown, ""
+		}
+		return levels[level], "bot tool access setting: " + level
+	})
+	read := Request{Actor: "bot:b", Action: "chat.tool.call", Resource: "chat/b/x", Effect: EffectRead}
+	hintRead := Request{Actor: "bot:b", Action: "mcp.tool.call", Resource: "mcp/s/free", Effect: EffectRead, FromHint: true}
+	write := Request{Actor: "bot:b", Action: "mcp.tool.call", Resource: "mcp/s/free", Effect: EffectWrite, FromHint: true}
+	destructive := Request{Actor: "bot:b", Action: "mcp.tool.call", Resource: "mcp/s/free", Effect: EffectDestructive, FromHint: true}
+	explicitAsk := Request{Actor: "bot:b", Action: "mcp.tool.call", Resource: "mcp/s/ask", Effect: EffectRead, FromHint: true}
+	explicitDeny := Request{Actor: "bot:b", Action: "mcp.tool.call", Resource: "mcp/s/deny", Effect: EffectRead}
+	ruleAsk := Request{Actor: "bot:b", Action: "rule.ask", Resource: "r", Effect: EffectRead, FromHint: true}
+	ruleDeny := Request{Actor: "bot:b", Action: "rule.deny", Resource: "r", Effect: EffectRead}
+	unknown := Request{Actor: "bot:b", Action: "mystery", Resource: "r"}
+	user := Request{Actor: "user", Action: "mail.send", Resource: "mail/x", Effect: EffectWrite}
+	tests := []struct {
+		level string
+		req   Request
+		want  Decision
+		auto  bool
+	}{
+		{"none", read, Allow, false},
+		{"none", hintRead, Ask, false},
+		{"none", write, Ask, false},
+		{"read", hintRead, Allow, true},
+		{"read", write, Ask, false},
+		{"read", destructive, Ask, false},
+		{"write", hintRead, Allow, true},
+		{"write", write, Allow, true},
+		{"write", destructive, Ask, false},
+		{"all", hintRead, Allow, true},
+		{"all", write, Allow, true},
+		{"all", destructive, Allow, true},
+		{"all", explicitAsk, Ask, false},
+		{"all", explicitDeny, Deny, false},
+		{"all", ruleAsk, Ask, false},
+		{"all", ruleDeny, Deny, false},
+		{"all", unknown, Deny, false},
+		{"all", user, Ask, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.level+" "+tt.req.Action+" "+tt.req.Resource+" "+string(tt.req.Effect), func(t *testing.T) {
+			level = tt.level
+			ev, err := e.Decide(ctx, tt.req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if ev.Decision != tt.want || (ev.Source == SourceAutoApprove) != tt.auto {
+				t.Fatalf("got %+v, want %s (auto-approved %v)", ev, tt.want, tt.auto)
+			}
+			if tt.auto && !strings.Contains(ev.Reason, "bot tool access setting") {
+				t.Fatalf("reason does not name the setting: %q", ev.Reason)
+			}
+		})
+	}
+}
+
+func TestAutoApprovedCheckIsAuditedWithoutPrompt(t *testing.T) {
+	e, db, _ := newEngine(t)
+	ctx := context.Background()
+	e.SetAutoApprove(func(context.Context, string) (Effect, string) { return EffectWrite, "Bot tools: reads and changes" })
+	req := Request{Actor: "bot:b", Action: "mail.send", Resource: "mail/x", Effect: EffectWrite}
+	if d, err := e.Check(ctx, req); err != nil || d != Allow {
+		t.Fatalf("check: %s %v", d, err)
+	}
+	if p := e.Pending(); len(p) != 0 {
+		t.Fatalf("auto-approved call queued an approval: %+v", p)
+	}
+	var out, detail string
+	db.QueryRow(`SELECT outcome, detail FROM audit_events WHERE action='mail.send' ORDER BY id DESC LIMIT 1`).Scan(&out, &detail)
+	if out != "allowed" || !strings.Contains(detail, SourceAutoApprove+": Bot tools: reads and changes") {
+		t.Fatalf("audit: %s %s", out, detail)
+	}
+	// Removing the hook restores the prompt.
+	e.SetAutoApprove(nil)
+	if ev, err := e.Decide(ctx, req); err != nil || ev.Decision != Ask {
+		t.Fatalf("without hook: %+v %v", ev, err)
+	}
+}

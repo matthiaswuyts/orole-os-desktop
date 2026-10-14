@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -350,6 +351,14 @@ func TestFetchPolicy(t *testing.T) {
 	res, err := callFetch(f, "http://pub.example.com/b")
 	if err != nil || !res.IsError || hits.Load() != before {
 		t.Fatalf("denied fetch must not run: res = %+v err = %v hits = %d->%d", res, err, before, hits.Load())
+	}
+	if strings.Contains(res.Text, "did not answer") {
+		t.Fatalf("a denial must not claim a timeout: %q", res.Text)
+	}
+	pol.err = fmt.Errorf("wrapped: %w", policy.ErrApprovalTimeout)
+	res, err = callFetch(f, "http://pub.example.com/b")
+	if err != nil || !res.IsError || hits.Load() != before || !strings.Contains(res.Text, "did not answer the approval request") || !strings.Contains(res.Text, "5 minutes") {
+		t.Fatalf("timed-out fetch: res = %+v err = %v", res, err)
 	}
 
 	// A canceled run surfaces the cancellation instead of a tool error.

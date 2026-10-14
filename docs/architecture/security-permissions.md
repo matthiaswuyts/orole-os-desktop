@@ -44,16 +44,23 @@ Single place that answers "may this actor do this?". Inputs: actor, action, reso
   does not bypass this engine for Orole's own MCP tools. Stored ask/deny rules still win.
   Automation/bot/agent-originated launches, actual tool actions, and external hints do not receive this default: a bot
   acting through `agents.WithActor` is the actor `bot:<id>`, an automation `automation:<id>`.
-  Annotations from servers never unlock more than ask.
+  Annotations from servers never unlock more than ask, with one exception the user opts into: bot tool access.
+- Bot tool access (`agents.botToolAccess`, per bot `BotConfig.toolAccess`: ask | read | write | all) is the engine's
+  auto-approve hook. It lifts only a **default** ask to allow for `bot:<id>` actors up to the chosen effect (`all`
+  includes destructive; `read` trusts the server's read-only annotation). Explicit `mcp_permissions` and stored rules
+  still win, unclassified stays denied, `bot:draft` always asks, and each lift is audited with source `auto-approve`.
+  Imported bot files never carry it.
 - `ask` parks the request (max 100 pending, 5 min timeout) until the UI resolves it; destructive actions cannot be remembered.
 - Every decision is written to `audit_events`. Pending-approval text is sanitised with `internal/untrusted`.
 
 **Wiring:** `internal/daemon/svc_mcp.go` exposes pending requests, resolution, and rule management over
 authenticated IPC. The global `PolicyApprovals` dialog subscribes before loading its initial snapshot and skips `bot:` actors:
-a bot's held `agent.start`/`agent.prompt` is decided inline in that bot's conversation (`features/chat/parts/JobApprovalCard.tsx`;
-Allow once, Always allow this bot = `agent.start` + `agent.prompt` allow rules for `bot:<id>` on `*`, Deny). Remembered bot
-rules are listed and removable under Settings > System > Task permissions; `agents.botAutoApprove` skips the ask altogether
-and `agents.botYolo` lets bots start in YOLO while YOLO is allowed.
+a bot's held request is decided inline in that bot's conversation (`features/chat/parts/JobApprovalCard.tsx`; Allow once,
+Always allow this bot = `agent.start` + `agent.prompt` allow rules for `bot:<id>` on `*` for task requests and an exact
+rule for any other rememberable request, Deny) and is also listed in Home › Needs you and counted on the bot in the rail.
+Remembered bot rules are listed and removable under Settings > System > Remembered approvals; `agents.botAutoApprove`
+skips the task-start ask altogether and `agents.botYolo` lets bots start in YOLO while YOLO is allowed. The permission
+mode of a bot's task comes from the user's settings (`agents.botTasks`, per bot `BotConfig.tasks`), never from the bot.
 MCP invocation uses `InvokeChecked`; Mail/Drive operations pass through the daemon adapters and policy.
 The agent manager requires an authorizer for launch, restart, prompts, checks, and destructive worktree
 discard, including calls from automations. Missing authorization fails closed. A retry of an already

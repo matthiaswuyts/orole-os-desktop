@@ -3,6 +3,7 @@ import { Pencil, Pin, PinOff, Plus, Plug, TriangleAlert } from "lucide-react";
 import { Chat, type Bot } from "@/mygo";
 import { cn } from "@/lib/utils";
 import { ago } from "@/features/agents/format";
+import { usePolicyPending } from "@/features/mcp/usePolicyPending";
 import { ConfirmDialog } from "@/features/projects/dialogs";
 import { activityOf, useBusyBotIds } from "@/stores/botActivity";
 import { useChat } from "@/stores/chat";
@@ -39,6 +40,8 @@ export function BotRail() {
   const list = useRef<HTMLUListElement>(null);
   useMinuteTick();
   useEffect(() => startSync(), [startSync]);
+  // Bot requests are decided in that bot's chat, so the rail shows which bots are waiting for one.
+  const held = usePolicyPending().items;
 
   const visible = useMemo(
     // Pinned bots first; the sort is stable, so each group keeps the list's own order.
@@ -88,7 +91,7 @@ export function BotRail() {
   } else if (bots.length > 0) {
     body = (
       <ul ref={list} aria-label="Bots" onKeyDown={move} className="flex flex-col gap-px">
-        {visible.map((bot) => <BotRow key={bot.id} bot={bot} selected={chatView && bot.id === selectedBotId} tabStop={bot.id === tabStop} onFocus={() => setFocusId(bot.id)} />)}
+        {visible.map((bot) => <BotRow key={bot.id} bot={bot} held={held.filter((item) => item.actor === `bot:${bot.id}`).length} selected={chatView && bot.id === selectedBotId} tabStop={bot.id === tabStop} onFocus={() => setFocusId(bot.id)} />)}
       </ul>
     );
   }
@@ -112,7 +115,7 @@ export function BotRail() {
   );
 }
 
-function BotRow({ bot, selected, tabStop, onFocus }: { bot: Bot; selected: boolean; tabStop: boolean; onFocus: () => void }) {
+function BotRow({ bot, held, selected, tabStop, onFocus }: { bot: Bot; held: number; selected: boolean; tabStop: boolean; onFocus: () => void }) {
   const responding = useChat((s) => s.running[bot.id] ?? false);
   const hasTask = useBusyBotIds().includes(bot.id);
   const activity = activityOf(responding, hasTask);
@@ -142,7 +145,7 @@ function BotRow({ bot, selected, tabStop, onFocus }: { bot: Bot; selected: boole
         <span className="relative shrink-0">
           <BotAvatar name={bot.name} avatar={bot.avatar} className="size-6" />
           {/* Nothing is drawn while the bot is idle: a dot is only ever a claim that something is happening or waiting. */}
-          {(running || awaiting) && <span aria-hidden="true" data-status={running ? activity : "waiting"} className={cn(
+          {(running || awaiting || held > 0) && <span aria-hidden="true" data-status={running ? activity : "waiting"} className={cn(
             "absolute -top-0.5 -right-0.5 size-2 rounded-full ring-2 ring-sidebar",
             activity === "responding" ? "animate-pulse bg-primary motion-reduce:animate-none" : activity === "working" ? "animate-pulse bg-info motion-reduce:animate-none" : "bg-warning",
           )} />}
@@ -151,6 +154,7 @@ function BotRow({ bot, selected, tabStop, onFocus }: { bot: Bot; selected: boole
           <span className="flex items-center gap-1.5">
             <span className="min-w-0 flex-1 truncate font-medium text-[13px]">{bot.name}</span>
             {pinned && <Pin aria-label="Pinned" className="size-3 shrink-0 -rotate-45 fill-current text-muted-foreground" />}
+            {held > 0 && <span aria-hidden="true" data-slot="bot-approvals-badge" className="shrink-0 rounded-full bg-warning/15 px-1.5 text-[11px] text-warning-foreground tabular-nums">{held}</span>}
             {preview && <time dateTime={new Date(preview.at).toISOString()} className="shrink-0 text-[11px] text-muted-foreground">{since(preview.at)}</time>}
           </span>
           <span className="truncate text-muted-foreground text-xs">
@@ -158,6 +162,7 @@ function BotRow({ bot, selected, tabStop, onFocus }: { bot: Bot; selected: boole
           </span>
         </span>
         {(running || awaiting) && <span className="sr-only">{activity === "responding" ? "Responding" : activity === "working" ? "Running a code task" : "Waiting for your answer"}</span>}
+        {held > 0 && <span className="sr-only">{held === 1 ? "1 approval waiting" : `${held} approvals waiting`}</span>}
       </button>
       <Menu>
         <MenuTrigger ref={menu} render={<button type="button" tabIndex={-1} aria-hidden="true" aria-label={`Actions for ${bot.name}`} className="pointer-events-none absolute top-1 right-1 size-5 opacity-0" />} />

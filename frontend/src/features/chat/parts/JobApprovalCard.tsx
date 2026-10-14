@@ -13,8 +13,9 @@ function alwaysRule(actor: string, action: string): Rule {
 }
 
 /**
- * One held bot request (start a task, send a follow-up), decided in the conversation it came from. The decision is a receipt
- * kept while the daemon still lists the request; the parent unmounts the card once the queue no longer has it.
+ * One held bot request (start a task, send a follow-up, use an integration or tool), decided in the conversation it came from.
+ * The decision is a receipt kept while the daemon still lists the request; the parent unmounts the card once the queue no
+ * longer has it.
  */
 export function JobApprovalCard({ request, requester }: { request: Pending; requester: string }) {
   const action = useAction();
@@ -26,17 +27,19 @@ export function JobApprovalCard({ request, requester }: { request: Pending; requ
     return () => window.clearInterval(timer);
   }, [receipt]);
   const expired = now >= request.expiresAt;
+  const taskAction = (BOT_TASK_ACTIONS as readonly string[]).includes(request.action);
   const decide = (scope: GrantScope) => {
     if (receipt || action.busy) return;
     void action.run(async () => {
-      if (scope === "always") for (const name of BOT_TASK_ACTIONS) await Policy.addRule(alwaysRule(request.actor, name));
-      await Policy.resolve(request.id, scope !== "denied", false);
+      if (scope === "always" && taskAction) for (const name of BOT_TASK_ACTIONS) await Policy.addRule(alwaysRule(request.actor, name));
+      // Any other request is remembered by the daemon for this exact bot, action and resource.
+      await Policy.resolve(request.id, scope !== "denied", scope === "always" && !taskAction);
       setReceipt(scope);
     });
   };
   return <PermissionGrant
     data-request={request.id}
-    capability={botRequestTitle(request.action)}
+    capability={botRequestTitle(request.action, request.resource)}
     requester={requester}
     reach={request.detail ? [request.detail] : []}
     scope={receipt ?? "pending"}
@@ -55,7 +58,7 @@ export function JobApprovalCard({ request, requester }: { request: Pending; requ
   />;
 }
 
-/** Every held request from this bot, above the composer. "Always allow" is listed under Settings › Task permissions. */
+/** Every held request from this bot, above the composer. "Always" decisions are listed under Settings › System › Bot code tasks. */
 export function BotApprovals({ botId }: { botId: string }) {
   const { items } = usePolicyPending();
   const name = useChat((s) => s.bots.find((bot) => bot.id === botId)?.name) ?? "This bot";

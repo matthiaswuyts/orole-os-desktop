@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -41,6 +42,8 @@ type TaskInfo struct {
 	Deletions      int    `json:"deletions"`
 	Turns          int    `json:"turns"`               // completed turns; a task can take several before it is finished
 	Subagents      int    `json:"subagents,omitempty"` // background agents still running: the task is not finished while > 0
+	Model          string `json:"model,omitempty"`     // "" = the harness's default
+	Reasoning      string `json:"reasoning,omitempty"` // "" = the harness's default
 	PermissionMode string `json:"permissionMode,omitempty"`
 	Waiting        string `json:"waitingFor,omitempty"` // what the task asks the user, when it needs them
 	Owner          string `json:"owner,omitempty"`
@@ -60,23 +63,48 @@ type TaskProject struct {
 	Git  bool   `json:"git"`
 }
 
-// TaskStart is a bot's request for a new task.
+// TaskStart is a bot's request for a new task. Harness, Model and Reasoning count only where the
+// user's settings leave them to the bot (TaskChoices); the permission mode is never the bot's.
 type TaskStart struct {
-	ProjectID      string `json:"projectId"`
-	Harness        string `json:"harness"`
-	Prompt         string `json:"prompt"`
-	Title          string `json:"title"`
-	PermissionMode string `json:"permissionMode"`
-	NewWorktree    bool   `json:"newWorktree"`
+	ProjectID   string `json:"projectId"`
+	Harness     string `json:"harness"`
+	Model       string `json:"model"`
+	Reasoning   string `json:"reasoning"`
+	Prompt      string `json:"prompt"`
+	Title       string `json:"title"`
+	NewWorktree bool   `json:"newWorktree"`
+}
+
+// TaskChoices is how the user's settings shape the code tasks one bot starts. Harness, Model and
+// Reasoning are fixed values or chat.TaskChoiceAuto: the bot chooses, and may leave model and
+// reasoning empty for the harness's default. PermissionMode is always the user's.
+type TaskChoices struct {
+	Harness        string
+	Model          string
+	Reasoning      string
+	PermissionMode string
+	// Harnesses are the installed harnesses the bot may use (only the fixed one when the harness is
+	// fixed), with the models and reasoning levels each advertises.
+	Harnesses []TaskHarness
+}
+
+// TaskHarness is one installed coding harness as a bot may choose it. Empty Models or Reasoning
+// means the harness lists none; CustomModel means it also takes model ids it does not list.
+type TaskHarness struct {
+	ID          string
+	Models      []string
+	Reasoning   []string
+	CustomModel bool
 }
 
 // TaskRuntime is the daemon's agent runtime as bots may use it. actor is "bot:<id>": the
-// runtime records it as the task's owner and as the policy actor; YOLO is honoured only when
-// the user's settings let bots use it.
+// runtime records it as the task's owner and as the policy actor. Start resolves the harness,
+// model, reasoning and permission mode from the user's settings and bot's own configuration,
+// ignoring what spec names for a fixed field; YOLO is honoured only when the user let bots use it.
 type TaskRuntime interface {
 	Projects(ctx context.Context) ([]TaskProject, error)
-	Harnesses(ctx context.Context) ([]string, error)
-	Start(ctx context.Context, actor string, spec TaskStart) (TaskInfo, error)
+	Choices(ctx context.Context, bot chat.Bot) (TaskChoices, error)
+	Start(ctx context.Context, actor string, bot chat.Bot, spec TaskStart) (TaskInfo, error)
 	List(ctx context.Context, limit int) ([]TaskInfo, error)
 	Get(ctx context.Context, id string, transcript int) (TaskInfo, []TaskLine, error)
 	Send(ctx context.Context, actor, id, text string) (TaskInfo, error)
@@ -95,7 +123,10 @@ func (t Tasks) Specs(bot chat.Bot, caps llm.Caps) []llm.ToolSpec {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	projects, _ := t.Runtime.Projects(ctx)
-	harnesses, _ := t.Runtime.Harnesses(ctx)
+	choices, err := t.Runtime.Choices(ctx, bot)
+	if err != nil { // offer every field; Start still resolves and enforces the settings
+		choices = TaskChoices{Harness: chat.TaskChoiceAuto, Model: chat.TaskChoiceAuto, Reasoning: chat.TaskChoiceAuto}
+	}
 	names := make([]string, 0, len(projects))
 	for _, p := range projects {
 		names = append(names, fmt.Sprintf("%s (%s)", p.ID, p.Name))
@@ -104,13 +135,9 @@ func (t Tasks) Specs(bot chat.Bot, caps llm.Caps) []llm.ToolSpec {
 	if len(names) > 0 {
 		projectHelp = "Project id, one of: " + strings.Join(names, "; ")
 	}
-	harnessJSON, _ := json.Marshal(harnesses)
-	if len(harnesses) == 0 {
-		harnessJSON = []byte(`["claude"]`)
-	}
 	return []llm.ToolSpec{
-		{Name: toolStartTask, Description: "Start a code task: a coding agent (Claude Code, Codex, ...) that reads and edits files and runs commands in a project on this PC. You cannot do that yourself. The user may be asked to approve the start (in chat) unless they allowed you always. Give a complete, self-contained task. You hear back with the task's full result once it is finished: its turn ended and no background agents of it are still running. Until then its status is working; a report never comes early.",
-			Schema: json.RawMessage(`{"type":"object","properties":{"projectId":{"type":"string","description":` + quote(projectHelp) + `},"harness":{"type":"string","enum":` + string(harnessJSON) + `},"prompt":{"type":"string","description":"The task for the agent."},"title":{"type":"string","description":"Short title (optional)."},"permissionMode":{"type":"string","enum":["manual","auto","yolo"],"description":"Omit to use the user's default mode. manual asks the user before risky actions; auto lets the agent's own safety checks decide; yolo asks nothing (only when the user allowed bots to use it)."},"newWorktree":{"type":"boolean","description":"Work on a new branch in a separate worktree (recommended for changes)."}},"required":["projectId","harness","prompt"],"additionalProperties":false}`)},
+		{Name: toolStartTask, Description: "Start a code task: a coding agent (Claude Code, Codex, ...) that reads and edits files and runs commands in a project on this PC. You cannot do that yourself. The user may be asked to approve the start (in chat) unless they allowed you always. " + settingsHelp(choices) + " Give a complete, self-contained task. You hear back with the task's full result once it is finished: its turn ended and no background agents of it are still running. Until then its status is working; a report never comes early.",
+			Schema: startTaskSchema(projectHelp, choices)},
 		{Name: toolListTasks, Description: "List recent code tasks (yours and the user's) with status and what each is doing.",
 			Schema: json.RawMessage(`{"type":"object","properties":{"limit":{"type":"integer","minimum":1,"maximum":30}},"additionalProperties":false}`)},
 		{Name: toolTaskStatus, Description: "Look at one code task: status, current activity, last message, changes, what it waits for, and optionally the latest transcript lines.",
@@ -122,7 +149,91 @@ func (t Tasks) Specs(bot chat.Bot, caps llm.Caps) []llm.ToolSpec {
 	}
 }
 
+// modeHelp says what each permission mode means for the tasks a bot starts.
+var modeHelp = map[string]string{
+	"manual": "risky actions wait for the user's approval",
+	"auto":   "the agent's own safety checks decide",
+	"yolo":   "nothing asks for approval",
+}
+
+// settingsHelp names what the user's settings fix for the bot's tasks; the permission mode always.
+func settingsHelp(c TaskChoices) string {
+	var fixed []string
+	for _, f := range []struct{ name, value string }{{"harness", c.Harness}, {"model", c.Model}, {"reasoning effort", c.Reasoning}} {
+		if f.value != chat.TaskChoiceAuto && f.value != "" {
+			fixed = append(fixed, f.name+" "+f.value)
+		}
+	}
+	mode := "the permission mode"
+	if c.PermissionMode != "" {
+		mode = "permission mode " + c.PermissionMode
+		if help := modeHelp[c.PermissionMode]; help != "" {
+			mode += " (" + help + ")"
+		}
+	}
+	return "The user's settings decide " + strings.Join(append(fixed, mode), ", ") + "; you cannot change them."
+}
+
 func quote(s string) string { b, _ := json.Marshal(s); return string(b) }
+
+// listedMax bounds the models listed per harness in a tool description.
+const listedMax = 8
+
+// startTaskSchema offers only the fields the user's settings leave to the bot: a fixed harness,
+// model or reasoning is absent (and ignored if sent anyway).
+func startTaskSchema(projectHelp string, c TaskChoices) json.RawMessage {
+	type prop map[string]any
+	props := map[string]prop{
+		"projectId":   {"type": "string", "description": projectHelp},
+		"prompt":      {"type": "string", "description": "The task for the agent."},
+		"title":       {"type": "string", "description": "Short title (optional)."},
+		"newWorktree": {"type": "boolean", "description": "Work on a new branch in a separate worktree (recommended for changes)."},
+	}
+	required := []string{"projectId", "prompt"}
+	if c.Harness == chat.TaskChoiceAuto {
+		ids := make([]string, 0, len(c.Harnesses))
+		for _, h := range c.Harnesses {
+			ids = append(ids, h.ID)
+		}
+		if len(ids) > 0 {
+			props["harness"] = prop{"type": "string", "enum": ids, "description": "The coding agent to run."}
+		} else {
+			props["harness"] = prop{"type": "string", "description": "No coding agent is installed; ask the user to install Claude Code or Codex."}
+		}
+		required = append(required, "harness")
+	}
+	if c.Model == chat.TaskChoiceAuto {
+		props["model"] = prop{"type": "string", "description": "Model id (optional; omit for the harness's default)." + perHarness(c.Harnesses, func(h TaskHarness) ([]string, bool) { return h.Models, h.CustomModel })}
+	}
+	if c.Reasoning == chat.TaskChoiceAuto {
+		props["reasoning"] = prop{"type": "string", "description": "Reasoning effort (optional; omit for the harness's default)." + perHarness(c.Harnesses, func(h TaskHarness) ([]string, bool) { return h.Reasoning, false })}
+	}
+	b, _ := json.Marshal(map[string]any{"type": "object", "properties": props, "required": required, "additionalProperties": false})
+	return b
+}
+
+// perHarness lists, per harness, the values it advertises (at most listedMax each).
+func perHarness(harnesses []TaskHarness, values func(TaskHarness) ([]string, bool)) string {
+	var parts []string
+	for _, h := range harnesses {
+		list, other := values(h)
+		if len(list) == 0 {
+			continue
+		}
+		s := strings.Join(list[:min(len(list), listedMax)], ", ")
+		if n := len(list) - listedMax; n > 0 {
+			s += fmt.Sprintf(" (+%d more)", n)
+		}
+		if other {
+			s += ", or another id it accepts"
+		}
+		parts = append(parts, h.ID+": "+s)
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return " Valid values by harness: " + strings.Join(parts, "; ") + "."
+}
 
 func (t Tasks) Call(ctx context.Context, rc chat.RunContext, name string, args json.RawMessage) (chat.ToolResult, error) {
 	if t.Runtime == nil || !rc.Bot.Config.CodeTasks || rc.BotID == "" {
@@ -133,6 +244,9 @@ func (t Tasks) Call(ctx context.Context, rc chat.RunContext, name string, args j
 	case toolStartTask:
 		var in TaskStart
 		if err := decode(args, &in); err != nil {
+			if strings.Contains(err.Error(), `"permissionMode"`) {
+				return errResult("the permission mode of your tasks is set by the user in Orole's settings; omit permissionMode")
+			}
 			return errResult("invalid arguments: %s", err)
 		}
 		if err := text("prompt", in.Prompt, 100_000, true); err != nil {
@@ -141,16 +255,19 @@ func (t Tasks) Call(ctx context.Context, rc chat.RunContext, name string, args j
 		if err := text("title", in.Title, 120, false); err != nil {
 			return errResult("%s", err)
 		}
-		switch in.PermissionMode {
-		case "", "manual", "auto", "yolo": // "" = the user's default mode, applied by the runtime
-		default:
-			return errResult("permissionMode must be manual, auto or yolo")
+		for _, f := range []struct{ name, value string }{{"harness", in.Harness}, {"model", in.Model}, {"reasoning", in.Reasoning}} {
+			if err := text(f.name, f.value, 128, false); err != nil {
+				return errResult("%s", err)
+			}
 		}
-		info, err := t.Runtime.Start(ctx, actor, in)
+		info, err := t.Runtime.Start(ctx, actor, rc.Bot, in)
 		if err != nil {
 			return errResult("the task did not start: %s", err)
 		}
-		res, err := taskResult("Started. You will get a report with the full result when it is finished (turn ended, no background agents running), and sooner only if it fails or needs the user. Do not call it done before that report; task_status shows status, turns and subagents meanwhile.", info, nil)
+		model, effort := cmp.Or(info.Model, "the harness's default"), cmp.Or(info.Reasoning, "the harness's default")
+		note := fmt.Sprintf("Started with harness %s, model %s, reasoning effort %s and permission mode %s (the user's setting). ", info.Harness, model, effort, cmp.Or(info.PermissionMode, "manual")) +
+			"You will get a report with the full result when it is finished (turn ended, no background agents running), and sooner only if it fails or needs the user. Do not call it done before that report; task_status shows status, turns and subagents meanwhile."
+		res, err := taskResult(note, info, nil)
 		res.Parts = []chat.MsgPart{{Type: chat.PartTask, ID: info.ID, Title: oneLine(info.Title, 120), Name: info.Harness}}
 		return res, err
 	case toolListTasks:

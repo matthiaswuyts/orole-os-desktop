@@ -4,7 +4,7 @@ import type { Bot, BotChange, Message, RunState, Session } from "@/mygo";
 import type { ChatState } from "@/stores/chat";
 
 const bridge = vi.hoisted(() => ({
-  bots: vi.fn(), clear: vi.fn(), archiveBot: vi.fn(), pinBot: vi.fn(), openSettings: vi.fn(),
+  bots: vi.fn(), clear: vi.fn(), archiveBot: vi.fn(), pinBot: vi.fn(), openSettings: vi.fn(), pending: vi.fn(),
   provider: { value: true as boolean | null },
   run: null as ((s: RunState) => void) | null,
   message: null as ((m: Message) => void) | null,
@@ -19,11 +19,14 @@ vi.mock("@/mygo", async (importOriginal) => {
     ...actual,
     Desktop: { openSettings: bridge.openSettings },
     Chat: { bots: bridge.bots, clear: bridge.clear, archiveBot: bridge.archiveBot, pinBot: bridge.pinBot },
+    Policy: { pending: bridge.pending },
     events: {
       chatRun: { on: (f: (s: RunState) => void) => { bridge.run = f; return () => { bridge.run = null; }; } },
       chatMessage: { on: (f: (m: Message) => void) => { bridge.message = f; return () => { bridge.message = null; }; } },
       chatMessageDelta: { on: () => none() },
       chatBot: { on: (_f: (c: BotChange) => void) => none() },
+      policyPending: { on: () => none() },
+      daemonState: { on: () => none() },
     },
   };
 });
@@ -52,6 +55,7 @@ beforeEach(() => {
   vi.useFakeTimers({ toFake: ["Date"] });
   vi.setSystemTime(NOW);
   bridge.bots.mockReset(); bridge.clear.mockReset(); bridge.archiveBot.mockReset(); bridge.pinBot.mockReset(); bridge.openSettings.mockReset().mockResolvedValue(undefined);
+  bridge.pending.mockReset().mockResolvedValue([]);
   bridge.provider.value = true;
   localStorage.clear();
   useDaemon.setState({ link: "connected" });
@@ -60,6 +64,19 @@ beforeEach(() => {
   loaded();
 });
 afterEach(() => { cleanup(); vi.useRealTimers(); });
+
+describe("BotRail approvals", () => {
+  it("marks a bot whose request waits for approval, and only that bot", async () => {
+    bridge.pending.mockResolvedValue([
+      { id: "p1", actor: "bot:coder", action: "mcp.tool.call", resource: "mcp/s/t", detail: "", effect: "write", fromHint: true, reason: "", createdAt: 1, expiresAt: NOW + 60_000, canRemember: true },
+      { id: "p2", actor: "user", action: "mail.send", resource: "mcp/s/send", detail: "", effect: "write", fromHint: false, reason: "", createdAt: 1, expiresAt: NOW + 60_000, canRemember: true },
+    ]);
+    render(<BotRail />);
+    const coder = await screen.findByRole("button", { name: /Coder.*1 approval waiting/ });
+    expect(coder.querySelector("[data-status=waiting]")).not.toBeNull();
+    expect(screen.getByRole("button", { name: /Travel/ })).not.toHaveTextContent(/approval/);
+  });
+});
 
 describe("BotRail states", () => {
   it("asks for the desktop app in the browser preview", () => {

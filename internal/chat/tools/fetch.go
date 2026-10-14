@@ -97,6 +97,9 @@ func (f *Fetcher) Call(ctx context.Context, rc chat.RunContext, args json.RawMes
 			if ctx.Err() != nil {
 				return chat.ToolResult{}, ctx.Err()
 			}
+			if errors.Is(err, policy.ErrApprovalTimeout) {
+				return approvalTimedOut("fetch")
+			}
 			return chat.ToolResult{Text: "This fetch was not permitted by your policy.", IsError: true}, nil
 		}
 	}

@@ -232,7 +232,9 @@ func (t *MCPTools) Call(ctx context.Context, rc chat.RunContext, name string, ar
 			return chat.ToolResult{}, ctx.Err()
 		}
 		switch {
-		case errors.Is(err, policy.ErrDenied), errors.Is(err, policy.ErrApprovalTimeout):
+		case errors.Is(err, policy.ErrApprovalTimeout):
+			return approvalTimedOut("tool call")
+		case errors.Is(err, policy.ErrDenied):
 			return errResult("This tool call was not approved, so it did not run.")
 		case errors.Is(err, mcp.ErrNotConnected), errors.Is(err, mcp.ErrDisabled), errors.Is(err, mcp.ErrNotFound), errors.Is(err, mcp.ErrNoSuchTool):
 			return errResult("The tool's server is not available right now.")
@@ -240,6 +242,13 @@ func (t *MCPTools) Call(ctx context.Context, rc chat.RunContext, name string, ar
 		return errResult("tool call failed: %s", untrusted.Line(err.Error(), 300))
 	}
 	return chat.ToolResult{Text: resultText(res), IsError: res.IsError, Untrusted: true}, nil
+}
+
+// approvalTimedOut is the result of an action whose approval prompt the user left unanswered
+// (policy.ErrApprovalTimeout): the bot must say so plainly instead of reporting a refusal.
+func approvalTimedOut(what string) (chat.ToolResult, error) {
+	return errResult("The user did not answer the approval request for this %s within %d minutes, so it did not run. "+
+		"Tell the user their approval timed out; they can ask you to try again.", what, int(policy.DefaultApprovalTimeout.Minutes()))
 }
 
 // resultText flattens an MCP result. Binary content is summarised, never forwarded.

@@ -75,7 +75,7 @@ export function NeedsYouWidget({ onRemove }: WidgetProps) {
             {sessions.map((s) => <Row key={s.id} icon={<ProviderLogo kind={s.kind} />} title={sessionTitle(s)} detail={[folderOf(s), waitingFor(s)].filter(Boolean).join(" · ")}
               aside={s.pending?.length ? "Permission" : s.questions?.length ? "Question" : "Reply"} onClick={() => openTask(s.id)} />)}
             {policy.items.map((p) => isBotActor(p.actor)
-              ? <Row key={p.id} icon={<ShieldAlert />} title={botRequestTitle(p.action)} detail={`Asked by ${botName(p.actor)} · decide in that bot's chat`} aside="Held action" onClick={() => useChat.getState().open(p.actor.slice(4))} />
+              ? <Row key={p.id} icon={<ShieldAlert />} title={botRequestTitle(p.action, p.resource)} detail={`Asked by ${botName(p.actor)} · decide in that bot's chat`} aside="Bot approval" onClick={() => useChat.getState().open(p.actor.slice(4))} />
               : <Row key={p.id} icon={<ShieldAlert />} title={`${p.action} · ${p.resource}`} detail={`Requested by ${p.actor} · decide in the approval dialog`} aside="Held action" />)}
             {approvals.map((a) => <Row key={`${a.runId}:${a.stepId}`} icon={<Workflow />} title={a.name} detail={a.message || "Automation waiting for approval"} aside="Approval"
               onClick={() => useUI.getState().setView("automations")} />)}
