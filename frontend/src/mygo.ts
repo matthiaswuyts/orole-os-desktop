@@ -1416,7 +1416,7 @@ export interface JarvisRule {
   createdAt: number;
 }
 
-export type JarvisTrigger = "task_finished" | "task_failed" | "automation_finished" | "automation_failed" | "notification" | "at_time";
+export type JarvisTrigger = "task_finished" | "task_failed" | "automation_finished" | "automation_failed" | "notification" | "at_time" | "bot_reported";
 
 /** Job is a job of a workflow run. */
 export interface Job {
@@ -1744,9 +1744,10 @@ export interface Message {
    */
   finishedAt?: number;
   /**
-   * CallID marks a spoken turn of a phone call (the owner's utterance or the bot's reply). Such messages stay in the
-   * bot's history and memory but never reach the chat UI: paging, previews and chat.message events skip them, and
-   * they are read through the call transcript (chat.call.message events while the call is live). "" otherwise.
+   * CallID marks a message of a phone call's thread: a spoken turn (the owner's utterance or the bot's reply), or a
+   * follow-up of work started on the call (a report from a bot or code task and the bot's written answer to it). Such
+   * messages stay in the bot's history and memory but never reach the chat UI: paging, previews and chat.message
+   * events skip them, and they are read through the call transcript (chat.call.message events). "" otherwise.
    */
   callId?: string;
 }
@@ -2059,6 +2060,12 @@ export interface PhoneSettings {
    * (Configure ignores it from the UI). "" with an AgentID is an agent from before the setting existed: English.
    */
   agentLanguage: string;
+  /**
+   * AgentRevision is the agentRevision the ElevenLabs agent was last provisioned with, set only by provisioning
+   * (Configure ignores it from the UI). Lower than agentRevision, including 0 for an agent from before revisions
+   * existed, means the agent still has an older configuration and the daemon updates it in the background.
+   */
+  agentRevision: number;
 }
 
 /** PinRequest pins or unpins a bot. */
@@ -2799,6 +2806,11 @@ export interface Session {
    * It decides who may steer the task and who hears about its progress, never tool authority.
    */
   owner?: string;
+  /**
+   * CallID is the phone call whose thread the owning bot started the session from (WithCall), or last steered it
+   * from (SetCall); "" otherwise. The session's reports to its owner go to that call's thread instead of the chat.
+   */
+  callId?: string;
   /** see Review* constants */
   review: string;
   reviewNote: string;
