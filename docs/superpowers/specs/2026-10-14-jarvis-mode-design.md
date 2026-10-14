@@ -375,8 +375,9 @@ call counts as answered at the first non-empty utterance that is not a voicemail
 (ElevenLabs sets it when the call starts) and the call card stays in the first bot's chat.
 
 **Turns.** A new request for a call cancels the in-flight turn (barge-in); the cancelled turn speaks no more and leaves
-no history. Streamed speech passes a sanitizer that replaces "Orole" and "Orole OS" with "the app". Voice limits are the
-smaller of the voice cap and the bot's own limit. A scripted filler is spoken when a tool starts.
+only a one-line note in the history, "(I was interrupted. These tools already ran: ...)", when it had started tools.
+Streamed speech passes a sanitizer that replaces "Orole" and "Orole OS" with "the app". Voice limits are the smaller of
+the voice cap and the bot's own limit. A scripted filler is spoken when a tool starts.
 
 **Gate timing.** The gate runs on save, before a call, on bot switch and at the start of each spoken turn (not before
 every individual tool call). A failure mid-call turns Jarvis off for the bot and ends the call. On save, turning Jarvis
