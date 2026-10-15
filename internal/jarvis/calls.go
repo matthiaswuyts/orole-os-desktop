@@ -26,6 +26,9 @@ const (
 	maxCallDuration = 30 * time.Minute
 	urgentRetryWait = 5 * time.Minute
 	maxHistory      = 40
+	// deadCallAfter ends an answered call that has had no LLM request for this long: ElevenLabs sends a silence prompt
+	// every 10 s while the owner is quiet, so a call this quiet is no longer listening (see Calls.hangUpDead).
+	deadCallAfter = 5 * time.Minute
 	// outcomeDelay, outcomeRetryDelay and outcomeCheckTimeout time the check after a call ends: how long ElevenLabs gets
 	// to record the conversation, how much longer it gets when the conversation is still open, and how long each
 	// request of the check may take.
@@ -113,15 +116,23 @@ type live struct {
 	// turnUtter is what the owner said that the in-flight turn answers (held words included; "" for a cue turn):
 	// end_call is only accepted when it is a closing (see EndAfterReply).
 	turnUtter string
-	// turnHeld is set while the in-flight turn waits on words the owner trailed off on ("geef me een, uhm-"): a new
-	// utterance in that window supersedes it and is answered with these words in front (see Calls.plan). It is
-	// cleared when the turn starts answering or ends.
-	turnHeld string
+	// turnPending is what the owner said that the in-flight turn has not answered in words of its own yet (held words
+	// included; "" for a cue turn): while the turn waits on words the owner trailed off on ("geef me een, uhm-"), waits
+	// for the previous turn, or until the model's first words. A new utterance in that time supersedes the turn and is
+	// answered with these words in front (see Calls.plan), so nothing the owner said is lost. The model's first words
+	// clear it (scripted lines do not).
+	turnPending string
 	// hangFor is the turn whose end_call was accepted: the call ends once that turn's reply has been spoken. A new
-	// turn clears it, so a barge-in after end_call keeps the call going.
+	// turn clears it, so a barge-in while that turn still runs keeps the call going; once the reply is out, the hang-up
+	// waits in hanging.
 	hangFor *speaker
+	// hanging is the hang-up scheduled after a goodbye (end_call or the silence goodbye) while the voice says it; nil
+	// when none waits. An utterance in that time cancels it (see Calls.plan).
+	hanging *hangup
 	// silences counts silence prompts in a row that had nothing to answer; any utterance resets it.
 	silences int
+	// lastRequest is when the last LLM request of the call came in (Calls.now); see Calls.hangUpDead.
+	lastRequest time.Time
 
 	// persistMu serializes writes of this call's row and card; see Calls.persist.
 	persistMu sync.Mutex
@@ -152,6 +163,9 @@ type Calls struct {
 	ackAfter, bufferEvery, stillAfter, turnDeadline, turnCap, hesitationWait time.Duration
 	// speechWait is how long to let the voice finish a line before hanging up at the carrier (tests use 0).
 	speechWait func(text string) time.Duration
+	// deadAfter is how long an answered call may go without an LLM request before the daemon hangs it up (see
+	// hangUpDead).
+	deadAfter time.Duration
 	// outcomeAfter is how long after a call ends to wait before asking the voice provider how it recorded it (it needs
 	// a moment), outcomeRetryAfter the wait before a second look when the conversation is not finished then, and
 	// outcomeTimeout bounds each request of that check (see checkOutcome).
@@ -184,7 +198,7 @@ func NewCalls(store *Store, host Host, dial Dialer, phone Phone, relay Sender, s
 	c := &Calls{store: store, host: host, dial: dial, phone: phone, relay: relay, settings: settings, now: now, log: log,
 		after: time.After, speechWait: speechTime,
 		ackAfter: ackAfter, bufferEvery: bufferEvery, stillAfter: stillAfter, turnDeadline: turnDeadline, turnCap: turnCap,
-		hesitationWait: hesitationWait, outcomeAfter: outcomeDelay, outcomeRetryAfter: outcomeRetryDelay,
+		hesitationWait: hesitationWait, deadAfter: deadCallAfter, outcomeAfter: outcomeDelay, outcomeRetryAfter: outcomeRetryDelay,
 		outcomeTimeout: outcomeCheckTimeout, baseCtx: ctx, stop: cancel}
 	c.Retry = func(ctx context.Context, req PlaceRequest) { _, _ = c.Place(ctx, req) }
 	return c
@@ -356,9 +370,12 @@ func (c *Calls) inject(callID, from, reason string, f *chat.FollowUp) (told, cla
 	return true, in.claimed
 }
 
-// ending reports whether the call is on its way out: end_call was accepted for the running turn. The caller holds
-// Calls.mu.
-func (l *live) ending() bool { return l.hangFor != nil }
+// ending reports whether the call is on its way out: end_call was accepted, or a goodbye is being spoken before the
+// hang-up. The caller holds Calls.mu.
+func (l *live) ending() bool { return l.hangFor != nil || l.hanging != nil }
+
+// hangup is a hang-up waiting for the voice to finish a goodbye; cancel calls it off.
+type hangup struct{ cancel context.CancelFunc }
 
 // openerInstruction asks for a name-only greeting in the call language. It carries no reason and no context: the call
 // may reach voicemail, and the opener is spoken before anyone has answered.
@@ -524,10 +541,13 @@ type speaker struct {
 	said       strings.Builder
 	closed     bool // done was sent: nothing more may go out
 	spoke      bool // the current request (see retarget) got words
-	acked      bool // the "one moment" line was spoken
-	scripted   bool // the last text out was a scripted line (acknowledgement or filler), not the model's
-	nudges     int  // "still working" lines spoken
-	expired    bool // the turn ran past Calls.turnDeadline: tooLong was said and the turn closed
+	modelSpoke bool // the model's own words went out (scripted lines are not its words)
+	// onWords, if set, runs once, without s.mu held, when the model's first words go out (see Calls.modelTurn).
+	onWords  func()
+	acked    bool // the "one moment" line was spoken
+	scripted bool // the last text out was a scripted line (acknowledgement or filler), not the model's
+	nudges   int  // "still working" lines spoken
+	expired  bool // the turn ran past Calls.turnDeadline: tooLong was said and the turn closed
 }
 
 func (c *Calls) newSpeaker(ctx context.Context, id, callID, botName, lang string) *speaker {
@@ -571,11 +591,40 @@ func (s *speaker) buffer() {
 func (s *speaker) say(text string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.write(text)
+}
+
+// write speaks text that is not a scripted line and reports whether words went out. The caller holds s.mu.
+func (s *speaker) write(text string) bool {
 	out := s.san.Write(text)
-	if strings.TrimSpace(out) != "" {
+	words := strings.TrimSpace(out) != ""
+	if words {
 		s.scripted = false
 	}
+	words = words && !s.hushed()
 	s.emit(out)
+	return words
+}
+
+// answer speaks the model's own words (VoiceRequest.OnText); the first ones that go out run onWords.
+func (s *speaker) answer(text string) {
+	s.mu.Lock()
+	first := s.write(text) && !s.modelSpoke
+	if first {
+		s.modelSpoke = true
+	}
+	fn := s.onWords
+	s.mu.Unlock()
+	if first && fn != nil {
+		fn()
+	}
+}
+
+// progress returns whether the model spoke, everything the turn said, and the tools it started.
+func (s *speaker) progress() (modelSpoke bool, said string, tools []string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.modelSpoke, s.said.String(), append([]string(nil), s.tools...)
 }
 
 // line speaks a scripted line (acknowledgement, filler) as its own sentence. The caller holds s.mu.
@@ -627,18 +676,29 @@ const (
 	hesitationWait = 2500 * time.Millisecond
 )
 
-// hold makes a turn wait d for the rest of a sentence the owner trailed off on, sending only buffer chunks. It reports
+// hold makes a turn wait, sending only buffer chunks: first until prev is closed (the turn it superseded let go of
+// chat's run slot; nil when there was none), then d for the rest of a sentence the owner trailed off on. It reports
 // false when the turn was superseded (ctx ended) first: the owner went on speaking, and a newer turn answers.
-func (s *speaker) hold(ctx context.Context, d time.Duration) bool {
-	end := time.Now().Add(d)
+func (s *speaker) hold(ctx context.Context, prev <-chan struct{}, d time.Duration) bool {
+	var end time.Time // set once prev is closed
+	if prev == nil {
+		end = time.Now().Add(d)
+	}
 	for {
+		if end.IsZero() {
+			select {
+			case <-prev:
+				end = time.Now().Add(d)
+			default:
+			}
+		}
 		s.mu.Lock()
 		now := time.Now()
 		if ctx.Err() != nil || s.hushed() {
 			s.mu.Unlock()
 			return false
 		}
-		if !now.Before(end) {
+		if !end.IsZero() && !now.Before(end) {
 			// The answer starts now: the acknowledgement and the other keep-alive timers count from here.
 			s.began = now
 			s.mu.Unlock()
@@ -647,13 +707,21 @@ func (s *speaker) hold(ctx context.Context, d time.Duration) bool {
 		if now.Sub(s.since(s.last)) >= s.c.bufferEvery {
 			s.buffer()
 		}
-		next := earliest(end, s.since(s.last).Add(s.c.bufferEvery))
+		next := s.since(s.last).Add(s.c.bufferEvery)
+		var released <-chan struct{} // wakes the wait when prev closes; nil (never) once it has
+		if end.IsZero() {
+			released = prev
+		} else {
+			next = earliest(end, next)
+		}
 		s.mu.Unlock()
 		t := time.NewTimer(max(next.Sub(now), time.Millisecond))
 		select {
 		case <-ctx.Done():
 			t.Stop()
 			return false
+		case <-released:
+			t.Stop()
 		case <-t.C:
 		}
 	}
@@ -835,6 +903,42 @@ func (c *Calls) hangupAfter(callSID, text string) {
 	})
 }
 
+// hangupLater hangs up once the voice has had time to say a goodbye, unless the owner speaks first: Calls.plan calls
+// the hang-up off on any utterance in that time ("oh wacht, nog één ding").
+func (c *Calls) hangupLater(l *live, callSID, text string) {
+	wait := c.speechWait(text)
+	if wait <= 0 {
+		c.hangup(c.baseCtx, callSID)
+		return
+	}
+	ctx, cancel := context.WithCancel(c.baseCtx)
+	h := &hangup{cancel: cancel}
+	c.mu.Lock()
+	if l.hanging != nil {
+		l.hanging.cancel()
+	}
+	l.hanging = h
+	c.mu.Unlock()
+	c.spawn(func() {
+		defer cancel()
+		select {
+		case <-c.after(wait):
+		case <-ctx.Done():
+			return
+		}
+		// Calls.plan cancels under c.mu, so this check and a cancel never cross.
+		c.mu.Lock()
+		off := ctx.Err() != nil
+		if l.hanging == h {
+			l.hanging = nil
+		}
+		c.mu.Unlock()
+		if !off {
+			c.hangup(c.baseCtx, callSID)
+		}
+	})
+}
+
 // speechTime estimates how long the voice needs for text: about 150 words a minute plus a margin.
 func speechTime(text string) time.Duration {
 	return 2*time.Second + time.Duration(len(strings.Fields(text)))*400*time.Millisecond
@@ -882,6 +986,9 @@ const (
 	kindHesitation = "hesitation" // the owner trailed off: a model turn that first waits for the rest (see speaker.hold)
 	kindNews       = "news"       // the silence prompt while news waits: a cue turn tells it
 	kindVerify     = "verify"     // a later request on a verification call: ended at once
+	// kindNoUser is a request whose last message is not the owner's (the agent's own, as when ElevenLabs asks again
+	// after a tool call): a running turn carries on in it, otherwise skip_turn. It never counts as a silence.
+	kindNoUser = "no_user"
 	// kindSilenceAdopted is the silence prompt while a turn runs (or waits after a hesitation): the turn carries on in
 	// the new request.
 	kindSilenceAdopted = "silence_adopted"
@@ -896,7 +1003,7 @@ const (
 
 // newsCue is the instruction of the model turn that tells news on a silence. It is English like every instruction; the
 // voice prompt sets the spoken language.
-const newsCue = "(Nobody spoke. News came in while you were talking: tell the owner briefly, then ask if there is anything else.)"
+const newsCue = "(Nobody spoke. News came in while you were talking (listed under New): tell the owner briefly, then ask if there is anything else.)"
 
 // ask is what a model turn answers.
 type ask struct {
@@ -918,7 +1025,7 @@ type turnPlan struct {
 
 func (c *Calls) turn(ctx context.Context, f Frame) {
 	start := c.now()
-	utter := lastUser(f.Messages)
+	utter, fromOwner := lastUser(f.Messages)
 	if isSilence(utter) {
 		// ElevenLabs sends "..." when the owner has been quiet for a while: that is a pause, not something to answer.
 		utter = ""
@@ -930,6 +1037,7 @@ func (c *Calls) turn(ctx context.Context, f Frame) {
 		c.endUnknown(ctx, f)
 		return
 	}
+	l.lastRequest = start
 	verify := l.verify != ""
 	sid := l.call.ProviderCallID
 	outbound := l.call.Direction == Outbound
@@ -968,7 +1076,7 @@ func (c *Calls) turn(ctx context.Context, f Frame) {
 	case verify:
 		p.kind = kindVerify
 	default:
-		p = c.plan(l, f, utter)
+		p = c.plan(l, f, utter, fromOwner)
 	}
 	c.mu.Unlock()
 	c.log.Info("jarvis: request", "call", f.CallID, "kind", p.kind, "messages", len(f.Messages))
@@ -1040,7 +1148,7 @@ func (c *Calls) turn(ctx context.Context, f Frame) {
 		sp.say(p.line)
 		sp.finish()
 		if p.hang {
-			c.hangupAfter(sid, p.line)
+			c.hangupLater(l, sid, p.line)
 		}
 		return
 	}
@@ -1049,15 +1157,26 @@ func (c *Calls) turn(ctx context.Context, f Frame) {
 }
 
 // plan decides how to answer a request after the first turn of a call that is not a verification call; utter is ""
-// for the silence prompt. It updates the call's silence count. The caller holds c.mu.
-func (c *Calls) plan(l *live, f Frame, utter string) turnPlan {
+// for the silence prompt, and fromOwner is false when the request does not end with an owner message at all. It
+// updates the call's silence count and calls off a hang-up the owner speaks into. The caller holds c.mu.
+func (c *Calls) plan(l *live, f Frame, utter string, fromOwner bool) turnPlan {
 	lines := phrasesFor(l.lang)
+	if !fromOwner {
+		// Not a silence prompt: nothing the owner said or did not say. A running turn carries on in it.
+		if l.turnSp != nil {
+			return turnPlan{kind: kindNoUser, adopt: l.turnSp}
+		}
+		return turnPlan{kind: kindNoUser, skip: true}
+	}
 	if utter == "" {
 		switch {
 		case l.turnSp != nil:
 			// A turn is still answering the owner, or waiting for the rest of their sentence: it carries on in this
 			// request rather than going unheard.
 			return turnPlan{kind: kindSilenceAdopted, adopt: l.turnSp}
+		case l.hanging != nil:
+			// The goodbye is being spoken and the call hangs up after it: nothing to add.
+			return turnPlan{kind: kindSilence, skip: true}
 		case len(l.inject) > l.delivered:
 			return turnPlan{kind: kindNews, ask: ask{text: newsCue, cue: true}}
 		}
@@ -1075,10 +1194,17 @@ func (c *Calls) plan(l *live, f Frame, utter string) turnPlan {
 		return turnPlan{kind: kindRetry, adopt: l.turnSp}
 	}
 	l.silences = 0
+	if l.hanging != nil {
+		// The owner speaks while the goodbye is said ("oh wacht, nog één ding"): the call goes on.
+		l.hanging.cancel()
+		l.hanging = nil
+		c.log.Info("jarvis: hang-up called off", "call", l.call.ID)
+	}
 	text := utter
-	if l.turnHeld != "" && !continues(utter, l.turnHeld) {
-		// The running turn is still waiting on words the owner trailed off on: this is the rest of that sentence.
-		text = l.turnHeld + " " + utter
+	if l.turnPending != "" && !continues(utter, l.turnPending) {
+		// The running turn has not answered the owner's last words yet (they trailed off, or the model has not
+		// spoken): this carries on from them, so both are answered together.
+		text = l.turnPending + " " + utter
 	}
 	a := ask{text: text, raw: utter}
 	if hesitates(text) && !bareGreeting(text) {
@@ -1162,19 +1288,40 @@ var closings = []string{
 	"that's it", "that is it", "leave it", "i'm done", "we're done", "all good", "see you", "good night",
 }
 
+// continuations say the owner is not done, even next to a closing ("nee, wacht", "no thanks, but one more thing").
+var continuations = []string{"wacht", "maar", "nog", "ook", "eerst", "eigenlijk", "wait", "but", "also", "first", "actually", "one more"}
+
+// courtesies are parting words that contain a continuation word ("nog een fijne dag", "jij ook"). They do not make an
+// utterance a closing, but they do not keep one from being one.
+var courtesies = []string{"nog een fijne dag", "nog een fijne avond", "nog een prettige dag", "fijne dag nog", "fijne avond nog",
+	"jij ook", "u ook", "you too"}
+
+// partingPhrases are closings and courtesies, longest first, as isClosing takes them out of an utterance.
+var partingPhrases = func() []string {
+	ps := append(slices.Clone(closings), courtesies...)
+	slices.SortStableFunc(ps, func(a, b string) int { return len(b) - len(a) })
+	return ps
+}()
+
 // isClosing reports whether an utterance says the owner is done ("nee, bedankt", "no thanks, that's all"). A question
-// ("is that all?") never is.
+// ("is that all?") never is, and neither is one that also says the owner goes on: what is left once the closings and
+// courtesies are taken out holds a continuation word ("nee, wacht", "dat was het, maar ..."). Phrases like "laat maar"
+// or "nog een fijne dag" are taken out first, so their "maar" and "nog" do not count.
 func isClosing(utter string) bool {
 	if strings.HasSuffix(strings.TrimSpace(utter), "?") {
 		return false
 	}
 	joined := " " + strings.Join(wordList(utter), " ") + " "
-	for _, p := range closings {
-		if strings.Contains(joined, " "+p+" ") {
-			return true
+	if !slices.ContainsFunc(closings, func(p string) bool { return strings.Contains(joined, " "+p+" ") }) {
+		return false
+	}
+	rest := joined
+	for _, p := range partingPhrases {
+		for strings.Contains(rest, " "+p+" ") {
+			rest = strings.ReplaceAll(rest, " "+p+" ", " ")
 		}
 	}
-	return false
+	return !slices.ContainsFunc(continuations, func(w string) bool { return strings.Contains(rest, " "+w+" ") })
 }
 
 // EndAfterReply marks the call to end once the running turn's reply has been spoken (the end_call tool). It refuses
@@ -1214,8 +1361,8 @@ func (c *Calls) awaitOpener(ctx context.Context, l *live, botName, lang string) 
 // first waits hesitationWait for the rest of the sentence: a new utterance in that window supersedes this turn.
 func (c *Calls) modelTurn(ctx context.Context, l *live, f Frame, sp *speaker, a ask, sid string) {
 	// A new request for this call means the owner barged in: cancel the in-flight turn and wait for it to release
-	// chat's run slot before starting this one. The superseded turn stays silent; it leaves only a note of the tools
-	// it already ran.
+	// chat's run slot before starting this one. The superseded turn stays silent; what it leaves in the history is
+	// settled in interrupted.
 	tctx, tcancel := context.WithCancel(ctx)
 	sp.quiet = tctx
 	myDone := make(chan struct{})
@@ -1226,11 +1373,7 @@ func (c *Calls) modelTurn(ctx context.Context, l *live, f Frame, sp *speaker, a 
 	c.mu.Lock()
 	prevCancel, prevDone := l.turnCancel, l.turnDone
 	l.turnCancel, l.turnDone = tcancel, myDone
-	l.turnSp, l.turnRaw, l.turnMsgs, l.turnUtter = sp, a.raw, len(f.Messages), owner
-	l.turnHeld = ""
-	if a.held {
-		l.turnHeld = a.text
-	}
+	l.turnSp, l.turnRaw, l.turnMsgs, l.turnUtter, l.turnPending = sp, a.raw, len(f.Messages), owner, owner
 	l.hangFor = nil // an accepted end_call belongs to the turn that asked for it
 	botID := l.call.BotID
 	if l.silenced {
@@ -1239,43 +1382,55 @@ func (c *Calls) modelTurn(ctx context.Context, l *live, f Frame, sp *speaker, a 
 	c.mu.Unlock()
 	defer func() {
 		tcancel()
+		if prevDone != nil {
+			// A newer turn waits on this one alone: never let go before the turn this one superseded has.
+			select {
+			case <-prevDone:
+			case <-ctx.Done():
+			}
+		}
 		close(myDone)
 		c.mu.Lock()
 		if l.turnDone == myDone {
 			l.turnCancel, l.turnDone = nil, nil
-			l.turnSp, l.turnRaw, l.turnMsgs, l.turnUtter, l.turnHeld = nil, "", 0, "", ""
+			l.turnSp, l.turnRaw, l.turnMsgs, l.turnUtter, l.turnPending = nil, "", 0, "", ""
 		}
 		c.mu.Unlock()
 	}()
-	// ElevenLabs gives a custom LLM a few seconds for its first chunk: send one at once, before anything that can wait.
 	sp.mu.Lock()
+	// Once the model speaks, the owner's words are being answered: an utterance from then on stands on its own.
+	sp.onWords = func() {
+		c.mu.Lock()
+		if l.turnDone == myDone {
+			l.turnPending = ""
+		}
+		c.mu.Unlock()
+	}
+	// ElevenLabs gives a custom LLM a few seconds for its first chunk: send one at once, before anything that can wait.
 	sp.buffer()
 	sp.mu.Unlock()
-	if !a.held {
-		go sp.keepAlive(tctx, tcancel)
-	}
 	if prevCancel != nil {
 		prevCancel()
-		select {
-		case <-prevDone:
-		case <-ctx.Done():
+	}
+	if a.held {
+		// Only buffer chunks while the superseded turn lets go and while waiting for the rest of the sentence;
+		// superseded in turn, this one goes without a word (the newer one answers its words too).
+		if !sp.hold(tctx, prevDone, c.hesitationWait) {
 			return
+		}
+		go sp.keepAlive(tctx, tcancel)
+	} else {
+		go sp.keepAlive(tctx, tcancel)
+		if prevDone != nil {
+			select {
+			case <-prevDone:
+			case <-ctx.Done():
+				return
+			}
 		}
 	}
 	if tctx.Err() != nil {
 		return
-	}
-	if a.held {
-		// Only buffer chunks while waiting; superseded, the turn goes without a word (the newer one answers).
-		if !sp.hold(tctx, c.hesitationWait) {
-			return
-		}
-		c.mu.Lock()
-		if l.turnDone == myDone {
-			l.turnHeld = "" // answering now: a later utterance is a new sentence
-		}
-		c.mu.Unlock()
-		go sp.keepAlive(tctx, tcancel)
 	}
 	bot, err := c.host.Bot(tctx, botID)
 	if err == nil {
@@ -1299,17 +1454,13 @@ func (c *Calls) modelTurn(ctx context.Context, l *live, f Frame, sp *speaker, a 
 	brief := l.brief
 	seen := len(l.inject)
 	if seen > 0 {
-		lines := make([]string, 0, seen)
-		for _, in := range l.inject {
-			lines = append(lines, in.bot+" wants to tell the owner: "+chat.Fence("call reason", in.reason))
-		}
-		brief += "\n\nNews since the call started:\n- " + strings.Join(lines, "\n- ")
+		brief += "\n\n" + newsBrief(l.inject, min(l.delivered, seen))
 	}
 	history := append([]chat.VoiceLine(nil), l.history...)
 	lang := l.lang
 	c.mu.Unlock()
 	reply, err := c.host.VoiceTurn(tctx, chat.VoiceRequest{BotID: bot.ID, CallID: f.CallID, Text: a.text, Cue: a.cue, Brief: brief,
-		History: history, Language: lang, OnText: sp.say, OnTool: sp.filler})
+		History: history, Language: lang, OnText: sp.answer, OnTool: sp.filler})
 	if sp.timedOut() {
 		// The keep-alive gave up at the deadline: the owner heard tooLong (shall I run it as a background task?) and the
 		// turn is closed. The next turn learns what was asked and which tools already ran, so a "yes" starts it.
@@ -1331,12 +1482,7 @@ func (c *Calls) modelTurn(ctx context.Context, l *live, f Frame, sp *speaker, a 
 		return
 	}
 	if tctx.Err() != nil {
-		// Superseded or aborted: no more speech. Keep a note of tools that already ran so the next turn knows.
-		if ran := sp.toolsRan(); len(ran) > 0 {
-			c.mu.Lock()
-			l.remember(chat.VoiceLine{Role: "assistant", Text: "(I was interrupted. These tools already ran: " + strings.Join(ran, ", ") + ".)"})
-			c.mu.Unlock()
-		}
+		c.interrupted(l, sp, a)
 		return
 	}
 	if err != nil {
@@ -1370,9 +1516,56 @@ func (c *Calls) modelTurn(ctx context.Context, l *live, f Frame, sp *speaker, a 
 	}
 	sp.finish()
 	if hang {
-		// end_call: hang up once the goodbye has been spoken.
-		c.hangupAfter(sid, sp.spoken())
+		// end_call: hang up once the goodbye has been spoken, unless the owner speaks first.
+		c.hangupLater(l, sid, sp.spoken())
 	}
+}
+
+// interrupted keeps what a model turn that was superseded (or aborted) after it asked the model leaves behind, so the
+// next turn knows: the owner's words, with what the turn already said or, if it said nothing of its own, the tools it
+// already ran. A turn that neither spoke nor ran a tool leaves nothing: its words went in front of the newer turn's
+// (see Calls.plan), and remembering them here too would hand the model the same words twice.
+func (c *Calls) interrupted(l *live, sp *speaker, a ask) {
+	spoke, said, ran := sp.progress()
+	toolsNote := ""
+	if len(ran) > 0 {
+		toolsNote = " These tools already ran: " + strings.Join(ran, ", ") + "."
+	}
+	var note string
+	switch {
+	case spoke:
+		note = strings.TrimSpace(said) + " (I was interrupted here." + toolsNote + ")"
+	case len(ran) > 0:
+		note = "(I was interrupted." + toolsNote + ")"
+	default:
+		return
+	}
+	c.mu.Lock()
+	l.remember(chat.VoiceLine{Role: "user", Text: a.text}, chat.VoiceLine{Role: "assistant", Text: note})
+	c.mu.Unlock()
+}
+
+// newsBrief lists the news folded into the call for the bot's brief, fenced: the first told items as news the bot
+// already had in a finished turn, the rest as new, so a turn tells only what is new.
+func newsBrief(inject []injected, told int) string {
+	item := func(in injected) string {
+		return in.bot + " wants to tell the owner: " + chat.Fence("call reason", in.reason)
+	}
+	var b strings.Builder
+	b.WriteString("News since the call started.")
+	if told > 0 {
+		b.WriteString("\nAlready told (do not repeat it unless the owner asks):")
+		for _, in := range inject[:told] {
+			b.WriteString("\n- " + item(in))
+		}
+	}
+	if told < len(inject) {
+		b.WriteString("\nNew (not told yet):")
+		for _, in := range inject[told:] {
+			b.WriteString("\n- " + item(in))
+		}
+	}
+	return b.String()
 }
 
 // greetingWords only answer the phone; an utterance made of nothing else is a bare greeting.
@@ -1469,16 +1662,18 @@ func IsVoicemail(utter string) bool {
 	return false
 }
 
-func lastUser(ms []LLMMessage) string {
+// lastUser returns the owner's last message, trimmed, and whether the request ends with one: false when the last
+// message (tool results aside) is the agent's own, as when ElevenLabs asks again after a tool call, or there is none.
+func lastUser(ms []LLMMessage) (string, bool) {
 	for i := len(ms) - 1; i >= 0; i-- {
 		switch ms[i].Role {
 		case "user":
-			return strings.TrimSpace(ms[i].Content)
+			return strings.TrimSpace(ms[i].Content), true
 		case "assistant":
-			return ""
+			return "", false
 		}
 	}
-	return ""
+	return "", false
 }
 
 func firstSentence(s string) string {
@@ -1634,9 +1829,10 @@ func (c *Calls) status(ctx context.Context, f Frame) {
 	c.finish(ctx, l, st, f.DurationSecs)
 }
 
-// monitor ends the call even if the post-call webhook never arrives: every pollEvery it asks Twilio for the call's
-// status by its SID (both directions), then ElevenLabs for the conversation's, and it enforces a hard ceiling.
-// finish is idempotent, so whichever path ends the call first wins.
+// monitor ends the call even if the post-call webhook never arrives: every pollEvery it hangs up an answered call that
+// has gone deadAfter without an LLM request (hangUpDead), asks Twilio for the call's status by its SID (both
+// directions), then ElevenLabs for the conversation's, and it enforces a hard ceiling. finish is idempotent, so
+// whichever path ends the call first wins.
 func (c *Calls) monitor(l *live) {
 	ceiling := c.after(maxCallDuration)
 	for {
@@ -1654,9 +1850,37 @@ func (c *Calls) monitor(l *live) {
 			}
 			return
 		case <-c.after(pollEvery):
-			c.poll(l)
+			if !c.hangUpDead(l) {
+				c.poll(l)
+			}
 		}
 	}
+}
+
+// hangUpDead hangs up an answered call that has had no LLM request for deadAfter and ends it as completed. ElevenLabs
+// asks for a turn at least every 10 s while the call is open (the silence prompt), so such a call is no longer heard;
+// without this it would run to the 30-minute ceiling. It reports whether it ended the call.
+func (c *Calls) hangUpDead(l *live) bool {
+	c.mu.Lock()
+	if l.ended || l.call.AnsweredAt == 0 {
+		c.mu.Unlock()
+		return false
+	}
+	last := time.UnixMilli(l.call.AnsweredAt)
+	if l.lastRequest.After(last) {
+		last = l.lastRequest
+	}
+	quiet := c.now().Sub(last)
+	id, sid := l.call.ID, l.call.ProviderCallID
+	c.mu.Unlock()
+	if quiet < c.deadAfter {
+		return false
+	}
+	c.log.Info("jarvis: no requests, hanging up", "call", id, "quiet_s", int(quiet.Seconds()))
+	if c.finish(c.baseCtx, l, StatusCompleted, 0) {
+		c.hangup(c.baseCtx, sid)
+	}
+	return true
 }
 
 // poll checks the carrier, then the voice provider, and ends the call if either reports it over.
