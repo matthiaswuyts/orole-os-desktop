@@ -224,6 +224,16 @@ func TestScreenHubReleasesHeldInputWhenTheTakeoverEnds(t *testing.T) {
 	got.wait(t, hasBytes(pointerDown))
 
 	h.TakeoverEnded("b1") // still taken over: nothing is released
+	h.bg.Wait()
+	h.mu.Lock()
+	s := h.screens[id]
+	h.mu.Unlock()
+	s.inMu.Lock()
+	held := len(s.filter.heldKeys) == 1 && s.filter.buttons == 1
+	s.inMu.Unlock()
+	if !held {
+		t.Fatal("TakeoverEnded released input while the user still holds the lock")
+	}
 	taken.Store(false)
 	h.TakeoverEnded("b1")
 	want := rfbConcat(rfbKey(0), []byte{5, 0, 0, 3, 0, 4})
@@ -272,7 +282,9 @@ func TestScreenHubReleasesHeldInputWhenTheScreenCloses(t *testing.T) {
 }
 
 func TestScreenHubReleaseIsBestEffortWhenTheGuestEnded(t *testing.T) {
-	h := NewScreenHub(func(ScreenChunk) {}, func(string) bool { return true })
+	log := &chunkLog{}
+	h := NewScreenHub(log.publish, func(string) bool { return true })
+	t.Cleanup(h.CloseAll)
 	hostEnd, guestEnd := net.Pipe()
 	id := h.Open("b1", hostEnd)
 	got := guestReader(guestEnd)
@@ -281,42 +293,90 @@ func TestScreenHubReleaseIsBestEffortWhenTheGuestEnded(t *testing.T) {
 	}
 	got.wait(t, hasBytes(rfbKey(1)))
 	_ = guestEnd.Close() // the stream fails while input is allowed and a key is held
-	deadline := time.Now().Add(5 * time.Second)
-	for !errors.Is(h.Input(id, nil), ErrNoScreen) {
-		if time.Now().After(deadline) {
-			t.Fatal("screen not dropped")
-		}
-		time.Sleep(2 * time.Millisecond)
+	log.wait(t, closedFor(id))
+	if err := h.Input(id, nil); !errors.Is(err, ErrNoScreen) {
+		t.Fatalf("screen still registered: %v", err)
+	}
+}
+
+// stalledScreen opens a screen whose guest takes the handshake and a key down, then stops reading.
+func stalledScreen(t *testing.T, log *chunkLog) (*ScreenHub, string) {
+	t.Helper()
+	h := NewScreenHub(log.publish, func(string) bool { return true })
+	h.releaseTimeout = 20 * time.Millisecond
+	t.Cleanup(h.CloseAll)
+	hostEnd, guestEnd := net.Pipe()
+	t.Cleanup(func() { _ = guestEnd.Close() })
+	id := h.Open("b1", hostEnd)
+	in := rfbConcat(rfbHandshake(), rfbKey(1))
+	read := make(chan struct{})
+	go func() { _, _ = io.ReadFull(guestEnd, make([]byte, len(in))); close(read) }()
+	if err := h.Input(id, in); err != nil {
+		t.Fatal(err)
+	}
+	<-read
+	return h, id
+}
+
+func TestScreenHubInputToAStalledGuestIsBounded(t *testing.T) {
+	log := &chunkLog{}
+	h, id := stalledScreen(t, log)
+	if err := h.Input(id, []byte{4, 1, 0, 0, 0, 0, 0, 0x41}); !errors.Is(err, errScreenStalled) {
+		t.Fatalf("err = %v", err)
+	}
+	cs := log.wait(t, closedFor(id))
+	if c := cs[len(cs)-1]; c.Error != "the screen stopped responding" {
+		t.Fatalf("closed with %q", c.Error)
+	}
+	if err := h.Input(id, nil); !errors.Is(err, ErrNoScreen) {
+		t.Fatalf("stalled screen still open: %v", err)
 	}
 }
 
 func TestScreenHubCloseIsBoundedWhenTheGuestStopsReading(t *testing.T) {
-	for _, blockedInput := range []bool{false, true} {
-		h := NewScreenHub(func(ScreenChunk) {}, func(string) bool { return true })
-		h.releaseTimeout = 20 * time.Millisecond
-		hostEnd, guestEnd := net.Pipe()
-		id := h.Open("b1", hostEnd)
-		in := rfbConcat(rfbHandshake(), rfbKey(1))
-		go func() { _, _ = io.ReadFull(guestEnd, make([]byte, len(in))) }() // then the guest stops reading
-		if err := h.Input(id, in); err != nil {
-			t.Fatal(err)
-		}
+	for _, withInput := range []bool{false, true} {
+		h, id := stalledScreen(t, &chunkLog{})
 		inputDone := make(chan struct{})
-		if blockedInput {
-			go func() { _ = h.Input(id, []byte{4, 1, 0, 0, 0, 0, 0, 0x41}); close(inputDone) }() // blocks in Write
-			time.Sleep(10 * time.Millisecond)
+		if withInput { // races Close for inMu; either order must end in bounded time
+			go func() { _ = h.Input(id, []byte{4, 1, 0, 0, 0, 0, 0, 0x41}); close(inputDone) }()
 		} else {
 			close(inputDone)
 		}
 		closed := make(chan struct{})
-		go func() { h.Close(id); close(closed) }() // the key up release blocks too
+		go func() { h.Close(id); close(closed) }() // the key up release cannot be written either
 		for _, ch := range []chan struct{}{closed, inputDone} {
 			select {
 			case <-ch:
 			case <-time.After(5 * time.Second):
-				t.Fatalf("blockedInput=%v: Close or Input blocked on a guest that stopped reading", blockedInput)
+				t.Fatalf("withInput=%v: Close or Input blocked on a guest that stopped reading", withInput)
 			}
 		}
+	}
+}
+
+func TestScreenHubClosesStalledScreensInParallel(t *testing.T) {
+	h := NewScreenHub(func(ScreenChunk) {}, func(string) bool { return true })
+	h.releaseTimeout = 200 * time.Millisecond
+	var guests []net.Conn
+	for _, bot := range []string{"b1", "b2", "b3", "b4"} {
+		hostEnd, guestEnd := net.Pipe()
+		guests = append(guests, guestEnd)
+		id := h.Open(bot, hostEnd)
+		in := rfbConcat(rfbHandshake(), rfbKey(1))
+		go func() { _, _ = io.ReadFull(guestEnd, make([]byte, len(in))) }()
+		if err := h.Input(id, in); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Cleanup(func() {
+		for _, g := range guests {
+			_ = g.Close()
+		}
+	})
+	start := time.Now()
+	h.CloseAll() // every release write stalls for releaseTimeout
+	if d := time.Since(start); d >= 4*h.releaseTimeout {
+		t.Fatalf("CloseAll took %v: screens closed one after another", d)
 	}
 }
 

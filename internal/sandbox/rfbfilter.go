@@ -19,6 +19,7 @@ const (
 
 	encExtendedMouseButtons = -316 // makes PointerEvent 7 bytes; stripped so every PointerEvent is 6
 	encXvp                  = -309 // lets the client power off, reboot or reset the guest; stripped
+	encContinuousUpdates    = -313 // lets the guest push updates unasked; stripped so the stream stays client-pull
 
 	encExtendedClipboard = -1063131698 // 0xC0A1E5CE; negative ClientCutText lengths are legal only after this
 )
@@ -142,8 +143,10 @@ func (f *rfbFilter) next() (n int, forward []byte, err error) {
 			}
 		}
 		return size, stripEncodings(b[:size]), nil
-	case 3, 150: // FramebufferUpdateRequest, EnableContinuousUpdates
+	case 3: // FramebufferUpdateRequest
 		return fixed(10)
+	case 150: // EnableContinuousUpdates: dropped, the guest sends an update only when the viewer asks for one
+		return drop(10)
 	case 248: // ClientFence
 		if len(b) < 9 {
 			return 0, nil, nil
@@ -219,7 +222,7 @@ func (f *rfbFilter) keyEvent() (int, []byte, error) {
 	}
 	if !down && f.heldKeys[sym] {
 		delete(f.heldKeys, sym)
-		return 8, b[:8], nil
+		return 8, keyUp(sym), nil // canonical: the client's padding never reaches the guest
 	}
 	return 8, nil, nil
 }
@@ -252,6 +255,13 @@ func (f *rfbFilter) qemuKeyEvent() (int, []byte, error) {
 		return 12, qemuKeyUp(recorded, code), nil // canonical: the client's other bytes never reach the guest
 	}
 	return 12, nil, nil
+}
+
+// keyUp is the KeyEvent releasing keysym sym.
+func keyUp(sym uint32) []byte {
+	m := []byte{4, 0, 0, 0, 0, 0, 0, 0}
+	binary.BigEndian.PutUint32(m[4:], sym)
+	return m
 }
 
 // qemuKeyUp is the QEMU extended key event releasing keycode code (keysym sym).
@@ -300,9 +310,7 @@ func (f *rfbFilter) Release() []byte {
 	}
 	sort.Slice(syms, func(i, j int) bool { return syms[i] < syms[j] })
 	for _, s := range syms {
-		m := []byte{4, 0, 0, 0, 0, 0, 0, 0}
-		binary.BigEndian.PutUint32(m[4:], s)
-		out = append(out, m...)
+		out = append(out, keyUp(s)...)
 	}
 	codes := make([]uint32, 0, len(f.heldQemu))
 	for c := range f.heldQemu {
@@ -319,13 +327,14 @@ func (f *rfbFilter) Release() []byte {
 	return out
 }
 
-// stripEncodings removes pseudo-encodings that would change message sizes or allow power actions.
+// stripEncodings removes pseudo-encodings that would change message sizes, allow power actions or let the guest
+// push screen updates the viewer did not request.
 func stripEncodings(msg []byte) []byte {
 	out := make([]byte, 4, len(msg))
 	copy(out, msg[:4])
 	for i := 4; i+4 <= len(msg); i += 4 {
 		switch int32(binary.BigEndian.Uint32(msg[i : i+4])) {
-		case encExtendedMouseButtons, encXvp:
+		case encExtendedMouseButtons, encXvp, encContinuousUpdates:
 			continue
 		}
 		out = append(out, msg[i:i+4]...)

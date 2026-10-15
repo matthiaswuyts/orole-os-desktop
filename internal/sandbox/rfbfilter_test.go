@@ -46,8 +46,12 @@ func TestRFBFilter(t *testing.T) {
 		{name: "handshake passes, client init forced shared", in: [][]byte{rfbHandshake()}, want: wantHandshake},
 		{name: "wrong protocol version", in: [][]byte{[]byte("RFB 003.003\n")}, wantErr: true},
 		{name: "security type other than None", in: [][]byte{append([]byte("RFB 003.008\n"), 2)}, wantErr: true},
-		{name: "view messages pass while view-only", in: [][]byte{rfbHandshake(), fbReq, pixelFormat, fence, {150, 1, 0, 0, 0, 0, 4, 0, 3, 0}},
-			want: rfbConcat(wantHandshake, fbReq, pixelFormat, fence, []byte{150, 1, 0, 0, 0, 0, 4, 0, 3, 0})},
+		{name: "view messages pass while view-only", in: [][]byte{rfbHandshake(), fbReq, pixelFormat, fence},
+			want: rfbConcat(wantHandshake, fbReq, pixelFormat, fence)},
+		{name: "enable continuous updates always dropped", allow: true, in: [][]byte{rfbHandshake(), {150, 1, 0, 0, 0, 0, 4, 0, 3, 0}, fbReq},
+			want: rfbConcat(wantHandshake, fbReq)},
+		{name: "continuous updates encoding stripped", in: [][]byte{rfbHandshake(), rfbEncodings(7, -313, 16)},
+			want: rfbConcat(wantHandshake, rfbEncodings(7, 16))},
 		{name: "key, pointer, clipboard and qemu key dropped while view-only", in: [][]byte{rfbHandshake(), rfbKey(1), pointer, rfbCutText(2, 2), qemuKey, fbReq},
 			want: rfbConcat(wantHandshake, fbReq)},
 		{name: "key, pointer, clipboard and qemu key pass after take over", allow: true, in: [][]byte{rfbHandshake(), rfbKey(1), pointer, rfbCutText(2, 2), qemuKey},
@@ -350,5 +354,17 @@ func TestRFBFilterFenceOfExactly64Passes(t *testing.T) {
 	}
 	if !bytes.HasSuffix(out, fence) {
 		t.Fatalf("fence not forwarded: %v", out)
+	}
+}
+
+func TestRFBFilterKeyUpWhileViewOnlyIsCanonical(t *testing.T) {
+	allow := true
+	f := newRFBFilter(func() bool { return allow })
+	if _, err := f.Feed(rfbConcat(rfbHandshake(), rfbKey(1))); err != nil {
+		t.Fatal(err)
+	}
+	allow = false
+	if out, _ := f.Feed([]byte{4, 0, 0xab, 0xcd, 0, 0, 0xff, 0x0d}); !bytes.Equal(out, rfbKey(0)) {
+		t.Fatalf("held up = %v, want %v", out, rfbKey(0))
 	}
 }

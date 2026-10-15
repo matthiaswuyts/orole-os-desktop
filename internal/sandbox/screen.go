@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -29,14 +30,15 @@ var (
 )
 
 const (
-	// ScreenChunkMax bounds one sandbox.screen.data event and one Input. RFB is client-pull (the guest sends an
-	// update only after the viewer asks for one), so a stream cannot flood the IPC queue.
+	// ScreenChunkMax bounds one sandbox.screen.data event and one Input. The RFB filter keeps the stream
+	// client-pull (it drops EnableContinuousUpdates and strips the ContinuousUpdates pseudo-encoding), so the guest
+	// sends an update only after the viewer asks for one and a stream cannot flood the IPC queue.
 	ScreenChunkMax = 128 << 10
 	// ScreenOpenTimeout bounds opening a guest screen stream in Connect; the open stream lives until closed.
 	ScreenOpenTimeout = 30 * time.Second
 	screensPerBot     = 2
-	// screenReleaseTimeout bounds how long ending a screen waits for the guest to take the key and button releases
-	// (and for an Input write already in progress); then the stream is closed regardless.
+	// screenReleaseTimeout bounds every write to the guest (input, key and button releases) and how long ending a
+	// screen waits for one in progress; a guest that does not take the bytes in time has its screen closed.
 	screenReleaseTimeout = 2 * time.Second
 )
 
@@ -51,7 +53,12 @@ type ScreenHub struct {
 	mu      sync.Mutex
 	screens map[string]*screenStream
 	order   []string // open ids, oldest first
+
+	bg sync.WaitGroup // TakeoverEnded releases in flight (tests wait on it)
 }
+
+// errScreenStalled is a guest write that did not complete within releaseTimeout.
+var errScreenStalled = errors.New("sandbox: the screen stopped responding")
 
 type screenStream struct {
 	id, botID string
@@ -64,6 +71,7 @@ type screenStream struct {
 	ended  bool // under inMu: the final release went out and rwc is closed
 
 	finishOnce sync.Once
+	stalled    atomic.Bool // a write timed out and closed rwc
 
 	pubMu  sync.Mutex // no data chunk is published after the closed chunk
 	closed bool
@@ -109,9 +117,7 @@ func (h *ScreenHub) Open(botID string, stream io.ReadWriteCloser) string {
 		h.removeLocked(o.id)
 	}
 	h.mu.Unlock()
-	for _, o := range evict {
-		h.finish(o, "the screen was opened somewhere else")
-	}
+	h.finishAll(evict, "the screen was opened somewhere else")
 	go h.pump(s)
 	return s.id
 }
@@ -140,14 +146,32 @@ func (h *ScreenHub) Input(id string, data []byte) error {
 		return err
 	}
 	if len(forward) > 0 {
-		_, err = s.rwc.Write(forward)
+		err = h.write(s, forward)
 	}
 	s.inMu.Unlock() // before drop: finish takes inMu for the final release
 	if err != nil {
-		h.drop(s, "the screen stream ended unexpectedly")
+		h.drop(s, writeFailure(err))
 		return err
 	}
 	return nil
+}
+
+// write sends p to the guest, closing the stream when the guest does not take it within releaseTimeout so a stalled
+// guest cannot pile up blocked Input calls. s.inMu must be held.
+func (h *ScreenHub) write(s *screenStream, p []byte) error {
+	t := time.AfterFunc(h.releaseTimeout, func() { s.stalled.Store(true); _ = s.rwc.Close() })
+	_, err := s.rwc.Write(p)
+	if !t.Stop() && s.stalled.Load() {
+		return errScreenStalled
+	}
+	return err
+}
+
+func writeFailure(err error) string {
+	if errors.Is(err, errScreenStalled) {
+		return "the screen stopped responding"
+	}
+	return "the screen stream ended unexpectedly"
 }
 
 // TakeoverEnded releases, in the guest, every key and pointer button the user still holds down on botID's screens,
@@ -163,19 +187,19 @@ func (h *ScreenHub) TakeoverEnded(botID string) {
 	}
 	h.mu.Unlock()
 	for _, s := range mine {
-		go func() {
+		h.bg.Go(func() {
 			s.inMu.Lock()
 			var err error
 			if !s.ended && !h.takenOver(botID) {
 				if rel := s.filter.Release(); len(rel) > 0 {
-					_, err = s.rwc.Write(rel)
+					err = h.write(s, rel)
 				}
 			}
 			s.inMu.Unlock()
 			if err != nil {
-				h.drop(s, "the screen stream ended unexpectedly")
+				h.drop(s, writeFailure(err))
 			}
-		}()
+		})
 	}
 }
 
@@ -212,9 +236,16 @@ func (h *ScreenHub) closeWhere(match func(*screenStream) bool, reason string) {
 		}
 	}
 	h.mu.Unlock()
+	h.finishAll(gone, reason)
+}
+
+// finishAll ends screens in parallel (each waits at most about releaseTimeout on its guest) and waits for all.
+func (h *ScreenHub) finishAll(gone []*screenStream, reason string) {
+	var wg sync.WaitGroup
 	for _, s := range gone {
-		h.finish(s, reason)
+		wg.Go(func() { h.finish(s, reason) })
 	}
+	wg.Wait()
 }
 
 func (h *ScreenHub) pump(s *screenStream) {
@@ -226,7 +257,10 @@ func (h *ScreenHub) pump(s *screenStream) {
 		}
 		if err != nil {
 			reason := ""
-			if !errors.Is(err, io.EOF) {
+			switch {
+			case s.stalled.Load(): // the read failed because a stalled write closed the stream
+				reason = writeFailure(errScreenStalled)
+			case !errors.Is(err, io.EOF):
 				reason = "the screen stream ended unexpectedly"
 			}
 			h.drop(s, reason)

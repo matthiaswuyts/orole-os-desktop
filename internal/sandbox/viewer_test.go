@@ -143,3 +143,77 @@ func TestViewerLeaseExpiryReleasesAnAbandonedTakeover(t *testing.T) {
 		t.Fatal("takeover not released on lease expiry")
 	}
 }
+
+// manualTimers replaces ViewerLeases.afterFunc: callbacks run only when the test fires them.
+type manualTimers struct {
+	mu  sync.Mutex
+	fns []func()
+}
+
+func (m *manualTimers) afterFunc(_ time.Duration, f func()) *time.Timer {
+	m.mu.Lock()
+	m.fns = append(m.fns, f)
+	m.mu.Unlock()
+	return time.NewTimer(time.Hour)
+}
+
+func (m *manualTimers) fire(i int) {
+	m.mu.Lock()
+	f := m.fns[i]
+	m.mu.Unlock()
+	f()
+}
+
+func TestViewerStaleExpiryAfterRenewalDoesNothing(t *testing.T) {
+	log := &viewerLog{}
+	timers := &manualTimers{}
+	var expired []string
+	v := NewViewerLeases(log.set, time.Minute)
+	v.afterFunc = timers.afterFunc
+	v.OnExpire(func(botID string) { expired = append(expired, botID) })
+	v.Watch("b1") // lease 0
+	v.Watch("b1") // renewed: lease 1
+	timers.fire(0)
+	if log.last() != "b1:on" || len(expired) != 0 {
+		t.Fatalf("stale expiry acted: last %q, expired %v", log.last(), expired)
+	}
+	v.Unwatch("b1")
+	v.Watch("b1") // lease 2
+	timers.fire(1)
+	if log.last() != "b1:on" || len(expired) != 0 {
+		t.Fatalf("expiry of an unwatched lease acted: last %q, expired %v", log.last(), expired)
+	}
+	timers.fire(2)
+	if log.last() != "b1:off" || len(expired) != 1 {
+		t.Fatalf("current lease did not expire: last %q, expired %v", log.last(), expired)
+	}
+}
+
+func TestViewerRenewalRacingExpiryEndsWatched(t *testing.T) {
+	for range 200 {
+		log := &viewerLog{}
+		timers := &manualTimers{}
+		v := NewViewerLeases(log.set, time.Minute)
+		v.afterFunc = timers.afterFunc
+		var mu sync.Mutex
+		released := false
+		v.OnExpire(func(string) { mu.Lock(); released = true; mu.Unlock() })
+		v.Watch("b1")
+		var wg sync.WaitGroup
+		wg.Go(func() { timers.fire(0) })
+		wg.Go(func() { v.Watch("b1") })
+		wg.Wait()
+		// Either order ends with the renewed lease watching; an expiry, if it won, came before the renewal.
+		if log.last() != "b1:on" {
+			t.Fatalf("renewed lease ended unwatched (released=%v)", released)
+		}
+		log.mu.Lock()
+		calls := append([]string(nil), log.calls...)
+		log.mu.Unlock()
+		mu.Lock()
+		if released && (len(calls) != 3 || calls[1] != "b1:off") {
+			t.Fatalf("expiry interleaved with the renewal: %v", calls)
+		}
+		mu.Unlock()
+	}
+}
