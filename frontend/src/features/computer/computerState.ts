@@ -71,8 +71,8 @@ export function setupCopy(reason: string, detail = ""): { title: string; body: s
   }
 }
 
-/** Shown on the setup screen: what the user agrees to by turning it on. */
-export const SECURITY_NOTE = "A bot computer has open internet access and can reach your home network and services running on this PC. Logins you make on it stay on the bot's disk.";
+/** Shown in the Computer pane's footer: what a bot computer can reach and what it keeps. */
+export const SECURITY_NOTE = "The computer can reach the internet and your home network. Sites you sign into stay signed in for this bot.";
 
 const STEP_LABELS: Record<string, string> = { qemu: "Virtual machine software", image: "Linux system image" };
 

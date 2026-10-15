@@ -1,7 +1,7 @@
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { rfbs } = vi.hoisted(() => ({ rfbs: [] as Array<EventTarget & { target: HTMLElement; channel: unknown; options: unknown; viewOnly: boolean; scaleViewport: boolean; resizeSession: boolean; disconnect: () => void; focus: () => void }> }));
+const { rfbs } = vi.hoisted(() => ({ rfbs: [] as Array<EventTarget & { target: HTMLElement; channel: unknown; options: unknown; viewOnly: boolean; scaleViewport: boolean; resizeSession: boolean; disconnect: () => void; focus: () => void; blur: () => void }> }));
 
 vi.mock("@novnc/novnc", async () => {
   const { vi: v } = await import("vitest");
@@ -14,6 +14,7 @@ vi.mock("@novnc/novnc", async () => {
     resizeSession = true;
     disconnect = v.fn();
     focus = v.fn();
+    blur = v.fn();
     constructor(target: HTMLElement, channel: unknown, options: unknown) {
       super();
       this.target = target;
@@ -56,11 +57,41 @@ describe("live screen", () => {
     const { rerender } = render(<LiveScreen botId="b1" interactive={false} />);
     await act(async () => {});
     const rfb = rfbs[0]!;
+    act(() => { rfb.dispatchEvent(new Event("connect")); });
     rerender(<LiveScreen botId="b1" interactive />);
     expect(rfb.viewOnly).toBe(false);
     expect(rfb.focus).toHaveBeenCalled();
     rerender(<LiveScreen botId="b1" interactive={false} />);
     expect(rfb.viewOnly).toBe(true);
+    expect(rfb.blur).toHaveBeenCalled();
+  });
+
+  it("focuses the screen when it connects during a takeover", async () => {
+    render(<LiveScreen botId="b1" interactive />);
+    await act(async () => {});
+    const rfb = rfbs[0]!;
+    expect(rfb.focus).not.toHaveBeenCalled();
+    act(() => { rfb.dispatchEvent(new Event("connect")); });
+    expect(rfb.focus).toHaveBeenCalled();
+  });
+
+  it("ignores events from a screen it has replaced", async () => {
+    render(<LiveScreen botId="b1" interactive={false} />);
+    await act(async () => {});
+    act(() => { rfbs[0]!.dispatchEvent(new Event("disconnect")); });
+    fireEvent.click(screen.getByRole("button", { name: "Reconnect" }));
+    await act(async () => {});
+    act(() => { rfbs[1]!.dispatchEvent(new Event("connect")); });
+    act(() => { rfbs[0]!.dispatchEvent(new Event("disconnect")); });
+    expect(screen.queryByText(/The screen disconnected/)).toBeNull();
+  });
+
+  it("says why the screen disconnected when the stream gave a reason", async () => {
+    sandbox.openScreen.mockRejectedValue(new Error("bad_request: the computer is not running"));
+    render(<LiveScreen botId="b1" interactive={false} />);
+    await act(async () => {});
+    act(() => { rfbs[0]!.dispatchEvent(new Event("disconnect")); });
+    expect(screen.getByRole("status")).toHaveTextContent("The screen disconnected: the computer is not running");
   });
 
   it("says when the screen disconnected and reconnects on request", async () => {

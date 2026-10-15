@@ -106,6 +106,7 @@ describe("screen channel", () => {
     emit("sandboxScreen", { id: "s1", closed: true, error: "the computer stopped" });
     expect(onclose.mock.calls[0]![0]).toMatchObject({ code: 1011, reason: "the computer stopped", wasClean: false });
     expect(sandbox.closeScreen).not.toHaveBeenCalled();
+    expect(ch.closeReason).toBe("the computer stopped");
   });
 
   it("fails with the daemon's message when the screen cannot open", async () => {

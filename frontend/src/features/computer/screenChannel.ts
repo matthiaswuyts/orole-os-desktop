@@ -35,6 +35,8 @@ export class ScreenChannel {
   onclose: ((event: CloseInfo) => void) | null = null;
   onerror: ((event: Event) => void) | null = null;
   readonly botId: string;
+  /** Why the stream ended, when it did not end cleanly ("" otherwise). */
+  closeReason = "";
   private id: string | null = null;
   private receiver: Receiver = null;
   private inbound: ArrayBuffer[] = [];
@@ -123,6 +125,7 @@ export class ScreenChannel {
 
   private finish(info: CloseInfo): void {
     this.readyState = "closed";
+    this.closeReason = info.reason;
     this.off();
     this.outbound = [];
     this.early = [];
