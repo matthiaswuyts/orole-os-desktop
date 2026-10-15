@@ -50,12 +50,17 @@ type cdpTab struct {
 	cancel context.CancelFunc
 }
 
-// cdpAttach is an attach in flight.
+// cdpAttach is an attach in flight. It has its own deadline: an attach that hangs is given up after attachTimeout
+// so it cannot hold up every later action (each would otherwise wait for it until its own request ended).
 type cdpAttach struct {
-	tab  cdpTab
-	done chan struct{}
-	err  error
+	tab      cdpTab
+	done     chan struct{}
+	err      error
+	deadline time.Time
 }
+
+// attachTimeout bounds attaching to a tab, independent of the request that started it.
+const attachTimeout = 20 * time.Second
 
 var _ guestagent.BrowserPage = (*cdpPage)(nil)
 
@@ -179,7 +184,7 @@ func (p *cdpPage) tabContext(ctx context.Context) (context.Context, string, erro
 		opts = append(opts, chromedp.WithTargetID(target.ID(plan.Front)))
 	}
 	tab, cancel := chromedp.NewContext(p.alloc, opts...)
-	a := &cdpAttach{tab: cdpTab{ctx: tab, cancel: cancel}, done: make(chan struct{})}
+	a := &cdpAttach{tab: cdpTab{ctx: tab, cancel: cancel}, done: make(chan struct{}), deadline: time.Now().Add(attachTimeout)}
 	go func() {
 		a.err = chromedp.Run(tab)
 		close(a.done)
@@ -191,20 +196,37 @@ func (p *cdpPage) tabContext(ctx context.Context) (context.Context, string, erro
 	return tab, targetID(tab), nil
 }
 
-// settle waits (bounded by ctx) for an in-flight attach and files it: stored in tabs when it worked, released when
-// it failed (nothing is attached then, so cancelling closes no tab). A late attach that outlived its request is
-// stored here by the next action instead of being abandoned. Callers hold p.mu.
+// settle waits for an in-flight attach, bounded by ctx and by the attach's own deadline, and files it (see file). A
+// late attach that outlived its request is filed here by the next action instead of being abandoned. One that is past
+// its deadline is given up: it no longer blocks actions, and is filed by a goroutine if it ever finishes (its context
+// is not cancelled meanwhile, as that could close the user's tab). Callers hold p.mu.
 func (p *cdpPage) settle(ctx context.Context) error {
 	a := p.pending
 	if a == nil {
 		return nil
 	}
-	select {
-	case <-a.done:
-	case <-ctx.Done():
+	timer := time.NewTimer(time.Until(a.deadline))
+	defer timer.Stop()
+	switch waitAttach(ctx, a.done, timer.C) {
+	case attachCancelled:
 		return ctx.Err()
+	case attachExpired:
+		p.pending = nil
+		go func() {
+			<-a.done
+			p.mu.Lock()
+			defer p.mu.Unlock()
+			_ = p.file(a)
+		}()
+		return fmt.Errorf("%w: Chromium did not let the browser attach to its tab within %s; try again", guestagent.ErrNoBrowser, attachTimeout)
 	}
 	p.pending = nil
+	return p.file(a)
+}
+
+// file stores a finished attach in tabs when it worked and releases it when it failed (nothing is attached then, so
+// cancelling closes no tab). Callers hold p.mu.
+func (p *cdpPage) file(a *cdpAttach) error {
 	if a.err != nil {
 		a.tab.cancel()
 		return fmt.Errorf("%w: %v", guestagent.ErrNoBrowser, a.err)
@@ -212,6 +234,33 @@ func (p *cdpPage) settle(ctx context.Context) error {
 	t := a.tab
 	p.tabs[targetID(t.ctx)] = &t
 	return nil
+}
+
+// How waiting for an attach ended.
+type attachWait int
+
+const (
+	attachDone      attachWait = iota // the attach finished (worked or failed)
+	attachCancelled                   // the request ended first; the attach stays pending for the next action
+	attachExpired                     // the attach's own deadline passed
+)
+
+// waitAttach waits for done, the request ctx or the attach deadline (expired), whichever comes first; a finished
+// attach wins a tie.
+func waitAttach(ctx context.Context, done <-chan struct{}, expired <-chan time.Time) attachWait {
+	select {
+	case <-done:
+		return attachDone
+	default:
+	}
+	select {
+	case <-done:
+		return attachDone
+	case <-ctx.Done():
+		return attachCancelled
+	case <-expired:
+		return attachExpired
+	}
 }
 
 // targetID is the id of the page target a tab context is attached to.
@@ -269,7 +318,7 @@ func (p *cdpPage) Click(ctx context.Context, target string) error {
 	if err != nil {
 		return err
 	}
-	sel, err := resolveOn(ctx, tab, target)
+	sel, err := resolveOn(ctx, tab, target, false)
 	if err != nil {
 		return err
 	}
@@ -284,7 +333,7 @@ func (p *cdpPage) Type(ctx context.Context, target, text string) error {
 	if err != nil {
 		return err
 	}
-	sel, err := resolveOn(ctx, tab, target)
+	sel, err := resolveOn(ctx, tab, target, true)
 	if err != nil {
 		return err
 	}
@@ -312,26 +361,47 @@ func (p *cdpPage) Screenshot(ctx context.Context) ([]byte, error) {
 	return png, err
 }
 
+// errPasswordField is what browser_type answers for a password field: the bot never types passwords.
+var errPasswordField = errors.New("that is a password field, and you never type passwords: call ask_user_to_take_over and ask the user to type it themselves")
+
 // resolveOn marks the element target names, with a fresh random marker, on tab and returns a selector for it.
-func resolveOn(ctx, tab context.Context, target string) (string, error) {
+// typing refuses a password field (errPasswordField).
+func resolveOn(ctx, tab context.Context, target string, typing bool) (string, error) {
 	var raw [8]byte
 	if _, err := rand.Read(raw[:]); err != nil {
 		return "", err
 	}
 	marker := hex.EncodeToString(raw[:])
-	var found bool
-	if err := runOn(ctx, tab, chromedp.Evaluate(resolveScript(marker, target), &found)); err != nil {
+	var found string
+	if err := runOn(ctx, tab, chromedp.Evaluate(resolveScript(marker, target, typing), &found)); err != nil {
 		return "", err
 	}
-	if !found {
-		return "", fmt.Errorf("nothing visible on the page matches %q", target)
-	}
-	return `[data-orole-target="` + marker + `"]`, nil
+	return resolved(found, marker, target)
 }
 
+// resolved turns resolveJS's answer into the marked element's selector or an error.
+func resolved(found, marker, target string) (string, error) {
+	switch found {
+	case resolveFound:
+		return `[data-orole-target="` + marker + `"]`, nil
+	case resolvePassword:
+		return "", errPasswordField
+	}
+	return "", fmt.Errorf("nothing visible on the page matches %q", target)
+}
+
+// Answers of resolveJS.
+const (
+	resolveFound    = "found"
+	resolveNone     = "none"
+	resolvePassword = "password"
+)
+
 // resolveJS finds a visible element by CSS selector, or by its visible text (exact, then partial match), marks it
-// with data-orole-target=<marker> and scrolls it into view. Its arguments are the marker and target (JSON strings) and a boolean.
-const resolveJS = `(function (marker, target, byText) {
+// with data-orole-target=<marker> and scrolls it into view. Its arguments are the marker and target (JSON strings) and
+// two booleans: match by text, and refuse a password field (for typing). It answers "found", "none" or "password"
+// (a password input when typing; the element is then not marked).
+const resolveJS = `(function (marker, target, byText, typing) {
   document.querySelectorAll('[data-orole-target]').forEach(function (e) { e.removeAttribute('data-orole-target'); });
   function visible(el) { var r = el.getBoundingClientRect(); var s = getComputedStyle(el); return r.width > 0 && r.height > 0 && s.visibility !== 'hidden' && s.display !== 'none'; }
   var el = null;
@@ -348,17 +418,19 @@ const resolveJS = `(function (marker, target, byText) {
     }
     el = el || partial;
   }
-  if (!el) return false;
+  if (!el) return 'none';
+  if (typing && el instanceof HTMLInputElement && el.type === 'password') return 'password';
   el.setAttribute('data-orole-target', marker);
   el.scrollIntoView({block: 'center', inline: 'center'});
-  return true;
-})(%s, %s, %t)`
+  return 'found';
+})(%s, %s, %t, %t)`
 
 // resolveScript builds resolveJS for target. wire.ParseTarget decides, exactly as request validation does, whether
 // the target is matched by visible text ("text=" prefix) or as a CSS selector (falling back to text if no match).
-func resolveScript(marker, target string) string {
+// typing makes the script refuse a password field.
+func resolveScript(marker, target string, typing bool) string {
 	value, byText := wire.ParseTarget(target)
 	quoted, _ := json.Marshal(value) // also escapes U+2028/U+2029
 	quotedMarker, _ := json.Marshal(marker)
-	return fmt.Sprintf(resolveJS, quotedMarker, quoted, byText)
+	return fmt.Sprintf(resolveJS, quotedMarker, quoted, byText, typing)
 }
