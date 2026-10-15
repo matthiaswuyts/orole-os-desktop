@@ -84,20 +84,24 @@ jobs:
           ls -la work
       - name: nixpkgs package metadata of this revision
         run: |
-          short=${NIXPKGS_REV:0:12}
-          prefix=$(curl -sSf "https://nix-releases.s3.amazonaws.com/?list-type=2&prefix=nixos/unstable/&delimiter=/&start-after=nixos/unstable/nixos-2" \
-            | grep -o "<Prefix>nixos/unstable/nixos-[^<]*\.$short/</Prefix>" | sed 's/<[^>]*>//g' | head -1) || true
-          if [ -z "$prefix" ]; then
-            # Not in the first listing page: list all pages.
-            token=""
-            while :; do
-              page=$(curl -sSf "https://nix-releases.s3.amazonaws.com/?list-type=2&prefix=nixos/unstable/&delimiter=/${token:+&continuation-token=$token}")
-              prefix=$(grep -o "<Prefix>nixos/unstable/nixos-[^<]*\.$short/</Prefix>" <<< "$page" | sed 's/<[^>]*>//g' | head -1)
-              [ -n "$prefix" ] && break
-              token=$(grep -o '<NextContinuationToken>[^<]*' <<< "$page" | sed 's/<NextContinuationToken>//' | python3 -c 'import sys,urllib.parse;print(urllib.parse.quote(sys.stdin.read().strip(), safe=""))')
-              [ -z "$token" ] && { echo "::error::no channel release for $NIXPKGS_REV"; exit 1; }
-            done
-          fi
+          # The nixos-unstable channel release of this revision (releases.nixos.org/nixos/unstable/nixos-*.<rev12>/).
+          prefix=$(python3 - "${NIXPKGS_REV:0:12}" <<'PY'
+          import re, sys, urllib.parse, urllib.request
+          short, token = sys.argv[1], None
+          while True:
+              q = {"list-type": "2", "prefix": "nixos/unstable/nixos-", "delimiter": "/"}
+              if token:
+                  q["continuation-token"] = token
+              page = urllib.request.urlopen("https://nix-releases.s3.amazonaws.com/?" + urllib.parse.urlencode(q)).read().decode()
+              hit = [p for p in re.findall(r"<Prefix>([^<]+)</Prefix>", page) if p.endswith("." + short + "/")]
+              if hit:
+                  print(hit[0]); break
+              m = re.search(r"<NextContinuationToken>([^<]+)</NextContinuationToken>", page)
+              if not m:
+                  sys.exit("no channel release for " + short)
+              token = m.group(1)
+          PY
+          )
           echo "channel release: $prefix"
           test "$(curl -sSf "https://releases.nixos.org/${prefix}git-revision")" = "$NIXPKGS_REV"
           curl -sSfL -o work/packages.json.br "https://releases.nixos.org/${prefix}packages.json.br"
