@@ -27,6 +27,13 @@ const (
 	crashGrace = 500 * time.Millisecond
 )
 
+// HTTP/2 keepalive: a guest that hangs but keeps the channel open is detected by an unanswered PING, which
+// closes the connection and fails calls in flight. Variables so tests can shorten them.
+var (
+	guestReadIdleTimeout = 15 * time.Second
+	guestPingTimeout     = 10 * time.Second
+)
+
 // Guest is an HTTP/2 (h2c) client bound to one VM's byte stream. Its answers are untrusted guest data.
 type Guest struct {
 	token string
@@ -42,7 +49,7 @@ type Guest struct {
 }
 
 func NewGuest(conn net.Conn, token string) (*Guest, error) {
-	cc, err := (&http2.Transport{AllowHTTP: true}).NewClientConn(conn)
+	cc, err := (&http2.Transport{AllowHTTP: true, ReadIdleTimeout: guestReadIdleTimeout, PingTimeout: guestPingTimeout}).NewClientConn(conn)
 	if err != nil {
 		_ = conn.Close()
 		return nil, fmt.Errorf("sandbox: guest channel: %w", err)

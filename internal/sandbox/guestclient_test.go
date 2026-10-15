@@ -241,3 +241,35 @@ func TestServeLoopReconnects(t *testing.T) {
 		t.Fatalf("ServeLoop = %v, want context.Canceled", err)
 	}
 }
+
+// A guest that reads everything but never answers (hung, channel still open) must fail calls via keepalive.
+func TestGuestKeepaliveFailsCallsToHungGuest(t *testing.T) {
+	oldIdle, oldPing := guestReadIdleTimeout, guestPingTimeout
+	guestReadIdleTimeout, guestPingTimeout = 200*time.Millisecond, 200*time.Millisecond
+	t.Cleanup(func() { guestReadIdleTimeout, guestPingTimeout = oldIdle, oldPing })
+
+	host, far := net.Pipe()
+	go func() { _, _ = io.Copy(io.Discard, far) }() // reads the preface and requests, never writes
+	t.Cleanup(func() { _ = far.Close() })
+
+	g, err := newGuestCtx(context.Background(), host, "tok")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = g.Close() })
+
+	start := time.Now()
+	errc := make(chan error, 1)
+	go func() { _, err := g.Health(context.Background()); errc <- err }()
+	select {
+	case err := <-errc:
+		if err == nil {
+			t.Fatal("Health to a hung guest succeeded")
+		}
+		if d := time.Since(start); d > 3*time.Second {
+			t.Fatalf("took %v to notice the hung guest", d)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("call to a hung guest never returned")
+	}
+}
