@@ -6,8 +6,10 @@ import (
 	"crypto/subtle"
 	"database/sql"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"math/big"
 	"net/http"
@@ -118,6 +120,7 @@ type Service struct {
 	lastTick    time.Time
 	startedAt   time.Time
 	relayUpOnce bool          // the relay has connected at least once since Start
+	relayOld    bool          // the connected relay reported an older /health version than minRelayVersion (see checkRelay)
 	voices      voiceCache    // jarvis.voices lists per language
 	changedCh   chan struct{} // coalesced Changed notifications
 	baseCtx     context.Context
@@ -462,6 +465,9 @@ func (s *Service) restartRelay() {
 	}
 	s.stopRelayLocked()
 	s.relayKey = key
+	s.mu.Lock()
+	s.relayOld = false // a new relay is checked when it connects
+	s.mu.Unlock()
 	if key == "" {
 		return
 	}
@@ -469,6 +475,7 @@ func (s *Service) restartRelay() {
 	rc.OnState = func(up bool) {
 		if up {
 			s.relayUp()
+			s.checkRelay()
 		}
 		s.notifyChanged()
 	}
@@ -746,6 +753,78 @@ func (s *Service) relayUp() {
 	}()
 }
 
+// minRelayVersion is the relay version (on /health) this daemon needs: 2 streams llm.tool, which skip_turn rides on.
+const minRelayVersion = 2
+
+// Status warnings, shown in Settings > Phone with any provisioning error.
+const (
+	relayOldWarning = "The call relay is out of date: redeploy it (see relay/README.md). Until then a silence can drop a call."
+	agentOldWarning = "The phone agent still has an older configuration: press Connect to update it."
+)
+
+// checkRelay reads the relay's version from <relay>/health once, after it connects, and records whether it is older
+// than minRelayVersion (an older relay answers without one): skip_turn needs a redeployed relay, and without it every
+// silence ends in an empty answer that ElevenLabs retries and then drops the call. A relay that cannot be read is
+// only logged. It never blocks the caller.
+func (s *Service) checkRelay() {
+	s.mu.Lock()
+	relayURL, base := s.settings.RelayURL, s.baseCtx
+	s.mu.Unlock()
+	if relayURL == "" || !s.track() {
+		return
+	}
+	go func() {
+		defer s.wg.Done()
+		ctx, cancel := context.WithTimeout(base, 10*time.Second)
+		defer cancel()
+		v, err := relayVersion(ctx, s.cfg.HTTP, relayURL)
+		if err != nil {
+			s.log.Info("jarvis: relay version not checked", "err", err)
+			return
+		}
+		old := v < minRelayVersion
+		if old {
+			s.log.Warn("jarvis: the relay is out of date; redeploy it", "version", v, "need", minRelayVersion)
+		}
+		s.mu.Lock()
+		changed := s.relayOld != old && relayURL == s.settings.RelayURL
+		if changed {
+			s.relayOld = old
+		}
+		s.mu.Unlock()
+		if changed {
+			s.notifyChanged()
+		}
+	}()
+}
+
+// relayVersion reads the version the relay at relayURL reports on /health: 0 when it reports none (a relay from
+// before versions).
+func relayVersion(ctx context.Context, client *http.Client, relayURL string) (int, error) {
+	if client == nil {
+		client = http.DefaultClient
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, relayURL+"/health", nil)
+	if err != nil {
+		return 0, err
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return 0, fmt.Errorf("relay health answered %d", resp.StatusCode)
+	}
+	var body struct {
+		Version int `json:"version"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 4096)).Decode(&body); err != nil {
+		return 0, fmt.Errorf("relay health is not JSON: %w", err)
+	}
+	return body.Version, nil
+}
+
 // holdTick reports whether the at_time tick should wait for the relay: it is configured but has not connected
 // since Start, and Start was less than missedGrace ago.
 func (s *Service) holdTick(now time.Time) bool {
@@ -883,15 +962,28 @@ func (s *Service) has(key string) bool {
 	return err == nil && len(v) > 0
 }
 
+// Status is what the settings screen shows. LastError carries the last provisioning error and the warnings that stop
+// calls from working well: an out-of-date relay (checkRelay) and an agent provisioned with an older agentRevision.
 func (s *Service) Status(ctx context.Context) StatusView {
 	u := s.usage(ctx, "")
 	s.mu.Lock()
-	set, last := s.settings, s.lastErr
+	set, last, relayOld := s.settings, s.lastErr, s.relayOld
 	pending := s.pendingCode != "" && s.now().Sub(s.pendingAt) < verifyTTL
 	s.mu.Unlock()
+	var problems []string
+	if last != "" {
+		problems = append(problems, last)
+	}
+	if relayOld {
+		problems = append(problems, relayOldWarning)
+	}
+	if set.AgentID != "" && set.AgentRevision < agentRevision {
+		problems = append(problems, agentOldWarning)
+	}
 	return StatusView{Settings: set, HasTwilio: s.has(KeyTwilioSID) && s.has(KeyTwilioToken), HasElevenLabs: s.has(KeyElevenLabs),
 		HasRelaySecrets: s.has(KeyRelayToken) && s.has(KeyLLMSecret), HasWebhookSecret: s.has(KeyWebhookSecret),
-		RelayConnected: s.sender.Connected(), VerificationPending: pending, CallsToday: u.Today, MonthCostMicros: u.MonthCostMicros, LastError: last}
+		RelayConnected: s.sender.Connected(), VerificationPending: pending, CallsToday: u.Today, MonthCostMicros: u.MonthCostMicros,
+		LastError: strings.Join(problems, " ")}
 }
 
 func (s *Service) SetSecrets(in SecretsInput) error {

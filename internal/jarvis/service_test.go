@@ -820,3 +820,94 @@ func TestConfigureKeepsAgentRevision(t *testing.T) {
 		t.Fatalf("settings=%+v", got)
 	}
 }
+
+// relayServer is a local relay: /daemon accepts the daemon's socket and /health answers health (status and body).
+func relayServer(t *testing.T, status int, health string) (*httptest.Server, *atomic.Int32) {
+	t.Helper()
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/health":
+			hits.Add(1)
+			w.WriteHeader(status)
+			_, _ = w.Write([]byte(health))
+		case "/daemon":
+			c, err := websocket.Accept(w, r, nil)
+			if err != nil {
+				return
+			}
+			_, _, _ = c.Read(context.Background()) // until the daemon goes away
+		}
+	}))
+	t.Cleanup(srv.Close)
+	return srv, &hits
+}
+
+// After the relay connects the daemon reads its version once: a relay without one, or an older one, shows a warning in
+// the status; a current relay, or one whose health cannot be read, does not.
+func TestRelayVersionIsCheckedOnConnect(t *testing.T) {
+	for _, c := range []struct {
+		name   string
+		status int
+		health string
+		old    bool
+	}{
+		{"before versions", http.StatusOK, `{"daemon":true}`, true},
+		{"older", http.StatusOK, `{"daemon":true,"version":1}`, true},
+		{"current", http.StatusOK, `{"daemon":true,"version":2}`, false},
+		{"unreadable", http.StatusInternalServerError, `oops`, false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			srv, hits := relayServer(t, c.status, c.health)
+			e := newSvcEnv(t, func(cfg *ServiceConfig) {
+				cfg.sender = nil
+				cfg.LoadSettings = func() (PhoneSettings, error) { return PhoneSettings{RelayURL: srv.URL}, nil }
+			})
+			_ = e.creds.Set(KeyRelayToken, []byte("tok"))
+			e.svc.Start(context.Background())
+			waitFor(t, func() bool { return e.svc.Status(context.Background()).RelayConnected && hits.Load() == 1 })
+			if c.old {
+				waitFor(t, func() bool { return e.svc.Status(context.Background()).LastError == relayOldWarning })
+				return
+			}
+			e.svc.Close() // the check has finished
+			if got := e.svc.Status(context.Background()).LastError; got != "" {
+				t.Fatalf("status warns %q", got)
+			}
+			if n := hits.Load(); n != 1 {
+				t.Fatalf("health read %d times", n)
+			}
+		})
+	}
+}
+
+// An agent provisioned with an older agentRevision is flagged in the status until it is updated; the warning comes
+// after any provisioning error.
+func TestStatusFlagsAnOlderAgent(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		set  PhoneSettings
+		want string
+	}{
+		{"older", PhoneSettings{AgentID: "ag", AgentRevision: agentRevision - 1}, agentOldWarning},
+		{"current", PhoneSettings{AgentID: "ag", AgentRevision: agentRevision}, ""},
+		{"no agent", PhoneSettings{}, ""},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			e := newSvcEnv(t, func(cfg *ServiceConfig) {
+				cfg.LoadSettings = func() (PhoneSettings, error) { return c.set, nil }
+			})
+			if got := e.svc.Status(context.Background()).LastError; got != c.want {
+				t.Fatalf("status %q, want %q", got, c.want)
+			}
+		})
+	}
+	e := newSvcEnv(t, nil) // agent "ag" at revision 0
+	e.svc.mu.Lock()
+	e.svc.lastErr = "Provisioning failed."
+	e.svc.relayOld = true
+	e.svc.mu.Unlock()
+	if got, want := e.svc.Status(context.Background()).LastError, "Provisioning failed. "+relayOldWarning+" "+agentOldWarning; got != want {
+		t.Fatalf("status %q, want %q", got, want)
+	}
+}
