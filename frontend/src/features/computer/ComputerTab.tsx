@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { ChevronLeftIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -26,13 +26,10 @@ export function ComputerTab({ botId, onClose }: { botId: string; onClose: () => 
   const { availability, status, handoff, error, refresh } = computer;
   useViewerLease(botId);
   const view = computerView(availability, status, handoff);
-  const takenOver = view.kind === "running" && view.takenOver;
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
-  const takenRef = useRef(false);
-  useEffect(() => { takenRef.current = takenOver; }, [takenOver]);
-  // Closing the pane hands control back, so the bot is never left waiting on a screen nobody sees.
-  useEffect(() => () => { if (takenRef.current) void Sandbox.release(botId, "").catch(() => {}); }, [botId]);
+  // Closing the pane never releases a takeover: Done would tell a waiting bot the user finished. The daemon ends an
+  // abandoned takeover itself (viewer lease expiry, or the bot's own hold timeout when it asked).
 
   const runAction = async (call: () => Promise<void>) => {
     setBusy(true);
@@ -58,6 +55,7 @@ export function ComputerTab({ botId, onClose }: { botId: string; onClose: () => 
     </header>
     <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-auto p-2">
       {actionError && <p role="alert" className="selectable px-1 text-xs text-destructive-foreground">{actionError}</p>}
+      {view.kind !== "loading" && view.kind !== "setup" && error && <p role="alert" className="selectable px-1 text-xs text-destructive-foreground">{error}</p>}
       {view.kind === "loading"
         ? error
           ? <div className="flex flex-col items-start gap-2 p-2"><p role="alert" className="selectable text-sm text-destructive-foreground">{error}</p><Button type="button" size="xs" variant="outline" onClick={() => void refresh()}>Try again</Button></div>

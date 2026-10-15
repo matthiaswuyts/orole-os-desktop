@@ -85,8 +85,8 @@ describe("computer tab setup", () => {
     sandbox.availability.mockResolvedValue({ ready: false, reason: "runtime-missing" });
     view();
     await screen.findByRole("heading", { name: "Download the bot computer" });
-    expect(screen.getByText(/can reach the internet and your home network/)).toBeInTheDocument();
-    expect(screen.getByText(/stay signed in for this bot/)).toBeInTheDocument();
+    expect(screen.getByText(/can reach the internet, your home network and anything on this PC/)).toBeInTheDocument();
+    expect(screen.getByText(/the bot can use them/)).toBeInTheDocument();
   });
 });
 
@@ -105,7 +105,7 @@ describe("computer tab states", () => {
     expect(sandbox.openTerminal).toHaveBeenCalledWith("b1", 100, 24);
     expect(screen.getByRole("button", { name: "Take over" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Done" })).toBeNull();
-    expect(screen.getByText(/can reach the internet and your home network/)).toBeInTheDocument();
+    expect(screen.getByText(/can reach the internet, your home network/)).toBeInTheDocument();
   });
 
   it("shows why the computer failed", async () => {
@@ -186,11 +186,24 @@ describe("computer tab takeover", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("the computer is not running");
   });
 
-  it("hands control back when the tab closes during a takeover", async () => {
+  it.each([
+    ["the user took over", { botId: "b1", pending: false }],
+    ["the bot asked", { botId: "b1", pending: true, reason: "Sign in" }],
+  ])("keeps the takeover when the pane closes (%s)", async (_, handoff) => {
     sandbox.status.mockResolvedValue(running(true));
+    sandbox.handoff.mockResolvedValue(handoff);
     const { unmount } = view();
     await screen.findByRole("button", { name: "Done" });
     unmount();
-    expect(sandbox.release).toHaveBeenCalledWith("b1", "");
+    await act(async () => {});
+    expect(sandbox.release).not.toHaveBeenCalled();
+  });
+
+  it("shows a failed refresh while the computer runs", async () => {
+    sandbox.status.mockResolvedValueOnce(running(false)).mockRejectedValue(new Error("internal: the daemon is not reachable"));
+    view();
+    fireEvent.click(await screen.findByRole("button", { name: "Take over" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("the daemon is not reachable");
+    expect(screen.getByTestId("live-screen")).toBeInTheDocument();
   });
 });

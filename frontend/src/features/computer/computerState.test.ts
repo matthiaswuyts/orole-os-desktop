@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 vi.mock("@/mygo", async () => (await import("./testing")).mygoMock);
 
-import { computerView, errorText, runtimeProgress, setupCopy, setupError, type Availability, type ComputerStatus } from "./computerState";
+import { computerView, errorText, runtimeProgress, SECURITY_NOTE, setupCopy, setupError, type Availability, type ComputerStatus } from "./computerState";
 
 const ready: Availability = { ready: true };
 const status = (over: Partial<ComputerStatus>): ComputerStatus => ({ botId: "b1", state: "off", takenOver: false, ...over }) as ComputerStatus;
@@ -73,5 +73,9 @@ describe("errorText", () => {
   it("strips the daemon's error code from messages", () => {
     expect(errorText(new Error("not_found: the computer is off"))).toBe("the computer is off");
     expect(errorText("plain")).toBe("plain");
+  });
+
+  it("says plainly what the computer can reach and what it keeps", () => {
+    expect(SECURITY_NOTE).toBe("The computer can reach the internet, your home network and anything on this PC that accepts network connections. Sites you sign into stay signed in, and the bot can use them.");
   });
 });
