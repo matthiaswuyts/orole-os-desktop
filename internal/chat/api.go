@@ -290,6 +290,14 @@ const (
 	PartComputer   = "computer"   // "Using the computer" card: one per message (ID "computer"); Name the last computer tool, Status running|done|failed|waiting, Text a short human summary, Summary what it did, BotID whose computer
 )
 
+// Statuses of a PartComputer card.
+const (
+	ComputerRunning = "running"
+	ComputerDone    = "done"
+	ComputerFailed  = "failed"
+	ComputerWaiting = "waiting" // waiting for the user (ask_user_to_take_over)
+)
+
 // MsgPart is one renderable piece of a message; fields are used per Type.
 type MsgPart struct {
 	Type string `json:"type"`
