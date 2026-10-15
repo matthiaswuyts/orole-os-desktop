@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -108,7 +109,6 @@ func TestVoiceTurnRunsWhileChatTurnBusy(t *testing.T) {
 	release := make(chan struct{})
 	var once sync.Once
 	unblock := func() { once.Do(func() { close(release) }) }
-	t.Cleanup(unblock)
 	e := newEnv(t, func(call int, _ llm.Request) []llm.Delta {
 		if call == 0 {
 			<-release // the chat turn blocks inside its model call
@@ -116,6 +116,7 @@ func TestVoiceTurnRunsWhileChatTurnBusy(t *testing.T) {
 		}
 		return []llm.Delta{llmtest.Text("on the phone")}
 	})
+	t.Cleanup(unblock) // after newEnv: cleanups run LIFO, and the manager's Close waits for the blocked turn
 	b := e.bot("Atlas")
 	e.send(b.ID, "long job")
 	e.until("chat turn to reach the model", func() bool { return len(e.fake.Calls()) == 1 })
@@ -141,11 +142,11 @@ func TestVoiceTurnRunsWhileChatTurnBusy(t *testing.T) {
 func TestVoiceTurnRejectsConcurrentTurnAndReportsCancel(t *testing.T) {
 	release := make(chan struct{})
 	var once sync.Once
-	t.Cleanup(func() { once.Do(func() { close(release) }) })
 	e := newEnv(t, func(call int, _ llm.Request) []llm.Delta {
 		<-release
 		return nil
 	})
+	t.Cleanup(func() { once.Do(func() { close(release) }) }) // after newEnv, so it runs before the manager's Close
 	b := e.bot("Atlas")
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
@@ -298,11 +299,12 @@ func blockingEnv(t *testing.T, release *func()) *env {
 	gate := make(chan struct{})
 	var once sync.Once
 	*release = func() { once.Do(func() { close(gate) }) }
-	t.Cleanup(*release)
-	return newEnv(t, func(call int, _ llm.Request) []llm.Delta {
+	e := newEnv(t, func(call int, _ llm.Request) []llm.Delta {
 		<-gate
 		return []llm.Delta{llmtest.Text("late")}
 	})
+	t.Cleanup(*release) // after newEnv, so it runs before the manager's Close, which waits for the blocked turn
+	return e
 }
 
 func TestArchiveAndClearStopVoiceTurn(t *testing.T) {
@@ -661,7 +663,6 @@ func TestVoiceTurnSeesTheHandoffsThatAreOut(t *testing.T) {
 	release := make(chan struct{})
 	var once sync.Once
 	unblock := func() { once.Do(func() { close(release) }) }
-	t.Cleanup(unblock)
 	e := newEnv(t, func(call int, req llm.Request) []llm.Delta {
 		if strings.Contains(req.System, "Be Callee.") {
 			<-release
@@ -669,6 +670,9 @@ func TestVoiceTurnSeesTheHandoffsThatAreOut(t *testing.T) {
 		}
 		return []llm.Delta{llmtest.Text("caller here")}
 	})
+	// Registered after newEnv so it runs before the manager's Close (cleanups are LIFO): Close waits for the
+	// callee's turn, which only returns once release is closed.
+	t.Cleanup(unblock)
 	callee := e.bot("Callee")
 	caller := e.bot("Caller", executive)
 	const brief = "Reason: you asked me to call."
@@ -688,6 +692,11 @@ func TestVoiceTurnSeesTheHandoffsThatAreOut(t *testing.T) {
 	if err := e.m.Handoff(context.Background(), fromBot(caller), callee.ID, "research the thing"); err != nil {
 		t.Fatal(err)
 	}
+	// Handoff only queues the callee's turn; its model request is recorded whenever the callee's pump gets there.
+	// Wait for it, so the voice turn's request is the last one lastRequest sees.
+	e.until("the callee's model call", func() bool {
+		return slices.ContainsFunc(e.fake.Calls(), func(r llm.Request) bool { return strings.Contains(r.System, "Be Callee.") })
+	})
 	sys := voiceSystem("c1")
 	note := e.m.handoffsNote(caller.ID)
 	if note == "" || !strings.HasSuffix(sys, brief+"\n\n"+note) {
