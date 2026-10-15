@@ -47,6 +47,7 @@ const maxSetupHelperBytes = 256 << 20
 
 var (
 	ErrSetupHelperUnverified = errors.New("sandbox: setup helper not verified: this daemon was built without the helper's SHA-256 (build it with scripts/build.ps1, or set " + SetupHelperUnverifiedEnv + "=1 while developing)")
+	ErrSetupHelperLink       = errors.New("sandbox: setup helper not verified: orole-sandbox-setup.exe next to the daemon is a link, not the file this build shipped; reinstall Orole")
 	ErrSetupHelperMismatch   = errors.New("sandbox: setup helper not verified: orole-sandbox-setup.exe next to the daemon is not the one this build shipped; reinstall Orole")
 )
 

@@ -85,6 +85,8 @@ The host never trusts the guest: answers over 8 MiB are refused, exec output is 
 `internal/daemon/svc_sandbox.go` builds the `Runtime`, the host backend and the `Manager` from `<data>\sandbox`
 (`Daemon.Sandbox`), stops every VM on daemon exit (after chat, before the database closes) and deletes a bot's
 computer (VM, overlay, socket, row) when the bot is archived (`chat.bots.archive`; a bot without one is a no-op).
+The delete runs in the background (it may wait for a boot in progress) and reports through `sandbox.status`; each
+daemon start sweeps away computers whose bot is archived or gone, finishing deletes that an exit cut short.
 
 | IPC method | Does |
 |---|---|
@@ -116,8 +118,8 @@ gone the boot fails with `ErrImageGone` instead of booting the overlay against a
   files by then) and on every failed boot, and the token is never logged.
 - QEMU runs in a job object with kill-on-close, so VMs never outlive the daemon.
 - The setup helper is always `orole-sandbox-setup.exe` next to `orole-daemon.exe`, never a path from IPC or
-  settings. That folder is writable by the user, so before the elevated start the daemon opens the helper denying
-  writes, renames and deletes, checks its SHA-256 against `sandbox.SetupHelperSHA256` (embedded at build time by
+  settings. That folder is writable by the user, so before the elevated start the daemon opens the helper itself
+  (refusing a symbolic link or other reparse point) denying writes, renames and deletes (of it and its folders), checks its SHA-256 against `sandbox.SetupHelperSHA256` (embedded at build time by
   `scripts/build.ps1` and `scripts/build-dev-daemon.ps1`, the mygo `devCommand`), and keeps that handle until the
   elevated process has started. A daemon built without the hash (`go run`, tests) refuses with "setup helper not
   verified" unless `OROLE_SANDBOX_SETUP_UNVERIFIED=1` is set; a mismatch is always refused.

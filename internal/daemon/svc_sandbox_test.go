@@ -136,12 +136,94 @@ func TestArchivingABotDeletesItsComputer(t *testing.T) {
 	if err := c.Call(ctx, "chat.bots.archive", chat.BotRef{ID: bot.ID}, nil); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(overlay); !os.IsNotExist(err) {
-		t.Fatalf("overlay still there: %v", err)
+	waitComputerGone(t, db, overlay, bot.ID) // the delete runs in the background
+}
+
+// waitComputerGone waits until botID has neither an overlay file nor a sandboxes row.
+func waitComputerGone(t *testing.T, db *sql.DB, overlay, botID string) {
+	t.Helper()
+	deadline := time.Now().Add(15 * time.Second)
+	for {
+		var n int
+		err := db.QueryRow(`SELECT COUNT(*) FROM sandboxes WHERE bot_id=?`, botID).Scan(&n)
+		_, statErr := os.Stat(overlay)
+		if err == nil && n == 0 && os.IsNotExist(statErr) {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("computer of %s not deleted: rows %d (%v), overlay %v", botID, n, err, statErr)
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+}
+
+// putComputer gives botID an overlay file and, when withRow, a sandboxes row.
+func putComputer(t *testing.T, db *sql.DB, paths sandbox.Paths, botID string, withRow bool) string {
+	t.Helper()
+	overlay := paths.Overlay(botID)
+	if err := os.MkdirAll(filepath.Dir(overlay), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(overlay, []byte("QFI"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if withRow {
+		if _, err := db.Exec(`INSERT INTO sandboxes(bot_id,image_version,overlay_path,created_at) VALUES(?,?,?,?)`,
+			botID, "0.1.0", overlay, time.Now().UnixMilli()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return overlay
+}
+
+func TestDaemonStartDeletesComputersOfArchivedAndMissingBots(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("OROLE_HOME", dir)
+	defer daemon.UseMemoryLLMCredentials()()
+	stop := start(t, dir)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	c := control.NewClient(dir, "sandbox-sweep-test")
+	if err := c.Connect(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var live, archived chat.Bot
+	if err := c.Call(ctx, "chat.bots.save", chat.BotInput{Name: "Live", Avatar: "L", Color: "blue"}, &live); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Call(ctx, "chat.bots.save", chat.BotInput{Name: "Archived", Avatar: "A", Color: "blue"}, &archived); err != nil {
+		t.Fatal(err)
+	}
+	c.Close()
+	stop()
+
+	// While the daemon was down: a delete that never ran (archived bot with a computer), a row and an overlay of
+	// bots that do not exist, and a live bot's computer that must survive.
+	db, err := sql.Open("sqlite", filepath.Join(dir, "orole.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(`UPDATE bots SET archived_at=? WHERE id=?`, time.Now().UnixMilli(), archived.ID); err != nil {
+		t.Fatal(err)
+	}
+	paths := sandbox.Paths{Root: filepath.Join(dir, "sandbox")}
+	liveOverlay := putComputer(t, db, paths, live.ID, true)
+	archivedOverlay := putComputer(t, db, paths, archived.ID, true)
+	goneRowOverlay := putComputer(t, db, paths, "gone-bot", true)
+	strayOverlay := putComputer(t, db, paths, "stray-bot", false)
+
+	stop = start(t, dir)
+	waitComputerGone(t, db, archivedOverlay, archived.ID)
+	waitComputerGone(t, db, goneRowOverlay, "gone-bot")
+	waitComputerGone(t, db, strayOverlay, "stray-bot")
+	stop() // the sweep has finished once the daemon has stopped
+	if _, err := os.Stat(liveOverlay); err != nil {
+		t.Fatalf("the live bot's overlay was deleted: %v", err)
 	}
 	var n int
-	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sandboxes WHERE bot_id=?`, bot.ID).Scan(&n); err != nil || n != 0 {
-		t.Fatalf("rows left: %d, %v", n, err)
+	if err := db.QueryRow(`SELECT COUNT(*) FROM sandboxes WHERE bot_id=?`, live.ID).Scan(&n); err != nil || n != 1 {
+		t.Fatalf("the live bot's row: %d, %v", n, err)
 	}
 }
 
@@ -150,7 +232,12 @@ func TestArchivingABotWithoutAComputerWorks(t *testing.T) {
 	t.Setenv("OROLE_HOME", dir)
 	defer daemon.UseMemoryLLMCredentials()()
 	stop := start(t, dir)
-	defer stop()
+	stopped := false
+	defer func() {
+		if !stopped {
+			stop()
+		}
+	}()
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	c := control.NewClient(dir, "sandbox-archive-none-test")
@@ -166,6 +253,9 @@ func TestArchivingABotWithoutAComputerWorks(t *testing.T) {
 	if err := c.Call(ctx, "chat.bots.archive", chat.BotRef{ID: bot.ID}, nil); err != nil {
 		t.Fatal(err)
 	}
+	time.Sleep(500 * time.Millisecond) // the delete runs in the background; give it time to (wrongly) audit
+	stop()
+	stopped = true
 	db, err := sql.Open("sqlite", filepath.Join(dir, "orole.db"))
 	if err != nil {
 		t.Fatal(err)

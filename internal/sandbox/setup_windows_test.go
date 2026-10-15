@@ -8,7 +8,9 @@ import (
 	"encoding/hex"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"unsafe"
 )
@@ -140,6 +142,10 @@ func TestEnableWHPKeepsTheVerifiedHelperFromBeingSwapped(t *testing.T) {
 		if err := os.Remove(helper); err == nil {
 			t.Error("the helper could be deleted after it was verified")
 		}
+		if err := os.Rename(dir, dir+"-moved"); err == nil {
+			t.Error("the helper's folder could be renamed after it was verified")
+			_ = os.Rename(dir+"-moved", dir)
+		}
 		if b, err := os.ReadFile(helper); err != nil || string(b) != "x" { // others may still read it (CreateProcess does)
 			t.Errorf("read during launch: %q %v", b, err)
 		}
@@ -150,5 +156,52 @@ func TestEnableWHPKeepsTheVerifiedHelperFromBeingSwapped(t *testing.T) {
 	}
 	if err := os.WriteFile(helper, []byte("y"), 0o600); err != nil { // released afterwards
 		t.Fatalf("still locked after the launch: %v", err)
+	}
+}
+
+func TestEnableWHPRefusesALinkedHelper(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "verified.exe")
+	if err := os.WriteFile(target, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	helper := filepath.Join(dir, "orole-sandbox-setup.exe")
+	if err := os.Symlink(target, helper); err != nil {
+		t.Skipf("cannot create a file symlink here (needs Developer Mode or the privilege): %v", err)
+	}
+	pinHelper(t, []byte("x")) // the target matches: only the link must make it fail
+	old := runElevatedFn
+	t.Cleanup(func() { runElevatedFn = old })
+	runElevatedFn = func(context.Context, string, string) (uint32, error) {
+		t.Error("a linked helper was launched")
+		return 0, nil
+	}
+	if _, err := EnableWHP(context.Background(), helper, Paths{Root: t.TempDir()}); !errors.Is(err, ErrSetupHelperLink) {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+// A junction (no privilege needed) stands in for links on machines where file symlinks cannot be made.
+func TestEnableWHPRefusesAJunctionAsTheHelper(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "elsewhere")
+	if err := os.Mkdir(target, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	helper := filepath.Join(dir, "orole-sandbox-setup.exe")
+	if out, err := exec.Command("cmd", "/c", "mklink", "/J", helper, target).CombinedOutput(); err != nil {
+		t.Skipf("mklink /J: %v %s", err, out)
+	}
+	t.Setenv(SetupHelperUnverifiedEnv, "1")
+	old, oldPin := runElevatedFn, SetupHelperSHA256
+	SetupHelperSHA256 = ""
+	t.Cleanup(func() { runElevatedFn, SetupHelperSHA256 = old, oldPin })
+	runElevatedFn = func(context.Context, string, string) (uint32, error) {
+		t.Error("a junction was launched as the helper")
+		return 0, nil
+	}
+	_, err := EnableWHP(context.Background(), helper, Paths{Root: t.TempDir()})
+	if err == nil || !strings.Contains(err.Error(), "setup helper not verified") {
+		t.Fatalf("err = %v", err)
 	}
 }

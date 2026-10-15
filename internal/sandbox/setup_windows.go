@@ -55,6 +55,9 @@ func EnableWHP(ctx context.Context, helper string, p Paths) (SetupResult, error)
 	if errors.Is(err, windows.ERROR_FILE_NOT_FOUND) || errors.Is(err, windows.ERROR_PATH_NOT_FOUND) {
 		return SetupResult{}, ErrSetupHelperMissing
 	}
+	if errors.Is(err, ErrSetupHelperLink) {
+		return SetupResult{}, err
+	}
 	if err != nil {
 		return SetupResult{}, fmt.Errorf("sandbox: setup helper not verified: %w", err)
 	}
@@ -77,17 +80,28 @@ func EnableWHP(ctx context.Context, helper string, p Paths) (SetupResult, error)
 	return res, err
 }
 
-// openHelperLocked opens the helper for reading and shares it for reading only: nobody can change, rename or
-// delete it while the handle is open, but Windows can still load it to run.
+// openHelperLocked opens the helper itself, never what a link points to, for reading and shares it for reading
+// only: nobody can change, rename or delete it (or rename a folder above it) while the handle is open, but
+// Windows can still load it to run. A symbolic link or other reparse point is refused: ShellExecuteEx would follow
+// it to a file that was never verified.
 func openHelperLocked(path string) (*os.File, error) {
 	p, err := windows.UTF16PtrFromString(path)
 	if err != nil {
 		return nil, err
 	}
 	h, err := windows.CreateFile(p, windows.GENERIC_READ, windows.FILE_SHARE_READ, nil, windows.OPEN_EXISTING,
-		windows.FILE_ATTRIBUTE_NORMAL, 0)
+		windows.FILE_ATTRIBUTE_NORMAL|windows.FILE_FLAG_OPEN_REPARSE_POINT, 0)
 	if err != nil {
 		return nil, err
+	}
+	var info windows.ByHandleFileInformation
+	if err := windows.GetFileInformationByHandle(h, &info); err != nil {
+		windows.CloseHandle(h)
+		return nil, err
+	}
+	if info.FileAttributes&(windows.FILE_ATTRIBUTE_REPARSE_POINT|windows.FILE_ATTRIBUTE_DIRECTORY) != 0 {
+		windows.CloseHandle(h)
+		return nil, ErrSetupHelperLink
 	}
 	return os.NewFile(uintptr(h), path), nil
 }

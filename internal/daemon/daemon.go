@@ -69,13 +69,18 @@ type Daemon struct {
 	ChatMemory *memory.Store
 	// Jarvis places and takes the owner's phone calls for bots (svc_jarvis.go).
 	Jarvis *jarvis.Service
-	// Sandbox runs one local VM per bot (svc_sandbox.go); sandboxStop ends its background setup and downloads,
-	// sandboxWG waits for the setup goroutine, sandboxStore is its table (read when a bot is archived).
-	Sandbox      *sandbox.Manager
-	sandboxStop  context.CancelFunc
-	sandboxWG    sync.WaitGroup
-	sandboxStore *sandbox.Store
-	Metrics      *systemmetrics.Sampler
+	// Sandbox runs one local VM per bot (svc_sandbox.go). sandboxLife is the lifetime of its background setup,
+	// downloads, deletes and startup sweep (sandboxStart); sandboxStop ends them and sandboxWG waits for them;
+	// sandboxClosing (under sandboxMu) refuses new ones once shutdown began. sandboxStore is its table.
+	Sandbox        *sandbox.Manager
+	sandboxLife    context.Context
+	sandboxStop    context.CancelFunc
+	sandboxStart   func()
+	sandboxMu      sync.Mutex
+	sandboxClosing bool
+	sandboxWG      sync.WaitGroup
+	sandboxStore   *sandbox.Store
+	Metrics        *systemmetrics.Sampler
 	// Skills is the central skill registry and Gateway the MCP gateway hub behind the
 	// `orole-daemon mcp-gateway` processes (svc_skills.go). gatewayExe is this executable.
 	Skills     *skills.Store
@@ -149,6 +154,9 @@ func (d *Daemon) Run(ctx context.Context) error {
 	}
 	if d.agentsStart != nil {
 		d.agentsStart()
+	}
+	if d.sandboxStart != nil {
+		d.sandboxStart() // deletes computers of archived bots: only once this daemon owns the endpoint
 	}
 	if d.Automations != nil {
 		if err := d.Automations.Start(ctx); err != nil {
