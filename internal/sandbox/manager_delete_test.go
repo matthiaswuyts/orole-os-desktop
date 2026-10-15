@@ -155,6 +155,10 @@ func TestNewManagerReusesOverlay(t *testing.T) {
 	ctx := context.Background()
 	ensure(t, h, "bot1")
 	rec, _, _ := h.store.Get(ctx, "bot1")
+	const marker = "disk contents written by the first boot"
+	if err := os.WriteFile(h.paths.Overlay("bot1"), []byte(marker), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	sctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	if err := h.m.Shutdown(sctx); err != nil {
@@ -165,6 +169,9 @@ func TestNewManagerReusesOverlay(t *testing.T) {
 	ensure(t, h, "bot1")
 	if got := h.b.spec(1).Overlay; got != h.paths.Overlay("bot1") {
 		t.Fatalf("second boot overlay = %q", got)
+	}
+	if got, err := os.ReadFile(h.paths.Overlay("bot1")); err != nil || string(got) != marker {
+		t.Fatalf("overlay after the second boot = %q, %v; want the first boot's contents", got, err)
 	}
 	again, _, _ := h.store.Get(ctx, "bot1")
 	if !again.CreatedAt.Equal(rec.CreatedAt) {

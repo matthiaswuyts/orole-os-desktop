@@ -3,6 +3,7 @@ package sandbox
 import (
 	"context"
 	"errors"
+	"io/fs"
 	"net"
 	"os"
 	"sync"
@@ -56,7 +57,11 @@ func (b *fakeBackend) Boot(ctx context.Context, spec BootSpec) (VM, error) {
 	if bootErr != nil {
 		return nil, bootErr
 	}
-	if err := os.WriteFile(spec.Overlay, []byte("qcow2"), 0o600); err != nil { // stands in for qemu-img create
+	if _, err := os.Stat(spec.Overlay); errors.Is(err, fs.ErrNotExist) { // stands in for qemu-img create
+		if err := os.WriteFile(spec.Overlay, []byte("qcow2"), 0o600); err != nil {
+			return nil, err
+		}
+	} else if err != nil {
 		return nil, err
 	}
 	host, guest := net.Pipe()
