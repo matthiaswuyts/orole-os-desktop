@@ -82,7 +82,7 @@ The host never trusts the guest: answers over 8 MiB are refused, exec output is 
 ### Storage
 
 `<data>\sandbox\runtime\<version>\` (QEMU), `images\<version>\` (base image), `bots\<bot>.qcow2` (overlay),
-`run\<bot>.sock` (guest channel), `<data>\logs\sandbox-<bot>.log`. Bot ids are checked against
+`run\<16 hex>.sock` (guest channel; the name is a hash of the bot id so the path stays under the 107-character AF_UNIX limit), `<data>\logs\sandbox-<bot>.log`. Bot ids are checked against
 `^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$` before they become file names.
 
 ### Security notes
