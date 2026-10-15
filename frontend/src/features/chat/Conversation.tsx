@@ -128,7 +128,7 @@ function Thread({ bot, running }: { bot: Bot; running: boolean }) {
       <ThreadPrimitive.Viewport ref={viewport} role="region" aria-label={`Conversation with ${bot.name}`} tabIndex={0}
         onScroll={(event) => { if (event.currentTarget.scrollTop < LOAD_OLDER_AT) loadOlder(); }}
         className="flex min-h-0 flex-1 flex-col overflow-y-auto outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring">
-        <div className="mx-auto flex min-h-full w-full max-w-3xl shrink-0 flex-col gap-3 px-4 pt-6 pb-12">
+        <div className="mx-auto flex w-full max-w-3xl flex-1 shrink-0 flex-col gap-3 px-4 pt-6 pb-6">
           {!conversation.loaded && !conversation.error && <p role="status" className="m-auto text-sm text-muted-foreground">Loading conversation…</p>}
           {!conversation.loaded && conversation.error && <div role="alert" className="m-auto flex flex-col items-center gap-2 text-center text-sm">
             <p className="selectable text-destructive-foreground">Could not load this conversation: {conversation.error}</p>
@@ -143,20 +143,26 @@ function Thread({ bot, running }: { bot: Bot; running: boolean }) {
           )}
           <ThreadPrimitive.Messages>{renderTurn}</ThreadPrimitive.Messages>
         </div>
+        {/* Sticks to the viewport's bottom, so the scrollbar runs the full height and the thread scrolls under the composer;
+            assistant-ui counts its height when it keeps the latest message in view. */}
+        <ThreadPrimitive.ViewportFooter className="sticky bottom-0 z-10 bg-background">
+          <div className="relative">
+            <ThreadPrimitive.ScrollToBottom asChild>
+              <Button type="button" variant="outline" size="icon-sm" aria-label="Jump to latest" className="absolute bottom-3 left-1/2 -translate-x-1/2 rounded-full bg-background hover:bg-background data-pressed:bg-background dark:bg-background dark:hover:bg-background dark:data-pressed:bg-background hover:bg-[image:linear-gradient(var(--muted),var(--muted))] data-pressed:bg-[image:linear-gradient(var(--muted),var(--muted))] disabled:hidden"><ArrowDownIcon aria-hidden /></Button>
+            </ThreadPrimitive.ScrollToBottom>
+          </div>
+          {problem && <div role="alert" className="mx-auto flex w-full max-w-3xl items-start gap-2 px-4 pb-2 text-xs">
+            <p className="selectable min-w-0 flex-1 rounded-lg border border-destructive/30 bg-destructive/8 px-2.5 py-1.5 text-destructive-foreground">{problem.message}</p>
+            {problem.request && <Button type="button" variant="outline" size="xs" onClick={() => void useChatMessages.getState().retrySend(bot.id)}><RotateCcwIcon aria-hidden />Retry</Button>}
+            <Button type="button" variant="ghost" size="icon-xs" aria-label="Dismiss" onClick={() => useChatMessages.getState().dismissProblem(bot.id)}><XIcon aria-hidden /></Button>
+          </div>}
+          <BotApprovals botId={bot.id} />
+          <QueuePanel bot={bot} running={running} />
+          <Composer bot={bot} running={running} />
+        </ThreadPrimitive.ViewportFooter>
       </ThreadPrimitive.Viewport>
-      <ThreadPrimitive.ScrollToBottom asChild>
-        <Button type="button" variant="outline" size="icon-sm" aria-label="Jump to latest" className="absolute bottom-3 left-1/2 -translate-x-1/2 rounded-full bg-background hover:bg-muted data-pressed:bg-muted dark:bg-background dark:hover:bg-muted dark:data-pressed:bg-muted disabled:hidden"><ArrowDownIcon aria-hidden /></Button>
-      </ThreadPrimitive.ScrollToBottom>
     </ThreadPrimitive.Root>
-    {problem && <div role="alert" className="mx-auto flex w-full max-w-3xl items-start gap-2 px-4 pb-2 text-xs">
-      <p className="selectable min-w-0 flex-1 rounded-lg border border-destructive/30 bg-destructive/8 px-2.5 py-1.5 text-destructive-foreground">{problem.message}</p>
-      {problem.request && <Button type="button" variant="outline" size="xs" onClick={() => void useChatMessages.getState().retrySend(bot.id)}><RotateCcwIcon aria-hidden />Retry</Button>}
-      <Button type="button" variant="ghost" size="icon-xs" aria-label="Dismiss" onClick={() => useChatMessages.getState().dismissProblem(bot.id)}><XIcon aria-hidden /></Button>
-    </div>}
     <LiveStatus running={running} />
-    <BotApprovals botId={bot.id} />
-    <QueuePanel bot={bot} running={running} />
-    <Composer bot={bot} running={running} />
   </>;
 }
 

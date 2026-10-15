@@ -2,6 +2,7 @@ import { PlayIcon, SquareIcon } from "lucide-react";
 import { useEffect, useState, type SyntheticEvent } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Select, SelectGroup, SelectGroupLabel, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "@/components/ui/tooltip";
 import { errText } from "@/features/agents/format";
@@ -69,7 +70,7 @@ interface PickerLook {
   className?: string;
 }
 
-function Picker({ id, value, options, groups, onChange, compact, className }: PickerLook & { options: Option[]; groups?: OptionGroup[] }) {
+function Picker({ id, value, options, groups, caption, onChange, compact, className }: PickerLook & { options: Option[]; groups?: OptionGroup[]; caption?: string }) {
   const all = [...options, ...(groups ?? []).flatMap((g) => g.options)];
   const byValue = new Map(all.map((o) => [o.value, o]));
   const hasPreview = all.some((o) => o.preview);
@@ -80,6 +81,7 @@ function Picker({ id, value, options, groups, onChange, compact, className }: Pi
       <SelectValue>{(current: string | null) => { const o = byValue.get(current ?? ""); return o ? <TriggerBody option={o} /> : null; }}</SelectValue>
     </SelectTrigger>
     <SelectPopup alignItemWithTrigger={false} align="end" className="max-h-80 w-80 max-w-[calc(100vw-2rem)]">
+      {caption && <div className="px-2 pt-1.5 pb-1 text-muted-foreground text-xs">{caption}</div>}
       {options.map((o) => <SelectItem key={o.value} value={o.value}><OptionBody option={o} /></SelectItem>)}
       {groups?.map((g) => <SelectGroup key={g.label}>
         <SelectGroupLabel>{g.label}</SelectGroupLabel>
@@ -93,18 +95,24 @@ export function VoicePicker({ voices, defaultId, ...look }: PickerLook & { voice
   return <Picker {...look} options={voiceOptions(voices, look.value, defaultId)} />;
 }
 
+/** The select value of the "Custom voice ID" option; never stored (a NUL cannot be in a voice id). */
+const CUSTOM = "\u0000custom";
+
 /**
  * The voice select for one call language: ElevenLabs voices fetched from the daemon for `language` (refetched when it
- * changes), grouped (Dutch by accent, English "Best for calls"), with a "Voices for" note. Choosing a Voice Library
- * voice asks the daemon to make it usable first (it adds it to the owner's ElevenLabs library when needed) and stores
- * the id the daemon returns. `previewSelected` adds a preview button for the chosen voice next to the select.
+ * changes), grouped (Dutch by accent, English "Best for calls"), with a "Voices for" caption in the list. Choosing a
+ * Voice Library voice asks the daemon to make it usable first (it adds it to the owner's ElevenLabs library when needed)
+ * and stores the id the daemon returns. `allowCustom` adds a "Custom voice ID" choice that reveals a field for any
+ * ElevenLabs voice id; a stored id the lists do not know opens in that mode.
  */
-export function LanguageVoicePicker({ language, enabled, defaultId, previewSelected, ...look }: PickerLook & {
-  language: string; enabled: boolean; defaultId: string; previewSelected?: boolean;
+export function LanguageVoicePicker({ language, enabled, defaultId, allowCustom, ...look }: PickerLook & {
+  language: string; enabled: boolean; defaultId: string; allowCustom?: boolean;
 }) {
   const [list, setList] = useState<VoiceList | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
+  // Set once the person picks "Custom voice ID" or types in its field; until then a stored unknown id implies it.
+  const [customDraft, setCustomDraft] = useState<string | null>(null);
 
   useEffect(() => {
     if (!inDesktop || !enabled) return;
@@ -113,11 +121,22 @@ export function LanguageVoicePicker({ language, enabled, defaultId, previewSelec
     return () => { live = false; };
   }, [language, enabled]);
 
-  const { top, groups } = groupedVoiceOptions(list, look.value, defaultId);
   const known = knownVoices(list);
   const shown = list?.language ?? (language === "en" ? "en" : "nl");
+  const custom = !!allowCustom && (customDraft !== null || (!!look.value && list !== null && !known.has(look.value)));
+  const grouped = groupedVoiceOptions(list, look.value, defaultId);
+  // In custom mode the stored id lives in the field, not as a raw-id option in the list.
+  const top = custom ? grouped.top.filter((o) => o.value !== look.value || known.has(o.value)) : grouped.top;
+  const groups = allowCustom
+    ? [...grouped.groups, { label: "Other", options: [{ value: CUSTOM, title: "Custom voice ID", description: "Any voice in your ElevenLabs account, by its ID." }] }]
+    : grouped.groups;
 
   async function choose(next: string) {
+    if (next === CUSTOM) {
+      setCustomDraft(known.has(look.value) ? "" : look.value);
+      return;
+    }
+    setCustomDraft(null);
     const voice = known.get(next);
     if (!next || !voice || voice.inLibrary || !voice.publicOwnerId) {
       look.onChange(next);
@@ -134,13 +153,16 @@ export function LanguageVoicePicker({ language, enabled, defaultId, previewSelec
     }
   }
 
-  const selected = known.get(look.value || defaultId);
-  return <span className="flex min-w-0 flex-col items-end gap-0.5">
-    <span className="flex items-center gap-1">
-      {previewSelected && selected?.previewUrl && <PreviewButton url={selected.previewUrl} name={selected.name} />}
-      <Picker {...look} options={top} groups={groups} onChange={(next) => void choose(next)} />
-    </span>
-    <span className="px-1 text-muted-foreground text-xs">{adding ? "Adding voice…" : `Voices for: ${voiceLanguageName(shown)}`}</span>
+  return <span className="flex min-w-0 flex-col items-end gap-1">
+    <Picker {...look} value={custom ? CUSTOM : look.value} options={top} groups={groups} caption={`Voices for: ${voiceLanguageName(shown)}`}
+      onChange={(next) => void choose(next)} />
+    {custom && <Input size="sm" className="w-52 font-mono" aria-label="ElevenLabs voice ID" placeholder="Paste a voice ID" spellCheck={false} autoComplete="off"
+      value={customDraft ?? look.value} onChange={(event) => {
+        const id = event.target.value.replace(/\s+/g, "");
+        setCustomDraft(id);
+        look.onChange(id);
+      }} />}
+    {adding && <span className="px-1 text-muted-foreground text-xs">Adding voice…</span>}
     {error && <span role="alert" className="selectable max-w-80 break-words px-1 text-destructive-foreground text-xs">{error}</span>}
   </span>;
 }

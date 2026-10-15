@@ -58,6 +58,44 @@ it("does not ask ElevenLabs for voices without a key", async () => {
   expect(api.models).not.toHaveBeenCalled();
 });
 
+const voiceList = { language: "nl", library: [], groups: [{ label: "Vlaams", voices: [{ id: "v1", name: "Rachel", description: "Calm", inLibrary: true }] }] };
+
+it("reopens a stored voice id the lists do not know as a custom id and edits it", async () => {
+  api.voices.mockResolvedValue(voiceList);
+  const patch = vi.fn();
+  render(<JarvisPage bot={bot} form={{ ...full, jarvisVoice: "myClone123" }} patch={patch} />);
+  const field = await screen.findByRole("textbox", { name: "ElevenLabs voice ID" });
+  expect(field).toHaveValue("myClone123");
+  expect(screen.getAllByRole("combobox")[0]).toHaveTextContent("Custom voice ID");
+  fireEvent.change(field, { target: { value: " abc 123 " } });
+  expect(patch).toHaveBeenLastCalledWith({ jarvisVoice: "abc123" });
+});
+
+async function pick(name: RegExp) {
+  const option = await screen.findByRole("option", { name });
+  fireEvent.mouseMove(option);
+  fireEvent.mouseUp(option);
+  fireEvent.click(option);
+}
+
+it("shows the custom id field only after Custom voice ID is picked, and hides it for a listed voice", async () => {
+  api.voices.mockResolvedValue(voiceList);
+  const patch = vi.fn();
+  render(<JarvisPage bot={bot} form={{ ...full, jarvisVoice: "v1" }} patch={patch} />);
+  const select = await screen.findByRole("combobox", { name: "Voice" });
+  await waitFor(() => expect(select).toHaveTextContent("Rachel"));
+  expect(screen.queryByRole("textbox", { name: "ElevenLabs voice ID" })).toBeNull();
+  fireEvent.click(select);
+  await pick(/Custom voice ID/);
+  const field = await screen.findByRole("textbox", { name: "ElevenLabs voice ID" });
+  expect(field).toHaveValue("");
+  expect(patch).not.toHaveBeenCalled();
+  fireEvent.click(select);
+  await pick(/Rachel/);
+  await waitFor(() => expect(screen.queryByRole("textbox", { name: "ElevenLabs voice ID" })).toBeNull());
+  expect(patch).toHaveBeenLastCalledWith({ jarvisVoice: "v1" });
+});
+
 it("disables the toggle and says why without full permissions", async () => {
   render(<JarvisPage bot={bot} form={{ ...full, toolAccess: "write" }} patch={vi.fn()} />);
   const toggle = await screen.findByRole("switch", { name: "Jarvis mode" });

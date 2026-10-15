@@ -53,6 +53,7 @@ const ENTRIES: Omit<Connector, "logo">[] = [
   { id: "sentry", name: "Sentry", description: "Triage errors and issues", about: "Search and triage Sentry issues, errors and events across your projects.", category: "Developer", url: "https://mcp.sentry.dev/mcp" },
 
   { id: "zapier", name: "Zapier", description: "Run actions across 8,000 apps", about: "Run the Zapier actions you have enabled across thousands of connected apps.", category: "Productivity", url: "https://mcp.zapier.com/api/mcp/mcp" },
+  { id: "composio", name: "Composio", description: "Use 1,000+ apps through one connection", about: "Composio Connect gives your bots tools for more than a thousand apps, such as Gmail, Slack, GitHub and Notion, through one connection. You sign in to Composio once, then link each app inside Composio when a tool first needs it.", category: "Productivity", url: "https://connect.composio.dev/mcp" },
   { id: "intercom", name: "Intercom", description: "Search conversations and contacts", about: "Search Intercom conversations and contacts for support context.", category: "Productivity", url: "https://mcp.intercom.com/mcp" },
 
   { id: "paypal", name: "PayPal", description: "Invoices, orders and payments", about: "Work with PayPal invoices, orders and payments.", category: "Finance", url: "https://mcp.paypal.com/mcp" },
@@ -74,7 +75,7 @@ const ENTRIES: Omit<Connector, "logo">[] = [
 
 const LOGO_FILES = import.meta.glob<string>("./logos/*", { eager: true, query: "?url", import: "default" });
 /** Single dark marks, painted in the foreground colour (see Logo.mono). */
-const MONO = new Set(["github", "vercel", "linear", "railway", "resend", "prisma", "intercom"]);
+const MONO = new Set(["github", "vercel", "linear", "railway", "resend", "prisma", "intercom", "composio"]);
 
 export const DIRECTORY: Connector[] = ENTRIES.map((entry) => {
   const src = Object.entries(LOGO_FILES).find(([path]) => path.replace(/^.*\/|\.\w+$/g, "") === entry.id)?.[1];

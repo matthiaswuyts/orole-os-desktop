@@ -128,7 +128,9 @@ export function NotificationCenter() {
         <Bell />
         {countKnown && n.unread > 0 && <Badge size="sm" className="absolute -right-1 -top-1" aria-hidden="true">{n.unread > 99 ? "99+" : n.unread}</Badge>}
       </TooltipTrigger><TooltipPopup>Notifications</TooltipPopup></Tooltip>
-      <PopoverPopup anchor={cornerAnchor} align="end" sideOffset={8}
+      {/* Always below the titlebar: flipping (to the anchor's side when a short window cannot fit 480px) would put the
+          popup over the native minimise/maximise/close buttons. Its height follows --available-height instead. */}
+      <PopoverPopup anchor={cornerAnchor} align="end" sideOffset={8} collisionAvoidance={{ side: "none", fallbackAxisSide: "none" }}
         className="w-[360px] max-w-[calc(100vw-16px)] rounded-2xl bg-card text-card-foreground [&>[data-slot=popover-viewport]]:p-0">
         <PopoverTitle className="sr-only">Notifications</PopoverTitle>
         <PopoverDescription className="sr-only">{countKnown ? `${n.unread} unread, ${n.needsYou} waiting for you` : "Activity from your tasks, bots and flows."}</PopoverDescription>

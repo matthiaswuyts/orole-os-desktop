@@ -492,9 +492,12 @@ Lists are cached in the daemon for 10 minutes per language; saving a new ElevenL
 `jarvis.voices.add {voiceId, publicOwnerId}` runs when the owner picks a voice that is not in their library: the
 daemon checks the library itself, adds a Voice Library voice with `POST /v1/voices/add/{public_user_id}/{voice_id}`
 (`new_name` = the voice's name) and returns the id to store (audit `jarvis.voice.add`). ElevenLabs documents adding
-shared voices but not using one directly by id in an agent, so the daemon always adds before storing. Each option has
-a preview button that plays the voice's public `preview_url` clip in the app (one clip at a time; the app sets no
-content security policy, so the ElevenLabs CDN needs no allowance).
+shared voices but not using one directly by id in an agent, so the daemon always adds before storing. Each option in
+the open list has a preview button that plays the voice's public `preview_url` clip in the app (one clip at a time; the
+app sets no content security policy, so the ElevenLabs CDN needs no allowance); the closed select shows no preview.
+A bot's Phone calls page also offers "Custom voice ID": a field for any voice id already in the owner's ElevenLabs
+account, stored as typed (whitespace removed). The daemon only checks its shape (`chat` bot validation: at most 128
+bytes, no whitespace or control characters); a stored id the voice lists do not know reopens in that mode.
 
 | Credential key (`internal/credentials`) | Holds | Set by |
 |---|---|---|

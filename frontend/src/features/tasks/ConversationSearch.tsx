@@ -33,7 +33,7 @@ export function ConversationSearch({ query, hits, activeIndex, onQueryChange, on
 }) {
   const scopeId = useId();
   const active = hits[activeIndex];
-  return <div data-slot="conversation-search" className="absolute top-3 right-5 z-10 w-[min(24rem,calc(100%-2.5rem))] rounded-md border bg-background p-2">
+  return <div data-slot="conversation-search" className="absolute top-3 right-[calc(var(--feed-aside,0px)+1.25rem)] z-10 w-[min(24rem,calc(100%-var(--feed-aside,0px)-2.5rem))] rounded-md border bg-background p-2">
     <div className="flex items-center gap-1.5">
       <Search aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
       <Input nativeInput ref={inputRef} size="sm" type="search" aria-label="Find in conversation" aria-describedby={scopeId} placeholder="Find in conversation" value={query} onChange={(event) => onQueryChange(event.target.value)} onKeyDown={(event) => {

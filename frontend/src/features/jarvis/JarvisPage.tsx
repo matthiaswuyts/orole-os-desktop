@@ -1,4 +1,4 @@
-import { MicIcon, PhoneCallIcon, PhoneIcon, Trash2Icon } from "lucide-react";
+import { AudioWaveformIcon, MicIcon, PhoneCallIcon, PhoneIcon, Trash2Icon } from "lucide-react";
 import { useCallback, useEffect, useId, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -128,10 +128,10 @@ export function JarvisPage({ bot, form, patch, onOpenPermissions }: { bot: Bot; 
 
     <Group title="Voice">
       <ControlRow icon={MicIcon} label="Voice" htmlFor={ids.voice}>
-        <LanguageVoicePicker compact previewSelected id={ids.voice} value={form.jarvisVoice} language={status?.settings.callLanguage ?? ""} enabled={hasElevenLabs}
+        <LanguageVoicePicker compact allowCustom id={ids.voice} value={form.jarvisVoice} language={status?.settings.callLanguage ?? ""} enabled={hasElevenLabs}
           defaultId={status?.settings.defaultVoiceId ?? ""} onChange={(jarvisVoice) => patch({ jarvisVoice })} />
       </ControlRow>
-      <ControlRow icon={MicIcon} label="Voice model" htmlFor={ids.model}>
+      <ControlRow icon={AudioWaveformIcon} label="Voice model" htmlFor={ids.model}>
         <ModelPicker compact id={ids.model} value={form.jarvisModel} models={models} defaultId={status?.settings.defaultTtsModel ?? ""} onChange={(jarvisModel) => patch({ jarvisModel })} />
       </ControlRow>
     </Group>

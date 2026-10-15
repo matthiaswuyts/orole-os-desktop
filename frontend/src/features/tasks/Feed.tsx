@@ -1,4 +1,4 @@
-import { memo, useCallback, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { memo, useCallback, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { LoaderCircle } from "lucide-react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import type { Event as AgentEvent, Session } from "@/mygo";
@@ -20,6 +20,7 @@ import { currentStep, LatestStep, nestSubagents, RUN_STATE, RunSteps, runStatusT
 import { ScrollAnchor, useScrollAnchor } from "./ScrollAnchor";
 import { useFeedItems, useTurnEntries } from "./useFeedItems";
 import { useVisibleTurns } from "./useVisibleTurns";
+import { cn } from "@/lib/utils";
 
 /** Conversations up to this many entries (a message, or one assistant turn) render every row; longer ones render only the rows near the viewport. */
 export const VIRTUALIZE_FROM = 60;
@@ -148,6 +149,13 @@ export interface FeedProps {
   onLoadMore: () => Promise<boolean>;
   /** Retries transcript loading, never replays a prompt or a tool. */
   onRetry?: () => void;
+  /**
+   * Sticks to the bottom of the scroll viewport (the composer), so the scrollbar runs the full height and the conversation
+   * scrolls under it.
+   */
+  footer?: ReactNode;
+  /** A column right of the conversation inside the viewport (the task details rail), so the scrollbar sits at the far right. */
+  aside?: { node: ReactNode; width: string };
 }
 
 export function Feed(props: FeedProps) {
@@ -155,7 +163,7 @@ export function Feed(props: FeedProps) {
   return <ConversationFeed key={props.session.id} {...props} />;
 }
 
-function ConversationFeed({ session, events, loading, loadingMore, error, hasMore, onLoadMore, onRetry }: FeedProps) {
+function ConversationFeed({ session, events, loading, loadingMore, error, hasMore, onLoadMore, onRetry, footer, aside }: FeedProps) {
   const grouped = useFeedItems(events, session.live);
   const items = useMemo(() => {
     const requests = session.questions ?? [];
@@ -293,31 +301,44 @@ function ConversationFeed({ session, events, loading, loadingMore, error, hasMor
       tokens={entry.type === "run" && index === entries.length - 1 ? session.tokens : undefined} onOpenChange={toggleRun} />;
   };
 
-  return <div className="relative flex min-h-0 flex-1 flex-col" onKeyDown={(event) => {
+  // The aside lies over the viewport's right side, left of its scrollbar (8px, index.css), so the conversation's scrollbar runs at
+  // the far right without the aside being inside the scrolling element (its own scrolling and dragging stay its own).
+  // `--feed-aside` is the width it covers; the conversation and the overlays (search box, conversation map) keep clear of it.
+  return <div className="relative flex min-h-0 flex-1 flex-col" style={{ "--feed-aside": aside ? `calc(${aside.width} + 0.5rem)` : "0px" } as CSSProperties} onKeyDown={(event) => {
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "f") {
       event.preventDefault(); setSearchOpen(true);
     }
   }}>
     {searchOpen && <ConversationSearch query={query} hits={hits} activeIndex={activeIndex} inputRef={searchInput} onQueryChange={(next) => { setQuery(next); setActiveId(null); }} onStep={step} onClose={() => { setQuery(""); setActiveId(null); setSearchOpen(false); }} />}
     <div className="@container/feed relative flex min-h-0 flex-1 flex-col">
-      <div ref={scroll.viewport} onScroll={scroll.onScroll} onWheel={(event) => { if (event.deltaY < 0) scroll.pause(); }} onTouchStart={scroll.pause} onKeyDown={scroll.onKeyDown} role="log" tabIndex={0} aria-label="Task conversation" aria-live="off" aria-busy={loading} style={{ overflowAnchor: "none" }} className="min-h-0 flex-1 overflow-auto px-5 py-4 pb-14 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring">
-        <div ref={scroll.content} className="mx-auto flex max-w-4xl flex-col gap-4">
-          {error && <div className="space-y-2"><ErrorNote error={error} />{onRetry && <Button size="sm" variant="outline" loading={loading || loadingMore} onClick={onRetry}>Retry loading conversation</Button>}</div>}
-          {hasMore && <Button size="xs" variant="outline" className="self-center" loading={loadingMore} onClick={loadEarlier}>Load earlier messages</Button>}
-          {loading && <p role="status" className="text-muted-foreground">Loading conversation…</p>}
-          {!loading && !error && !items.length && <p role="status" className="text-muted-foreground">No output has been recorded yet.</p>}
-          {virtualized
-            ? <div ref={list} className="relative w-full" style={{ height: virtual.getTotalSize() }}>
-              {virtual.getVirtualItems().map((virtualRow) => <div key={virtualRow.key} ref={virtual.measureElement} data-index={virtualRow.index} className="absolute inset-x-0 top-0 flex min-w-0 flex-col gap-4" style={{ transform: `translateY(${virtualRow.start - margin}px)` }}>{row(virtualRow.index)}</div>)}
+      <div ref={scroll.viewport} onScroll={scroll.onScroll} onWheel={(event) => { if (event.deltaY < 0) scroll.pause(); }} onTouchStart={scroll.pause} onKeyDown={scroll.onKeyDown} role="log" tabIndex={0} aria-label="Task conversation" aria-live="off" aria-busy={loading} style={{ overflowAnchor: "none" }} className="min-h-0 flex-1 overflow-auto outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring">
+        <div ref={scroll.content} className="mr-(--feed-aside) flex min-h-full min-w-0 flex-col">
+          <div className={cn("flex-1 px-5 pt-4", footer ? "pb-6" : "pb-14")}>
+            <div className="mx-auto flex max-w-4xl flex-col gap-4">
+              {error && <div className="space-y-2"><ErrorNote error={error} />{onRetry && <Button size="sm" variant="outline" loading={loading || loadingMore} onClick={onRetry}>Retry loading conversation</Button>}</div>}
+              {hasMore && <Button size="xs" variant="outline" className="self-center" loading={loadingMore} onClick={loadEarlier}>Load earlier messages</Button>}
+              {loading && <p role="status" className="text-muted-foreground">Loading conversation…</p>}
+              {!loading && !error && !items.length && <p role="status" className="text-muted-foreground">No output has been recorded yet.</p>}
+              {virtualized
+                ? <div ref={list} className="relative w-full" style={{ height: virtual.getTotalSize() }}>
+                  {virtual.getVirtualItems().map((virtualRow) => <div key={virtualRow.key} ref={virtual.measureElement} data-index={virtualRow.index} className="absolute inset-x-0 top-0 flex min-w-0 flex-col gap-4" style={{ transform: `translateY(${virtualRow.start - margin}px)` }}>{row(virtualRow.index)}</div>)}
+                </div>
+                : entries.map((entry, index) => <div key={entry.key} className="flex min-w-0 flex-col gap-4">{row(index)}</div>)}
+              {activity && !liveRun && <p role="status" data-testid="live-activity" className="flex items-center gap-2 text-xs text-muted-foreground"><LoaderCircle aria-hidden className="size-3.5 animate-spin motion-reduce:animate-none" /><span className="cv-shimmer min-w-0 truncate font-medium">{activity.label}</span></p>}
             </div>
-            : entries.map((entry, index) => <div key={entry.key} className="flex min-w-0 flex-col gap-4">{row(index)}</div>)}
-          {activity && !liveRun && <p role="status" data-testid="live-activity" className="flex items-center gap-2 text-xs text-muted-foreground"><LoaderCircle aria-hidden className="size-3.5 animate-spin motion-reduce:animate-none" /><span className="cv-shimmer min-w-0 truncate font-medium">{activity.label}</span></p>}
+          </div>
+          {/* The jump button sits just above the composer: a zero-height anchor it is positioned from. */}
+          {footer && <div className="sticky bottom-0 z-10">
+            {scroll.away && <div className="relative"><ScrollAnchor unseen={scroll.unseen} onJump={scroll.jump} /></div>}
+            {footer}
+          </div>}
         </div>
       </div>
+      {aside && <div data-feed-aside className="absolute inset-y-0 right-2 z-10" style={{ width: aside.width }}>{aside.node}</div>}
       <SearchTrack hits={hits} activeId={active?.id} />
       {map.turns.length > 1 && <ConversationMap side="left" entries={map.turns} activeId={mapState.activeId} visibleIds={mapState.visibleIds} onSelect={(id) => revealRow(id)}
-        className="absolute top-1/2 right-1.5 z-10 hidden max-h-[70%] -translate-y-1/2 @5xl/feed:flex" />}
-      {scroll.away && <ScrollAnchor unseen={scroll.unseen} onJump={scroll.jump} />}
+        className="absolute top-1/2 right-[calc(var(--feed-aside)+0.375rem)] z-10 hidden max-h-[70%] -translate-y-1/2 @5xl/feed:flex" />}
+      {!footer && scroll.away && <ScrollAnchor unseen={scroll.unseen} onJump={scroll.jump} />}
     </div>
   </div>;
 }

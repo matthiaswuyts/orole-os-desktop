@@ -291,7 +291,30 @@ logo and task title are the only task-specific titlebar content. Returning to th
 its page title. The titlebar's command-palette plus button is removed; the keyboard shortcut remains.
 
 `features/tasks/TaskView.tsx` wraps the real conversation and composer in `TaskCanvas`; file and
-image selections open a responsive side canvas without removing chat.
+image selections open a responsive side canvas without removing chat. The composer is the `Feed`'s `footer`: it sticks to
+the bottom of the conversation's scroll viewport (`role="log"`), so the scrollbar runs the full height and the conversation
+scrolls under it. The bot chat does the same with `ThreadPrimitive.ViewportFooter` (problem, approvals, queue, composer).
+Scrollbars app-wide are styled once in `index.css` (8px gutter, 4px thumb, no arrow buttons); Base UI `ScrollArea` bars are 4px.
+
+**Session Rail** (`features/tasks/rail/`). On the Tasks page (`TaskView rail`; not the narrow task pane beside a bot
+chat) a 288px rail is the `Feed`'s `aside`: it lies over the scroll viewport's right side, just left of its scrollbar, and the
+conversation keeps clear of it (`--feed-aside`). It is not inside the scrolling element, so its own scrolling and dragging
+never move the conversation. The titlebar's Session Rail button (`AppShell`, shown only while a task is open) toggles
+`useUI.taskRailOpen`, remembered in `localStorage` (`orole.taskRail`); each section folds on its title (`orole.taskRail.closed`)
+and moves by the grip at its top right (dnd-kit sortable, pointer or keyboard; order in `orole.taskRail.order`, sections it
+does not name follow in their default order). Sections, each a `RailSection` card with a one-line summary while folded:
+- **Environment**: machine, project and working directory, branch (and whether the daemon owns the worktree).
+- **Context**: `ContextWindow` from `ComposerContext.tsx`, the same body as the composer's context popover: occupancy, the
+  harness's category grid and rows with their share of the window, or a plain meter for totals-only harnesses.
+- **Connectors**: the MCP servers every task reaches through the Orole gateway (`MCP.List`), with a status dot, a switch
+  (`MCP.Enable`), Sign in (`MCP.StartAuth`) or Reconnect (`MCP.Connect`); a connected server opens to per-tool switches grouped
+  by the tool's effect (`MCP.SetToolPermission` `deny`/`ask`, as on Settings › Integrations). Changes are global, not
+  per task, and Go enforces them on each call.
+- **Changes**: the session's diff stats and Create PR, a dialog that calls `Agents.Publish` with `pr`, `push` and
+  `confirmed`: submitting it is the confirmation of the remote effects; Go re-checks that the agent is not working and applies
+  the GitHub gates. Once published it links the pull request instead.
+- **Background tasks**: the harness's reported subagents, folded from the loaded `subagent` events (first report = start):
+  failed first, then running with their time so far, finished ones behind one "N finished" row.
 
 **Starting a task is instant.** Send (Home or New task) calls `beginLaunch` (`features/tasks/pendingLaunch.ts`), which adds a
 `PendingLaunch` to the agents store (`launches`, keyed `launch:<uuid>`; `status` `starting` | `failed`), makes it the open task and

@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useState, type ReactNode } from "react";
-import { PanelLeftOpen } from "lucide-react";
+import { PanelLeftOpen, SquareMenu } from "lucide-react";
 import { Tooltip, TooltipPopup, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Sidebar } from "./Sidebar";
 import { StatusBar } from "./StatusBar";
@@ -54,6 +54,8 @@ export function AppShell({ children }: { children: ReactNode }) {
   const chatBot = useSelectedBot();
   const builderOpen = useChat((state) => state.builder.open);
   const bot = view === "chat" && !builderOpen ? chatBot : undefined;
+  const railOpen = useUI((s) => s.taskRailOpen);
+  const toggleRail = useUI((s) => s.toggleTaskRail);
   return (
     <TooltipProvider delay={300}>
       <div className="flex h-full flex-col bg-background">
@@ -68,6 +70,7 @@ export function AppShell({ children }: { children: ReactNode }) {
               </>}
               <div className="titlebar-nodrag ml-auto flex h-full shrink-0 items-center gap-2 pl-2">
                 {bot && <BotActions />}
+                {activeTask && <Tooltip><TooltipTrigger render={<button type="button" aria-label="Session Rail" aria-pressed={railOpen} onClick={toggleRail} className={`inline-flex size-6 items-center justify-center rounded-md hover:bg-accent hover:text-foreground ${railOpen ? "bg-accent text-foreground" : "text-muted-foreground"}`} />}><SquareMenu className="size-3.5" /></TooltipTrigger><TooltipPopup side="bottom">{railOpen ? "Hide Session Rail" : "Show Session Rail"}</TooltipPopup></Tooltip>}
                 <NotificationCenter />
                 <span aria-hidden="true" className="mr-1 h-4 w-px bg-border" />
               </div>

@@ -57,7 +57,7 @@ export function contextCells(breakdown: ContextBreakdown, cells = GRID_CELLS): C
 const formatTokens = (value: number) => new Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 1 }).format(value);
 
 export function ComposerContext({ usage }: { usage?: ContextUsage | null }) {
-  const { used, limit, fraction } = contextUsage(usage);
+  const { fraction } = contextUsage(usage);
   const breakdown = usage?.breakdown && usage.breakdown.windowTokens > 0 ? usage.breakdown : null;
   const percentage = fraction === null ? null : Math.round(fraction * 100);
   const label = percentage === null ? "Context usage: not fully reported" : `Context usage: ${percentage}%`;
@@ -77,21 +77,36 @@ export function ComposerContext({ usage }: { usage?: ContextUsage | null }) {
           <PopoverTitle className="flex-1">Context window</PopoverTitle>
           {breakdown?.model && <span className="min-w-0 truncate text-xs text-muted-foreground">{breakdown.model}</span>}
         </div>
-        <div className="flex items-baseline justify-between gap-4 tabular-nums">
-          <p className="flex items-baseline gap-1.5">
-            <span className="text-2xl font-semibold tracking-tight">{used === null ? "Not reported" : formatTokens(used)}</span>
-            {limit !== null && limit > 0 && <span className="text-sm text-muted-foreground">/ {formatTokens(limit)}</span>}
-          </p>
-          {percentage !== null && <span className={cn("text-sm text-muted-foreground", warn && "font-medium text-warning-foreground")}>{percentage}%</span>}
-        </div>
-        {breakdown ? <Breakdown breakdown={breakdown} used={used} />
-          : <TotalsOnly usage={usage} fraction={fraction} percentage={percentage} />}
+        <ContextWindow usage={usage} bounded />
       </div>
     </PopoverPopup>
   </Popover>;
 }
 
-function Breakdown({ breakdown, used }: { breakdown: ContextBreakdown; used: number | null }) {
+/**
+ * What the model holds: occupancy against the window, then the harness's own per-category grid and rows, or a plain meter
+ * when it reports totals only. Shared by the composer's popover (`bounded`: the rows scroll inside it) and the task details
+ * rail, which scrolls as a whole.
+ */
+export function ContextWindow({ usage, bounded = false }: { usage?: ContextUsage | null; bounded?: boolean }) {
+  const { used, limit, fraction } = contextUsage(usage);
+  const breakdown = usage?.breakdown && usage.breakdown.windowTokens > 0 ? usage.breakdown : null;
+  const percentage = fraction === null ? null : Math.round(fraction * 100);
+  const warn = fraction !== null && fraction >= 0.85;
+  return <>
+    <div className="flex items-baseline justify-between gap-4 tabular-nums">
+      <p className="flex items-baseline gap-1.5">
+        <span className="text-2xl font-semibold tracking-tight">{used === null ? "Not reported" : formatTokens(used)}</span>
+        {limit !== null && limit > 0 && <span className="text-sm text-muted-foreground">/ {formatTokens(limit)}</span>}
+      </p>
+      {percentage !== null && <span className={cn("text-sm text-muted-foreground", warn && "font-medium text-warning-foreground")}>{percentage}%</span>}
+    </div>
+    {breakdown ? <Breakdown breakdown={breakdown} used={used} bounded={bounded} />
+      : <TotalsOnly usage={usage} fraction={fraction} percentage={percentage} />}
+  </>;
+}
+
+function Breakdown({ breakdown, used, bounded }: { breakdown: ContextBreakdown; used: number | null; bounded: boolean }) {
   const cells = contextCells(breakdown);
   const usedCategories = breakdown.categories.filter((c) => c.kind === "used" && c.tokens > 0);
   const colors = new Map(usedCategories.map((c, index) => {
@@ -109,9 +124,9 @@ function Breakdown({ breakdown, used }: { breakdown: ContextBreakdown; used: num
       {cells.map((cell, index) => <span key={index} className={cn("aspect-square rounded-[3px]", cell.kind === "free" && "bg-foreground/8", cell.kind === "buffer" && "bg-foreground/20")}
         style={cell.kind === "used" ? { backgroundColor: colors.get(cell.category ?? "") } : undefined} />)}
     </div>
-    <ul aria-label="Context breakdown" className="-mx-1 flex max-h-72 flex-col overflow-y-auto">
-      {usedCategories.map((c) => <CategoryRow key={c.name} category={c} color={colors.get(c.name)} />)}
-      {buffer.map((c) => <CategoryRow key={c.name} category={c} swatch="bg-foreground/20" />)}
+    <ul aria-label="Context breakdown" className={cn("-mx-1 flex flex-col", bounded && "max-h-72 overflow-y-auto")}>
+      {usedCategories.map((c) => <CategoryRow key={c.name} category={c} color={colors.get(c.name)} windowTokens={breakdown.windowTokens} />)}
+      {buffer.map((c) => <CategoryRow key={c.name} category={c} swatch="bg-foreground/20" windowTokens={breakdown.windowTokens} />)}
       {deferred.length > 0 && <li aria-hidden className="px-1 pt-2 pb-1 text-xs text-muted-foreground">Loaded on demand, not in context</li>}
       {deferred.map((c) => <CategoryRow key={c.name} category={c} swatch="border border-dashed border-muted-foreground/50" muted />)}
     </ul>
@@ -125,11 +140,15 @@ function Breakdown({ breakdown, used }: { breakdown: ContextBreakdown; used: num
   </>;
 }
 
-function CategoryRow({ category, color, swatch, muted = false }: { category: ContextCategory; color?: string; swatch?: string; muted?: boolean }) {
+/** `windowTokens` adds the category's share of the window; on-demand rows sit outside it and get none. */
+function CategoryRow({ category, color, swatch, muted = false, windowTokens }: { category: ContextCategory; color?: string; swatch?: string; muted?: boolean; windowTokens?: number }) {
   const [open, setOpen] = useState(false);
   const items = category.items ?? [];
   const marker = <span aria-hidden className={cn("size-2.5 shrink-0 rounded-[3px]", swatch)} style={color ? { backgroundColor: color } : undefined} />;
-  const tokens = <span className="ml-auto shrink-0 tabular-nums text-muted-foreground">{formatTokens(category.tokens)}</span>;
+  const tokens = <span className="ml-auto flex shrink-0 items-baseline gap-2 tabular-nums">
+    <span className="text-muted-foreground">{formatTokens(category.tokens)}</span>
+    {windowTokens ? <span className="w-11 text-right text-xs font-medium">{`${(category.tokens / windowTokens * 100).toFixed(1)}%`}</span> : null}
+  </span>;
   if (!items.length) {
     return <li className={cn("flex min-h-8 items-center gap-2.5 px-1 text-sm", muted && "text-muted-foreground")}>{marker}<span className="truncate">{category.name}</span>{tokens}</li>;
   }

@@ -321,7 +321,7 @@ function CallsSection({ status }: { status: StatusView }) {
         <LanguagePicker id={ids.language} value={language} onChange={setLanguage} />
       </Row>
       <Row label="Default voice" htmlFor={ids.voice}>
-        <LanguageVoicePicker id={ids.voice} value={voiceId} language={language} enabled={status.hasElevenLabs} defaultId="" previewSelected onChange={setVoiceId} />
+        <LanguageVoicePicker id={ids.voice} value={voiceId} language={language} enabled={status.hasElevenLabs} defaultId="" onChange={setVoiceId} />
       </Row>
       <Row label="Default voice model" htmlFor={ids.model}>
         <ModelPicker id={ids.model} value={ttsModel} models={models} defaultId="" onChange={setTtsModel} />

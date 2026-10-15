@@ -39,7 +39,7 @@ const SUBAGENT_RUNNING = /^(started|running|pending|pendinginit|queued|in_progre
 const SUBAGENT_FAILED = /^(failed|error|errored)$/i;
 const SUBAGENT_STOPPED = /^(cancel+ed|interrupted|aborted|stopped|killed)$/i;
 
-function subagentState(status: string): AgentState {
+export function subagentState(status: string): AgentState {
   if (!status) return "idle";
   if (SUBAGENT_RUNNING.test(status)) return "running";
   if (SUBAGENT_FAILED.test(status)) return "failed";

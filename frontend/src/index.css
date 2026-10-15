@@ -84,6 +84,30 @@
     --spacing-row-pad: var(--row-pad);
     --spacing-row-gap: var(--row-gap);
     --spacing-side-row: var(--side-row);
+    /* Padding, margin, gap and space-* steps scale with density (--density-space, below); sizes
+       (h-*, w-*, size-*) do not. A step not listed here keeps the unscaled --spacing value, and
+       so do arbitrary values written with --spacing(n). */
+    --padding-0\.5: var(--sp-0_5); --margin-0\.5: var(--sp-0_5); --gap-0\.5: var(--sp-0_5); --space-0\.5: var(--sp-0_5);
+    --padding-1: var(--sp-1); --margin-1: var(--sp-1); --gap-1: var(--sp-1); --space-1: var(--sp-1);
+    --padding-1\.25: var(--sp-1_25); --margin-1\.25: var(--sp-1_25); --gap-1\.25: var(--sp-1_25); --space-1\.25: var(--sp-1_25);
+    --padding-1\.5: var(--sp-1_5); --margin-1\.5: var(--sp-1_5); --gap-1\.5: var(--sp-1_5); --space-1\.5: var(--sp-1_5);
+    --padding-2: var(--sp-2); --margin-2: var(--sp-2); --gap-2: var(--sp-2); --space-2: var(--sp-2);
+    --padding-2\.5: var(--sp-2_5); --margin-2\.5: var(--sp-2_5); --gap-2\.5: var(--sp-2_5); --space-2\.5: var(--sp-2_5);
+    --padding-3: var(--sp-3); --margin-3: var(--sp-3); --gap-3: var(--sp-3); --space-3: var(--sp-3);
+    --padding-3\.5: var(--sp-3_5); --margin-3\.5: var(--sp-3_5); --gap-3\.5: var(--sp-3_5); --space-3\.5: var(--sp-3_5);
+    --padding-4: var(--sp-4); --margin-4: var(--sp-4); --gap-4: var(--sp-4); --space-4: var(--sp-4);
+    --padding-5: var(--sp-5); --margin-5: var(--sp-5); --gap-5: var(--sp-5); --space-5: var(--sp-5);
+    --padding-5\.5: var(--sp-5_5); --margin-5\.5: var(--sp-5_5); --gap-5\.5: var(--sp-5_5); --space-5\.5: var(--sp-5_5);
+    --padding-6: var(--sp-6); --margin-6: var(--sp-6); --gap-6: var(--sp-6); --space-6: var(--sp-6);
+    --padding-6\.5: var(--sp-6_5); --margin-6\.5: var(--sp-6_5); --gap-6\.5: var(--sp-6_5); --space-6\.5: var(--sp-6_5);
+    --padding-7: var(--sp-7); --margin-7: var(--sp-7); --gap-7: var(--sp-7); --space-7: var(--sp-7);
+    --padding-8: var(--sp-8); --margin-8: var(--sp-8); --gap-8: var(--sp-8); --space-8: var(--sp-8);
+    --padding-9: var(--sp-9); --margin-9: var(--sp-9); --gap-9: var(--sp-9); --space-9: var(--sp-9);
+    --padding-10: var(--sp-10); --margin-10: var(--sp-10); --gap-10: var(--sp-10); --space-10: var(--sp-10);
+    --padding-12: var(--sp-12); --margin-12: var(--sp-12); --gap-12: var(--sp-12); --space-12: var(--sp-12);
+    --padding-14: var(--sp-14); --margin-14: var(--sp-14); --gap-14: var(--sp-14); --space-14: var(--sp-14);
+    --padding-16: var(--sp-16); --margin-16: var(--sp-16); --gap-16: var(--sp-16); --space-16: var(--sp-16);
+    --padding-20: var(--sp-20); --margin-20: var(--sp-20); --gap-20: var(--sp-20); --space-20: var(--sp-20);
   @keyframes skeleton {
   to {
     background-position: -200% 0;
@@ -290,17 +314,36 @@
   input, textarea, pre, code, .xterm, .selectable, [data-selectable] {
     @apply select-text;
   }
-  * {
-    scrollbar-width: thin;
-    scrollbar-color: color-mix(in srgb, var(--foreground) 16%, transparent) transparent;
-  }
 }
 
-/* xterm.js: let the theme's background show through, and keep the
-   scrollbar quiet. */
+/* xterm.js: let the theme's background show through. */
 .xterm .xterm-viewport {
   background-color: transparent !important;
-  scrollbar-width: thin;
+}
+
+/* Scrollbars app-wide: 8px gutter with a 4px rounded thumb inset by a transparent border, no arrow buttons. Chromium
+   (WebView2) ignores these rules on any element that sets the standard scrollbar-width or scrollbar-color, so neither is
+   used. */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track,
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+::-webkit-scrollbar-button {
+  display: none;
+}
+::-webkit-scrollbar-thumb {
+  min-height: 24px;
+  border: 2px solid transparent;
+  border-radius: 9999px;
+  background-clip: padding-box;
+  background-color: color-mix(in srgb, var(--foreground) 18%, transparent);
+}
+::-webkit-scrollbar-thumb:hover {
+  background-color: color-mix(in srgb, var(--foreground) 32%, transparent);
 }
 .xterm {
   height: 100%;
@@ -311,18 +354,44 @@
    h-row for a one-line row (Worktrees, flow runs), py-row-pad for a row of
    two or three lines (Review, History, flows, hooks), gap-row-gap between
    stacked cards (the Agent Dashboard), h-side-row for the sidebar's rows.
+   --density-space scales every padding, margin, gap and space-* step (see
+   @theme): compact is 3/4 of Tailwind's, rounded to whole pixels;
+   comfortable is Tailwind's own.
    The commit graph draws in pixels; lib/density.ts has its row height. */
 :root {
   --row-h: 2.25rem;
   --row-pad: 0.5rem;
   --row-gap: 0.5rem;
   --side-row: 1.75rem;
+  --density-space: 0.75;
+  --sp-0_5: round(calc(--spacing(0.5) * var(--density-space)), 1px);
+  --sp-1: round(calc(--spacing(1) * var(--density-space)), 1px);
+  --sp-1_25: round(calc(--spacing(1.25) * var(--density-space)), 1px);
+  --sp-1_5: round(calc(--spacing(1.5) * var(--density-space)), 1px);
+  --sp-2: round(calc(--spacing(2) * var(--density-space)), 1px);
+  --sp-2_5: round(calc(--spacing(2.5) * var(--density-space)), 1px);
+  --sp-3: round(calc(--spacing(3) * var(--density-space)), 1px);
+  --sp-3_5: round(calc(--spacing(3.5) * var(--density-space)), 1px);
+  --sp-4: round(calc(--spacing(4) * var(--density-space)), 1px);
+  --sp-5: round(calc(--spacing(5) * var(--density-space)), 1px);
+  --sp-5_5: round(calc(--spacing(5.5) * var(--density-space)), 1px);
+  --sp-6: round(calc(--spacing(6) * var(--density-space)), 1px);
+  --sp-6_5: round(calc(--spacing(6.5) * var(--density-space)), 1px);
+  --sp-7: round(calc(--spacing(7) * var(--density-space)), 1px);
+  --sp-8: round(calc(--spacing(8) * var(--density-space)), 1px);
+  --sp-9: round(calc(--spacing(9) * var(--density-space)), 1px);
+  --sp-10: round(calc(--spacing(10) * var(--density-space)), 1px);
+  --sp-12: round(calc(--spacing(12) * var(--density-space)), 1px);
+  --sp-14: round(calc(--spacing(14) * var(--density-space)), 1px);
+  --sp-16: round(calc(--spacing(16) * var(--density-space)), 1px);
+  --sp-20: round(calc(--spacing(20) * var(--density-space)), 1px);
 }
 :root[data-density="comfortable"] {
   --row-h: 2.75rem;
   --row-pad: 0.75rem;
   --row-gap: 0.75rem;
   --side-row: 2rem;
+  --density-space: 1;
 }
 
 /* Reduce motion (System Settings → Accessibility → Display): animations

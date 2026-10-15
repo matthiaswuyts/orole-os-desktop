@@ -6,6 +6,16 @@ export type ViewId = "home" | "agents" | "review" | "issues" | "automations" | "
 
 const isSettingsWindow = () => new URLSearchParams(window.location.search).get("window") === "settings";
 
+const RAIL_KEY = "orole.taskRail";
+const readRail = () => {
+  try { return localStorage.getItem(RAIL_KEY) !== "closed"; } catch { return true; }
+};
+const writeRail = (open: boolean) => {
+  try { localStorage.setItem(RAIL_KEY, open ? "open" : "closed"); } catch {
+    // The choice then lasts for the session only.
+  }
+};
+
 interface UIState {
   view: ViewId;
   /** Saved automation the Automations view should open, set by the palette; the view clears it once handled. */
@@ -19,6 +29,9 @@ interface UIState {
   paletteOpen: boolean;
   sidebarOpen: boolean;
   toggleSidebar: () => void;
+  /** The details rail beside an open code task (environment, context, connectors, changes, background tasks). Remembered per browser profile. */
+  taskRailOpen: boolean;
+  toggleTaskRail: () => void;
   windowFocused: boolean;
   setView: (v: ViewId) => void;
   setPalette: (o: boolean) => void;
@@ -46,6 +59,8 @@ export const useUI = create<UIState>((set, get) => ({
   paletteOpen: false,
   sidebarOpen: true,
   toggleSidebar: () => set((s) => ({ sidebarOpen: !s.sidebarOpen })),
+  taskRailOpen: readRail(),
+  toggleTaskRail: () => set((s) => { writeRail(!s.taskRailOpen); return { taskRailOpen: !s.taskRailOpen }; }),
   windowFocused: true,
   setView: (view) => set({ view }),
   setPalette: (paletteOpen) => set({ paletteOpen }),
