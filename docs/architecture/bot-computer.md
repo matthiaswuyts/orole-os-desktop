@@ -279,7 +279,7 @@ that names the host (lowercased, punycode, no port or user info): the user is as
   the bot wrote before; the `computer_write_file` approval for that script showed only its first 300 bytes. Approving
   a run of a file the bot wrote means trusting the whole file.
 - **Passwords.** `browser_type` refuses when the resolved field is an `input[type=password]` (checked in the guest)
-  and tells the bot to ask the user to take over.
+  and tells the bot to ask the user to take over. The check does not see through shadow DOM, so a password field inside a custom web component is not detected (gap).
 - **Results are untrusted.** Command output, file contents, page text, screenshots and guest error text are
   `Untrusted` (fenced by the engine). The model sees at most 64 KiB per command or file and 90 KiB of page text, with
   a note on how to get the rest; binary files are summarised. URLs must be absolute http(s); targets are a CSS
@@ -333,7 +333,7 @@ Phone-call turns cannot ask for a takeover. Untrusted content cannot start one: 
   prompt, again after one, and by the daemon adapter after the VM starts. `computer_read_file` is allowed. A guest
   call already in flight finishes first (a command started before the takeover keeps running, and so does anything it
   left running in the background). The bot's user cannot connect to Chromium's DevTools port or wayvnc at all (guest
-  nftables, image 0.1.3), so a command cannot drive the browser or watch the screen the user is using.
+  nftables, image 0.1.3), so a command cannot connect to the DevTools port or the VNC port. Same-uid processes can still use the Wayland socket (screencopy), Chromium's ProcessSingleton socket (to open URLs in the running browser) and wayvnc's control socket; the fix is running Chromium, cage and wayvnc as a separate user (follow-up issue).
 - **Signing in.** What the user signs in to stays in the browser profile on the bot's computer, and the bot can use
   those sessions afterwards. The profile's cookie files are owned by `bot`, so the bot's own commands can read them
   too (and use them outside the browser). Each new host the bot types still needs approval unless the user chose
