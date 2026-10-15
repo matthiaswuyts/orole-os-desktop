@@ -1,0 +1,127 @@
+name: qemu-sources
+
+# Tag sources-qemu-v<build> -> attach the corresponding source of the published qemu-v<build> release's zip to that
+# same release: the QEMU tree the binaries were built from (with its firmware submodules and meson subprojects),
+# the MSYS2 source package of every copyleft DLL (matched byte for byte against MSYS2's binary packages), the licence
+# texts and SOURCES.md. Existing assets are never replaced: an asset already on the release is skipped when its
+# SHA-256 matches and fails the run when it does not.
+on:
+  push:
+    tags: ["sources-qemu-v*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: qemu-sources-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  QEMU_BUILD: "20260811"
+  QEMU_SHA512: "5bcf9eed634e8575a37b74f445af41a2fe4106da512d0c30c368301d4c105037fdfab40a5287367a28a957624cddebbc8c07e16c88ab6634f554cdf3d16bf543"
+  # git describe of the binaries: v11.1.0-12130-ge470268ff4; the commit is in https://repo.or.cz/qemu/ar7.git.
+  QEMU_VERSION: "v11.1.0-12130-ge470268ff4"
+  QEMU_COMMIT: "e470268ff446ec56728215a987ed166d5ed8fb64"
+  QEMU_REPO: "https://repo.or.cz/qemu/ar7.git"
+
+jobs:
+  sources:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    permissions:
+      contents: write # uploads to the existing release
+    env:
+      GH_TOKEN: ${{ github.token }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Tag matches the pinned build
+        run: |
+          rel="qemu-v$QEMU_BUILD"
+          if [ "$GITHUB_REF_NAME" != "sources-$rel" ]; then echo "tag $GITHUB_REF_NAME is not sources-$rel"; exit 1; fi
+          echo "RELEASE_TAG=$rel" >> "$GITHUB_ENV"
+          echo "SHORT=${QEMU_COMMIT:0:10}" >> "$GITHUB_ENV"
+          sudo apt-get update -qq && sudo apt-get install -y -qq zstd xz-utils python3-zstandard python3-venv >/dev/null
+      - name: Download the released zip and check it against the release's SHA256SUMS
+        run: |
+          mkdir -p dl && cd dl
+          gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" -p "qemu-$QEMU_BUILD-win64.zip" -p SHA256SUMS
+          sha256sum -c SHA256SUMS
+          echo "ZIP_SHA256=$(sha256sum "qemu-$QEMU_BUILD-win64.zip" | cut -d' ' -f1)" >> "$GITHUB_ENV"
+          mkdir ../zip && cd ../zip && unzip -q "../dl/qemu-$QEMU_BUILD-win64.zip"
+          grep -aq -- "$QEMU_VERSION" qemu-system-x86_64.exe
+          grep -aq -- "$QEMU_VERSION" qemu-img.exe
+      - name: QEMU source tree at the binaries' commit (as scripts/make-release assembles it)
+        run: |
+          dir="qemu-$SHORT"
+          git init -q "$dir"
+          cd "$dir"
+          git fetch -q --depth 1 "$QEMU_REPO" "$QEMU_COMMIT"
+          git checkout -q FETCH_HEAD
+          test "$(git rev-parse HEAD)" = "$QEMU_COMMIT"
+          git submodule update --init --depth 1 --jobs 8 || git submodule update --init --jobs 8
+          (cd roms/edk2 && git submodule update --init --depth 1 --jobs 8)
+          (cd roms/seabios && git describe --tags --long --dirty > .version 2>/dev/null || git rev-parse --short HEAD > .version)
+          (cd roms/skiboot && ./make_version.sh > .version 2>/dev/null || git rev-parse --short HEAD > .version)
+          # QEMU's own bundled meson (python/wheels), as its configure would use.
+          python3 -m venv ../meson-venv && ../meson-venv/bin/pip -q install python/wheels/meson-*.whl
+          ../meson-venv/bin/meson subprojects download
+          git submodule status --recursive > SUBMODULES.txt
+          echo "$QEMU_REPO $QEMU_COMMIT ($QEMU_VERSION)" > SOURCE-COMMIT.txt
+          cd ..
+          # Like make-release: keep the wrap-file tarballs in subprojects/packagecache, not their expansion.
+          exclude=(--exclude=.git)
+          for w in "$dir"/subprojects/*.wrap; do
+            if grep -xqF "[wrap-file]" "$w"; then
+              d=$(sed -n -e '/^directory *= */{s///p;q}' "$w")
+              exclude+=(--exclude="$dir/subprojects/${d:-$(basename "$w" .wrap)}")
+            fi
+          done
+          mkdir -p out
+          tar "${exclude[@]}" --sort=name --owner=0 --group=0 --numeric-owner --mtime="@$(git -C "$dir" log -1 --format=%ct)" -cf - "$dir" | xz -T0 -6 > "out/qemu-src-$SHORT.tar.xz"
+          ls -la out
+      - name: Identify the DLLs' MSYS2 packages
+        run: |
+          python3 .github/scripts/qemu_dll_sources.py --dir zip --build-date 2026-08-11 \
+            --cache work/pkgcache --licenses work/licenses --out work/dlls.json
+      - name: Collect copyleft sources, licences and SOURCES.md
+        run: |
+          python3 .github/scripts/qemu_sources_pack.py --dlls work/dlls.json --zipdir zip --licenses work/licenses \
+            --qemu-src "out/qemu-src-$SHORT.tar.xz" --qemu-commit "$QEMU_COMMIT" --qemu-version "$QEMU_VERSION" \
+            --zip-name "qemu-$QEMU_BUILD-win64.zip" --zip-sha256 "$ZIP_SHA256" \
+            --installer "qemu-w64-setup-$QEMU_BUILD.exe" --installer-sha512 "$QEMU_SHA512" \
+            --work work --out out
+          cat out/SOURCES.md >> "$GITHUB_STEP_SUMMARY"
+          ls -la out
+          for f in out/*; do
+            if [ "$(stat -c %s "$f")" -ge 2147483648 ]; then echo "$f is over the 2 GiB asset limit"; exit 1; fi
+          done
+      - name: Keep the manifest for inspection
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: qemu-sources-${{ github.run_id }}
+          path: |
+            out/SOURCES.md
+            work/dlls.json
+          if-no-files-found: ignore
+          retention-days: 14
+      - name: Upload to the release (never replaces an asset)
+        run: |
+          existing=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" --jq '.assets[] | .name + " " + (.digest // "")')
+          for f in out/*; do
+            name=$(basename "$f")
+            sum="sha256:$(sha256sum "$f" | cut -d' ' -f1)"
+            have=$(awk -v n="$name" '$1 == n { print $2 }' <<< "$existing")
+            if [ -n "$have" ]; then
+              if [ "$have" = "$sum" ]; then echo "already there: $name"; continue; fi
+              echo "::error::$name is already on $RELEASE_TAG with $have, built $sum; not replacing it"
+              exit 1
+            fi
+            gh release upload "$RELEASE_TAG" "$f" --repo "$GITHUB_REPOSITORY"
+          done

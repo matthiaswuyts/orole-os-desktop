@@ -1,0 +1,151 @@
+name: guest-sources
+
+# Tag sources-guest-v<version> -> attach the corresponding source of the published guest-v<version> image to that same
+# release. The job checks out the commit the guest-v<version> tag points at, evaluates the image, checks that the
+# NixOS system it evaluates is the one in the release's `cmdline`, realises that system and walks its runtime closure:
+# the sources of every copyleft (or licence-unknown) package go into tar.zst parts below 1.9 GiB, the flake files and
+# Orole's own source (the repository at the tag) and the nixpkgs tree go in as separate assets, and SOURCES.md lists
+# every package with its licence, source URL, SHA-256 and part. Existing assets are never replaced: an asset already on
+# the release is skipped when its SHA-256 matches and fails the run when it does not.
+on:
+  push:
+    tags: ["sources-guest-v*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: guest-sources-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  sources:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    permissions:
+      contents: write # uploads to the existing release
+    env:
+      GH_TOKEN: ${{ github.token }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Release tag from the trigger tag
+        run: |
+          case "$GITHUB_REF_NAME" in sources-guest-v*) ;; *) echo "unexpected tag $GITHUB_REF_NAME"; exit 1 ;; esac
+          echo "RELEASE_TAG=${GITHUB_REF_NAME#sources-}" >> "$GITHUB_ENV"
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL /usr/local/share/boost
+          df -h /
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: tools
+          fetch-depth: 1
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+          path: src
+          fetch-depth: 1
+          persist-credentials: false
+      - uses: cachix/install-nix-action@448cde739abec1eaf0646249e3d25bb8d9bc7702 # v31.11.2
+        with:
+          extra_nix_config: |
+            system-features = nixos-test benchmark big-parallel kvm
+      - name: Tools
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq zstd brotli >/dev/null
+      - name: Evaluate the image and find its NixOS system
+        run: |
+          commit=$(git -C src rev-parse HEAD)
+          echo "REPO_COMMIT=$commit" >> "$GITHUB_ENV"
+          rev=$(python3 -c 'import json;print(json.load(open("src/guest/flake.lock"))["nodes"]["nixpkgs"]["locked"]["rev"])')
+          echo "NIXPKGS_REV=$rev" >> "$GITHUB_ENV"
+          gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" -p cmdline -p SHA256SUMS -D rel
+          (cd rel && sha256sum -c --ignore-missing SHA256SUMS)
+          toplevel=$(grep -o 'init=[^ ]*' rel/cmdline | sed 's/^init=//; s#/init$##')
+          echo "released system: $toplevel"
+          imgdrv=$(nix eval --raw ./src/guest#image.drvPath)
+          echo "image derivation: $imgdrv"
+          topdrv=""
+          for d in $(nix-store -qR "$imgdrv" | grep -- '-nixos-system-.*\.drv$'); do
+            if nix-store -q --outputs "$d" | grep -qxF "$toplevel"; then topdrv=$d; fi
+          done
+          if [ -z "$topdrv" ]; then echo "::error::the evaluated image does not contain $toplevel"; exit 1; fi
+          echo "TOPLEVEL=$toplevel" >> "$GITHUB_ENV"
+          echo "TOPDRV=$topdrv" >> "$GITHUB_ENV"
+      - name: Realise the system and list its runtime closure
+        run: |
+          nix-store -r "$TOPDRV" > /dev/null
+          mkdir -p work out
+          nix-store -qR "$TOPLEVEL" > work/closure.txt
+          wc -l work/closure.txt
+          nix derivation show -r "$TOPDRV" > work/graph.json
+          ls -la work
+      - name: nixpkgs package metadata of this revision
+        run: |
+          short=${NIXPKGS_REV:0:12}
+          prefix=$(curl -sSf "https://nix-releases.s3.amazonaws.com/?list-type=2&prefix=nixos/unstable/&delimiter=/&start-after=nixos/unstable/nixos-2" \
+            | grep -o "<Prefix>nixos/unstable/nixos-[^<]*\.$short/</Prefix>" | sed 's/<[^>]*>//g' | head -1) || true
+          if [ -z "$prefix" ]; then
+            # Not in the first listing page: list all pages.
+            token=""
+            while :; do
+              page=$(curl -sSf "https://nix-releases.s3.amazonaws.com/?list-type=2&prefix=nixos/unstable/&delimiter=/${token:+&continuation-token=$token}")
+              prefix=$(grep -o "<Prefix>nixos/unstable/nixos-[^<]*\.$short/</Prefix>" <<< "$page" | sed 's/<[^>]*>//g' | head -1)
+              [ -n "$prefix" ] && break
+              token=$(grep -o '<NextContinuationToken>[^<]*' <<< "$page" | sed 's/<NextContinuationToken>//' | python3 -c 'import sys,urllib.parse;print(urllib.parse.quote(sys.stdin.read().strip(), safe=""))')
+              [ -z "$token" ] && { echo "::error::no channel release for $NIXPKGS_REV"; exit 1; }
+            done
+          fi
+          echo "channel release: $prefix"
+          test "$(curl -sSf "https://releases.nixos.org/${prefix}git-revision")" = "$NIXPKGS_REV"
+          curl -sSfL -o work/packages.json.br "https://releases.nixos.org/${prefix}packages.json.br"
+          brotli -d -o work/packages.json work/packages.json.br
+          echo "CHANNEL=https://releases.nixos.org/${prefix}" >> "$GITHUB_ENV"
+      - name: nixpkgs tree and this repository at the tag
+        run: |
+          np=$(nix flake archive --json ./src/guest | python3 -c 'import json,sys;print(json.load(sys.stdin)["inputs"]["nixpkgs"]["path"])')
+          tar --sort=name --owner=0 --group=0 --numeric-owner --mtime=@1 -C "$(dirname "$np")" \
+            --transform "s#^$(basename "$np")#nixpkgs-$NIXPKGS_REV#" -cf - "$(basename "$np")" \
+            | zstd -q -T0 -19 -o "out/nixpkgs-${NIXPKGS_REV:0:12}.tar.zst"
+          git -C src archive --format=tar.gz --prefix="orole-os-desktop-${REPO_COMMIT:0:12}/" HEAD \
+            > "out/orole-os-desktop-${REPO_COMMIT:0:12}.tar.gz"
+          ls -la out
+      - name: Collect the sources
+        run: |
+          python3 tools/.github/scripts/guest_sources.py --closure work/closure.txt --graph work/graph.json \
+            --packages work/packages.json --toplevel "$TOPLEVEL" --release "$RELEASE_TAG" \
+            --nixpkgs-rev "$NIXPKGS_REV" --repo-commit "$REPO_COMMIT" \
+            --extra "nixpkgs-${NIXPKGS_REV:0:12}.tar.zst=nixpkgs at $NIXPKGS_REV (every package's build recipe; MIT)" \
+            --extra "orole-os-desktop-${REPO_COMMIT:0:12}.tar.gz=this repository at the tag: guest/flake.nix, flake.lock, configuration.nix, orole-guest.nix and the orole-guest source (cmd/orole-guest, internal/...)" \
+            --work work --out out
+          ls -la out
+          for f in out/*; do
+            if [ "$(stat -c %s "$f")" -ge 2040109466 ]; then echo "$f is over 1.9 GiB"; exit 1; fi
+          done
+          head -c 60000 out/SOURCES.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Keep the manifest for inspection
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: guest-sources-${{ github.run_id }}
+          path: |
+            out/SOURCES.md
+            work/closure.txt
+          if-no-files-found: ignore
+          retention-days: 14
+      - name: Upload to the release (never replaces an asset)
+        run: |
+          existing=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" --jq '.assets[] | .name + " " + (.digest // "")')
+          for f in out/*; do
+            name=$(basename "$f")
+            sum="sha256:$(sha256sum "$f" | cut -d' ' -f1)"
+            have=$(awk -v n="$name" '$1 == n { print $2 }' <<< "$existing")
+            if [ -n "$have" ]; then
+              if [ "$have" = "$sum" ]; then echo "already there: $name"; continue; fi
+              echo "::error::$name is already on $RELEASE_TAG with $have, built $sum; not replacing it"
+              exit 1
+            fi
+            gh release upload "$RELEASE_TAG" "$f" --repo "$GITHUB_REPOSITORY"
+          done
