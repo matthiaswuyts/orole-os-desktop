@@ -97,3 +97,35 @@ The host never trusts the guest: answers over 8 MiB are refused, exec output is 
 `go test -race ./internal/sandbox/... ./cmd/orole-guest/...` runs everywhere: the fake backend serves the real
 guest handler over `net.Pipe`, and the test binary doubles as the guest's shell (`guestagent/agenttest`). The
 Linux CI lane also runs the real `/bin/sh` exec tests and the real PTY test, and builds `orole-guest`.
+
+## Phase 2 spike (WHPX on build 22000)
+
+Run on 2026-10-15 on the developer PC (Windows 11 Pro 21H2, build 22000, Hyper-V running), unelevated. Re-run with
+`go test -tags spike -run TestSpike -v ./internal/sandbox` (see the header of `internal/sandbox/spike_windows_test.go`).
+The boot test uses the production `qemuArgs` builder (token via `-fw_cfg name=opt/orole/token,file=`), with only the
+serial console moved from a file to a socket so the test can drive the guest's `/bin/sh`.
+
+| Question | Result |
+|---|---|
+| QEMU build | `qemu-20260811-win64.zip` from draft release `qemu-v20260811` (SHA-256 `513d950c…54bf1b`, matches `SHA256SUMS`; unmodified files of `qemu-w64-setup-20260811.exe`, SHA-512 `5bcf9eed…f543`). `qemu-system-x86_64 --version`: `QEMU emulator version 11.1.0 (v11.1.0-12130-ge470268ff4)`. Accelerators: tcg, whpx |
+| Alpine netboot 3.24.2 SHA-256 (`dl-cdn.alpinelinux.org/alpine/v3.24/releases/x86_64/netboot-3.24.2/`) | vmlinuz-virt `40f620bc8c93d952e57dd8dfc0f94fca1759d192a4fc4a260705d50ca378559c`, initramfs-virt `c990c63e4602aa84b92d7df54fd180cb0e56590d61b71221ba6d60e913d26357`, modloop-virt `1e7a3eea707d2ecb3d0502f97fb4dc4dcbac1fe06075e24ae19bfdf4343bb1cf` (kernel 6.18.52-0-virt) |
+| Probes, this PC (Hyper-V role on, HypervisorPlatform feature reads disabled) | build=22000, dll_loads=true, hypervisor_present=true, create_partition=ok (no error), firmware_virtualization=false (Windows reports false inside the Hyper-V root partition), install_state=2 (disabled), cbs_reboot_pending=false |
+| Probes, WHP enabled before / after reboot | not run: the feature was not changed (agents never change Windows features), and `WHvCreatePartition` already succeeds with it disabled |
+| `-accel whpx` (default) | **fail**: `WHPX: Failed to enable nested virtualization, hr=80370302` then `failed to initialize whpx: Invalid argument`. Same with `whpx,hyperv=off` and `whpx,kernel-irqchip=on` |
+| `-accel whpx,kernel-irqchip=off` | **ok** (also with `,hyperv=off`). QEMU 11.1 only asks WHP for nested virtualization on the in-kernel irqchip path, which build 22000 rejects |
+| Direct kernel boot (`-kernel/-initrd`), boot to shell | whpx,kernel-irqchip=off cpu=host: ok, shell after 1.69 s; cpu=max: ok, 1.71 s. tcg cpu=max: ok, 3.20 s. Whole run (boot, all checks, poweroff): 6.5 s / 6.4 s / 8.5 s |
+| AF_UNIX chardev (QEMU connects to a Go `net.Listen("unix")`) | ok, all three runs (guest channel, QMP and console sockets connected 32-34 ms after start; QMP greeting received) |
+| virtio-serial port name `org.orole.guest.0` visible in guest | ok (`/dev/vport3p1`, `/sys/class/virtio-ports/vport3p1/name`) |
+| guest→host / host→guest bytes | ok / ok, all three runs |
+| `-fw_cfg name=opt/orole/token,file=<path>` readable in guest | ok: `/sys/firmware/qemu_fw_cfg/by_name/opt/orole/token/raw` holds the token (needs the `qemu_fw_cfg` module; Alpine ships it in modloop, not the netboot initramfs). Token not in QEMU argv |
+| `-chardev pipe` DACL | `O:<user SID>D:(A;;FA;;;SY)(A;;FA;;;BA)(A;;FA;;;<user SID>)(A;;FR;;;WD)(A;;FR;;;AN)`; Everyone/Anonymous ACE: **yes** (read) |
+| Guest reaches host 127.0.0.1 via 10.0.2.2 (`-netdev user`) | yes (HTTP GET from guest reached a Go listener on 127.0.0.1) |
+| Guest internet via `-netdev user` | yes (`wget http://example.com`) |
+| `poweroff -f` with `-no-reboot` ends QEMU | yes (exit status 0) |
+| `%LOCALAPPDATA%\Orole` ACL (socket files inherit it) | inherited: SYSTEM (F), BUILTIN\Administrators (F), the user (F), and a local group `CodexSandboxUsers` (RX) inherited from the profile. Not user-only |
+
+Decisions: `-accel whpx,kernel-irqchip=off` on Windows (Task 3: `defaultAccel`); `-cpu host` (`defaultCPU`; `max`
+also works); channel: AF_UNIX (the pipe chardev grants Everyone and Anonymous read, so it is not a fallback without
+changing QEMU); host loopback: reachable, so keep the nftables rule blocking 10.0.2.2 for uid 1000 (Task 8). The
+data folder's ACL is inherited, not user-only: the backend should set an explicit user-only DACL on
+`<data>\sandbox\run\` rather than rely on inheritance.
