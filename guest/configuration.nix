@@ -97,6 +97,10 @@ let
   # channel); the profile lives on the bot's disk so logins survive restarts. Restarted if it exits.
   browser = pkgs.writeShellScript "orole-browser" ''
     mkdir -p ${stableHome}/.config/orole-chromium
+    # Chromium's profile lock names the host it was taken on; the host name follows the bot's name, so after a
+    # rename Chromium would take its own stale lock for another computer's and refuse to start. Nothing else runs
+    # this profile when cage starts.
+    rm -f ${stableHome}/.config/orole-chromium/Singleton{Lock,Socket,Cookie}
     while true; do
       ${pkgs.chromium}/bin/chromium \
         --ozone-platform=wayland \
