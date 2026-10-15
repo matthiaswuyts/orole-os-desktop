@@ -25,6 +25,9 @@ type Config struct {
 	// OnExec, when set, is told about every command a bot's computer ran (the daemon echoes it in the terminal).
 	// Delivery is ordered per bot but never blocks the call: a slow consumer makes events drop.
 	OnExec func(botID string, req wire.ExecRequest, res wire.ExecResult)
+	// BotName, when set, is the bot's display name, read at each boot: the computer's account, home folder and host
+	// name follow it (GuestUser), so renaming a bot takes effect the next time its computer starts.
+	BotName func(botID string) string
 }
 
 type ImageSet struct{ Version, Kernel, Initrd, BaseImage string }
@@ -399,9 +402,13 @@ func (m *Manager) start(ctx context.Context, botID string) (VM, *Guest, error) {
 	if err != nil {
 		return nil, nil, err
 	}
+	user := DefaultGuestUser
+	if m.cfg.BotName != nil {
+		user = GuestUser(m.cfg.BotName(botID))
+	}
 	vm, err := m.backend.Boot(ctx, BootSpec{
 		BotID: botID, Limits: rec.Limits, BaseImage: img.BaseImage, Kernel: img.Kernel, Initrd: img.Initrd,
-		Overlay: rec.OverlayPath, Token: token, LogPath: logPath,
+		Overlay: rec.OverlayPath, Token: token, LogPath: logPath, User: user,
 	})
 	if err != nil {
 		m.logf(botID, "the computer failed to start: %q", err.Error())

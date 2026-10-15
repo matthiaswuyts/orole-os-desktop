@@ -202,14 +202,14 @@ func TestComputerFileTools(t *testing.T) {
 		t.Fatalf("binary: %q", res.Text)
 	}
 	res, err = tool.Call(ctx, pcRun(nil), ComputerWriteFileName, json.RawMessage(`{"path":"notes/a.txt","content":"new text"}`))
-	if err != nil || res.IsError || string(rt.writes["/home/bot/notes/a.txt"]) != "new text" {
+	if err != nil || res.IsError || string(rt.writes["/home/pc/notes/a.txt"]) != "new text" {
 		t.Fatalf("write: %+v %v %v", res, err, rt.writes)
 	}
 	reqs := pol.requests()
 	if len(reqs) != 3 ||
-		reqs[0].Action != "computer.files.read" || reqs[0].Resource != "computer/b1/home/bot/notes/a.txt" || reqs[0].Effect != policy.EffectRead ||
-		reqs[2].Action != "computer.files.write" || reqs[2].Resource != "computer/b1/home/bot/notes/a.txt" || reqs[2].Effect != policy.EffectWrite ||
-		reqs[2].Detail != "Write 8 bytes to /home/bot/notes/a.txt on its computer, starting:\nnew text" {
+		reqs[0].Action != "computer.files.read" || reqs[0].Resource != "computer/b1/home/pc/notes/a.txt" || reqs[0].Effect != policy.EffectRead ||
+		reqs[2].Action != "computer.files.write" || reqs[2].Resource != "computer/b1/home/pc/notes/a.txt" || reqs[2].Effect != policy.EffectWrite ||
+		reqs[2].Detail != "Write 8 bytes to /home/pc/notes/a.txt on its computer, starting:\nnew text" {
 		t.Fatalf("policy: %+v", reqs)
 	}
 }
@@ -379,11 +379,11 @@ func TestComputerApprovalShowsTheWholeCommand(t *testing.T) {
 func TestComputerFileResourcesAreCanonical(t *testing.T) {
 	long := "/" + strings.Repeat("d", 600)
 	for _, tt := range []struct{ path, resource string }{
-		{"a.txt", "computer/b1/home/bot/a.txt"},
-		{"./x/../a.txt", "computer/b1/home/bot/a.txt"},
+		{"a.txt", "computer/b1/home/pc/a.txt"},
+		{"./x/../a.txt", "computer/b1/home/pc/a.txt"},
 		{"/etc//hosts", "computer/b1/etc/hosts"},
-		{"/home/bot/../../etc/passwd", "computer/b1/etc/passwd"},
-		{"dir/", "computer/b1/home/bot/dir"},
+		{"/home/pc/../../etc/passwd", "computer/b1/etc/passwd"},
+		{"dir/", "computer/b1/home/pc/dir"},
 		{long, ""},
 		{"a​.txt", ""},
 	} {
@@ -488,5 +488,30 @@ func TestComputerRunAndWriteAreRefusedWhileTakenOver(t *testing.T) {
 	}
 	if p := ComputerPrompt(pcBot()); !strings.Contains(p, "computer_run, computer_write_file and the browser tools are refused") {
 		t.Fatalf("prompt does not say what is refused during a takeover:\n%s", p)
+	}
+}
+
+// The bot's account on its computer is named after the bot, so relative paths, the default cwd and the policy
+// resource use that home.
+func TestComputerHomeFollowsTheBotsName(t *testing.T) {
+	rc := pcRun(nil)
+	rc.Bot.Name = "Élodie Test"
+	pol := &computerPolicy{}
+	rt := &fakeComputer{running: true, file: wire.ReadFileResult{Content: []byte("x")}}
+	args, _ := json.Marshal(map[string]string{"path": "notes.txt"})
+	if res, _ := (Computer{Runtime: rt, Policy: pol}).Call(context.Background(), rc, ComputerReadFileName, args); res.IsError {
+		t.Fatal(res.Text)
+	}
+	if reqs := pol.requests(); len(reqs) != 1 || reqs[0].Resource != "computer/b1/home/elodie-test/notes.txt" {
+		t.Fatalf("requests %+v", reqs)
+	}
+	specs := Computer{Runtime: rt, Policy: pol}.Specs(rc.Bot, llm.Caps{Tools: true})
+	for _, s := range specs {
+		if strings.Contains(s.Description+string(s.Schema), "/home/bot") {
+			t.Errorf("%s still names /home/bot", s.Name)
+		}
+	}
+	if !strings.Contains(specs[0].Description, "elodie-test") || !strings.Contains(string(specs[0].Schema), "/home/elodie-test") {
+		t.Errorf("run spec: %s %s", specs[0].Description, specs[0].Schema)
 	}
 }

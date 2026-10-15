@@ -14,7 +14,9 @@ const (
 	MaxReadFile        = 4 << 20  // bytes returned by /files/read
 	MaxWriteFile       = 16 << 20 // bytes accepted by /files/write
 
-	Home = "/home/bot" // relative guest paths resolve here
+	// Home is where relative guest paths resolve when the agent is given no home (host tests). In the image the home
+	// is the bot account's, /home/<name> (sandbox.GuestHome).
+	Home = "/home/bot"
 )
 
 type Health struct {

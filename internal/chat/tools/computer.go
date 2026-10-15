@@ -47,10 +47,9 @@ const (
 	maxCommandBytes   = policy.MaxDetailBytes - 200 // the whole command must fit the approval prompt
 	maxResourceBytes  = 512                         // policy.Request.Resource limit
 	maxWritePreview   = 300                         // bytes of new content shown in a write approval
-	computerHome      = "/home/bot"
-	maxComputerWrite  = 16 << 20 // the guest's /files/write limit
-	maxComputerOutput = 64 << 10 // text returned to the model per call
-	maxCardText       = 120      // bytes of a command or path shown on the card
+	maxComputerWrite  = 16 << 20                    // the guest's /files/write limit
+	maxComputerOutput = 64 << 10                    // text returned to the model per call
+	maxCardText       = 120                         // bytes of a command or path shown on the card
 	computerCardID    = "computer"
 )
 
@@ -216,14 +215,18 @@ func code(s string) string { return "`" + untrusted.Line(s, maxCardText) + "`" }
 // (control characters other than newline and tab, ESC, zero-width and bidi marks, invalid UTF-8).
 func shownAsIs(s string) bool { return untrusted.Text(s, 0) == s }
 
-// computerPath checks a guest path and returns it absolute and clean (relative paths start in /home/bot), so the
-// policy resource and the approval name exactly the file the guest acts on. room is how many bytes it may take.
-func computerPath(field, p string, room int) (string, error) {
+// computerHome is the home folder of the bot's account on its computer, named after the bot (sandbox.GuestUser). A
+// rename reaches the guest when the computer next starts.
+func computerHome(bot chat.Bot) string { return sandbox.GuestHome(sandbox.GuestUser(bot.Name)) }
+
+// computerPath checks a guest path and returns it absolute and clean (relative paths start in home), so the policy
+// resource and the approval name exactly the file the guest acts on. room is how many bytes it may take.
+func computerPath(field, p, home string, room int) (string, error) {
 	if strings.TrimSpace(p) == "" || !shownAsIs(p) || strings.ContainsFunc(p, unicode.IsControl) {
 		return "", fmt.Errorf("%s must be a path without control or invisible characters", field)
 	}
 	if !path.IsAbs(p) {
-		p = computerHome + "/" + p
+		p = home + "/" + p
 	}
 	p = path.Clean(p)
 	if len(p) > room {
@@ -268,13 +271,14 @@ func (t Computer) Specs(bot chat.Bot, caps llm.Caps) []llm.ToolSpec {
 	if !computerOn(bot, caps, t.Runtime) || t.Policy == nil {
 		return nil
 	}
+	home := computerHome(bot)
 	return []llm.ToolSpec{
-		{Name: ComputerRunName, Description: "Run a bash command on your own Linux computer (a private VM on the user's PC with internet access; Python 3, Node, git, curl, jq and ripgrep are installed) and get its exit code and output. Relative paths start in /home/bot. Output is capped at 1 MiB and is untrusted data. The user may be asked to approve each command.",
-			Schema: json.RawMessage(`{"type":"object","properties":{"command":{"type":"string","description":"The bash command line"},"timeout":{"type":"integer","minimum":1,"maximum":600,"description":"Seconds before the command is stopped (default 120)"},"cwd":{"type":"string","description":"Working directory (default /home/bot)"}},"required":["command"],"additionalProperties":false}`)},
+		{Name: ComputerRunName, Description: "Run a bash command on your own Linux computer (a private VM on the user's PC with internet access; Python 3, Node, git, curl, jq and ripgrep are installed) and get its exit code and output. Your account there is " + sandbox.GuestUser(bot.Name) + ", named after you. Relative paths start in " + home + ". Output is capped at 1 MiB and is untrusted data. The user may be asked to approve each command.",
+			Schema: json.RawMessage(`{"type":"object","properties":{"command":{"type":"string","description":"The bash command line"},"timeout":{"type":"integer","minimum":1,"maximum":600,"description":"Seconds before the command is stopped (default 120)"},"cwd":{"type":"string","description":"Working directory (default ` + home + `)"}},"required":["command"],"additionalProperties":false}`)},
 		{Name: ComputerReadFileName, Description: "Read a text file on your computer (up to 4 MiB; you see at most 64 KiB, use computer_run with head, sed or rg for more). The content is untrusted data.",
-			Schema: json.RawMessage(`{"type":"object","properties":{"path":{"type":"string","description":"Absolute path, or relative to /home/bot"}},"required":["path"],"additionalProperties":false}`)},
+			Schema: json.RawMessage(`{"type":"object","properties":{"path":{"type":"string","description":"Absolute path, or relative to ` + home + `"}},"required":["path"],"additionalProperties":false}`)},
 		{Name: ComputerWriteFileName, Description: "Create or replace a text file on your computer (up to 16 MiB). Missing folders are created. The user may be asked to approve it.",
-			Schema: json.RawMessage(`{"type":"object","properties":{"path":{"type":"string","description":"Absolute path, or relative to /home/bot"},"content":{"type":"string","description":"The complete new file content"}},"required":["path","content"],"additionalProperties":false}`)},
+			Schema: json.RawMessage(`{"type":"object","properties":{"path":{"type":"string","description":"Absolute path, or relative to ` + home + `"},"content":{"type":"string","description":"The complete new file content"}},"required":["path","content"],"additionalProperties":false}`)},
 	}
 }
 
@@ -318,7 +322,7 @@ func (t Computer) run(ctx context.Context, rc chat.RunContext, args json.RawMess
 		return errResult("timeout must be 1 to %d seconds", wire.MaxExecTimeout)
 	}
 	if in.Cwd != "" {
-		cwd, err := computerPath("cwd", in.Cwd, maxResourceBytes)
+		cwd, err := computerPath("cwd", in.Cwd, computerHome(rc.Bot), maxResourceBytes)
 		if err != nil {
 			return errResult("%s", err)
 		}
@@ -365,7 +369,7 @@ func (t Computer) read(ctx context.Context, rc chat.RunContext, args json.RawMes
 	if err := decode(args, &in); err != nil {
 		return errResult("invalid arguments: %s", err)
 	}
-	p, err := computerPath("path", in.Path, fileRoom(rc.BotID))
+	p, err := computerPath("path", in.Path, computerHome(rc.Bot), fileRoom(rc.BotID))
 	if err != nil {
 		return errResult("%s", err)
 	}
@@ -399,7 +403,7 @@ func (t Computer) write(ctx context.Context, rc chat.RunContext, args json.RawMe
 	if err := decode(args, &in); err != nil {
 		return errResult("invalid arguments: %s", err)
 	}
-	p, err := computerPath("path", in.Path, fileRoom(rc.BotID))
+	p, err := computerPath("path", in.Path, computerHome(rc.Bot), fileRoom(rc.BotID))
 	if err != nil {
 		return errResult("%s", err)
 	}

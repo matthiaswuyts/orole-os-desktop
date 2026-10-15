@@ -168,3 +168,15 @@ func TestQEMUArgsPassTheKeymapThroughFwCfg(t *testing.T) {
 		}
 	}
 }
+
+func TestQEMUArgsPassTheGuestUserThroughFwCfg(t *testing.T) {
+	for _, tt := range []struct{ in, want string }{
+		{"atlas-2", "atlas-2"}, {"elodie", "elodie"}, {"", "bot"}, {"Root", "bot"}, {"a,id=x", "bot"}, {"x-", "bot"},
+	} {
+		c := testQEMUConfig()
+		c.Spec.User = tt.in
+		if args := qemuArgs(c); !hasPair(args, "-fw_cfg", "name=opt/orole/user,string="+tt.want) {
+			t.Errorf("user %q: no -fw_cfg name=opt/orole/user,string=%s in %q", tt.in, tt.want, args)
+		}
+	}
+}

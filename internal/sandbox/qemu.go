@@ -51,6 +51,10 @@ func qemuArgs(c qemuConfig) []string {
 	if !ValidKeymap(keymap) {
 		keymap = DefaultKeymap
 	}
+	user := s.User
+	if !ValidGuestUser(user) {
+		user = DefaultGuestUser
+	}
 	return []string{
 		"-nodefaults", "-no-user-config", "-no-reboot",
 		"-name", qemuOpt("orole-" + s.BotID),
@@ -62,6 +66,8 @@ func qemuArgs(c qemuConfig) []string {
 		"-fw_cfg", "name=opt/orole/token,file=" + qemuOpt(c.TokenFile),
 		// Not secret: the keyboard layout travels inline. ValidKeymap admits no comma, so it cannot add QEMU options.
 		"-fw_cfg", "name=opt/orole/keymap,string=" + keymap,
+		// The account name (and from it the home folder and host name) the guest gives the bot; not secret either.
+		"-fw_cfg", "name=opt/orole/user,string=" + user,
 		"-drive", "if=none,id=root,format=qcow2,cache=writeback,discard=unmap,file=" + qemuOpt(s.Overlay),
 		"-device", "virtio-blk-pci,drive=root",
 		"-netdev", "user,id=net0",

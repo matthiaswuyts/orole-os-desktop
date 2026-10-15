@@ -566,3 +566,33 @@ func TestBootFailureLogQuotesGuestText(t *testing.T) {
 		t.Fatalf("log has %d extra lines:\n%s", lines, data)
 	}
 }
+
+func TestBootUsesTheBotsNameForTheGuestAccountReadAtEachBoot(t *testing.T) {
+	name := "Élodie Test"
+	var nameMu sync.Mutex
+	h := newHarness(t, func(c *Config) {
+		c.BotName = func(string) string { nameMu.Lock(); defer nameMu.Unlock(); return name }
+	})
+	ensure(t, h, "b1")
+	h.b.vmFor("b1").crash()
+	eventually(t, func() bool { return h.m.Status("b1").State == StateOff })
+	nameMu.Lock()
+	name = "Atlas 2"
+	nameMu.Unlock()
+	ensure(t, h, "b1")
+	h.b.mu.Lock()
+	defer h.b.mu.Unlock()
+	if len(h.b.specs) != 2 || h.b.specs[0].User != "elodie-test" || h.b.specs[1].User != "atlas-2" {
+		t.Fatalf("boot users %+v", h.b.specs)
+	}
+}
+
+func TestBootWithoutBotNameUsesTheDefaultAccount(t *testing.T) {
+	h := newHarness(t, nil)
+	ensure(t, h, "b1")
+	h.b.mu.Lock()
+	defer h.b.mu.Unlock()
+	if h.b.specs[0].User != DefaultGuestUser {
+		t.Fatalf("user %q", h.b.specs[0].User)
+	}
+}

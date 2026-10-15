@@ -67,7 +67,7 @@ func (d *Daemon) registerSandbox() {
 		}})
 	m = sandbox.NewManager(sandbox.Config{
 		Paths: paths, MaxRunning: 4, IdleTimeout: 15 * time.Minute, BootTimeout: sandboxBootTimeout, BusyWait: sandboxBusyWait,
-		FreeMemory: d.freeMemory, Now: time.Now, Image: rt.Image, OnExec: d.echoSandboxExec,
+		FreeMemory: d.freeMemory, Now: time.Now, Image: rt.Image, OnExec: d.echoSandboxExec, BotName: d.computerBotName,
 	}, sandbox.NewHostBackend(rt, paths), d.sandboxStore)
 	d.Sandbox = m
 	m.Subscribe(func(s sandbox.Status) { d.IPC.Publish("sandbox.status", s) })

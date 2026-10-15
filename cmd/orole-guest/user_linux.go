@@ -11,13 +11,15 @@ import (
 	"github.com/rayorole/orole-os-desktop/internal/sandbox/guestagent"
 )
 
-// botUser is the guest image's unprivileged user (guest/configuration.nix: uid 1000, home /home/bot).
-const botUser = "bot"
+// botUID is the guest image's unprivileged account (guest/configuration.nix). Its name and home follow the bot's
+// name (orole-identity renames it at boot, before this agent starts), so it is looked up by uid, never by name.
+const botUID = "1000"
 
-// guestUser makes commands and terminals run as the bot user, through login shells so they get the system
-// environment (PATH, nix-ld) from /etc/profile rather than the service's minimal one.
+// guestUser makes commands and terminals run as the bot's account, through login shells so they get the system
+// environment (PATH, nix-ld) from /etc/profile rather than the service's minimal one. Relative paths resolve against
+// the account's current home from passwd (/home/<name>), and HOME, USER and LOGNAME come from the same entry.
 func guestUser(cfg *guestagent.Config) error {
-	id, home, err := lookupIdentity(botUser)
+	id, home, err := lookupIdentityByUID(botUID)
 	if err != nil {
 		return err
 	}
@@ -33,11 +35,24 @@ func guestUser(cfg *guestagent.Config) error {
 // nixosBash is bash on the NixOS guest image; other guests (the Alpine real-boot test) get /bin/sh.
 const nixosBash = "/run/current-system/sw/bin/bash"
 
+func lookupIdentityByUID(uid string) (*guestagent.Identity, string, error) {
+	u, err := user.LookupId(uid)
+	if err != nil {
+		return nil, "", fmt.Errorf("guest user uid %s: %w", uid, err)
+	}
+	return identityOf(u)
+}
+
 func lookupIdentity(name string) (*guestagent.Identity, string, error) {
 	u, err := user.Lookup(name)
 	if err != nil {
 		return nil, "", fmt.Errorf("guest user %s: %w", name, err)
 	}
+	return identityOf(u)
+}
+
+func identityOf(u *user.User) (*guestagent.Identity, string, error) {
+	name := u.Username
 	uid, err := strconv.ParseUint(u.Uid, 10, 32)
 	if err != nil {
 		return nil, "", fmt.Errorf("guest user %s: uid %q: %w", name, u.Uid, err)

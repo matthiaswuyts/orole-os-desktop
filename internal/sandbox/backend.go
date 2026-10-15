@@ -14,6 +14,7 @@ type BootSpec struct {
 	Overlay   string // absolute path to <data>\sandbox\bots\<botID>.qcow2
 	Token     string // per-boot random, 32 bytes hex
 	LogPath   string // <data>\logs\sandbox-<botID>.log
+	User      string // the guest account name (GuestUser of the bot's name); invalid or empty means DefaultGuestUser
 }
 
 // Backend starts VMs. backend_windows.go (phase 2) runs QEMU; other platforms report NotImplemented; tests use
