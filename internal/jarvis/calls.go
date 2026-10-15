@@ -146,6 +146,9 @@ type injected struct {
 	bot, reason string
 	follow      *chat.FollowUp
 	claimed     bool
+	// bye is set when a turn that ended the call (an accepted end_call) had this news as new: the model only said
+	// goodbye, so it stays untold, and a follow-up among it is settled through FollowUpUnsaid if the call ends.
+	bye bool
 }
 
 type Calls struct {
@@ -170,6 +173,9 @@ type Calls struct {
 	// is still live then. quickHangup is that wait when the relay is out of date and the carrier hang-up is the only
 	// one. See endCall; tests use 0 for both.
 	endFallback, quickHangup func(text string) time.Duration
+	// toolLineGap is how soon after the model's own words a tool line is left out: the model has just said what it is
+	// doing ("Even kijken in Canvas."), so a scripted line right after would say it twice (see speaker.toolStarted).
+	toolLineGap time.Duration
 	// relayOld, if set, reports whether the connected relay is known to be out of date: it does not stream llm.tool,
 	// so end_call cannot reach ElevenLabs (see Service.checkRelay). It is never called with c.mu held.
 	relayOld func() bool
@@ -190,6 +196,10 @@ type Calls struct {
 	// whether the call had taken over its written answer.
 	FollowUpTold   func(f chat.FollowUp)
 	FollowUpMissed func(f chat.FollowUp, claimed bool)
+	// FollowUpUnsaid, if set, is called (and must not block) instead of FollowUpMissed for a follow-up the call ended
+	// on while the goodbye turn had it as new (see injected.bye): the owner was on the line but only heard goodbye, so
+	// its rules are neither used up nor fired, and a claimed one gets its written answer.
+	FollowUpUnsaid func(f chat.FollowUp, claimed bool)
 	// afterAnswer, if set, runs after a turn marks the call answered and before that is persisted (tests only).
 	afterAnswer func()
 
@@ -206,7 +216,7 @@ type Calls struct {
 func NewCalls(store *Store, host Host, dial Dialer, phone Phone, relay Sender, settings func() PhoneSettings, now func() time.Time, log *slog.Logger) *Calls {
 	ctx, cancel := context.WithCancel(context.Background())
 	c := &Calls{store: store, host: host, dial: dial, phone: phone, relay: relay, settings: settings, now: now, log: log,
-		after: time.After, speechWait: speechTime, endFallback: endFallbackTime, quickHangup: quickSpeechTime,
+		after: time.After, speechWait: speechTime, endFallback: endFallbackTime, quickHangup: quickSpeechTime, toolLineGap: toolLineGap,
 		ackAfter: ackAfter, bufferEvery: bufferEvery, stillAfter: stillAfter, turnDeadline: turnDeadline, turnCap: turnCap,
 		hesitationWait: hesitationWait, deadAfter: deadCallAfter, outcomeAfter: outcomeDelay, outcomeRetryAfter: outcomeRetryDelay,
 		outcomeTimeout: outcomeCheckTimeout, baseCtx: ctx, stop: cancel}
@@ -547,6 +557,7 @@ type speaker struct {
 	words      time.Time // wall-clock time words (the model's or a scripted line) last left
 	last       time.Time // wall-clock time anything (words or a buffer chunk) last left
 	lastTool   string    // the last tool line spoken (see toolStarted)
+	modelAt    time.Time // wall-clock time the model's own words last went out
 	tools      []string  // tools this turn started, for the note a superseded turn leaves
 	said       strings.Builder
 	closed     bool // done was sent: nothing more may go out
@@ -614,7 +625,11 @@ func (s *speaker) write(text string) bool {
 // answer speaks the model's own words (VoiceRequest.OnText); the first ones that go out run onWords.
 func (s *speaker) answer(text string) {
 	s.mu.Lock()
-	first := s.write(text) && !s.modelSpoke
+	words := s.write(text)
+	if words {
+		s.modelAt = time.Now()
+	}
+	first := words && !s.modelSpoke
 	if first {
 		s.modelSpoke = true
 	}
@@ -679,6 +694,8 @@ const (
 	turnDeadline   = 60 * time.Second
 	turnCap        = 100 * time.Second
 	hesitationWait = 2500 * time.Millisecond
+	// toolLineGap: a tool line is left out within this long of the model's own words (see speaker.toolStarted).
+	toolLineGap = time.Second
 )
 
 // hold makes a turn wait, sending only buffer chunks: first until prev is closed (the turn it superseded let go of
@@ -825,17 +842,18 @@ func (s *speaker) timedOut() bool {
 }
 
 // toolStarted is VoiceRequest.OnTool: it notes the tool for the turn and says, at once, what the bot is doing with it
-// (see phrases.toolLine). A fast local tool says nothing; a tool says its line at most once per turn, and a line is
-// never said twice in a row (two tools of one integration, or web_fetch after fetch_url).
-func (s *speaker) toolStarted(tool string) {
+// (see phrases.toolLine; label names an MCP tool's integration). A fast local tool says nothing; a tool says its line
+// at most once per turn, a line is never said twice in a row (two tools of one integration, or web_fetch after
+// fetch_url), and none comes within toolLineGap of the model's own words, which just said what it is doing.
+func (s *speaker) toolStarted(tool, label string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if slices.Contains(s.tools, tool) {
 		return
 	}
 	s.tools = append(s.tools, tool)
-	line := s.lines.toolLine(tool)
-	if line == "" || line == s.lastTool {
+	line := s.lines.toolLine(tool, label)
+	if line == "" || line == s.lastTool || (!s.modelAt.IsZero() && time.Since(s.modelAt) < s.c.toolLineGap) {
 		return
 	}
 	s.lastTool = line
@@ -961,17 +979,31 @@ func (c *Calls) endCall(l *live, sp *speaker, sid, reason string, cancellable bo
 		wait = c.quickHangup(text)
 	}
 	c.log.Info("jarvis: ending call", "call", sp.callID, "reason", reason, "end_call", !old, "fallback_ms", wait.Milliseconds())
-	c.hangupLater(l, sid, wait, cancellable)
+	var keep func() bool
+	if cancellable {
+		// The owner may have spoken since the turn closed: a newer turn runs, or (for end_call) the goodbye was called
+		// off. Then the call goes on and no fallback may hang it up.
+		keep = func() bool { return (l.turnSp == nil || l.turnSp == sp) && (reason != endBye || l.hangFor == sp) }
+	}
+	c.hangupLater(l, sid, wait, keep)
 }
 
 // hangupLater hangs up at the carrier after wait (at once when it is not positive) if the call is still live then (see
-// stillLive). A cancellable hang-up waits in l.hanging: Calls.plan calls it off on any utterance in that time ("oh
-// wacht, nog één ding").
-func (c *Calls) hangupLater(l *live, callSID string, wait time.Duration, cancellable bool) {
+// stillLive); a call the carrier reports over is ended on record instead. A cancellable hang-up (keep set) waits in
+// l.hanging, and Calls.plan calls it off on any utterance in that time. keep is checked under c.mu as the hang-up is
+// registered; when it reports false, the owner has already spoken and nothing is scheduled.
+func (c *Calls) hangupLater(l *live, callSID string, wait time.Duration, keep func() bool) {
 	ctx, cancel := context.WithCancel(c.baseCtx)
 	h := &hangup{cancel: cancel}
-	if cancellable {
+	if keep != nil {
 		c.mu.Lock()
+		if !keep() {
+			id := l.call.ID
+			c.mu.Unlock()
+			cancel()
+			c.log.Info("jarvis: hang-up called off", "call", id)
+			return
+		}
 		if l.hanging != nil {
 			l.hanging.cancel()
 		}
@@ -988,7 +1020,13 @@ func (c *Calls) hangupLater(l *live, callSID string, wait time.Duration, cancell
 		}
 		id := l.call.ID
 		c.mu.Unlock()
-		if off || !c.stillLive(l, callSID) {
+		if off {
+			return
+		}
+		if live, end := c.stillLive(l, callSID); !live {
+			if end != "" {
+				c.finish(c.baseCtx, l, end, 0) // over at the carrier: no need to wait for the poll
+			}
 			return
 		}
 		c.log.Info("jarvis: hanging up at the carrier", "call", id, "after_ms", wait.Milliseconds())
@@ -1008,25 +1046,26 @@ func (c *Calls) hangupLater(l *live, callSID string, wait time.Duration, cancell
 }
 
 // stillLive reports whether a call is still going: it has not ended on record and the carrier does not report it over.
-// A call the carrier cannot be asked about (no SID, an error) counts as live.
-func (c *Calls) stillLive(l *live, sid string) bool {
+// A call the carrier cannot be asked about (no SID, an error) counts as live. end is the call's status when the
+// carrier reports it over while it has not ended on record yet.
+func (c *Calls) stillLive(l *live, sid string) (live bool, end string) {
 	c.mu.Lock()
 	ended, answered := l.ended, l.call.AnsweredAt != 0
 	c.mu.Unlock()
 	if ended {
-		return false
+		return false, ""
 	}
 	if sid == "" || c.phone == nil {
-		return true
+		return true, ""
 	}
 	ctx, cancel := context.WithTimeout(c.baseCtx, 10*time.Second)
 	defer cancel()
 	st, err := c.phone.CallStatus(ctx, sid)
 	if err != nil {
-		return true
+		return true, ""
 	}
-	_, over := carrierEnd(st, answered)
-	return !over
+	end, over := carrierEnd(st, answered)
+	return !over, end
 }
 
 // speechTime estimates how long the voice needs for text: about 150 words a minute plus a margin.
@@ -1298,6 +1337,7 @@ func (c *Calls) plan(l *live, f Frame, utter string, fromOwner bool) turnPlan {
 		return turnPlan{kind: kindRetry, adopt: l.turnSp}
 	}
 	l.silences = 0
+	l.hangFor = nil // the owner speaks: a goodbye still being given is called off with its hang-up
 	if l.hanging != nil {
 		// The owner speaks while the goodbye is said ("oh wacht, nog één ding"): the call goes on.
 		l.hanging.cancel()
@@ -1592,8 +1632,17 @@ func (c *Calls) modelTurn(ctx context.Context, l *live, f Frame, sp *speaker, a 
 		sp.say(sp.lines.failed + firstSentence(err.Error()))
 	}
 	c.mu.Lock()
+	hang := l.hangFor == sp && !l.ended
 	var told []chat.FollowUp
-	if err == nil {
+	switch {
+	case err == nil && hang:
+		l.reasonGiven = true
+		// The turn ends the call: the model only said goodbye, so the news it had as new stays untold. Should the call
+		// go on, the next turn has it as new again; should it end, finish settles it (see injected.bye).
+		for i := min(l.delivered, seen); i < seen; i++ {
+			l.inject[i].bye = true
+		}
+	case err == nil:
 		l.reasonGiven = true
 		// The news in this turn's brief reached the bot in a finished turn.
 		for _, in := range l.inject[min(l.delivered, seen):seen] {
@@ -1607,7 +1656,6 @@ func (c *Calls) modelTurn(ctx context.Context, l *live, f Frame, sp *speaker, a 
 	if reply != "" {
 		l.remember(chat.VoiceLine{Role: "assistant", Text: reply})
 	}
-	hang := l.hangFor == sp && !l.ended
 	c.mu.Unlock()
 	if c.FollowUpTold != nil {
 		for _, f := range told {
@@ -2081,8 +2129,11 @@ func (c *Calls) finish(ctx context.Context, l *live, status string, durationSecs
 	if len(missed) > 0 {
 		c.host.Notify("News you missed on the call", strings.Join(missed, "\n"), "bot:"+call.BotID, "info")
 	}
-	if c.FollowUpMissed != nil {
-		for _, in := range untold {
+	for _, in := range untold {
+		switch {
+		case in.bye && c.FollowUpUnsaid != nil:
+			c.FollowUpUnsaid(*in.follow, in.claimed)
+		case !in.bye && c.FollowUpMissed != nil:
 			c.FollowUpMissed(*in.follow, in.claimed)
 		}
 	}

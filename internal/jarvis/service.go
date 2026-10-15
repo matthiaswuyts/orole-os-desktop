@@ -169,7 +169,7 @@ func NewService(cfg ServiceConfig) *Service {
 	s.calls = NewCalls(s.store, cfg.Host, dial, phone, s.sender, s.callSettings, cfg.Now, s.log)
 	s.calls.Retry = func(ctx context.Context, req PlaceRequest) { s.fire(ctx, req, Ask{QuietOverride: req.QuietOverride}) }
 	s.calls.Changed = s.notifyChanged
-	s.calls.FollowUpTold, s.calls.FollowUpMissed = s.followUpTold, s.followUpMissed
+	s.calls.FollowUpTold, s.calls.FollowUpMissed, s.calls.FollowUpUnsaid = s.followUpTold, s.followUpMissed, s.followUpUnsaid
 	s.calls.relayOld = func() bool { s.mu.Lock(); defer s.mu.Unlock(); return s.relayOld }
 	return s
 }
@@ -669,6 +669,14 @@ func (s *Service) followUpMissed(f chat.FollowUp, claimed bool) {
 	if f.Kind == chat.FollowUpReport {
 		s.OnEvent(reportEvent(f))
 	}
+	s.followUpUnsaid(f, claimed)
+}
+
+// followUpUnsaid runs for a follow-up the call ended on while its goodbye turn had it as new: the owner only heard
+// goodbye. Its rules are left alone (neither used up nor fired: the owner was on the line and is not called back), and
+// one whose written answer the call had taken over gets it in the call's thread, with a notice where to read it. It
+// never blocks the caller.
+func (s *Service) followUpUnsaid(f chat.FollowUp, claimed bool) {
 	if !claimed || !s.track() {
 		return
 	}

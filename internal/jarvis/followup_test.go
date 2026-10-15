@@ -627,3 +627,53 @@ func TestCallReportsWhatBecameOfItsFollowUps(t *testing.T) {
 		t.Fatalf("notices %v", n)
 	}
 }
+
+// A claimed report the goodbye turn had as new was not told: the model only said goodbye. When the call ends, its
+// written answer is queued with a notice where to read it, its once-rule stays, and nobody is called back.
+func TestReportTheGoodbyeTurnHadIsNotTold(t *testing.T) {
+	svc, host, dial, _, _ := newTestService(t)
+	ctx := context.Background()
+	if _, err := svc.CallOwner(ctx, "b1", "first", false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.AddRule(ctx, JarvisRule{BotID: "b1", Trigger: BotReported, Target: "nova"}); err != nil {
+		t.Fatal(err)
+	}
+	rec, _ := svc.calls.Active()
+	svc.calls.HandleFrame(ctx, Frame{Type: FrameLLMRequest, ID: "r0", CallID: rec.ID}) // the opener
+	f := nova(rec.ID, "complete", "found 3 flights")
+	f.MessageID = "m-report"
+	if !svc.OnFollowUp(f) {
+		t.Fatal("a follow-up of the live call was not handed to it")
+	}
+	host.onTurn = func(r chat.VoiceRequest) {
+		if !strings.Contains(r.Brief, "found 3 flights") {
+			t.Errorf("the goodbye turn did not have the report: %q", r.Brief)
+		}
+		if err := svc.EndCall(rec.ID); err != nil {
+			t.Error(err)
+		}
+	}
+	host.mu.Lock()
+	host.reply = "Oké, tot later!"
+	host.mu.Unlock()
+	svc.calls.HandleFrame(ctx, llmFrame("r1", rec.ID, "nee, dat was het"))
+	svc.wait()
+	if rules, _ := svc.Rules(ctx, "b1"); len(rules) != 1 {
+		t.Fatalf("the once-rule was used up by a goodbye: %+v", rules)
+	}
+	endCall(svc, rec.ID)
+	svc.wait()
+	if got := host.answeredList(); len(got) != 1 || got[0] != f {
+		t.Fatalf("answered %+v, want %+v", got, f)
+	}
+	if got := reportedNotices(host); len(got) != 1 || !strings.HasPrefix(got[0], "Nova reported back: From your call with Atlas.") {
+		t.Fatalf("notices %v", host.noticeList())
+	}
+	if rules, _ := svc.Rules(ctx, "b1"); len(rules) != 1 {
+		t.Fatalf("once-rule gone: %+v", rules)
+	}
+	if d := dial.dialed(); len(d) != 1 {
+		t.Fatalf("called back after a goodbye: dials=%d", len(d))
+	}
+}

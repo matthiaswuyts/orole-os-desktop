@@ -96,7 +96,7 @@ func (h *fakeHost) VoiceTurn(ctx context.Context, r chat.VoiceRequest) (string, 
 	}
 	if hold {
 		if tool != "" && r.OnTool != nil {
-			r.OnTool(tool)
+			r.OnTool(tool, "")
 		}
 		h.started <- struct{}{}
 		<-ctx.Done()
@@ -104,7 +104,7 @@ func (h *fakeHost) VoiceTurn(ctx context.Context, r chat.VoiceRequest) (string, 
 		return "stale reply", ctx.Err()
 	}
 	if tool != "" && r.OnTool != nil {
-		r.OnTool(tool)
+		r.OnTool(tool, "")
 	}
 	r.OnText(reply)
 	return reply, nil
@@ -2488,7 +2488,7 @@ func TestRetargetedRequestWithoutWordsIsSkipped(t *testing.T) {
 	e := newCallEnv(t)
 	e.c.ackAfter = time.Hour
 	e.host.reply = ""
-	e.host.onTurn = func(r chat.VoiceRequest) { r.OnTool("start_task") }
+	e.host.onTurn = func(r chat.VoiceRequest) { r.OnTool("start_task", "") }
 	call, release, wait := e.heldTurn(t, "r1", "check my tasks")
 	e.c.HandleFrame(context.Background(), llmFrame("r2", call.ID, "check my tasks")) // ElevenLabs re-sends it
 	release()
@@ -2617,7 +2617,7 @@ func TestTurnDeadlineSpeaksTooLong(t *testing.T) {
 	e.c.ackAfter, e.c.stillAfter, e.c.bufferEvery, e.c.turnDeadline = time.Hour, 250*time.Millisecond, time.Hour, 30*time.Millisecond
 	e.host.onTurn = func(r chat.VoiceRequest) {
 		if r.Text == "check my tasks" {
-			r.OnTool("start_task")
+			r.OnTool("start_task", "")
 		}
 	}
 	call, _, wait := e.heldTurn(t, "r1", "check my tasks")
@@ -3115,8 +3115,8 @@ func TestQuickAnswerSpeaksNoAcknowledgement(t *testing.T) {
 // An MCP tool says at once which integration the bot is using, and no long-wait line follows it.
 func TestMCPToolSaysItsLineAtOnce(t *testing.T) {
 	for _, tc := range []struct{ lang, want string }{
-		{LangEnglish, "I'm using your canvas lms tools now. Give me a second to get the results."},
-		{LangDutch, "Ik gebruik nu je canvas lms koppeling. Even geduld, dan heb ik de resultaten."},
+		{LangEnglish, "I'm using your Canvas LMS tools now. Give me a second to get the results."},
+		{LangDutch, "Ik gebruik nu je Canvas LMS koppeling. Even geduld, dan heb ik de resultaten."},
 	} {
 		t.Run(tc.lang, func(t *testing.T) {
 			e := newCallEnv(t)
@@ -3124,7 +3124,7 @@ func TestMCPToolSaysItsLineAtOnce(t *testing.T) {
 			e.c.ackAfter, e.c.stillAfter = 100*time.Millisecond, time.Hour
 			heard := make(chan string, 1)
 			e.host.onTurn = func(r chat.VoiceRequest) {
-				r.OnTool("mcp__canvas_lms__get_assignment")
+				r.OnTool("mcp__4f2c9d1e-0b6a-4c1e-9a53-1f0e2d7c8b90__get_assignment", "Canvas LMS")
 				heard <- e.relay.text("r1") // what had gone out by the time OnTool returned
 			}
 			_, release, wait := e.heldTurn(t, "r1", "what's due this week?")
@@ -3159,7 +3159,7 @@ func TestFastLocalToolSaysNothing(t *testing.T) {
 		e := newCallEnv(t)
 		e.settings.CallLanguage, e.settings.AgentLanguage = LangDutch, LangDutch
 		e.c.ackAfter, e.c.stillAfter = 30*time.Millisecond, time.Hour
-		e.host.onTurn = func(r chat.VoiceRequest) { r.OnTool("memory") }
+		e.host.onTurn = func(r chat.VoiceRequest) { r.OnTool("memory", "") }
 		_, release, wait := e.heldTurn(t, "r1", "onthoud dat ik thee lekker vind")
 		waitFor(t, func() bool { return e.relay.text("r1") != "" })
 		release()
@@ -3174,15 +3174,37 @@ func TestFastLocalToolSaysNothing(t *testing.T) {
 func TestToolLineOncePerToolNeverTwiceInARow(t *testing.T) {
 	e := newCallEnv(t)
 	e.host.onTurn = func(r chat.VoiceRequest) {
-		for _, tool := range []string{"mcp__canvas_lms__get_assignment", "mcp__canvas_lms__list_courses", "memory", "web_search",
-			"mcp__canvas_lms__get_assignment", "fetch_url", "web_fetch", "fetch_url", "ask_bot", "ask_bot"} {
-			r.OnTool(tool)
+		for _, tool := range []string{"mcp__s1__get_assignment", "mcp__s1__list_courses", "memory", "web_search",
+			"mcp__s1__get_assignment", "fetch_url", "web_fetch", "fetch_url", "ask_bot", "ask_bot"} {
+			label := ""
+			if strings.HasPrefix(tool, "mcp__") {
+				label = "Canvas"
+			}
+			r.OnTool(tool, label)
 		}
 	}
 	call := e.openCall(t)
 	e.c.HandleFrame(context.Background(), llmFrame("r1", call.ID, "check canvas and the web"))
-	want := "I'm using your canvas lms tools now. Give me a second to get the results. I'm searching the web for that now. " +
+	want := "I'm using your Canvas tools now. Give me a second to get the results. I'm searching the web for that now. " +
 		"I'm opening that page now. I'm passing it on. " + e.host.reply
+	if got := e.relay.text("r1"); got != want {
+		t.Fatalf("owner heard %q\nwant %q", got, want)
+	}
+}
+
+// A tool line is left out when the model has just said, in its own words, what it is doing; later it is said.
+func TestToolLineWaitsForAGapAfterTheModelSpoke(t *testing.T) {
+	e := newCallEnv(t)
+	e.c.toolLineGap = 200 * time.Millisecond
+	e.host.onTurn = func(r chat.VoiceRequest) {
+		r.OnText("Even kijken in Canvas. ")
+		r.OnTool("mcp__s1__get_assignment", "Canvas") // right after the model's words: left out
+		time.Sleep(2 * e.c.toolLineGap)
+		r.OnTool("start_task", "") // well after: said
+	}
+	call := e.openCall(t)
+	e.c.HandleFrame(context.Background(), llmFrame("r1", call.ID, "wat moet ik inleveren?"))
+	want := "Even kijken in Canvas. I'm starting that coding task now. " + e.host.reply
 	if got := e.relay.text("r1"); got != want {
 		t.Fatalf("owner heard %q\nwant %q", got, want)
 	}
@@ -3190,48 +3212,52 @@ func TestToolLineOncePerToolNeverTwiceInARow(t *testing.T) {
 
 func TestToolLines(t *testing.T) {
 	const (
-		canvasEN = "I'm using your canvas lms tools now. Give me a second to get the results."
-		canvasNL = "Ik gebruik nu je canvas lms koppeling. Even geduld, dan heb ik de resultaten."
-		anyEN    = "I'm using one of your integrations now. Give me a second to get the results."
-		anyNL    = "Ik gebruik nu een van je koppelingen. Even geduld, dan heb ik de resultaten."
+		anyEN = "I'm using one of your integrations now. Give me a second to get the results."
+		anyNL = "Ik gebruik nu een van je koppelingen. Even geduld, dan heb ik de resultaten."
 	)
-	for _, tc := range []struct{ tool, en, nl string }{
-		{"web_search", "I'm searching the web for that now.", "Ik zoek het even op internet op."},
-		{"web_fetch", "I'm opening that page now.", "Ik open die pagina even."},
-		{"fetch_url", "I'm opening that page now.", "Ik open die pagina even."},
-		{"research", "I'm starting the research, that can take a moment.", "Ik start het onderzoek, dat kan even duren."},
-		{"ask_bot", "I'm passing it on.", "Ik geef het door."},
-		{"start_task", "I'm starting that coding task now.", "Ik start die codetaak nu."},
-		{"message_task", "I'm passing that on to the task.", "Ik geef het door aan de taak."},
-		{"stop_task", "I'm stopping that task.", "Ik stop die taak."},
-		{"list_automations", "I'm checking your automations.", "Ik kijk even naar je automatiseringen."},
-		{"automation_detail", "I'm looking at that automation and its runs.", "Ik bekijk die automatisering en de runs."},
-		{"switch_bot", "I'll put you through.", "Ik verbind je door."},
-		{"mcp__canvas_lms__get_assignment", canvasEN, canvasNL},
-		{"mcp__canvas_lms__a_very_long_tool_name_cut_short_9f3a12bc", canvasEN, canvasNL},
-		{"mcp__orole_mail__send_message", "I'm using your mail tools now. Give me a second to get the results.",
-			"Ik gebruik nu je mail koppeling. Even geduld, dan heb ik de resultaten."},
-		{"mcp__google-drive__search", "I'm using your google drive tools now. Give me a second to get the results.",
-			"Ik gebruik nu je google drive koppeling. Even geduld, dan heb ik de resultaten."},
-		// The app names its own MCP servers by UUID: that, a bare id, the app's name or no server part is not said.
-		{"mcp__1b4e28ba-2fa1-11d2-883f-0016d3cca427__search", anyEN, anyNL},
-		{"mcp__orole__search", anyEN, anyNL},
-		{"mcp__my_orole_box__search", anyEN, anyNL},
-		{"mcp__1234__search", anyEN, anyNL},
-		{"mcp__searchonly", anyEN, anyNL},
-		{"mcp__" + strings.Repeat("x", 41) + "__search", anyEN, anyNL},
-		// Fast local tools and tools nobody listed say nothing.
-		{"memory", "", ""}, {"memory_search", "", ""}, {"search_history", "", ""}, {"knowledge_search", "", ""},
-		{"knowledge_write", "", ""}, {"list_tasks", "", ""}, {"task_status", "", ""}, {"jarvis_rule_add", "", ""},
-		{"jarvis_rule_list", "", ""}, {"jarvis_rule_delete", "", ""}, {"call_owner", "", ""}, {"end_call", "", ""},
-		{"datetime", "", ""}, {"show_table", "", ""}, {"orole_get_skill", "", ""}, {"propose_automation", "", ""},
-		{"a_tool_nobody_listed", "", ""}, {"", "", ""},
+	mcpEN := func(n string) string {
+		return "I'm using your " + n + " tools now. Give me a second to get the results."
+	}
+	mcpNL := func(n string) string {
+		return "Ik gebruik nu je " + n + " koppeling. Even geduld, dan heb ik de resultaten."
+	}
+	const uuidTool = "mcp__1b4e28ba-2fa1-11d2-883f-0016d3cca427__search"
+	for _, tc := range []struct{ tool, label, en, nl string }{
+		{"web_search", "", "I'm searching the web for that now.", "Ik zoek het even op internet op."},
+		{"web_fetch", "", "I'm opening that page now.", "Ik open die pagina even."},
+		{"fetch_url", "", "I'm opening that page now.", "Ik open die pagina even."},
+		{"research", "", "I'm starting the research, that can take a moment.", "Ik start het onderzoek, dat kan even duren."},
+		{"ask_bot", "", "I'm passing it on.", "Ik geef het door."},
+		{"start_task", "", "I'm starting that coding task now.", "Ik start die codetaak nu."},
+		{"message_task", "", "I'm passing that on to the task.", "Ik geef het door aan de taak."},
+		{"stop_task", "", "I'm stopping that task.", "Ik stop die taak."},
+		{"list_automations", "", "I'm checking your automations.", "Ik kijk even naar je automatiseringen."},
+		{"automation_detail", "", "I'm looking at that automation and its runs.", "Ik bekijk die automatisering en de runs."},
+		{"switch_bot", "", "I'll put you through.", "Ik verbind je door."},
+		// An MCP tool says the name the owner gave its server (the label); the function name only holds its id.
+		{uuidTool, "Canvas LMS", mcpEN("Canvas LMS"), mcpNL("Canvas LMS")},
+		{uuidTool, "  Google\tDrive ", mcpEN("Google Drive"), mcpNL("Google Drive")},
+		{uuidTool, "Orole Mail", mcpEN("Mail"), mcpNL("Mail")},
+		{uuidTool, "orole os drive", mcpEN("drive"), mcpNL("drive")},
+		// No label, or one that cannot be said: the line without a name.
+		{uuidTool, "", anyEN, anyNL},
+		{uuidTool, "Orole", anyEN, anyNL},
+		{uuidTool, "My Orole box", anyEN, anyNL},
+		{uuidTool, "1234", anyEN, anyNL},
+		{uuidTool, strings.Repeat("x", 41), anyEN, anyNL},
+		{"mcp__canvas_lms__get_assignment", "", anyEN, anyNL},
+		// Fast local tools and tools nobody listed say nothing, whatever their label.
+		{"memory", "", "", ""}, {"memory_search", "", "", ""}, {"search_history", "", "", ""}, {"knowledge_search", "", "", ""},
+		{"knowledge_write", "", "", ""}, {"list_tasks", "", "", ""}, {"task_status", "", "", ""}, {"jarvis_rule_add", "", "", ""},
+		{"jarvis_rule_list", "", "", ""}, {"jarvis_rule_delete", "", "", ""}, {"call_owner", "", "", ""}, {"end_call", "", "", ""},
+		{"datetime", "", "", ""}, {"show_table", "", "", ""}, {"orole_get_skill", "", "", ""}, {"propose_automation", "", "", ""},
+		{"a_tool_nobody_listed", "Canvas", "", ""}, {"", "", "", ""},
 	} {
-		if got := english.toolLine(tc.tool); got != tc.en {
-			t.Errorf("english %q: %q, want %q", tc.tool, got, tc.en)
+		if got := english.toolLine(tc.tool, tc.label); got != tc.en {
+			t.Errorf("english %q (%q): %q, want %q", tc.tool, tc.label, got, tc.en)
 		}
-		if got := dutch.toolLine(tc.tool); got != tc.nl {
-			t.Errorf("dutch %q: %q, want %q", tc.tool, got, tc.nl)
+		if got := dutch.toolLine(tc.tool, tc.label); got != tc.nl {
+			t.Errorf("dutch %q (%q): %q, want %q", tc.tool, tc.label, got, tc.nl)
 		}
 	}
 	// Every kind in the table has a line in both languages, and no line names the app.
@@ -3314,7 +3340,33 @@ func TestEndCallEndsTheStreamWithTheTool(t *testing.T) {
 			if e.phone.hungUp(testSID) {
 				t.Fatal("hung up a call that had ended")
 			}
+			// A call the carrier reports over is ended on record at once, not at the next poll.
+			e.waitInactive(t, call.ID)
 		})
+	}
+}
+
+// A goodbye hang-up is not scheduled once the owner has spoken again: the call goes on.
+func TestGoodbyeHangUpIsNotScheduledAfterTheOwnerSpoke(t *testing.T) {
+	e := newCallEnv(t)
+	call := e.openCall(t)
+	sp := e.c.newSpeaker(context.Background(), "r1", call.ID, "Atlas", LangEnglish)
+	l := e.liveCall(t)
+	e.c.mu.Lock()
+	l.turnSp, l.hangFor = sp, sp // a turn whose end_call was accepted
+	e.c.mu.Unlock()
+	e.c.HandleFrame(context.Background(), llmFrame("r2", call.ID, "oh wacht, nog één ding")) // before it closed
+	e.c.mu.Lock()
+	l.turnSp = sp // the barge-in turn has finished; only the old goodbye is left to close
+	e.c.mu.Unlock()
+	sp.say("Okay, talk later!")
+	e.c.endCall(l, sp, testSID, endBye, true)
+	e.c.mu.Lock()
+	hanging := l.hanging
+	l.turnSp = nil
+	e.c.mu.Unlock()
+	if hanging != nil || e.phone.hungUp(testSID) {
+		t.Fatalf("hang-up scheduled %v, hung up %v", hanging != nil, e.phone.hungUp(testSID))
 	}
 }
 

@@ -2,7 +2,6 @@ package jarvis
 
 import (
 	"fmt"
-	"regexp"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -19,7 +18,7 @@ type phrases struct {
 	refused string   // prefix of the gate refusal; the gate's reason follows
 	failed  string   // prefix of a model or tool error; its first sentence follows
 	// tools are the lines said the moment a tool of a kind starts (see toolKinds); mcp says an MCP tool started, with
-	// the integration's name for %s, and mcpAny when the tool's name gives no name to say (see phrases.toolLine).
+	// the integration's name for %s, and mcpAny when there is no name to say (see phrases.toolLine).
 	tools       map[string]string
 	mcp, mcpAny string
 	// longWait is said once when a turn has had no words for Calls.ackAfter and said no tool line (see speaker.tick).
@@ -132,8 +131,8 @@ const (
 // toolKinds sorts every tool a bot can run on a call (the Specs of internal/chat/tools and internal/chat/memory) by
 // what the voice says the moment it starts. A tool that leaves the PC or hands work on says what it is doing; a fast
 // tool that only reads or writes local state says nothing, and if the turn then goes quiet the long-wait line covers it
-// (see speaker.tick). MCP tools (mcp__<server>__<tool>) are told by their prefix (see phrases.toolLine); any other tool
-// that is not listed is silent.
+// (see speaker.tick). MCP tools (mcp__<server id>__<tool>) are told by their prefix and say the integration's name
+// (see phrases.toolLine); any other tool that is not listed is silent.
 //
 // Hosted tools (the provider's web_search, and web_fetch when the provider fetches pages itself) run at the provider
 // and never reach VoiceRequest.OnTool; their entries count only for a provider that runs them as client tools.
@@ -165,14 +164,16 @@ var toolKinds = map[string]string{
 	"show_job_progress": toolSilent, "show_todo_list": toolSilent, "show_document": toolSilent,
 }
 
-// mcpPrefix starts the function name of every MCP tool: mcp__<server>__<tool> (see internal/chat/tools/mcp.go).
+// mcpPrefix starts the function name of every MCP tool: mcp__<server id>__<tool> (see internal/chat/tools/mcp.go).
 const mcpPrefix = "mcp__"
 
 // toolLine is what the voice says the moment tool starts: the line of its kind (see toolKinds), the MCP line for an
-// MCP tool, or "" for a tool that runs silently.
-func (p phrases) toolLine(tool string) string {
-	if rest, ok := strings.CutPrefix(tool, mcpPrefix); ok {
-		if name := integrationName(rest); name != "" {
+// MCP tool, or "" for a tool that runs silently. label is the tool's label from VoiceRequest.OnTool: for an MCP tool
+// the name the owner gave its server, which the MCP line says (see integrationName); without one it says the line
+// without a name.
+func (p phrases) toolLine(tool, label string) string {
+	if strings.HasPrefix(tool, mcpPrefix) {
+		if name := integrationName(label); name != "" {
 			return fmt.Sprintf(p.mcp, name)
 		}
 		return p.mcpAny
@@ -183,26 +184,19 @@ func (p phrases) toolLine(tool string) string {
 // maxIntegrationName caps the integration name an MCP line says.
 const maxIntegrationName = 40
 
-// uuidRE matches a UUID: the app's own MCP servers are named by one in their tools' names.
-var uuidRE = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
-
-// integrationName is the integration an MCP tool belongs to, as the voice can say it: the server part of
-// "<server>__<tool>" with underscores and dashes as spaces and an "orole_" prefix dropped ("canvas_lms" -> "canvas lms",
-// "orole_mail" -> "mail"). It is "" when there is no such name: no server part, an id (a UUID, or no letters at all),
-// a name longer than maxIntegrationName, or one that names the app.
-func integrationName(rest string) string {
-	server, _, ok := strings.Cut(rest, "__")
-	if !ok {
-		return ""
+// integrationName is an MCP server's name as the voice can say it: one line of words, with a leading "Orole" or
+// "Orole OS" dropped ("Orole Mail" -> "Mail"). It is "" when nothing is left, when it is longer than
+// maxIntegrationName or has no letters, and when it still names the app (the sanitizer would turn that into "the app").
+func integrationName(label string) string {
+	name := strings.Join(strings.Fields(label), " ")
+	for _, prefix := range []string{"orole os ", "orole "} {
+		if len(name) > len(prefix) && strings.EqualFold(name[:len(prefix)], prefix) {
+			name = name[len(prefix):]
+			break
+		}
 	}
-	if len(server) > len("orole_") && strings.EqualFold(server[:len("orole_")], "orole_") {
-		server = server[len("orole_"):]
-	}
-	if uuidRE.MatchString(server) || !strings.ContainsFunc(server, unicode.IsLetter) {
-		return ""
-	}
-	name := strings.Join(strings.FieldsFunc(server, func(r rune) bool { return r == '_' || r == '-' }), " ")
-	if name == "" || utf8.RuneCountInString(name) > maxIntegrationName || appNameRE.MatchString(name) {
+	if name == "" || utf8.RuneCountInString(name) > maxIntegrationName || !strings.ContainsFunc(name, unicode.IsLetter) ||
+		appNameRE.MatchString(name) {
 		return ""
 	}
 	return name
