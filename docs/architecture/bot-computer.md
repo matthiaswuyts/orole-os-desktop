@@ -396,7 +396,7 @@ answers `not_found` ("it starts when the bot uses it"; `Manager.RunningGuest` ne
   the last one has `closed`). `sandbox.screen.input{id, data}` passes viewer bytes through the RFB filter: keyboard and
   mouse reach the guest only during a takeover. Unknown or closed screens are `not_found`; more than 128 KiB at once
   or input outside the accepted RFB subset closes the screen and answers `bad_request`; a guest that stops taking
-  input answers `timeout`. A guest that sends more than its byte budget (32 MB/s sustained, 64 MB burst) has the
+  input answers `timeout`. A guest that sends more than its byte budget (32 MiB/s sustained, 64 MiB burst) has the
   screen closed ("the screen sent too much data"). `sandbox.screen.close{id}` is idempotent. A computer that stops closes its screens ("the
   computer stopped"), and whenever the lock is released (Done, a hold timeout, a cancelled turn, an abandoned lease)
   the keys and buttons the user still held are released in the guest.

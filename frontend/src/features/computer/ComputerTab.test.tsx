@@ -141,7 +141,7 @@ describe("computer tab takeover", () => {
     expect(await screen.findByRole("button", { name: "Done" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Take over" })).toBeNull();
     expect(screen.getByTestId("live-screen")).toHaveAttribute("data-interactive", "true");
-    expect(screen.getByText(/The bot can't use the computer until you click Done/)).toBeInTheDocument();
+    expect(screen.getByText(/The bot can't use the computer until you click Done\. If you leave this tab or minimise the window for about 2½ minutes, the bot gets it back automatically\./)).toBeInTheDocument();
     expect(screen.queryByText(/The bot waits/)).toBeNull();
     const note = screen.getByRole("textbox", { name: "Note for the bot" });
     expect(note).toHaveAttribute("maxLength", "500");

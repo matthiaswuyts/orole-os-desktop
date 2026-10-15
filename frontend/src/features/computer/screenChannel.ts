@@ -8,6 +8,7 @@ type Receiver = ((event: { data: ArrayBuffer }) => void) | null;
  * every open screen, so chunks are kept per id and only this screen's count once its id is known.
  */
 const EARLY_MAX = 256;
+const OVERFLOWED_MAX = 64;
 /** Distinct screen ids buffered while the id is unknown; chunks of further ids are only remembered as overflowed. */
 const EARLY_IDS_MAX = 16;
 
@@ -121,6 +122,8 @@ export class ScreenChannel {
         // Not a failure yet: these may be another screen's bytes. open() fails if they turn out to be ours.
         this.early.delete(chunk.id);
         this.overflowed.add(chunk.id);
+        // Bounded: a flood of distinct ids must not grow this forever; the oldest id is forgotten first.
+        if (this.overflowed.size > OVERFLOWED_MAX) this.overflowed.delete(this.overflowed.values().next().value as string);
         return;
       }
       if (kept) kept.push(chunk); else this.early.set(chunk.id, [chunk]);

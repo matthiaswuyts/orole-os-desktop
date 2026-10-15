@@ -90,7 +90,7 @@ function Takeover({ pending, reason, busy, onDone }: { pending: boolean; reason?
   };
   return <form data-slot="computer-takeover" onSubmit={submit} className="flex flex-col gap-1.5 rounded-lg border p-2 text-xs">
     <p role="status" className="text-muted-foreground">
-      {pending ? "You have the mouse and keyboard. The bot waits until you click Done." : "You have the mouse and keyboard. The bot can't use the computer until you click Done."}
+      {pending ? "You have the mouse and keyboard. The bot waits until you click Done." : "You have the mouse and keyboard. The bot can't use the computer until you click Done. If you leave this tab or minimise the window for about 2½ minutes, the bot gets it back automatically."}
     </p>
     {reason && <p className="selectable"><span className="text-muted-foreground">The bot asked: </span>{reason}</p>}
     <div className="flex items-center gap-2">
