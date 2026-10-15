@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"time"
 
 	"github.com/rayorole/orole-os-desktop/internal/sandbox/wire"
 )
@@ -69,6 +70,19 @@ func (a *Agent) handlePTY(w http.ResponseWriter, r *http.Request) {
 	_ = rc.Flush()
 
 	go func() { _, _ = io.Copy(p, r.Body) }()
+
+	// A shell can exit while a background job still holds the terminal, so the read below never sees EOF.
+	// When the shell is gone, give buffered output a moment to drain, then hang up to end the session.
+	sessionDone := make(chan struct{})
+	defer close(sessionDone)
+	go func() {
+		_, _ = p.Wait()
+		select {
+		case <-time.After(150 * time.Millisecond):
+			_ = p.Close()
+		case <-sessionDone:
+		}
+	}()
 	buf := make([]byte, 32<<10)
 	for {
 		n, err := p.Read(buf)

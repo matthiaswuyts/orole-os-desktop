@@ -120,6 +120,9 @@ func TestGuestPTYCloseEndsGuestSession(t *testing.T) {
 		t.Fatal(err)
 	}
 	fake := <-fakes
+	go io.Copy(io.Discard, p) // the terminal manager reads while another goroutine closes
+	time.Sleep(50 * time.Millisecond)
+	start := time.Now()
 	if err := p.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -132,6 +135,9 @@ func TestGuestPTYCloseEndsGuestSession(t *testing.T) {
 	defer cancel()
 	if _, err := p.Wait(ctx); err != nil {
 		t.Fatalf("Wait after Close = %v", err)
+	}
+	if d := time.Since(start); d > 200*time.Millisecond {
+		t.Fatalf("Close and Wait took %v, want under 200ms", d)
 	}
 }
 

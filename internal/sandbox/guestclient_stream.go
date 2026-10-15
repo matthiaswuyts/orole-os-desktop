@@ -126,9 +126,8 @@ func (p *guestPTY) Read(b []byte) (int, error) {
 }
 
 func (p *guestPTY) Close() error {
-	err := p.stream.Close()
-	p.finish(errPTYClosed)
-	return err
+	p.finish(errPTYClosed) // first: a concurrent Read must not report the teardown as a channel failure
+	return p.stream.Close()
 }
 
 func (p *guestPTY) finish(err error) {

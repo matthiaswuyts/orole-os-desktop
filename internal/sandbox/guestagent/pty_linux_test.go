@@ -5,9 +5,13 @@ package guestagent
 import (
 	"bytes"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"testing"
 	"time"
+
+	"github.com/rayorole/orole-os-desktop/internal/sandbox/wire"
 )
 
 func readUntil(t *testing.T, r io.Reader, want string) {
@@ -51,5 +55,29 @@ func TestStartPTYRunsShell(t *testing.T) {
 	go io.Copy(io.Discard, p)
 	if code, _ := p.Wait(); code != 3 {
 		t.Fatalf("exit code = %d, want 3", code)
+	}
+}
+
+// A shell that exits while a background job holds the terminal must still end the session with its exit code.
+func TestPTYSessionEndsWhenShellExitsWithBackgroundJob(t *testing.T) {
+	a := New(Config{Token: "t", Home: t.TempDir(), LoginShell: []string{"/bin/sh", "-c", "sleep 30 & exit 3"}})
+	srv := httptest.NewServer(a.Handler())
+	defer srv.Close()
+	req, _ := http.NewRequest("POST", srv.URL+"/pty", nil)
+	req.Header.Set(wire.TokenHeader, "t")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	done := make(chan struct{})
+	go func() { _, _ = io.Copy(io.Discard, resp.Body); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("session still open after the shell exited")
+	}
+	if got := resp.Trailer.Get(wire.ExitTrailer); got != "3" {
+		t.Fatalf("exit trailer = %q, want 3", got)
 	}
 }
