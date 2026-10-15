@@ -36,12 +36,15 @@ running commands do not.**
 - There is deliberately no start, stop, reset or wipe button, and no resource display.
 - Take over gives the user the mouse and keyboard; the bot's commands, file writes and browser tools are refused until
   Done. Closing the tab or switching bot does **not** hand control back, because that would tell a waiting bot that
-  the user finished. A takeover the user started by hand ends when the viewer lease runs out (about 150 s after the
-  tab went away); one the bot asked for ends at Done or after the 30-minute hold limit.
+  the user finished. A takeover the user started by hand ends about 150 s after the tab went away (closed, hidden or
+  the GUI gone) unless the tab comes back first; one the bot asked for ends at Done or after the 30-minute hold limit.
 - The UAC prompt for Windows Hypervisor Platform is started by the daemon; the desktop app first calls
   `AllowSetForegroundWindow` for the daemon's process so the prompt appears in front.
 - Commands the bot runs are echoed in the open terminal (dim `[bot] $ <command>`, output, exit code). The terminal
   is a daemon terminal: it survives closing the tab or restarting the GUI, and ends when the computer stops.
+- The terminal's shell runs as the `bot` user, so everything it shows is untrusted: the bot's commands can write
+  escape sequences to that pty and read what the user types there, and links in its output are clickable. Do not type
+  secrets into it.
 
 ## Architecture
 
@@ -384,15 +387,17 @@ The daemon serves the Computer tab from `internal/daemon/svc_sandbox_streams.go`
 answers `not_found` ("it starts when the bot uses it"; `Manager.RunningGuest` never boots).
 
 - **Viewer lease.** `sandbox.viewer{botId, watching}` starts, renews or ends the tab's lease (`sandbox.ViewerLeases`,
-  150 s; the UI renews every 60 s). A watched computer is not idle. A lease that runs out (the GUI went away without
-  saying so) clears the flag and, when the user holds the takeover lock with no handoff pending, gives the computer
-  back to the bot (`ReleaseAbandonedTakeover`, under the takeover mutex).
+  150 s; the UI renews every 45 s). A watched computer is not idle. `watching: false` (tab hidden or closed) clears
+  the flag at once but still arms the 150 s abandonment timer, which a later renewal supersedes. A lease that runs out
+  (or an unwatch not followed by a renewal) clears the flag and, when the user holds the takeover lock with no handoff
+  pending, gives the computer back to the bot (`ReleaseAbandonedTakeover`, under the takeover mutex).
 - **Screen.** `sandbox.screen.open{botId}` -> `{id}` opens `/screen` (opening bounded at 30 s) in `sandbox.ScreenHub`,
   at most two per bot. Guest bytes arrive as `sandbox.screen.data` events (`ScreenChunk{id, data, closed, error}`;
   the last one has `closed`). `sandbox.screen.input{id, data}` passes viewer bytes through the RFB filter: keyboard and
   mouse reach the guest only during a takeover. Unknown or closed screens are `not_found`; more than 128 KiB at once
   or input outside the accepted RFB subset closes the screen and answers `bad_request`; a guest that stops taking
-  input answers `timeout`. `sandbox.screen.close{id}` is idempotent. A computer that stops closes its screens ("the
+  input answers `timeout`. A guest that sends more than its byte budget (32 MB/s sustained, 64 MB burst) has the
+  screen closed ("the screen sent too much data"). `sandbox.screen.close{id}` is idempotent. A computer that stops closes its screens ("the
   computer stopped"), and whenever the lock is released (Done, a hold timeout, a cancelled turn, an abandoned lease)
   the keys and buttons the user still held are released in the guest.
 - **Input filter** (`internal/sandbox/rfbfilter.go`). Viewer bytes are parsed as RFB 3.8 with security None and a
@@ -402,12 +407,14 @@ answers `not_found` ("it starts when the bot uses it"; `Manager.RunningGuest` ne
   When the lock ends, the keys and buttons still held are released in the guest. noVNC's `viewOnly` is cosmetic.
 - **Terminal.** `sandbox.pty.open{botId, cols, rows}` -> `terminals.Info` opens a login shell in the guest and adopts
   it as an ordinary daemon terminal (owner `sandbox:<botId>`, shell `orole-guest`), so `terminals.write`, resize,
-  attach and the `terminal.*` events serve it. A bot has at most one; an open one is returned. Like every terminal it
-  survives GUI restarts, not a daemon exit, and it ends when the computer stops.
+  attach and the `terminal.*` events serve it. A bot has at most one; an open one is returned. `cols`/`rows` default
+  to 120x30 and are clamped to 20..500 and 5..200 before the guest sees them. Like every terminal it survives GUI
+  restarts, not a daemon exit, and it ends when the computer stops. The shell runs as `bot`: its output is untrusted
+  (bot commands can write escape sequences to the pty and see what the user types there; links in it are clickable).
 - **Command echo.** Each command the bot runs (`computer_run`) is echoed into that terminal when it is open: a dim
   `[bot] $ command` line, the output (newlines as CRLF, at most 64 KiB after that) and a dim `(exit N, timed out,
-  output cut)` line. Escape sequences and control characters are removed from the command and the output, so neither
-  can drive the user's terminal. Delivery is ordered per bot and never delays the command: when the terminal falls
+  output cut)` line. Escape sequences and control characters are removed from the echoed command and output, so the
+  echo itself cannot drive the user's terminal; this does not cover what bot processes write to the pty directly. Delivery is ordered per bot and never delays the command: when the terminal falls
   behind, echoes are dropped.
 
 ## Windows backend (phase 2)
