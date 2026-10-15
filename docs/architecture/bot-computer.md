@@ -71,7 +71,7 @@ memory; the guest answers 401 otherwise.
 |---|---|---|
 | `GET /health` | version and readiness | |
 | `POST /exec` | `/bin/sh -lc <command>` as `bot`, in its own process group (host tests: `/bin/sh -c` as the agent's user) | timeout 120 s default, 600 s max; stdout+stderr 1 MiB kept, the rest dropped (`truncated`); background children get 2 s to release the output |
-| `POST /files/read`, `/files/write` | guest files; relative paths under `/home/bot`; files and directories a write creates belong to `bot` | read 4 MiB (`truncated`), write 16 MiB max |
+| `POST /files/read`, `/files/write` | guest files with `bot`'s permissions (a helper process: `orole-guest` re-executed as `bot`); relative paths under `/home/bot`; 403 where `bot` may not read or write | read 4 MiB (`truncated`), write 16 MiB max |
 | `POST /pty?cols=&rows=` | login shell (bash) as `bot` on a pseudo-terminal it owns, full duplex; `X-Orole-Pty` id, `X-Orole-Exit` trailer | |
 | `POST /pty/resize` | resize by id | |
 | `POST /screen`, `POST /browser` | 501 until phases 3-4 | |
@@ -102,8 +102,11 @@ gone the boot fails with `ErrImageGone` instead of booting the overlay against a
 - The VM is the security boundary. The token authenticates the daemon's connection to the guest. In the guest,
   `orole-guest` runs as root and is the only process that can read the token (fw_cfg sysfs files are 0400 root)
   or open the channel (`/dev/virtio-ports/org.orole.guest.0` is 0600 root by a udev rule); commands and terminals
-  run as the unprivileged `bot`, which has no sudo. `/files/read` and `/files/write` still run as root (paths are not
-  confined), so a bot can read the token through them; acceptable, because the guest is already the bot's.
+  run as the unprivileged `bot`, which has no sudo. `/files/read` and `/files/write` run in a helper process
+  (`orole-guest` re-executed with a hidden argument) as `bot`, so they reach exactly what the bot's own commands
+  can: no root-owned paths, no writes through symlinks to them. Size limits are enforced by the agent, not the helper.
+- Commands, terminals and file helpers run in `orole-guest`'s cgroup: restarting `orole-guest` (crash or
+  update) kills the bot's running commands and terminals.
 - Inside the guest, nftables rejects everything to 10.0.2.2 and fec0::2 (QEMU user networking's aliases for the
   host's loopback) except DHCP renewals from port 68, which only root can bind.
 - The guest has open internet and can reach the home network (phase 2 documents this in the UI).
@@ -116,11 +119,12 @@ panic=-1`), `base.qcow2` (compressed qcow2, ext4 labelled `nixos` without a part
 size on boot) and `SHA256SUMS`. `nix build ./guest#image-debug` is the same with root autologin on the serial console.
 Building it: `docs/development/guest-image.md`.
 
-Facts later phases rely on: user `bot` (uid 1000, home `/home/bot`, no sudo, locked password); Chromium in cage
+Facts later phases rely on: user `bot` (uid 1000, primary group `users` gid 100, home `/home/bot`, no sudo,
+locked password); Chromium in cage
 (wlroots headless backend, pixman) with CDP on `127.0.0.1:9222` and its profile in `/home/bot/.config/orole-chromium`;
 wayvnc on `127.0.0.1:5900`; `orole-guest` as a root systemd unit after module loading, restarted forever;
 `qemu_fw_cfg` loaded in the initrd; Python 3 + uv, Node.js, git, curl, jq, ripgrep; nix-ld and envfs so downloaded
-Linux binaries and `#!/bin/bash` scripts run. `orole-guest` reads its token from fw_cfg
+Linux binaries and `#!/bin/bash` scripts run; fontconfig with DejaVu and Noto for Chromium. `orole-guest` reads its token from fw_cfg
 (`/sys/firmware/qemu_fw_cfg/by_name/opt/orole/token/raw`) and falls back to `orole.token=` on the kernel command line.
 
 #### Guest image checks
@@ -128,7 +132,8 @@ Linux binaries and `#!/bin/bash` scripts run. `orole-guest` reads its token from
 Not run yet: no local Nix (the image is built in CI, `.github/workflows/guest-image.yml`). Boot the debug image
 (`docs/development/guest-image.md`) and record here: `systemd-analyze`; `systemctl is-active cage-tty1 wayvnc
 orole-guest`; `ls -l` of the fw_cfg token (0400 root) and `/dev/virtio-ports/org.orole.guest.0` (0600 root);
-`ss -ltnp` (5900 and 9222 on 127.0.0.1 only); `runuser -u bot -- curl -s http://127.0.0.1:9222/json/version`;
+`ss -ltnp` (5900 and 9222 on 127.0.0.1 only); wayvnc input works (cage's virtual keyboard and pointer: type and
+click through a VNC client); text renders with real glyphs in Chromium (fonts); `runuser -u bot -- curl -s http://127.0.0.1:9222/json/version`;
 `nft list ruleset`; `runuser -u bot -- curl -m 5 http://10.0.2.2:<port>` refused; internet as bot; `df -h /`;
 `free -m`; and the NixOS report's criteria as bot (uv + numpy/pandas, a native npm module, a downloaded Node binary
 through nix-ld, a `#!/bin/bash` script, Playwright's browser download, expected to fail).
@@ -138,7 +143,7 @@ through nix-ld, a `#!/bin/bash` script, Playwright's browser download, expected 
 `go test -race ./internal/sandbox/... ./cmd/orole-guest/...` runs everywhere: the fake backend serves the real
 guest handler over `net.Pipe`, and the test binary doubles as the guest's shell (`guestagent/agenttest`). The
 Linux CI lane also runs the real `/bin/sh` exec tests and the real PTY test, and builds `orole-guest`; the tests that
-switch to another user (`TestRunAsSwitchesUser`, `TestWriteFileAsRunAsOwnsNewPathsOnly`) need root and skip otherwise.
+switch to another user (`TestRunAsSwitchesUser`, `TestFilesRunAsBot`) need root and skip otherwise.
 On Windows the QEMU backend is tested against a fake QEMU (it connects the sockets and answers QMP like the real
 one); `TestRealBootConnectsTheGuestAgent` boots real QEMU with the spike's Alpine kernel and `orole-guest` and talks h2c
 to it when `OROLE_SPIKE_QEMU` and `OROLE_SPIKE_ALPINE` are set.

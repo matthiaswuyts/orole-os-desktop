@@ -26,9 +26,12 @@ type Config struct {
 	LoginShell []string                   // argv for /pty; default /bin/sh -l
 	StartPTY   func(PTYSpec) (PTY, error) // nil uses the platform terminal (Linux only; elsewhere /pty answers 501)
 
-	// RunAs is the unprivileged user that /exec and /pty commands run as, and that owns files /files/write
-	// creates. nil runs them as the agent's own user (host tests). Switching users needs root and Unix.
+	// RunAs is the unprivileged user that /exec, /pty and /files/* run as. nil runs them as the agent's own
+	// user (host tests). Switching users needs root and Unix.
 	RunAs *Identity
+	// HelperExe is the binary started (as RunAs) for /files/* when RunAs is set; it must call RunFileHelper
+	// first thing. Default: this executable.
+	HelperExe string
 }
 
 // Identity is a Unix user to run guest commands as.

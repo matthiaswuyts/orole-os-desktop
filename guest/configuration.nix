@@ -123,6 +123,10 @@ in
     serviceConfig = { ExecStart = lib.getExe orole-guest; Restart = "always"; RestartSec = 1; };
   };
 
+  # Fonts for Chromium (without fontconfig and a font set, pages render as boxes).
+  fonts.fontconfig.enable = true;
+  fonts.packages = with pkgs; [ dejavu_fonts noto-fonts ];
+
   environment.systemPackages = with pkgs; [
     python3 uv nodejs git curl jq ripgrep chromium
     coreutils findutils gnugrep gnused gawk which file unzip zip gnutar xz

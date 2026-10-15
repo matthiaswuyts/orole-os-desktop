@@ -103,6 +103,16 @@ func TestRealBootConnectsTheGuestAgent(t *testing.T) {
 		t.Fatalf("exec = %+v, %v (want uname, then the bot user)\n--- console ---\n%s", res, err, log)
 	}
 	t.Logf("REALBOOT exec uname: %s", strings.TrimSpace(res.Stdout))
+	// File operations run as bot through the re-executed helper: home is writable, / (root's) is not.
+	if _, err := g.WriteFile(ctx, "notes/hi.txt", []byte("hi")); err != nil {
+		t.Fatalf("write in home: %v", err)
+	}
+	if rf, err := g.ReadFile(ctx, "notes/hi.txt"); err != nil || string(rf.Content) != "hi" {
+		t.Fatalf("read back = %q, %v", rf.Content, err)
+	}
+	if _, err := g.WriteFile(ctx, "/root-only.txt", []byte("x")); err == nil || !strings.Contains(err.Error(), "403") {
+		t.Fatalf("write to / as bot = %v, want 403", err)
+	}
 	if !pathExists(spec.Overlay) {
 		t.Fatal("no overlay")
 	}

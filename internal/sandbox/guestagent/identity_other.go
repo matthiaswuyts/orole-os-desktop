@@ -15,10 +15,3 @@ func setIdentity(_ *exec.Cmd, id *Identity) error {
 	}
 	return nil
 }
-
-func chownTo(_ string, id *Identity) error {
-	if id != nil {
-		return errRunAsUnsupported
-	}
-	return nil
-}

@@ -3,7 +3,6 @@
 package main
 
 import (
-	"errors"
 	"os"
 	"strings"
 )
@@ -12,7 +11,7 @@ import (
 // is loaded. The kernel makes it readable by root only (0400), and it is never printed, unlike the command line.
 const fwCfgTokenPath = "/sys/firmware/qemu_fw_cfg/by_name/opt/orole/token/raw"
 
-// fwCfgToken reads the token from a fw_cfg file; a missing or empty file is an error.
+// fwCfgToken reads the token from a fw_cfg file; a missing file is fs.ErrNotExist, an empty one errEmptyToken.
 func fwCfgToken(path string) (string, error) {
 	b, err := os.ReadFile(path)
 	if err != nil {
@@ -20,7 +19,7 @@ func fwCfgToken(path string) (string, error) {
 	}
 	tok := strings.TrimSpace(string(b))
 	if tok == "" {
-		return "", errors.New("fw_cfg token is empty")
+		return "", errEmptyToken
 	}
 	return tok, nil
 }

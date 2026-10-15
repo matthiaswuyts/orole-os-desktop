@@ -1,8 +1,10 @@
 {
   description = "Orole bot computer: NixOS guest image (kernel, initrd, kernel command line, base disk)";
 
-  # Pinned nixos-unstable (has go_1_27). Update with `nix flake update` and bump guest/VERSION.
-  inputs.nixpkgs.url = "github:NixOS/nixpkgs/7fd4004d0511991fff3a0524856a9be09e28c5f0";
+  # Pinned to a nixos-unstable channel head (channels.nixos.org/nixos-unstable/git-revision): Hydra built and
+  # cached it, so Chromium and the kernel come from cache.nixos.org. Has go_1_27. Update the same way, run
+  # `nix flake lock ./guest`, and bump guest/VERSION.
+  inputs.nixpkgs.url = "github:NixOS/nixpkgs/55bfb4d7437bd4e09ab7cba58a43bd68eb310044";
 
   outputs = { self, nixpkgs }:
     let

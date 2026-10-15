@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log"
 	"os"
 	"os/signal"
@@ -21,6 +22,10 @@ import (
 var version = "dev" // set with -ldflags "-X main.version=..."
 
 func main() {
+	// The agent re-executes itself as the bot user for file operations.
+	if code, ok := guestagent.RunFileHelper(os.Args[1:], os.Stdin, os.Stdout, os.Stderr); ok {
+		os.Exit(code)
+	}
 	logger := log.New(os.Stderr, "orole-guest: ", log.LstdFlags)
 	token, err := readToken()
 	if err != nil {
@@ -42,9 +47,16 @@ func main() {
 // source since phase 2), with orole.token= on the kernel command line as a fallback.
 func readToken() (string, error) { return readTokenFrom(fwCfgTokenPath, "/proc/cmdline") }
 
+var errEmptyToken = errors.New("fw_cfg token is empty")
+
 func readTokenFrom(fwCfg, cmdlinePath string) (string, error) {
-	if tok, err := fwCfgToken(fwCfg); err == nil {
+	tok, err := fwCfgToken(fwCfg)
+	if err == nil {
 		return tok, nil
+	}
+	// Fall back only when there is no fw_cfg token at all; a token that exists but cannot be read is an error.
+	if !errors.Is(err, fs.ErrNotExist) && !errors.Is(err, errEmptyToken) {
+		return "", fmt.Errorf("read fw_cfg token: %w", err)
 	}
 	cmdline, err := os.ReadFile(cmdlinePath)
 	if err != nil {

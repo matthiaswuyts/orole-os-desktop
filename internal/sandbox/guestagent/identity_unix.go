@@ -3,7 +3,6 @@
 package guestagent
 
 import (
-	"os"
 	"os/exec"
 	"syscall"
 )
@@ -18,12 +17,4 @@ func setIdentity(cmd *exec.Cmd, id *Identity) error {
 	}
 	cmd.SysProcAttr.Credential = &syscall.Credential{Uid: id.UID, Gid: id.GID, Groups: id.Groups}
 	return nil
-}
-
-// chownTo gives a path the agent created to id (nil does nothing). Lchown: never follow a link.
-func chownTo(path string, id *Identity) error {
-	if id == nil {
-		return nil
-	}
-	return os.Lchown(path, int(id.UID), int(id.GID))
 }

@@ -39,7 +39,9 @@ the `got: sha256-…` value. Without Nix, the hash is the NAR hash of the `vendo
 for a copy of the repository's `*.go`, `go.mod`, `go.sum` and `mygo.json` files.
 
 To move nixpkgs: change the revision in `guest/flake.nix`, run `nix flake lock ./guest`, and bump `guest/VERSION`.
-Pick a revision Hydra has built (a `nixos-unstable` head), or Chromium builds from source for hours.
+Use a nixos-unstable channel head (`curl https://channels.nixos.org/nixos-unstable/git-revision`): Hydra built
+and cached it, so Chromium comes from cache.nixos.org instead of building from source for hours. The release's
+`store-paths.xz` (next to `git-revision` under `releases.nixos.org`) lists the cached paths if you want to check.
 
 ## Boot it on Windows
 

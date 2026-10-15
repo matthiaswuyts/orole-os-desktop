@@ -32,6 +32,16 @@ func TestReadTokenPrefersFwCfg(t *testing.T) {
 	if tok, err := readTokenFrom(fw, cmdline); err != nil || tok != "cmdtoken" {
 		t.Fatalf("fallback: got %q %v", tok, err)
 	}
+	// A fw_cfg token that exists but cannot be read must not silently fall back to the command line.
+	if err := os.Mkdir(fw, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if tok, err := readTokenFrom(fw, cmdline); err == nil {
+		t.Fatalf("unreadable fw_cfg fell back to %q", tok)
+	}
+	if err := os.Remove(fw); err != nil {
+		t.Fatal(err)
+	}
 	write(cmdline, "init=/x quiet\n")
 	if _, err := readTokenFrom(fw, cmdline); err == nil {
 		t.Fatal("no token anywhere must be an error")
