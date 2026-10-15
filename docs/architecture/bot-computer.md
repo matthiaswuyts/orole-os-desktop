@@ -1,14 +1,16 @@
 # Bot computer: a local VM per bot
 
-Every chat bot can have its own small Linux computer on the user's PC: its own disk, a terminal and (later) a
+Every chat bot can have its own small Linux computer on the user's PC: its own disk, a terminal and a
 visible browser. Design: `docs/superpowers/specs/2026-10-15-bot-computer-design.md`. Plans:
 `docs/superpowers/plans/2026-10-15-bot-computer*.md`.
 
-**Status: phase 2 (Windows backend).** The manager, store, guest protocol and `orole-guest` (phase 1) now run on
-a real QEMU backend on Windows, with the runtime download, the setup helper and the NixOS guest image, all
-checked end to end on build 22000 (see "Guest image checks"). The pinned release assets are drafts until the owner
-publishes them, so a user's build cannot download them yet (the pinned URLs answer 404). Nothing is visible in the
-app: bot tools come in phase 3, the Computer tab and its setup screens in phase 4.
+**Status: phase 3 (bot tools).** The manager, store, guest protocol and `orole-guest` run on a real QEMU backend
+on Windows, with the runtime download, the setup helper and the NixOS guest image, all checked end to end on build 22000
+(see "Guest image checks"). A bot with "Has its own computer" switched on gets terminal, file and browser tools and can
+ask the user to take over (see "Bot tools"). The pinned release assets are drafts until the owner publishes them, so a
+user's build cannot download them yet (the pinned URLs answer 404). What is visible in the app: the Tools switch, the
+card in chat and the "Needs you" notification. The Computer tab (screen, terminal, Take over and Done buttons) and its
+setup screens come in phase 4.
 
 **A bot's computer lives in the daemon: it survives GUI restarts, not a daemon exit or reboot. Its disk persists;
 running commands do not.**
@@ -16,7 +18,7 @@ running commands do not.**
 ## Architecture
 
 ```
- bot tool call (phase 3)
+ bot tool call (internal/chat/tools)
         |
  internal/sandbox.Manager ---- Store (table sandboxes)
         |  Ensure(bot) -> *Guest
@@ -57,7 +59,7 @@ running commands do not.**
 - Restarting `orole-guest` inside the VM makes the host treat the channel as dead; the next call reboots the VM.
 - A VM that is stopping keeps its overlay open, so `Ensure` waits for it to be gone before booting again.
 - `TakeOver`/`Release` hold the takeover lock in the daemon; while it is held the VM is never idle-stopped or
-  evicted, and (phase 3) bot browser tools are refused.
+  evicted, and bot browser tools are refused.
 - `Delete(bot)` stops the VM (calls in flight fail), then removes the overlay, the socket and the record. The log
   is kept.
 - `Shutdown` (daemon exit) stops every VM and refuses new ones.
@@ -76,11 +78,12 @@ memory; the guest answers 401 otherwise.
 | `POST /files/read`, `/files/write` | guest files with `bot`'s permissions (a helper process: `orole-guest` re-executed as `bot`); relative paths under `/home/bot`; 403 where `bot` may not read or write | read 4 MiB (`truncated`), write 16 MiB max |
 | `POST /pty?cols=&rows=` | login shell (bash) as `bot` on a pseudo-terminal it owns, full duplex; `X-Orole-Pty` id, `X-Orole-Exit` trailer | |
 | `POST /pty/resize` | resize by id | |
-| `POST /screen`, `POST /browser` | 501 until phases 3-4 | |
+| `POST /browser` | chromedp on the visible Chromium: open, click, type, read, screenshot (see "Bot tools"); 501 on an image without it | page load 60 s, other steps 20 s; page text 90 KiB, screenshot 5 MiB |
+| `POST /screen` | full-duplex relay to the guest's VNC server (the viewer is phase 4); 501 on an image without it | |
 | `POST /poweroff` | 202, then a clean power off | |
 
 The host never trusts the guest: answers over 8 MiB are refused, exec output is cut to 1 MiB and file content to
-4 MiB again on the host, and everything a bot receives from the guest is untrusted data (phase 3 wraps it).
+4 MiB again on the host, and everything a bot receives from the guest is untrusted data (the bot tools wrap it).
 
 ### Daemon wiring
 
@@ -219,6 +222,105 @@ guest-v<version>` reads both releases (drafts too) with `gh`, takes each hash fr
 against GitHub's own asset digest, and writes the file. The pinned URLs
 (`https://github.com/rayorole/orole-os-desktop/releases/download/<tag>/<name>`) work for users only once both releases
 are published.
+
+## Bot tools (phase 3)
+
+A saved bot with `BotConfig.computer` (bot settings › Tools: "Has its own computer"; off by default, never exported)
+gets these tools (`internal/chat/tools/computer.go`, `browser.go`, `takeover.go`, wired in
+`internal/daemon/svc_chat_tools.go` through `computerRuntime` in `internal/daemon/computer_tools.go`). Builder drafts
+never get them, and neither do models without tool calling. Every call except `ask_user_to_take_over` goes through
+`policy.Engine` as `bot:<id>`, so the bot's tool access level (ask/read/write/all) and stored rules apply as for any
+other tool:
+
+| Tool | Action | Resource | Effect |
+|---|---|---|---|
+| `computer_run(command, timeout?, cwd?)` | `computer.exec` | `computer/<botID>` | write |
+| `computer_read_file(path)` | `computer.files.read` | `computer/<botID>/<absolute path>` | read |
+| `computer_write_file(path, content)` | `computer.files.write` | `computer/<botID>/<absolute path>` | write |
+| `browser_open(url)` | `computer.browser.open` | `computer/<botID>/browser/<host>` | **write** |
+| `browser_read()`, `browser_screenshot()` | `computer.browser.read` | `computer/<botID>/browser` | read |
+| `browser_click(target)`, `browser_type(target, text)` | `computer.browser.write` | `computer/<botID>/browser` | write |
+| `ask_user_to_take_over(reason)` | none (it only asks the user) | - | - |
+
+**Deviation from the plan table.** The plan listed `browser_open` as `computer.browser.read` on
+`computer/<botID>/browser`. Opening a page carries the user's logged-in sessions (the bot's browser keeps its
+profile), so an unprompted open followed by a read is a way to move data out. It is therefore a write, on a resource
+that names the host (lowercased, punycode, no port or user info): the user is asked once per new site and can choose
+"always allow" for that host only. `browser_read` and `browser_screenshot` stay reads.
+
+- **`browser_open` refuses** `localhost` and `*.localhost`, and literal loopback, private, link-local, CGNAT
+  (100.64.0.0/10), "this network" and unspecified IPs, including the VM's gateway 10.0.2.2, IPv6 forms that carry such
+  an IPv4 address (NAT64, 6to4, IPv4-compatible) and every spelling a browser would read as one (`127.1`, `0x7f.1`,
+  `2130706433`, fullwidth or ideographic-dot Unicode forms; hosts are mapped with UTS-46 first). **Not caught:** a
+  public hostname whose DNS answer is a private address. The computer can reach the user's home network (the guest
+  firewall only blocks the host's own loopback), so the per-host approval is the guard there.
+- **Approvals show exactly what runs.** The prompt carries the whole command (at most 1800 bytes: the approval detail
+  limit minus 200), file paths in canonical absolute form (relative paths start in `/home/bot`; the policy resource
+  uses the same path), a 300-byte preview of file content, and the full URL, target or typed text. Commands, URLs,
+  targets and text containing control or invisible characters (carriage return, escape, zero-width, bidi marks,
+  invalid UTF-8) are refused instead of being shown differently from what would run; newlines and tabs are allowed in
+  commands and typed text.
+- **Results are untrusted.** Command output, file contents, page text, screenshots and guest error text are
+  `Untrusted` (fenced by the engine). The model sees at most 64 KiB per command or file and 90 KiB of page text, with
+  a note on how to get the rest; binary files are summarised. URLs must be absolute http(s); targets are a CSS
+  selector or `text=<visible text>` (`wire.ValidateBrowser`, checked by the tool and again by the guest).
+- **Screenshots.** `browser_screenshot` returns the PNG as `ToolResult.Images`. A vision model gets it in a transient
+  user message after the tool results, for the latest step only (earlier ones become a text placeholder); it is never
+  stored or logged. Other models get a text note and should use `browser_read`.
+- **Limits.** Computer bots default to 30 steps and 60 tool calls per turn (`computerMaxSteps`, `computerMaxToolCalls`
+  in `internal/chat/engine.go`) unless the bot sets its own. `computer_read_file`, `browser_read` and
+  `browser_screenshot` are exempt from the repeated-identical-call guard, because the file or page changes between
+  calls.
+- **Deadlines.** Every guest call has one: a command's timeout (default 120 s, max 600 s) plus 30 s, files 60 s,
+  browser 90 s. Starting the VM is bounded separately at 100 s (boot, busy wait, slack). The guest bounds a page load
+  at 60 s and other browser steps at 20 s.
+- **Archived or missing bots are refused** before anything boots ("you no longer exist, so you have no computer").
+- **Card.** Each reply gets one compact card part (`type: "computer"`, `id: "computer"`, `name` the last tool,
+  `status` running|waiting|done|failed, `text` the human line, `summary` the outcome), updated through
+  `RunContext.Emit`; it says "Starting the computer…" while the VM boots. Errors map to plain messages: not set up,
+  failed to start, stopped unexpectedly, all computers busy, low memory, the user is controlling the computer, an
+  image too old for this feature. Phase 3 publishes no activity event; the Computer tab's live echo of commands is
+  phase 4.
+- **What the user sees today.** The Tools switch, the card in chat and the "Needs you" notification. The Computer
+  tab, where the user watches the screen and presses Take over and Done, arrives with phase 4; until then
+  `sandbox.takeover` and `sandbox.release` have no button.
+
+### Takeover
+
+`ask_user_to_take_over(reason)` (reason at most 200 characters, plain single-line text) waits in `sandbox.Handoffs`
+(`internal/sandbox/handoff.go`): up to `DefaultHandoffAsk` (5 minutes, the same as `policy.DefaultApprovalTimeout`)
+for the user to press Take over, then until Done, at most `DefaultHandoffHold` (30 minutes). The tool texts take both
+numbers from those constants. The tool makes sure the computer runs first, so there is a screen to take over.
+Phone-call turns cannot ask for a takeover. Untrusted content cannot start one: only the user's click takes over.
+
+- **Notification.** While the bot waits the daemon publishes `sandbox.handoff` (`HandoffState{botId, pending, reason,
+  since}`, also answered by IPC `sandbox.handoff{botId}`) and keeps one "Needs you" notification open (ref
+  `computer-takeover:<botId>`, target `computer:<botId>`, which opens the bot). It resolves however the wait ends.
+  Handoffs do not survive a daemon restart, so the notification list drops such entries on start.
+- **IPC.** `sandbox.takeover{botId}` takes the lock (`Manager.TakeOver`; the computer must be running),
+  `sandbox.release{botId, note?}` releases it and resumes the bot with "The user finished: <note>" (note at most 500
+  characters, control and invisible characters stripped). `sandbox.takeover`, `sandbox.release` and `sandbox.handoff`
+  are **desktop-only**: the daemon refuses them from any other IPC client, so neither the CLI nor a bot can use them.
+  Take over and Done are audited as actor `user` (`computer.takeover`, `computer.release`).
+- **Lock lifetime.** Whether the user holds the computer is decided under one mutex shared by the Take over and Done
+  handlers and the start of a wait, so a wait never starts from a stale answer. A VM stop or crash ends the wait (the
+  bot is told the computer stopped) and drops the lock. The lock is also released, so the bot's browser works again,
+  when the hold timeout passes or the bot's turn is cancelled, including when the user started the takeover by hand
+  with no request pending.
+- **While taken over.** Browser tools are refused before any approval prompt, and again after one. A guest call
+  already in flight finishes first. Command and file tools are not blocked.
+- **Signing in.** What the user signs in to stays in the browser profile on the bot's computer, and the bot can use
+  those sessions afterwards. Each new host still needs approval unless the user chose "always allow" for it. There is
+  no UI to wipe the browser profile yet; the only way is to delete the computer.
+
+### Guest browser and screen
+
+`cmd/orole-guest` serves `POST /browser` with chromedp attached to the visible Chromium tab over CDP on
+`127.0.0.1:9222` inside the guest (open waits for the load event; read returns title, URL and the visible text capped
+at 90 KiB; screenshot is a viewport PNG, at most 5 MiB), and `POST /screen` as a full-duplex relay to the guest's VNC
+server on `127.0.0.1:5900`. Neither port is reachable from the host except through the authenticated channel. Both
+routes need guest image 0.1.2; a computer still on an older image answers 501 and the bot is told to ask the user to
+reset it. The viewer that uses `/screen` is phase 4.
 
 ## Windows backend (phase 2)
 
