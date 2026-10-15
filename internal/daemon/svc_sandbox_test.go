@@ -81,7 +81,7 @@ func TestSandboxSetupAndInstallFailCleanlyInTests(t *testing.T) {
 	}
 
 	if sandbox.DefaultPins.Complete() {
-		t.Skip("this build pins a runtime: installing it would download ~1 GB (see TestManualSandboxRuntimeInstall)")
+		t.Skip("this build pins a runtime: installing it would download ~1.6 GB (see TestManualSandboxRuntimeInstall)")
 	}
 	var st sandbox.RuntimeState
 	err = c.Call(ctx, "sandbox.runtime.install", struct{}{}, &st)
@@ -268,7 +268,7 @@ func TestArchivingABotWithoutAComputerWorks(t *testing.T) {
 	}
 }
 
-// TestManualSandboxRuntimeInstall downloads the pinned runtime (~1 GB) through the real daemon. Run by hand:
+// TestManualSandboxRuntimeInstall downloads the pinned runtime (~1.6 GB) through the real daemon. Run by hand:
 //
 //	$env:OROLE_SANDBOX_MANUAL = "1"; go test -run TestManualSandboxRuntimeInstall -v -timeout 40m ./internal/daemon
 func TestManualSandboxRuntimeInstall(t *testing.T) {

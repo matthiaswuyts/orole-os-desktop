@@ -354,7 +354,7 @@ func TestInstallKeepsASlowSteadyDownload(t *testing.T) {
 func TestDefaultHTTPClientHasNoWholeRequestTimeout(t *testing.T) {
 	rt := NewRuntime(RuntimeConfig{})
 	if rt.cfg.HTTP.Timeout != 0 {
-		t.Fatalf("whole-request timeout %s would cut a slow 1.5 GB download", rt.cfg.HTTP.Timeout)
+		t.Fatalf("whole-request timeout %s would cut a slow 1.6 GB download", rt.cfg.HTTP.Timeout)
 	}
 	if rt.cfg.IdleTimeout <= 0 {
 		t.Fatal("no idle timeout: a stalled download would hang forever")

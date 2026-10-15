@@ -37,6 +37,15 @@ type Pins struct {
 // Complete reports whether p names a full runtime; a build made before the releases were pinned has none.
 func (p Pins) Complete() bool { return p.complete() }
 
+// DownloadSize is the total of the pinned files in bytes: what installing the runtime downloads.
+func (p Pins) DownloadSize() int64 {
+	n := p.QEMU.Size
+	for _, a := range p.Image {
+		n += a.Size
+	}
+	return n
+}
+
 func (p Pins) complete() bool {
 	return p.QEMUVersion != "" && p.QEMUTag != "" && p.QEMU.SHA256 != "" && p.ImageVersion != "" && p.ImageTag != "" && len(p.Image) > 0
 }
@@ -73,7 +82,7 @@ type RuntimeConfig struct {
 	Paths   Paths
 	Pins    Pins
 	BaseURL string       // default: GitHub releases of rayorole/orole-os-desktop
-	HTTP    *http.Client // default: no whole-request timeout (the image is ~1.5 GB); IdleTimeout bounds stalls
+	HTTP    *http.Client // default: no whole-request timeout (the image is ~1.6 GB); IdleTimeout bounds stalls
 	// IdleTimeout fails a download that receives no bytes (headers included) for this long. Default 2 minutes.
 	IdleTimeout time.Duration
 	OnChange    func(RuntimeState)

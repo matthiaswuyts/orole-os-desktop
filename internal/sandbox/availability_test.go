@@ -2,6 +2,7 @@ package sandbox
 
 import (
 	"errors"
+	"strings"
 	"testing"
 	"time"
 )
@@ -73,5 +74,26 @@ func TestRebootMarkerOnlyCountsForTheCurrentBoot(t *testing.T) {
 	}
 	if rebootMarkerActive([]byte("not a number"), boot) || rebootMarkerActive(nil, boot) {
 		t.Fatal("unreadable marker counts")
+	}
+}
+
+func TestTheRuntimeMissingDetailStatesThePinnedDownloadSize(t *testing.T) {
+	p := Pins{QEMU: Asset{Size: 62_624_686}, Image: []Asset{{Size: 1_522_466_816}, {Size: 44_354_934}}}
+	if got := p.DownloadSize(); got != 1_629_446_436 {
+		t.Fatalf("DownloadSize %d", got)
+	}
+	if got := downloadSizeText(p.DownloadSize()); got != "about 1.6 GB" {
+		t.Fatalf("text %q", got)
+	}
+	if got := downloadSizeText(0); got != "" {
+		t.Fatalf("no pins: %q", got)
+	}
+	a := decideAvailability(hostProbe{Build: 22000}, false)
+	want := "(QEMU and the Linux image, " + downloadSizeText(DefaultPins.DownloadSize()) + ")"
+	if !DefaultPins.Complete() {
+		want = "(QEMU and the Linux image)"
+	}
+	if !strings.Contains(a.Detail, want) {
+		t.Fatalf("detail %q lacks %q", a.Detail, want)
 	}
 }

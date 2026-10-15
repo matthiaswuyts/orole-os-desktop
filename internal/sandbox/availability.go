@@ -28,6 +28,22 @@ type hostProbe struct {
 	RebootPending     bool // Windows servicing or our own setup is waiting for a restart
 }
 
+// downloadSuffix names the pinned download size for the setup screen, or nothing in a build without pins.
+func downloadSuffix() string {
+	if !DefaultPins.Complete() {
+		return ""
+	}
+	return ", " + downloadSizeText(DefaultPins.DownloadSize())
+}
+
+// downloadSizeText is n bytes in decimal gigabytes with one decimal ("about 1.6 GB"); empty for n <= 0.
+func downloadSizeText(n int64) string {
+	if n <= 0 {
+		return ""
+	}
+	return "about " + strconv.FormatFloat(float64(n)/1e9, 'f', 1, 64) + " GB"
+}
+
 // decideAvailability turns probes into what the Computer tab shows. Reasons are the contract's strings.
 //
 // A successful partition probe is authoritative: the HypervisorPlatform optional feature can read as
@@ -40,7 +56,7 @@ func decideAvailability(p hostProbe, runtimeReady bool) Availability {
 	case p.PartitionErr == nil && runtimeReady:
 		return Availability{Ready: true}
 	case p.PartitionErr == nil:
-		return Availability{Reason: "runtime-missing", Detail: "Download the computer (QEMU and the Linux image, about 1 GB) to continue."}
+		return Availability{Reason: "runtime-missing", Detail: "Download the computer (QEMU and the Linux image" + downloadSuffix() + ") to continue."}
 	case p.RebootPending:
 		return Availability{Reason: "reboot-required", Detail: "Restart Windows to finish turning on Windows Hypervisor Platform."}
 	case p.Feature != featureEnabled:
