@@ -125,8 +125,13 @@ def main():
         """The derivation's environment; structured-attrs derivations keep theirs in __json."""
         if kd not in env_cache:
             e = dict(drvs[kd].get("env") or {})
+            sa = drvs[kd].get("structuredAttrs")  # newer `nix derivation show` format
+            if isinstance(sa, str):
+                sa = json.loads(sa)
             if "__json" in e:
-                for k, v in json.loads(e.pop("__json")).items():
+                sa = json.loads(e.pop("__json"))
+            if isinstance(sa, dict):
+                for k, v in sa.items():
                     if isinstance(v, str):
                         e.setdefault(k, v)
                     elif isinstance(v, (int, float)) and not isinstance(v, bool):
@@ -215,7 +220,7 @@ def main():
     if not kernel or not all(r["srcs"] for r in kernel):
         for r in kernel:
             e = env(r["drv"])
-            print(f"kernel drv {r['drv']}: keys {sorted(e)[:80]}", file=sys.stderr)
+            print(f"kernel drv {r['drv']}: keys {sorted(e)[:80]} drv keys {sorted(drvs[r['drv']])}", file=sys.stderr)
             for k in SRC_ATTRS:
                 for tok in (e.get(k) or "").split():
                     top = base(tok).split("/", 1)[0]
