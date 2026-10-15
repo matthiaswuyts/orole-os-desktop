@@ -42,6 +42,12 @@ const (
 	// screenReleaseTimeout bounds every write to the guest (input, key and button releases) and how long ending a
 	// screen waits for one in progress; a guest that does not take the bytes in time has its screen closed.
 	screenReleaseTimeout = 2 * time.Second
+	// ScreenByteRate and ScreenByteBurst are each screen's guest byte budget (a token bucket): a guest that sends
+	// more than the burst above the sustained rate has its screen closed with screenFloodReason. The RFB filter keeps
+	// updates client-pull, so an honest guest stays far below this; it bounds a compromised one.
+	ScreenByteRate    = 32 << 20 // bytes per second
+	ScreenByteBurst   = 64 << 20
+	screenFloodReason = "the screen sent too much data"
 )
 
 // ScreenHub relays the guest's VNC stream for open Computer tabs. Guest bytes go out as events; user bytes come in
@@ -51,6 +57,8 @@ type ScreenHub struct {
 	publish        func(ScreenChunk)
 	takenOver      func(botID string) bool
 	releaseTimeout time.Duration // screenReleaseTimeout; shorter in tests
+	byteRate       float64       // ScreenByteRate; smaller in tests
+	byteBurst      float64       // ScreenByteBurst; smaller in tests
 
 	mu      sync.Mutex
 	screens map[string]*screenStream
@@ -78,7 +86,10 @@ type screenStream struct {
 
 // NewScreenHub creates a hub. publish must not block for long; takenOver is Manager.TakenOver.
 func NewScreenHub(publish func(ScreenChunk), takenOver func(botID string) bool) *ScreenHub {
-	return &ScreenHub{publish: publish, takenOver: takenOver, releaseTimeout: screenReleaseTimeout, screens: map[string]*screenStream{}}
+	return &ScreenHub{
+		publish: publish, takenOver: takenOver, releaseTimeout: screenReleaseTimeout,
+		byteRate: ScreenByteRate, byteBurst: ScreenByteBurst, screens: map[string]*screenStream{},
+	}
 }
 
 // Connect opens a guest screen stream with open (Guest.OpenScreen) and starts relaying it. ctx bounded by
@@ -249,8 +260,13 @@ func (h *ScreenHub) finishAll(gone []*screenStream, reason string) {
 
 func (h *ScreenHub) pump(s *screenStream) {
 	buf := make([]byte, ScreenChunkMax)
+	budget := byteBudget{rate: h.byteRate, burst: h.byteBurst, tokens: h.byteBurst, last: time.Now()}
 	for {
 		n, err := s.rwc.Read(buf)
+		if n > 0 && !budget.take(n, time.Now()) {
+			h.drop(s, screenFloodReason)
+			return
+		}
 		if n > 0 {
 			s.emit(h, ScreenChunk{ID: s.id, Data: bytes.Clone(buf[:n])}, false)
 		}
@@ -266,6 +282,20 @@ func (h *ScreenHub) pump(s *screenStream) {
 			return
 		}
 	}
+}
+
+// byteBudget is a token bucket over guest bytes: it refills at rate per second up to burst.
+type byteBudget struct {
+	rate, burst, tokens float64
+	last                time.Time
+}
+
+// take spends n bytes at now and reports whether the budget still covers them.
+func (b *byteBudget) take(n int, now time.Time) bool {
+	b.tokens = min(b.burst, b.tokens+now.Sub(b.last).Seconds()*b.rate)
+	b.last = now
+	b.tokens -= float64(n)
+	return b.tokens >= 0
 }
 
 // drop removes s if it is still registered and ends it.

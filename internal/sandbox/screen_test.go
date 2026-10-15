@@ -76,6 +76,53 @@ func TestScreenHubRelaysGuestOutputInBoundedChunks(t *testing.T) {
 	}
 }
 
+// floodGuest is a guest screen that sends bytes as fast as they are read.
+type floodGuest struct{ closed atomic.Bool }
+
+func (g *floodGuest) Read(p []byte) (int, error) {
+	if g.closed.Load() {
+		return 0, io.EOF
+	}
+	return len(p), nil
+}
+func (g *floodGuest) Write(p []byte) (int, error) { return len(p), nil }
+func (g *floodGuest) Close() error                { g.closed.Store(true); return nil }
+
+func TestScreenHubClosesAScreenThatExceedsItsByteBudget(t *testing.T) {
+	log := &chunkLog{}
+	h := NewScreenHub(log.publish, func(string) bool { return false })
+	h.byteRate, h.byteBurst = 1024, 4*ScreenChunkMax
+	t.Cleanup(h.CloseAll)
+	g := &floodGuest{}
+	id := h.Open("b1", g)
+	cs := log.wait(t, closedFor(id))
+	last := cs[len(cs)-1]
+	if !last.Closed || last.Error != screenFloodReason {
+		t.Fatalf("closed chunk = %+v", last)
+	}
+	if got := len(dataFor(cs, id)); got > 4*ScreenChunkMax {
+		t.Fatalf("relayed %d bytes past a %d-byte burst", got, 4*ScreenChunkMax)
+	}
+	if !g.closed.Load() {
+		t.Fatal("guest stream left open")
+	}
+}
+
+func TestByteBudgetRefillsAtItsRate(t *testing.T) {
+	t0 := time.Unix(0, 0)
+	b := byteBudget{rate: 100, burst: 200, tokens: 200, last: t0}
+	if !b.take(200, t0) || b.take(1, t0) {
+		t.Fatal("burst not enforced")
+	}
+	b = byteBudget{rate: 100, burst: 200, tokens: 0, last: t0}
+	if !b.take(100, t0.Add(time.Second)) {
+		t.Fatal("did not refill at the rate")
+	}
+	if b.take(250, t0.Add(10*time.Second)) {
+		t.Fatal("refill exceeded the burst")
+	}
+}
+
 func TestScreenHubForwardsInputOnlyAsTheFilterAllows(t *testing.T) {
 	var taken atomic.Bool
 	log := &chunkLog{}
