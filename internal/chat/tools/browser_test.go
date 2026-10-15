@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -238,6 +239,12 @@ func TestBrowserOpenRefusesLocalAddresses(t *testing.T) {
 		"http://[::1]/", "http://[::]/", "http://[fe80::1]/", "http://[fd00::1]/", "http://[fc12::1]/",
 		"http://[::ffff:127.0.0.1]/", "http://[::ffff:10.0.2.2]/", "http://[::ffff:169.254.1.1]/",
 		"http://1.2.3.4.5/", "http://08.1.1.1/", "http://256.1.1.1/",
+		// Unicode spellings the browser maps to the same hosts (UTS-46).
+		"http://127。0。0。1/", "http://１２７.0.0.1/", "http://ｌｏｃａｌｈｏｓｔ/",
+		"http://127．0．0．1/", "http://10｡0｡2｡2/", "http://LocalHost。/", "http://app.ＬＯＣＡＬＨＯＳＴ/",
+		"http://%31%32%37.0.0.1/", "http://%6c%6f%63%61%6c%68%6f%73%74/",
+		// IPv6 forms that carry a private IPv4 address: NAT64, local-use NAT64, 6to4, IPv4-compatible.
+		"http://[64:ff9b::a00:202]/", "http://[64:ff9b::7f00:1]/", "http://[64:ff9b:1::c0a8:101]/", "http://[2002:a00:202::1]/", "http://[2002:c0a8:101::]/", "http://[::a00:202]/", "http://[::127.0.0.1]/",
 	} {
 		rt, pol := &fakeComputer{}, &computerPolicy{}
 		args, _ := json.Marshal(map[string]string{"url": u})
@@ -246,7 +253,7 @@ func TestBrowserOpenRefusesLocalAddresses(t *testing.T) {
 			t.Errorf("%s: %+v %v", u, res, err)
 		}
 	}
-	for _, u := range []string{"https://example.com/", "http://100.128.0.1/", "http://[2606:4700::1111]/", "https://192.168.example.com/", "https://0x.example/"} {
+	for _, u := range []string{"https://example.com/", "http://100.128.0.1/", "http://[2606:4700::1111]/", "https://192.168.example.com/", "https://0x.example/", "https://my_host.example/", "http://[64:ff9b::808:808]/", "http://[2002:808:808::1]/"} {
 		pol := &computerPolicy{}
 		args, _ := json.Marshal(map[string]string{"url": u})
 		if res, _ := (Browser{Runtime: &fakeComputer{running: true}, Policy: pol}).Call(context.Background(), pcRun(nil), BrowserOpenName, args); res.IsError || len(pol.requests()) != 1 {
@@ -256,6 +263,27 @@ func TestBrowserOpenRefusesLocalAddresses(t *testing.T) {
 	res, _ := Browser{Runtime: &fakeComputer{}, Policy: &computerPolicy{}}.Call(context.Background(), pcRun(nil), BrowserOpenName, json.RawMessage(`{"url":"http://10.0.2.2/"}`))
 	if !strings.Contains(res.Text, "only opens public web sites") {
 		t.Fatalf("message: %q", res.Text)
+	}
+}
+
+// The size error tells the model how much text fits with its target, and that much is accepted.
+func TestBrowserTypeSizeErrorIsExact(t *testing.T) {
+	target := `text=Say "hi" \ there` // quoting adds escapes to the approval
+	call := func(text string) chat.ToolResult {
+		args, _ := json.Marshal(map[string]string{"target": target, "text": text})
+		res, _ := Browser{Runtime: &fakeComputer{running: true}, Policy: &computerPolicy{}}.Call(context.Background(), pcRun(nil), BrowserTypeName, args)
+		return res
+	}
+	res := call(strings.Repeat("x", policy.MaxDetailBytes))
+	var n int
+	if _, err := fmt.Sscanf(res.Text[strings.Index(res.Text, "at most "):], "at most %d bytes", &n); err != nil || !res.IsError {
+		t.Fatalf("%q: %v", res.Text, err)
+	}
+	if res := call(strings.Repeat("x", n)); res.IsError {
+		t.Fatalf("%d bytes refused: %q", n, res.Text)
+	}
+	if res := call(strings.Repeat("x", n+1)); !res.IsError {
+		t.Fatalf("%d bytes accepted", n+1)
 	}
 }
 

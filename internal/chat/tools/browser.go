@@ -115,7 +115,7 @@ func browserStepFor(name string, args json.RawMessage) (browserStep, error) {
 	if len(s.detail) > policy.MaxDetailBytes {
 		switch name {
 		case BrowserTypeName:
-			return browserStep{}, fmt.Errorf("target and text together are too long to show the user for approval (at most about %d bytes); type the text in several shorter calls", policy.MaxDetailBytes-len(s.detail)+len(in.Target)+len(in.Text))
+			return browserStep{}, fmt.Errorf("text is too long to show the user for approval: with this target it may be at most %d bytes; type the text in several shorter calls", max(0, policy.MaxDetailBytes-(len(s.detail)-len(in.Text))))
 		default:
 			return browserStep{}, fmt.Errorf("url is too long to show the user for approval (at most %d bytes)", policy.MaxDetailBytes-len(s.detail)+len(in.URL))
 		}
@@ -176,26 +176,43 @@ func openHost(raw string) (string, error) {
 	if err != nil {
 		return "", errors.New("url must be an absolute http or https address")
 	}
-	host := strings.TrimSuffix(strings.ToLower(u.Hostname()), ".")
+	host := u.Hostname()
 	if host == "" {
 		return "", errors.New("url must name a host")
 	}
 	refused := fmt.Errorf("%s is an address on the user's own PC or network; the browser on your computer only opens public web sites", host)
-	if host == "localhost" || strings.HasSuffix(host, ".localhost") {
-		return "", refused
-	}
-	if ip, ok := literalIP(host); ok {
+	if strings.Contains(host, ":") { // an IPv6 literal (url.Parse only allows a colon in a bracketed host)
+		ip, err := netip.ParseAddr(host)
+		if err != nil {
+			return "", fmt.Errorf("url's host %q is not a valid IPv6 address", host)
+		}
 		if !publicIP(ip) {
 			return "", refused
 		}
 		return ip.String(), nil
 	}
-	ascii, err := idna.Punycode.ToASCII(host)
+	// Map the host the way the browser does (UTS-46: case folding, fullwidth forms, ideographic full stops) before any
+	// check, so no Unicode spelling of a local address gets through.
+	ascii, err := hostProfile.ToASCII(host)
+	ascii = strings.TrimSuffix(ascii, ".")
 	if err != nil || ascii == "" {
 		return "", fmt.Errorf("url's host %q is not a valid host name", host)
 	}
+	if ascii == "localhost" || strings.HasSuffix(ascii, ".localhost") {
+		return "", refused
+	}
+	if ip, ok := literalIP(ascii); ok {
+		if !publicIP(ip) {
+			return "", refused
+		}
+		return ip.String(), nil
+	}
 	return ascii, nil
 }
+
+// hostProfile maps a host name the way a browser's URL parser does (UTS-46, non-transitional). Underscores, which
+// browsers accept in host names, are allowed.
+var hostProfile = idna.New(idna.MapForLookup(), idna.Transitional(false), idna.BidiRule(), idna.StrictDomainName(false))
 
 // literalIP reports whether a URL host is an IP address the way a browser reads it: an IPv6 literal, or an IPv4 address
 // in any of the WHATWG forms (a host whose last label is a number, such as 127.1, 0x7f.1 or 2130706433). An IPv4 form
@@ -264,12 +281,39 @@ func ipv4Number(l string) (uint64, bool) {
 	return n, err == nil
 }
 
+// IPv6 prefixes that carry an IPv4 address: NAT64 (well-known and local-use), 6to4 and the deprecated
+// IPv4-compatible form (::a.b.c.d).
+var (
+	nat64      = netip.MustParsePrefix("64:ff9b::/96")
+	nat64Local = netip.MustParsePrefix("64:ff9b:1::/48")
+	sixToFour  = netip.MustParsePrefix("2002::/16")
+	v4Compat   = netip.MustParsePrefix("::/96")
+)
+
+// embeddedIPv4 returns the IPv4 address an IPv6 address carries, if any.
+func embeddedIPv4(ip netip.Addr) (netip.Addr, bool) {
+	if !ip.Is6() {
+		return netip.Addr{}, false
+	}
+	b := ip.As16()
+	switch {
+	case nat64.Contains(ip), nat64Local.Contains(ip), v4Compat.Contains(ip):
+		return netip.AddrFrom4([4]byte{b[12], b[13], b[14], b[15]}), true
+	case sixToFour.Contains(ip):
+		return netip.AddrFrom4([4]byte{b[2], b[3], b[4], b[5]}), true
+	}
+	return netip.Addr{}, false
+}
+
 var cgnat = netip.MustParsePrefix("100.64.0.0/10")
 var thisNetwork = netip.MustParsePrefix("0.0.0.0/8")
 
 // publicIP reports whether ip is not on the user's PC or network.
 func publicIP(ip netip.Addr) bool {
 	ip = ip.Unmap()
+	if v4, ok := embeddedIPv4(ip); ok && !publicIP(v4) {
+		return false
+	}
 	return !(ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() ||
 		ip.IsInterfaceLocalMulticast() || ip.IsUnspecified() || cgnat.Contains(ip) || thisNetwork.Contains(ip))
 }
