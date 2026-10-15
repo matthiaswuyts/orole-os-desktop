@@ -17,9 +17,12 @@ import (
 const (
 	defaultMaxSteps     = 8
 	defaultMaxToolCalls = 20
-	doomLoopRepeats     = 3 // the third identical tool call is not executed
-	maxToolResultBytes  = 100 << 10
-	toolSummaryBytes    = 160
+	// A bot with its own computer works in longer loops (shell, browser), so its defaults are higher.
+	computerMaxSteps     = 30
+	computerMaxToolCalls = 60
+	doomLoopRepeats      = 3 // the third identical tool call is not executed
+	maxToolResultBytes   = 100 << 10
+	toolSummaryBytes     = 160
 )
 
 // turnEnv is everything one model/tool loop needs.
@@ -328,9 +331,7 @@ type streamResult struct {
 // ctx is canceled. The last permitted model call is made without tools so a turn can end in an
 // answer; a model that still asks for tools then is stopped with a notice.
 func (m *Manager) loop(ctx context.Context, env *turnEnv) (string, string) {
-	lim := env.bot.Config.Limits
-	maxSteps := orDefault(lim.MaxSteps, defaultMaxSteps)
-	maxCalls := orDefault(lim.MaxToolCalls, defaultMaxToolCalls)
+	maxSteps, maxCalls := turnBudget(env.bot.Config)
 	msgs := slices.Clone(env.history)
 	used := 0
 	seen := map[string]int{}
@@ -411,6 +412,16 @@ func (m *Manager) loop(ctx context.Context, env *turnEnv) (string, string) {
 		}
 		msgs = append(msgs, asst, results)
 	}
+}
+
+// turnBudget resolves a bot's per-turn model-call and tool-call budgets. Unset limits use the engine
+// defaults, or the larger computer defaults when the bot has its own computer.
+func turnBudget(c BotConfig) (steps, calls int) {
+	defSteps, defCalls := defaultMaxSteps, defaultMaxToolCalls
+	if c.Computer {
+		defSteps, defCalls = computerMaxSteps, computerMaxToolCalls
+	}
+	return orDefault(c.Limits.MaxSteps, defSteps), orDefault(c.Limits.MaxToolCalls, defCalls)
 }
 
 func orDefault(v, d int) int {

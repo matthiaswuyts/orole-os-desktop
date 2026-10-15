@@ -91,6 +91,10 @@ type BotConfig struct {
 	// CodeTasks lets the bot start, watch and steer code tasks: coding agents that run commands and edit files on
 	// this PC. Every start and message still goes through the shared permission policy as "bot:<id>".
 	CodeTasks bool `json:"codeTasks,omitempty"`
+	// Computer gives the bot its own local Linux VM (internal/sandbox): the computer_*, browser_* and
+	// ask_user_to_take_over tools. No VM exists until the first tool call after it is switched on. Never exported.
+	// Unset turn limits default to 30 steps / 60 tool calls instead of 8 / 20.
+	Computer bool `json:"computer,omitempty"`
 	// ToolAccess overrides the global "Bot tools" setting for this bot: how much it may do through
 	// integrations and tools without asking (one of the ToolAccess* values; "" = the global setting).
 	ToolAccess string `json:"toolAccess,omitempty"`
