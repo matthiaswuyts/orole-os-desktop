@@ -3,14 +3,95 @@
 { config, lib, pkgs, modulesPath, orole-guest, ... }:
 
 let
+  # The bot's account is uid 1000. Its name, home folder and the host name follow the bot's name, which the host
+  # passes at each boot (fw_cfg opt/orole/user), so nothing below may name it: units use the uid and this stable
+  # home, which /home/<name> is bind-mounted from.
+  stableHome = "/home/.orole-user";
+
+  # Boot-time identity and keyboard layout from the host's fw_cfg (opt/orole/user, opt/orole/keymap; neither is
+  # secret). "reset" runs before userborn and gives uid 1000 its image name back, so userborn always finds the
+  # account it manages; "apply" runs after it, renames the account (name fields of passwd, shadow, group, gshadow),
+  # binds /home/<name> to the stable home, sets the host name and writes /run/orole/session.env for cage and wayvnc.
+  identity = pkgs.writeShellScript "orole-identity" ''
+    set -u
+    export PATH=${lib.makeBinPath (with pkgs; [ coreutils gnugrep gawk util-linux ])}
+    fw=/sys/firmware/qemu_fw_cfg/by_name/opt/orole
+
+    fwvalue() {
+      [ -r "$fw/$1/raw" ] || return 0
+      head -c 64 "$fw/$1/raw" | tr -d '\000\n'
+    }
+
+    # edit FILE AWK-ARGS...: rewrite FILE through awk, keeping its mode and owner.
+    edit() {
+      f=$1
+      shift
+      [ -f "$f" ] || return 0
+      awk "$@" "$f" > "$f.orole" && chmod --reference="$f" "$f.orole" && chown --reference="$f" "$f.orole" && mv "$f.orole" "$f"
+    }
+
+    swap='function swap(list, n, i, a, out) { n = split(list, a, ","); out = ""; for (i = 1; i <= n; i++) { if (a[i] == old) a[i] = new; out = out (i > 1 ? "," : "") a[i] } return out }'
+
+    # rename NAME HOME: uid 1000 becomes NAME with home HOME.
+    rename() {
+      old=$(awk -F: '$3 == 1000 { print $1; exit }' /etc/passwd)
+      [ -n "$old" ] || return 0
+      edit /etc/passwd -v old="$old" -v new="$1" -v home="$2" 'BEGIN { FS = OFS = ":" } $3 == 1000 { $1 = new; $6 = home } { print }'
+      [ "$old" != "$1" ] || return 0
+      edit /etc/shadow -v old="$old" -v new="$1" 'BEGIN { FS = OFS = ":" } $1 == old { $1 = new } { print }'
+      edit /etc/group -v old="$old" -v new="$1" "$swap"' BEGIN { FS = OFS = ":" } { $4 = swap($4); print }'
+      edit /etc/gshadow -v old="$old" -v new="$1" "$swap"' BEGIN { FS = OFS = ":" } { $3 = swap($3); $4 = swap($4); print }'
+    }
+
+    case "$1" in
+    reset)
+      if [ -f /etc/passwd ]; then rename bot ${stableHome}; fi
+      ;;
+    apply)
+      name=$(fwvalue user)
+      echo "$name" | grep -Eqx '[a-z][a-z0-9-]{0,23}' || name=bot
+      case "$name" in *-) name=bot ;; esac
+      # The host never sends a system account's name; this is the guest's own check.
+      if awk -F: -v n="$name" '$1 == n && $3 != 1000 { found = 1 } END { exit !found }' /etc/passwd /etc/group; then
+        name=bot
+      fi
+      home=/home/$name
+      install -d -m 0700 -o 1000 -g 100 ${stableHome}
+      rename "$name" "$home"
+      # Earlier names left empty mount points behind; the bot cannot write /home, so only those are empty.
+      for d in /home/*; do
+        [ "$d" = "$home" ] || rmdir "$d" 2>/dev/null || true
+      done
+      if ! mountpoint -q "$home"; then
+        install -d -m 0755 -o 0 -g 0 "$home"
+        mount --bind ${stableHome} "$home"
+      fi
+      echo "$name-computer" > /proc/sys/kernel/hostname
+
+      keymap=$(fwvalue keymap)
+      echo "$keymap" | grep -Eqx '[a-z0-9_()+-]{1,40}' || keymap=us
+      layout=$(echo "$keymap" | awk -F'(' '{ print $1 }')
+      variant=$(echo "$keymap" | awk -F'[()]' '{ print $2 }')
+      [ -n "$layout" ] || layout=us
+      wayvnc=$layout
+      [ -z "$variant" ] || wayvnc="$layout-$variant"
+      mkdir -p /run/orole
+      printf 'XKB_DEFAULT_LAYOUT=%s\nXKB_DEFAULT_VARIANT=%s\nWAYVNC_KEYBOARD=%s\n' "$layout" "$variant" "$wayvnc" > /run/orole/session.env.new
+      chmod 0644 /run/orole/session.env.new
+      mv /run/orole/session.env.new /run/orole/session.env
+      echo "orole-identity: account $name, home $home, host $name-computer, keyboard $keymap"
+      ;;
+    esac
+  '';
+
   # Chromium in the kiosk compositor. CDP listens on guest loopback only (orole-guest relays it over the
   # channel); the profile lives on the bot's disk so logins survive restarts. Restarted if it exits.
   browser = pkgs.writeShellScript "orole-browser" ''
-    mkdir -p /home/bot/.config/orole-chromium
+    mkdir -p ${stableHome}/.config/orole-chromium
     while true; do
       ${pkgs.chromium}/bin/chromium \
         --ozone-platform=wayland \
-        --user-data-dir=/home/bot/.config/orole-chromium \
+        --user-data-dir=${stableHome}/.config/orole-chromium \
         --remote-debugging-address=127.0.0.1 \
         --remote-debugging-port=9222 \
         --no-first-run --no-default-browser-check \
@@ -80,7 +161,8 @@ in
   # through orole-guest; the debug image (debug.nix) adds root autologin on the serial console.
   users.allowNoPasswordLogin = true;
   users.users.root.hashedPassword = "!";
-  users.users.bot = { isNormalUser = true; uid = 1000; home = "/home/bot"; createHome = true; hashedPassword = "!"; };
+  # The image names the account "bot"; orole-identity renames it to the bot's name at each boot and creates the home.
+  users.users.bot = { isNormalUser = true; uid = 1000; home = stableHome; createHome = false; hashedPassword = "!"; };
   security.sudo.enable = false;
 
   # Only root (orole-guest) may open the host channel; the kernel already makes fw_cfg files 0400 root, the
@@ -94,7 +176,7 @@ in
   # guest loopback for orole-guest's screen relay.
   services.cage = {
     enable = true;
-    user = "bot";
+    user = "1000"; # the account's name changes with the bot's (orole-identity); systemd takes a uid
     program = browser;
     environment = {
       WLR_BACKENDS = "headless";
@@ -105,18 +187,40 @@ in
   };
   # Restart forever: the default start limit (5 starts in 10 s) would leave a crashing service down.
   systemd.services."cage-tty1" = {
+    wants = [ "orole-identity.service" ];
+    after = [ "orole-identity.service" ];
     unitConfig.StartLimitIntervalSec = 0;
-    serviceConfig = { Restart = "always"; RestartSec = 2; };
+    # XKB_DEFAULT_LAYOUT/VARIANT: the host's keyboard layout (orole-identity).
+    serviceConfig = { Restart = "always"; RestartSec = 2; EnvironmentFile = "-/run/orole/session.env"; };
+  };
+  systemd.services.orole-identity-reset = {
+    description = "Give the bot account its image name back before userborn";
+    unitConfig.DefaultDependencies = false;
+    wantedBy = [ "sysinit.target" ];
+    before = [ "userborn.service" "sysinit.target" ];
+    after = [ "systemd-remount-fs.service" ];
+    serviceConfig = { Type = "oneshot"; RemainAfterExit = true; ExecStart = "${identity} reset"; };
+  };
+  systemd.services.orole-identity = {
+    description = "Name the bot account, home and host after the bot; set the keyboard layout";
+    wantedBy = [ "multi-user.target" ];
+    after = [ "userborn.service" "systemd-tmpfiles-setup.service" "systemd-modules-load.service" "local-fs.target" ];
+    before = [ "systemd-user-sessions.service" ];
+    serviceConfig = { Type = "oneshot"; RemainAfterExit = true; ExecStart = "${identity} apply"; };
   };
   systemd.services.wayvnc = {
     description = "VNC server for the bot computer's screen (guest loopback only)";
-    after = [ "cage-tty1.service" ];
+    after = [ "cage-tty1.service" "orole-identity.service" ];
+    wants = [ "orole-identity.service" ];
     wantedBy = [ "graphical.target" ];
     unitConfig.StartLimitIntervalSec = 0;
     serviceConfig = {
-      User = "bot";
+      User = "1000";
       Environment = [ "XDG_RUNTIME_DIR=/run/user/1000" "WAYLAND_DISPLAY=wayland-0" ];
-      ExecStart = "${pkgs.wayvnc}/bin/wayvnc 127.0.0.1 5900";
+      EnvironmentFile = "-/run/orole/session.env";
+      # --render-cursor draws the pointer into the picture, so the user sees it while in control; --keyboard maps
+      # the viewer's keys with the host's layout (WAYVNC_KEYBOARD is <layout>[-<variant>], from orole-identity).
+      ExecStart = "${pkgs.wayvnc}/bin/wayvnc --render-cursor --keyboard=\${WAYVNC_KEYBOARD} 127.0.0.1 5900";
       Restart = "always";
       RestartSec = 2;
     };
@@ -126,7 +230,9 @@ in
   # Runs as root: it powers the VM off and owns the channel. It runs commands and terminals as bot.
   systemd.services.orole-guest = {
     description = "Orole guest agent (virtio-serial org.orole.guest.0)";
-    after = [ "systemd-modules-load.service" "systemd-udevd.service" ];
+    # After orole-identity: it looks the account up by uid and takes its name and home from passwd.
+    after = [ "systemd-modules-load.service" "systemd-udevd.service" "orole-identity.service" ];
+    wants = [ "orole-identity.service" ];
     wantedBy = [ "multi-user.target" ];
     unitConfig.StartLimitIntervalSec = 0;
     serviceConfig = { ExecStart = lib.getExe orole-guest; Restart = "always"; RestartSec = 1; };
