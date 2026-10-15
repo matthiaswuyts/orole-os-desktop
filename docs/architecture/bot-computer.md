@@ -9,7 +9,8 @@ Windows, with the runtime download, the setup helper and the NixOS guest image, 
 (see "Guest image checks"). A bot with "Has its own computer" switched on gets terminal, file and browser tools and can
 ask the user to take over (see "Bot tools"), and the Computer tab shows the screen, a terminal and the Take over and
 Done buttons (see "What the user sees" and "Computer tab streams"). **Release gate:** the pinned release assets are
-published (`qemu-v20260811`, `guest-v0.1.3`, both prereleases) and carry their corresponding source (see "Licences").
+published (`qemu-v20260811`, `guest-v0.1.4`, both prereleases; `guest-v0.1.3` stays published for computers made
+with it) and carry their corresponding source (see "Licences").
 The manual checklist is `docs/development/bot-computer-e2e.md`.
 
 **A bot's computer lives in the daemon: it survives GUI restarts, not a daemon exit or reboot. Its disk persists;
@@ -33,6 +34,10 @@ running commands do not.**
   - while it runs: the **live screen** (view-only until Take over), **Take over** / **Done** (with an optional note to
     the bot) and a **terminal** inside the computer. When the bot asked for help, its reason is shown with Take over.
 - There is deliberately no start, stop, reset or wipe button, and no resource display.
+- From image 0.1.4 the computer is named after the bot: its Linux account, home folder and host name follow the bot's
+  name ("Élodie Test" is `elodie-test` in `/home/elodie-test` on `elodie-test-computer`; see "Bot identity"). A rename
+  takes effect the next time the computer starts. Its keyboard uses the PC's keyboard layout, and the live screen
+  shows the mouse pointer (see "Keyboard layout and pointer").
 - Take over gives the user the mouse and keyboard; the bot's commands, file writes and browser tools are refused until
   Done. Closing the tab or switching bot does **not** hand control back, because that would tell a waiting bot that
   the user finished. A takeover the user started by hand ends about 150 s after the tab went away (closed, hidden or
@@ -41,7 +46,7 @@ running commands do not.**
   `AllowSetForegroundWindow` for the daemon's process so the prompt appears in front.
 - Commands the bot runs are echoed in the open terminal (dim `[bot] $ <command>`, output, exit code). The terminal
   is a daemon terminal: it survives closing the tab or restarting the GUI, and ends when the computer stops.
-- The terminal's shell runs as the `bot` user, so everything it shows is untrusted: the bot's commands can write
+- The terminal's shell runs as the bot's account, so everything it shows is untrusted: the bot's commands can write
   escape sequences to that pty and read what the user types there, and links in its output are clickable. Do not type
   secrets into it.
 
@@ -105,7 +110,7 @@ memory; the guest answers 401 otherwise.
 |---|---|---|
 | `GET /health` | version and readiness | |
 | `POST /exec` | `/bin/sh -lc <command>` as `bot`, in its own process group (host tests: `/bin/sh -c` as the agent's user) | timeout 120 s default, 600 s max; stdout+stderr 1 MiB kept, the rest dropped (`truncated`); background children get 2 s to release the output |
-| `POST /files/read`, `/files/write` | guest files with `bot`'s permissions (a helper process: `orole-guest` re-executed as `bot`); relative paths under `/home/bot`; 403 where `bot` may not read or write | read 4 MiB (`truncated`), write 16 MiB max |
+| `POST /files/read`, `/files/write` | guest files with `bot`'s permissions (a helper process: `orole-guest` re-executed as `bot`); relative paths under the account's home (`/home/bot`, from 0.1.4 `/home/<name>`); 403 where `bot` may not read or write | read 4 MiB (`truncated`), write 16 MiB max |
 | `POST /pty?cols=&rows=` | login shell (bash) as `bot` on a pseudo-terminal it owns, full duplex; `X-Orole-Pty` id, `X-Orole-Exit` trailer | |
 | `POST /pty/resize` | resize by id | |
 | `POST /browser` | chromedp on the visible Chromium: open, click, type, read, screenshot (see "Bot tools"); 501 on an image without it | page load 60 s, other steps 20 s; page text 90 KiB, screenshot 5 MiB |
@@ -178,6 +183,51 @@ gone the boot fails with `ErrImageGone` instead of booting the overlay against a
   so the bot cannot drive the browser or read the screen around the tools' approvals and the takeover lock. Chromium,
   cage and wayvnc still run as `bot`, so this closes the ports, not same-user access to those processes, their files
   or the Wayland socket.
+- `opt/orole/user` and `opt/orole/keymap` (image 0.1.4) are not secrets: QEMU gets them inline (`string=`), checked on
+  the host against `^[a-z][a-z0-9-]{0,23}$` (not ending in `-`) and `^[a-z0-9_()+-]{1,40}$` and again in the guest,
+  which falls back to `bot` and `us`. Neither can contain a comma, so neither can add QEMU options.
+
+### Bot identity
+
+From image 0.1.4 the computer's Linux account, home folder and host name follow the bot's name. Everywhere above,
+"`bot`" means that account: uid 1000, whatever it is called.
+
+- **Name.** `sandbox.GuestUser(name)`: Unicode NFD with combining marks dropped (é -> e), lowercase, every run of
+  characters outside `a-z0-9` becomes `-`, leading and trailing `-` trimmed, `bot-` in front when it does not start
+  with a letter, at most 24 characters, and `-bot` appended to system account names (`root`, `daemon`, `nobody`,
+  `messagebus`, `users`, `systemd-*`, `nixbld*` and the others in `reservedGuestUsers`); nothing usable is `bot`.
+  "Atlas 2" is `atlas-2`, "Élodie" `elodie`, "42" `bot-42`. Home `/home/<name>`, host name `<name>-computer`.
+- **Passing it.** `Config.BotName` (the daemon: the bot's display name from the chat store) is read at every boot;
+  `BootSpec.User` reaches QEMU as `-fw_cfg name=opt/orole/user,string=<name>`. A rename takes effect the next time the
+  computer starts; until then a running computer keeps the old name, and the bot tools (which compute the home from the
+  current name for relative paths and policy resources) can name a home that does not exist yet.
+- **Guest.** The image's account is `bot` (uid 1000) with the stable home `/home/.orole-user`. `orole-identity-reset`
+  (before userborn) gives uid 1000 the name `bot` back, so userborn always finds the account it manages;
+  `orole-identity` (after userborn, before cage, wayvnc and `orole-guest`) renames uid 1000 in the name fields of
+  `/etc/passwd`, `/etc/shadow`, `/etc/group` and `/etc/gshadow` (userborn bind-mounts those read-only onto themselves:
+  each is unmounted for the edit and bound read-only again), sets its home to `/home/<name>`, bind-mounts
+  `/home/.orole-user` there (empty folders of earlier names are removed), and writes the host name. Units name the
+  account by uid (`User=1000`), Chromium's profile is `/home/.orole-user/.config/orole-chromium` (its stale profile
+  lock, which names the old host, is removed when cage starts), and `orole-guest` looks the account up by uid and takes
+  `HOME`, `USER`, `LOGNAME` and the base of relative paths from passwd.
+- **Older images.** A computer made with 0.1.3 or earlier keeps its image (and the account `bot`) until the bot is
+  archived and recreated; nothing is migrated.
+
+### Keyboard layout and pointer
+
+- **Layout.** At every boot the Windows backend reads the user's default input layout (`HKCU\Keyboard
+  Layout\Preload\1`, through `Substitutes`; falls back to `GetKeyboardLayoutName` of the daemon's thread, which starts
+  as that same default; no admin) and maps the KLID with `KeymapForKLID` (`internal/sandbox/keymap.go`: whole KLIDs
+  first, e.g. `0000080C`/`00000813` -> `be`, `0000100C` -> `ch(fr)`, `00020409` -> `us(intl)`, `00010409` ->
+  `us(dvorak)`, then the language word, then `us`). It reaches the guest as `opt/orole/keymap`; `orole-identity`
+  writes `/run/orole/session.env` with `XKB_DEFAULT_LAYOUT`/`XKB_DEFAULT_VARIANT` (cage's `EnvironmentFile`) and
+  `WAYVNC_KEYBOARD=<layout>[-<variant>]` for `wayvnc --keyboard=` (wayvnc 0.10.2 splits at the first `-`). wayvnc
+  maps the viewer's keysyms (and QEMU extended key codes) with that layout, so a user on AZERTY gets the characters on
+  their keys. The layout is the one the user logs on with: switching layouts in Windows while Orole runs is not
+  followed until the computer restarts.
+- **Pointer.** `wayvnc --render-cursor` draws the pointer into the picture; noVNC's `showDotCursor` covers a server
+  that sends an empty cursor shape. The RFB filter passes the cursor pseudo-encodings (Cursor -239, XCursor -240,
+  VMware alpha cursor, PointerPos -232) unchanged (`TestRFBFilterKeepsCursorEncodings`).
 
 ### Guest image
 
@@ -187,10 +237,12 @@ panic=-1`), `base.qcow2` (compressed qcow2, ext4 labelled `nixos` without a part
 size on boot) and `SHA256SUMS`. `nix build ./guest#image-debug` is the same with root autologin on the serial console.
 Building it: `docs/development/guest-image.md`.
 
-Facts later phases rely on: user `bot` (uid 1000, primary group `users` gid 100, home `/home/bot`, no sudo,
+Facts later phases rely on: user `bot` (uid 1000, primary group `users` gid 100, home `/home/bot`; from 0.1.4 named
+after the bot with home `/home/<name>`, see "Bot identity"; no sudo,
 locked password); root's password is locked too and there is no sshd, so the image has no login method at all
 (`users.allowNoPasswordLogin = true`; the debug image's serial-console autologin is the only way in); Chromium in cage
-(wlroots headless backend, pixman) with CDP on `127.0.0.1:9222` and its profile in `/home/bot/.config/orole-chromium`;
+(wlroots headless backend, pixman) with CDP on `127.0.0.1:9222` and its profile in `/home/bot/.config/orole-chromium` (from
+0.1.4 `/home/.orole-user/.config/orole-chromium`);
 wayvnc on `127.0.0.1:5900` (from 0.1.3 only root can connect to either); `orole-guest` as a root systemd unit after module loading, restarted forever;
 `qemu_fw_cfg` loaded in the initrd; Python 3 + uv, Node.js, git, curl, jq, ripgrep; nix-ld and envfs so downloaded
 Linux binaries and `#!/bin/bash` scripts run; fontconfig with DejaVu and Noto for Chromium. `orole-guest` reads its token from fw_cfg
@@ -207,7 +259,12 @@ through `orole-guest`. Two full runs on `guest-v0.1.0`, one on `guest-v0.1.1` an
 image with the browser and screen relay: `orole-guest` with chromedp v0.14.2), same results; times from the
 `guest-v0.1.2` run. A run on `guest-v0.1.3` (draft, Actions run 38740342706: the CDP/VNC firewall for `bot`, the
 password-field refusal and the attach deadline) passed every row again with similar times (boot 9.6 s, CDP up 4.1 s
-after ready) and the rows marked 0.1.3 below.
+after ready) and the rows marked 0.1.3 below. Two runs on `guest-v0.1.4` (draft, Actions run 38779262612: the bot's
+name, the host keyboard layout and the drawn pointer) passed every row again (boot 8.3 s, CDP up 3.1 s after ready) and
+the rows marked 0.1.4, with bots named "Élodie Test" (renamed "Élodie Renamed" between boots) and "Atlas 2" and the
+keymap forced to `be` (this PC uses Belgian (Period), `00000813`, which also maps to `be`). Two earlier 0.1.4 builds
+failed the gate and were replaced before publishing: userborn's read-only binds kept the rename from taking, and
+Chromium's profile lock from the old host name kept the browser from starting after a rename.
 
 | Check | Result |
 |---|---|
@@ -216,7 +273,13 @@ after ready) and the rows marked 0.1.3 below.
 | Clean shutdown (agent power-off, then QMP) | 1.8 s |
 | QEMU process RAM (host) | one bot: working set 510 MB, private 2139 MB; with two bots running (the first after the browser checks): 1305 MB and 524 MB working set, 2136 MB and 2132 MB private (the guest touches its RAM lazily; private bytes are the 2 GB reservation) |
 | Guest memory (`free -m`) | 477 MB used of 1969 MB, idle with Chromium open |
-| `id -un` | `bot` |
+| `id -un` | `bot` (0.1.4: see below) |
+| 0.1.4: `id -un; id -u; echo $HOME; pwd; hostname` | `elodie-test 1000 /home/elodie-test /home/elodie-test elodie-test-computer` |
+| 0.1.4: `/run/orole/session.env`; cage and wayvnc (owner and command line from `/proc`) | `XKB_DEFAULT_LAYOUT=be`, empty variant, `WAYVNC_KEYBOARD=be`; both run as `elodie-test`, `wayvnc --render-cursor --keyboard=be 127.0.0.1 5900` |
+| 0.1.4: `/etc/passwd`, `group`, `shadow` after the rename | still bound read-only (3 `ro` binds in mountinfo), no edit left behind |
+| 0.1.4: keys through the screen relay (client bytes through the daemon's RFB filter with input allowed, KeyEvent eacute 0xe9 then `a` into a focused field of a page on the guest's loopback, 1 s after connecting) | ServerInit 1280x720 32 bpp "WayVNC"; noVNC's encodings (raw, copyrect, -239, -240, -232, -223) pass the filter unchanged; first FramebufferUpdate one raw 1280x720 rectangle; the field reads `éa` on the first try (a US layout has no key for é) |
+| 0.1.4: rename between boots (`Élodie Test` -> `Élodie Renamed`, same overlay) | `elodie-renamed` in `/home/elodie-renamed`, host `elodie-renamed-computer`; `persist.txt` kept and owned by the new name; `/home` holds only `.orole-user` and `elodie-renamed`; Chromium up 1.1 s after ready, `open https://example.com` works |
+| 0.1.4: second bot "Atlas 2" | `id -un` = `atlas-2`, separate home |
 | Services (`systemctl is-active cage-tty1 wayvnc orole-guest`) | active, active, active |
 | Chromium CDP (`curl -s 127.0.0.1:9222/json/version`; from 0.1.3 `ss -ltn`, since bot can no longer connect) | up 3.2 s after guest ready, `Chrome/155.0.8059.79` |
 | 0.1.3: bot connects to `127.0.0.1:9222`, `[::1]:9222`, `127.0.0.2:9222` (curl, bash `/dev/tcp`) | refused (`curl` exit 7, `Connection refused`), no DevTools JSON |
@@ -236,13 +299,13 @@ after ready) and the rows marked 0.1.3 below.
 | 0.1.3: `type` into a text field / a password field (`#pw` and `text=Password`) | 62 ms, typed / refused in 2-7 ms: "that is a password field, and you never type passwords: call ask_user_to_take_over…" |
 | Screen relay (`Guest.OpenScreen`, wayvnc) | banner `RFB 003.008` 1 ms after opening; RFB 3.8 handshake with security None, framebuffer 1280x720 |
 | Long streams: `/screen` and `/pty` open and idle for 65 s | both still work (a FramebufferUpdate after the idle, a shell command echoes); the guest's `http2.Server` sets no timeouts and the host transport only pings (15 s read idle, 10 s ping timeout) |
-| File write through `/files/write` | owner `bot`; read back after a clean restart |
+| File write through `/files/write` | owner `bot` (0.1.4: `elodie-test`, in `/home/elodie-test`); read back after a clean restart |
 | Hard kill (`TerminateProcess`, what the job object does), then boot on the same overlay | boots; a file written and `sync`ed before the kill is there; the manager reports the kill as a crash |
 | Two bots at once on one base image | both run; separate homes; `base.qcow2` size and mtime unchanged |
 | Guest tokens in the console logs (`sandbox-<bot>.log`) | none (3.2 KB and 0.8 KB of log) |
 | Test binary killed with `taskkill /F` mid-run (a crashed daemon; `guest-v0.1.0` run) | its QEMU was gone 3 s later (job object, kill on close) |
 
-Not checked here yet: input through wayvnc and glyphs on screen (the Computer tab's viewer; see the manual checklist), the NixOS report's
+Not checked here yet: glyphs on screen and the pointer as drawn (the Computer tab's viewer; see the manual checklist), the NixOS report's
 package criteria (numpy/pandas through uv, a native npm module, a downloaded Node binary through nix-ld).
 
 ### Testing
@@ -300,7 +363,7 @@ that names the host (lowercased, punycode, no port or user info): the user is as
   public hostname whose DNS answer is a private address. The computer can reach the user's home network (the guest
   firewall only blocks the host's own loopback), so the per-host approval is the guard there.
 - **Approvals show exactly what runs.** The prompt carries the whole command (at most 1800 bytes: the approval detail
-  limit minus 200), file paths in canonical absolute form (relative paths start in `/home/bot`; the policy resource
+  limit minus 200), file paths in canonical absolute form (relative paths start in the bot's home, `/home/<name>`; the policy resource
   uses the same path), a 300-byte preview of file content, and the full URL, target or typed text. Commands, URLs,
   targets and text containing control or invisible characters (carriage return, escape, zero-width, bidi marks,
   invalid UTF-8) are refused instead of being shown differently from what would run; newlines and tabs are allowed in
