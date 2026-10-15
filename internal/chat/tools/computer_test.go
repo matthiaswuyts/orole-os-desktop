@@ -458,3 +458,35 @@ func TestComputerCancelledTurnShowsNoFailure(t *testing.T) {
 		}
 	}
 }
+
+// Review focus: while the user holds the computer, commands and file writes are refused before the approval prompt
+// (a command could drive the browser or screen the user is using); reading files stays allowed.
+func TestComputerRunAndWriteAreRefusedWhileTakenOver(t *testing.T) {
+	writes := map[string]string{
+		ComputerRunName:       `{"command":"ls"}`,
+		ComputerWriteFileName: `{"path":"a.txt","content":"x"}`,
+	}
+	for name, args := range writes {
+		rt := &fakeComputer{running: true, takenOver: true}
+		pol := &computerPolicy{}
+		var cards []chat.MsgPart
+		res, err := Computer{Runtime: rt, Policy: pol}.Call(context.Background(), pcRun(&cards), name, json.RawMessage(args))
+		if err != nil || !res.IsError || !strings.Contains(res.Text, "controlling your computer") || len(pol.requests()) != 0 || len(rt.ctxs) != 0 || len(cards) != 0 {
+			t.Errorf("%s: %+v %v (asked %d, calls %d, cards %d)", name, res, err, len(pol.requests()), len(rt.ctxs), len(cards))
+		}
+		// The user takes over while the approval prompt is open.
+		rt = &fakeComputer{running: true}
+		res, err = Computer{Runtime: rt, Policy: &takeoverPolicy{rt: rt}}.Call(context.Background(), pcRun(nil), name, json.RawMessage(args))
+		if err != nil || !res.IsError || !strings.Contains(res.Text, "controlling your computer") || len(rt.ctxs) != 0 {
+			t.Errorf("%s after approval: %+v %v (calls %d)", name, res, err, len(rt.ctxs))
+		}
+	}
+	rt := &fakeComputer{running: true, takenOver: true, file: wire.ReadFileResult{Content: []byte("hello")}}
+	res, err := Computer{Runtime: rt, Policy: &computerPolicy{}}.Call(context.Background(), pcRun(nil), ComputerReadFileName, json.RawMessage(`{"path":"a.txt"}`))
+	if err != nil || res.IsError || !strings.Contains(res.Text, "hello") {
+		t.Fatalf("read while taken over: %+v %v", res, err)
+	}
+	if p := ComputerPrompt(pcBot()); !strings.Contains(p, "computer_run, computer_write_file and the browser tools are refused") {
+		t.Fatalf("prompt does not say what is refused during a takeover:\n%s", p)
+	}
+}

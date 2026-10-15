@@ -268,9 +268,12 @@ func (r computerRuntime) TakenOver(botID string) bool {
 }
 
 func (r computerRuntime) Exec(ctx context.Context, botID string, req wire.ExecRequest) (wire.ExecResult, error) {
-	_, g, err := r.guest(ctx, botID)
+	h, g, err := r.guest(ctx, botID)
 	if err != nil {
 		return wire.ExecResult{}, err
+	}
+	if h.TakenOver(botID) { // the user may have taken over while the VM started
+		return wire.ExecResult{}, sandbox.ErrTakenOver
 	}
 	cctx, cancel := guestCall(ctx)
 	defer cancel()
@@ -288,9 +291,12 @@ func (r computerRuntime) ReadFile(ctx context.Context, botID, path string) (wire
 }
 
 func (r computerRuntime) WriteFile(ctx context.Context, botID, path string, content []byte) (wire.WriteFileResult, error) {
-	_, g, err := r.guest(ctx, botID)
+	h, g, err := r.guest(ctx, botID)
 	if err != nil {
 		return wire.WriteFileResult{}, err
+	}
+	if h.TakenOver(botID) { // the user may have taken over while the VM started
+		return wire.WriteFileResult{}, sandbox.ErrTakenOver
 	}
 	cctx, cancel := guestCall(ctx)
 	defer cancel()

@@ -627,3 +627,23 @@ func TestReconcileDropsComputerTakeovers(t *testing.T) {
 		}
 	}
 }
+
+// Review focus: a takeover that started while the VM booted refuses commands and file writes at the adapter too;
+// reads still run.
+func TestComputerRuntimeRefusesRunAndWriteWhileTakenOver(t *testing.T) {
+	host := newFakeHost()
+	host.taken["b1"] = true
+	rt := computerRuntime{d: &Daemon{}, host: host}
+	if _, err := rt.Exec(context.Background(), "b1", wire.ExecRequest{Command: "ls"}); !errors.Is(err, sandbox.ErrTakenOver) {
+		t.Errorf("exec: %v", err)
+	}
+	if _, err := rt.WriteFile(context.Background(), "b1", "/home/bot/a", []byte("x")); !errors.Is(err, sandbox.ErrTakenOver) {
+		t.Errorf("write: %v", err)
+	}
+	if host.guest.count() != 0 {
+		t.Fatalf("guest called %d times while taken over", host.guest.count())
+	}
+	if _, err := rt.ReadFile(context.Background(), "b1", "/home/bot/a"); err != nil {
+		t.Fatalf("read: %v", err)
+	}
+}
