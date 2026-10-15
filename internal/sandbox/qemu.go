@@ -21,30 +21,38 @@ type qemuConfig struct {
 	Share       string // QEMU firmware folder (-L), <runtime>\share
 	CPU         string // -cpu model
 	Accel       string // -accel value; empty means defaultAccel (whpx). "tcg" is the software fallback
+	TokenFile   string // file holding the guest token (user-only dir); QEMU reads it into fw_cfg, so the token is never in argv
 	Cmdline     string // the image's kernel command line (the cmdline file next to the kernel)
 	GuestSocket string // AF_UNIX path the virtio-serial chardev connects to (the daemon listens)
 	QMPSocket   string // AF_UNIX path the QMP monitor connects to (the daemon listens)
 }
 
 // qemuArgs builds the QEMU command line for one bot VM. QEMU only ever connects out to sockets the
-// daemon listens on; it opens no listener of its own. The token travels in fw_cfg, never on the
-// kernel command line (the guest console, which is logged, prints that).
+// daemon listens on; it opens no listener of its own. The token travels in fw_cfg from a file, never in argv
+// (same-user processes can read command lines) nor on the kernel command line (the console log prints that).
 func qemuArgs(c qemuConfig) []string {
 	s := c.Spec
 	accel := c.Accel
 	if accel == "" {
 		accel = defaultAccel
 	}
+	cpu := c.CPU
+	if cpu == "" {
+		cpu = defaultCPU
+	}
+	if accel == "tcg" && cpu == "host" {
+		cpu = "max" // host is only valid with a hardware accelerator
+	}
 	appendLine := strings.Join(strings.Fields(c.Cmdline+" console=ttyS0 panic=-1"), " ")
 	return []string{
 		"-nodefaults", "-no-user-config", "-no-reboot",
 		"-name", qemuOpt("orole-" + s.BotID),
-		"-machine", "q35", "-accel", accel, "-cpu", c.CPU,
+		"-machine", "q35", "-accel", accel, "-cpu", cpu,
 		"-m", strconv.Itoa(s.Limits.MemoryMB), "-smp", strconv.Itoa(s.Limits.CPUs),
 		"-L", c.Share,
 		"-display", "none", "-vga", "none",
 		"-kernel", s.Kernel, "-initrd", s.Initrd, "-append", appendLine,
-		"-fw_cfg", "name=opt/orole/token,string=" + qemuOpt(s.Token),
+		"-fw_cfg", "name=opt/orole/token,file=" + qemuOpt(c.TokenFile),
 		"-drive", "if=none,id=root,format=qcow2,cache=writeback,discard=unmap,file=" + qemuOpt(s.Overlay),
 		"-device", "virtio-blk-pci,drive=root",
 		"-netdev", "user,id=net0",
@@ -89,13 +97,13 @@ type tailBuffer struct {
 func newTailBuffer(max int, secret string) *tailBuffer { return &tailBuffer{max: max, secret: secret} }
 
 func (t *tailBuffer) Write(p []byte) (int, error) {
-	chunk := p
-	if t.secret != "" {
-		chunk = []byte(strings.ReplaceAll(string(p), t.secret, "<redacted>"))
-	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	t.b = append(t.b, chunk...)
+	t.b = append(t.b, p...)
+	// Redact the whole accumulated buffer before trimming, so a token split across writes is caught.
+	if t.secret != "" {
+		t.b = []byte(strings.ReplaceAll(string(t.b), t.secret, "<redacted>"))
+	}
 	if len(t.b) > t.max {
 		t.b = append([]byte(nil), t.b[len(t.b)-t.max:]...)
 	}

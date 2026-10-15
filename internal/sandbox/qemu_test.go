@@ -38,7 +38,7 @@ func TestQEMUArgsBootTheImageWithWHPX(t *testing.T) {
 		{"-L", c.Share}, {"-display", "none"}, {"-vga", "none"},
 		{"-kernel", c.Spec.Kernel}, {"-initrd", c.Spec.Initrd},
 		{"-append", "init=/nix/store/abc-nixos-system/init root=/dev/disk/by-label/nixos console=ttyS0 panic=-1"},
-		{"-fw_cfg", "name=opt/orole/token,string=" + c.Spec.Token},
+		{"-fw_cfg", "name=opt/orole/token,file=" + c.TokenFile},
 		{"-drive", `if=none,id=root,format=qcow2,cache=writeback,discard=unmap,file=` + c.Spec.Overlay},
 		{"-device", "virtio-blk-pci,drive=root"},
 		{"-netdev", "user,id=net0"}, {"-device", "virtio-net-pci,netdev=net0,romfile="},
@@ -57,6 +57,9 @@ func TestQEMUArgsBootTheImageWithWHPX(t *testing.T) {
 		if !slices.Contains(args, flag) {
 			t.Errorf("missing %s", flag)
 		}
+	}
+	if strings.Contains(strings.Join(args, " "), c.Spec.Token) {
+		t.Fatal("the token is in argv")
 	}
 	for i, a := range args {
 		if a == "-append" && strings.Contains(args[i+1], c.Spec.Token) {
@@ -90,7 +93,8 @@ func TestQMPSocketSitsNextToTheGuestSocket(t *testing.T) {
 
 func TestRedactArgsHidesTheToken(t *testing.T) {
 	c := testQEMUConfig()
-	red := redactArgs(qemuArgs(c), c.Spec.Token)
+	args := append(qemuArgs(c), "-fw_cfg", "name=opt/orole/token,string="+c.Spec.Token)
+	red := redactArgs(args, c.Spec.Token)
 	if strings.Contains(strings.Join(red, " "), c.Spec.Token) {
 		t.Fatal("token survived redaction")
 	}
@@ -120,5 +124,32 @@ func TestQEMUArgsAcceleratorIsAParameter(t *testing.T) {
 	args := qemuArgs(c)
 	if !hasPair(args, "-accel", "tcg") || !hasPair(args, "-cpu", "max") {
 		t.Fatalf("%q", args)
+	}
+}
+
+func TestQEMUArgsCPUDefaults(t *testing.T) {
+	for _, tc := range []struct{ accel, cpu, want string }{
+		{"", "", defaultCPU}, {"whpx", "host", "host"}, {"tcg", "", "max"}, {"tcg", "host", "max"}, {"tcg", "qemu64", "qemu64"},
+	} {
+		c := testQEMUConfig()
+		c.Accel, c.CPU = tc.accel, tc.cpu
+		if !hasPair(qemuArgs(c), "-cpu", tc.want) {
+			t.Errorf("accel %q cpu %q: want -cpu %s", tc.accel, tc.cpu, tc.want)
+		}
+	}
+}
+
+func TestTailBufferRedactsATokenSplitAcrossWrites(t *testing.T) {
+	tb := newTailBuffer(8, "secret-token")
+	fmt.Fprint(tb, "xxxxxxxxxxxx secret-")
+	fmt.Fprint(tb, "token tail")
+	if s := tb.suffix(); strings.Contains(s, "secret") || strings.Contains(s, "token") && !strings.Contains(s, "<redacted>") {
+		t.Fatalf("%q", s)
+	}
+	tb = newTailBuffer(8, "secret-token")
+	fmt.Fprint(tb, "aaaa secret-")
+	fmt.Fprint(tb, "token")
+	if s := tb.suffix(); strings.Contains(s, "secret") || strings.Contains(s, "ecret") {
+		t.Fatalf("partial token left: %q", s)
 	}
 }
