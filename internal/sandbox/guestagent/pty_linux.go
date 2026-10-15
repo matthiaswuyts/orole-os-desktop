@@ -56,10 +56,14 @@ func (p *linuxPTY) Resize(cols, rows int) error {
 	return pty.Setsize(p.f, &pty.Winsize{Cols: uint16(cols), Rows: uint16(rows)})
 }
 
-// Close hangs up the terminal (the shell gets SIGHUP) and kills the shell if it is still there 2 s later.
-// Background jobs that ignore SIGHUP are orphaned, not killed; they die with the VM.
+// Close kills the shell's process group, closes the terminal, and kills the shell if it is still there 2 s later.
 func (p *linuxPTY) Close() error {
 	p.once.Do(func() {
+		// The shell leads its session and, without job control, its background jobs share its process group.
+		// Killing the group closes the terminal slave, which is what ends a blocked master Read (closing the
+		// master file does not interrupt it). Only processes that left the session (setsid) outlive this, until
+		// the VM stops. ESRCH (group already gone) is fine.
+		_ = syscall.Kill(-p.cmd.Process.Pid, syscall.SIGKILL)
 		_ = p.f.Close()
 		go func() {
 			select {

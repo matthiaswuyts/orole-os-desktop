@@ -8,6 +8,10 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"regexp"
+	"strconv"
+	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -60,7 +64,7 @@ func TestStartPTYRunsShell(t *testing.T) {
 
 // A shell that exits while a background job (ignoring SIGHUP) holds the terminal must still end the session with its exit code.
 func TestPTYSessionEndsWhenShellExitsWithBackgroundJob(t *testing.T) {
-	a := New(Config{Token: "t", Home: t.TempDir(), LoginShell: []string{"/bin/sh", "-c", "trap '' HUP; sleep 30 & exit 3"}})
+	a := New(Config{Token: "t", Home: t.TempDir(), LoginShell: []string{"/bin/sh", "-c", "trap '' HUP; sleep 30 & echo pid=$!; exit 3"}})
 	srv := httptest.NewServer(a.Handler())
 	defer srv.Close()
 	req, _ := http.NewRequest("POST", srv.URL+"/pty", nil)
@@ -72,7 +76,8 @@ func TestPTYSessionEndsWhenShellExitsWithBackgroundJob(t *testing.T) {
 	defer resp.Body.Close()
 	start := time.Now()
 	done := make(chan struct{})
-	go func() { _, _ = io.Copy(io.Discard, resp.Body); close(done) }()
+	var out []byte
+	go func() { out, _ = io.ReadAll(resp.Body); close(done) }()
 	select {
 	case <-done:
 	case <-time.After(5 * time.Second):
@@ -85,4 +90,32 @@ func TestPTYSessionEndsWhenShellExitsWithBackgroundJob(t *testing.T) {
 	if got := resp.Trailer.Get(wire.ExitTrailer); got != "3" {
 		t.Fatalf("exit trailer = %q, want 3", got)
 	}
+	m := regexp.MustCompile(`pid=([0-9]+)`).FindSubmatch(out)
+	if m == nil {
+		t.Fatalf("no background pid in output %q", out)
+	}
+	pid, _ := strconv.Atoi(string(m[1]))
+	for i := 0; ; i++ {
+		if gone(pid) {
+			break
+		}
+		if i > 40 {
+			t.Fatalf("background job %d still alive after the session ended", pid)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}
+
+// gone reports whether pid no longer runs (a zombie awaiting a reaper counts as gone).
+func gone(pid int) bool {
+	if err := syscall.Kill(pid, 0); err != nil {
+		return true
+	}
+	b, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/stat")
+	if err != nil {
+		return true
+	}
+	s := string(b)
+	i := strings.LastIndex(s, ")")
+	return i >= 0 && len(s) > i+2 && s[i+2] == 'Z'
 }
