@@ -403,3 +403,83 @@ func TestShutdownDuringBoot(t *testing.T) {
 		t.Fatalf("%d VMs left after Shutdown during boot", n)
 	}
 }
+
+func TestHungGuestIsReplacedOnNextEnsure(t *testing.T) {
+	oldIdle, oldPing := guestReadIdleTimeout, guestPingTimeout
+	guestReadIdleTimeout, guestPingTimeout = 100*time.Millisecond, 100*time.Millisecond
+	t.Cleanup(func() { guestReadIdleTimeout, guestPingTimeout = oldIdle, oldPing })
+	h := newHarness(t, nil)
+	g := ensure(t, h, "bot1")
+	h.b.vmFor("bot1").stall()
+	if _, err := g.Health(context.Background()); err == nil {
+		t.Fatal("Health to a hung guest succeeded")
+	}
+	g2 := ensure(t, h, "bot1")
+	if g2 == g || h.b.bootCount() != 2 {
+		t.Fatalf("new guest=%v boots=%d, want a fresh boot", g2 != g, h.b.bootCount())
+	}
+	if h.b.vm(0).kills.Load() == 0 {
+		t.Fatal("the hung VM was not killed")
+	}
+	if hl, err := g2.Health(context.Background()); err != nil || !hl.Ready {
+		t.Fatalf("Health on the new guest = %+v, %v", hl, err)
+	}
+}
+
+func TestDeadChannelCallsAreNotActivity(t *testing.T) {
+	h := newHarness(t, nil)
+	g := ensure(t, h, "bot1")
+	h.m.mu.Lock()
+	before := h.m.vms["bot1"].lastUsed
+	h.m.mu.Unlock()
+	_ = g.cc.Close()
+	h.advance(time.Minute)
+	if _, err := g.Health(context.Background()); err == nil {
+		t.Fatal("Health on a closed channel succeeded")
+	}
+	h.m.mu.Lock()
+	after := h.m.vms["bot1"].lastUsed
+	h.m.mu.Unlock()
+	if !after.Equal(before) {
+		t.Fatalf("lastUsed moved from %v to %v on a dead channel", before, after)
+	}
+}
+
+func TestShutdownCancelsBootInProgress(t *testing.T) {
+	h := newHarness(t, func(c *Config) { c.BootTimeout = 30 * time.Second })
+	h.b.update(func(b *fakeBackend) { b.notReady = true })
+	ensured := make(chan error, 1)
+	go func() { _, err := h.m.Ensure(context.Background(), "bot1"); ensured <- err }()
+	eventually(t, func() bool { return h.b.bootCount() == 1 && h.b.vmFor("bot1") != nil })
+	start := time.Now()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := h.m.Shutdown(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if d := time.Since(start); d > 5*time.Second {
+		t.Fatalf("Shutdown took %v: the boot was not cancelled", d)
+	}
+	if err := <-ensured; !errors.Is(err, errClosed) {
+		t.Fatalf("Ensure = %v, want errClosed", err)
+	}
+	if vm := h.b.vm(0); vm.kills.Load() == 0 || h.b.liveCount() != 0 {
+		t.Fatalf("fake VM not killed (kills=%d, live=%d)", vm.kills.Load(), h.b.liveCount())
+	}
+}
+
+func TestShutdownPublishesStopping(t *testing.T) {
+	h := newHarness(t, nil)
+	ensure(t, h, "bot1")
+	var mu sync.Mutex
+	var seen []State
+	h.m.Subscribe(func(s Status) { mu.Lock(); seen = append(seen, s.State); mu.Unlock() })
+	if err := h.m.Shutdown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(seen) < 2 || seen[0] != StateStopping || seen[len(seen)-1] != StateOff {
+		t.Fatalf("events = %v, want stopping ... off", seen)
+	}
+}

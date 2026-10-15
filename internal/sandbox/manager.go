@@ -164,8 +164,21 @@ func (m *Manager) Ensure(ctx context.Context, botID string) (*Guest, error) {
 		if inst := m.vms[botID]; inst != nil {
 			switch inst.state {
 			case StateRunning:
-				inst.lastUsed = m.cfg.Now()
 				g := inst.guest
+				if !g.alive() {
+					// The channel died while the VM lives (a hung guest failed keepalive): treat it as a crash.
+					g.abort(ErrCrashed)
+					vm, gone := inst.vm, inst.gone
+					m.mu.Unlock()
+					_ = vm.Kill()
+					select {
+					case <-gone:
+					case <-ctx.Done():
+						return nil, ctx.Err()
+					}
+					continue
+				}
+				inst.lastUsed = m.cfg.Now()
 				m.mu.Unlock()
 				return g, nil
 			case StateStarting:
@@ -271,6 +284,13 @@ func (m *Manager) boot(inst *instance, after <-chan struct{}) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), m.cfg.BootTimeout)
 	defer cancel()
+	go func() { // Shutdown cancels a boot in progress
+		select {
+		case <-m.stop:
+			cancel()
+		case <-ctx.Done():
+		}
+	}()
 	vm, g, err := m.start(ctx, inst.botID)
 
 	m.mu.Lock()
@@ -280,6 +300,9 @@ func (m *Manager) boot(inst *instance, after <-chan struct{}) {
 		_ = vm.Kill()
 	} else if err != nil {
 		vm = nil // start already stopped it
+		if m.closed {
+			err = errClosed
+		}
 	}
 	if err != nil {
 		delete(m.vms, inst.botID)
@@ -305,8 +328,8 @@ func (m *Manager) boot(inst *instance, after <-chan struct{}) {
 	m.signalLocked()
 	st := m.statusLocked(inst.botID)
 	m.mu.Unlock()
-	go m.watch(inst)
 	m.publish(st)
+	go m.watch(inst)
 }
 
 // start checks readiness and memory, records the sandbox, boots the VM and waits for the guest to be ready.
@@ -418,7 +441,6 @@ func (m *Manager) watch(inst *instance) {
 		return
 	}
 	inst.guest.abort(ErrCrashed)
-	m.logf(inst.botID, "the computer stopped unexpectedly: %v", inst.vm.ExitErr())
 	delete(m.vms, inst.botID)
 	inst.state = StateOff
 	inst.takenOver = false
@@ -427,6 +449,7 @@ func (m *Manager) watch(inst *instance) {
 	m.last[inst.botID] = st
 	m.signalLocked()
 	m.mu.Unlock()
+	m.logf(inst.botID, "the computer stopped unexpectedly: %v", inst.vm.ExitErr())
 	_ = inst.guest.Close()
 	m.publish(st)
 }
@@ -482,16 +505,21 @@ func (m *Manager) Shutdown(ctx context.Context) error {
 	m.closed = true
 	close(m.stop)
 	var running, stopping []*instance
+	var stoppingStatus []Status
 	for _, inst := range m.vms {
 		switch inst.state {
 		case StateRunning:
 			m.beginStopLocked(inst)
 			running = append(running, inst)
+			stoppingStatus = append(stoppingStatus, m.statusLocked(inst.botID))
 		case StateStopping:
 			stopping = append(stopping, inst)
 		}
 	}
 	m.mu.Unlock()
+	for _, st := range stoppingStatus {
+		m.publish(st)
+	}
 
 	var wg sync.WaitGroup
 	for _, inst := range running {

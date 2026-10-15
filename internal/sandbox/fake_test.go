@@ -60,7 +60,7 @@ func (b *fakeBackend) Boot(ctx context.Context, spec BootSpec) (VM, error) {
 		return nil, err
 	}
 	host, guest := net.Pipe()
-	vm := &fakeVM{spec: spec, conn: host, guestEnd: guest, done: make(chan struct{})}
+	vm := &fakeVM{spec: spec, conn: &stallConn{Conn: host}, guestEnd: guest, done: make(chan struct{})}
 	agent := guestagent.New(guestagent.Config{
 		Token: spec.Token, Version: "test", Home: scratchHome(b.t), Shell: agenttest.Shell(),
 		Ready:    func() bool { return !notReady },
@@ -125,6 +125,23 @@ func (b *fakeBackend) killAll() {
 		vm.exit(errors.New("test cleanup"))
 	}
 }
+
+// stallConn drops everything the guest sends once stalled: a hung guest that keeps the channel open.
+type stallConn struct {
+	net.Conn
+	stalled atomic.Bool
+}
+
+func (c *stallConn) Read(p []byte) (int, error) {
+	for {
+		n, err := c.Conn.Read(p)
+		if err != nil || !c.stalled.Load() {
+			return n, err
+		}
+	}
+}
+
+func (v *fakeVM) stall() { v.conn.(*stallConn).stalled.Store(true) }
 
 type fakeVM struct {
 	spec      BootSpec

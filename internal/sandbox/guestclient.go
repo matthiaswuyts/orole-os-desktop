@@ -139,6 +139,10 @@ func (g *Guest) Close() error {
 	return nil
 }
 
+// alive reports whether the client connection can still take requests; it is false once the channel died
+// (keepalive failure, VM exit) or the Guest was closed.
+func (g *Guest) alive() bool { return g.cc.CanTakeNewRequest() }
+
 func (g *Guest) setOnUse(fn func(delta int)) {
 	g.mu.Lock()
 	g.onUse = fn
@@ -199,6 +203,9 @@ func (g *Guest) call(ctx context.Context, method, path string, in, out any) erro
 	req.Header.Set(wire.TokenHeader, g.token)
 	if in != nil {
 		req.Header.Set("Content-Type", "application/json")
+	}
+	if !g.alive() { // a dead channel is not bot activity: do not count it as use
+		return g.mapErr(ctx, errors.New("connection closed"))
 	}
 	g.use(+1)
 	defer g.use(-1)
