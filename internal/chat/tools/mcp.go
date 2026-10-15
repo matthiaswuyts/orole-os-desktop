@@ -198,6 +198,19 @@ func objectSchema(schema json.RawMessage) json.RawMessage {
 	return json.RawMessage(`{"type":"object","properties":{}}`)
 }
 
+// ToolLabel is the name the owner gave the server of the MCP function name, or "" when the bot has no such tool.
+func (t *MCPTools) ToolLabel(ctx context.Context, rc chat.RunContext, name string) string {
+	if t.Client == nil {
+		return ""
+	}
+	for _, e := range t.toolsOf(ctx, rc.Bot) {
+		if e.Name == name {
+			return e.ServerName
+		}
+	}
+	return ""
+}
+
 func (t *MCPTools) Call(ctx context.Context, rc chat.RunContext, name string, args json.RawMessage) (chat.ToolResult, error) {
 	if t.Client == nil {
 		return errResult("MCP is not available")

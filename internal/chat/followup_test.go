@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 	"unicode/utf8"
 
 	"github.com/rayorole/orole-os-desktop/internal/llm"
@@ -563,5 +564,27 @@ func TestChatMessageAnnouncesAWorkerThatHasNotStartedYet(t *testing.T) {
 	}
 	if runs := e.runStates(b.ID); len(runs) != 1 || !runs[0].Running || runs[0].Paused {
 		t.Fatalf("chat.run: %+v", runs)
+	}
+}
+
+// A request to answer a follow-up that is never stored (its store path already ran and failed) does not stay behind:
+// the next such request drops it once it is older than answerLaterFor.
+func TestAnswerLaterForgetsFollowUpsNeverStored(t *testing.T) {
+	e := newEnv(t, delegationScript)
+	b := e.bot("Caller")
+	e.m.mu.Lock()
+	e.m.answerLater["gone"] = time.Now().Add(-answerLaterFor - time.Second)
+	e.m.answerLater["recent"] = time.Now()
+	e.m.mu.Unlock()
+	if err := e.m.AnswerFollowUp(context.Background(), FollowUp{BotID: b.ID, CallID: "call-7", Kind: FollowUpReport, MessageID: "missing"}); err != nil {
+		t.Fatal(err)
+	}
+	e.m.mu.Lock()
+	defer e.m.mu.Unlock()
+	_, gone := e.m.answerLater["gone"]
+	_, recent := e.m.answerLater["recent"]
+	_, missing := e.m.answerLater["missing"]
+	if gone || !recent || !missing {
+		t.Fatalf("answerLater %v", e.m.answerLater)
 	}
 }

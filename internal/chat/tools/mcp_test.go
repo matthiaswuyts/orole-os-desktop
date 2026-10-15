@@ -356,3 +356,16 @@ func TestMCPResultTextFallbacks(t *testing.T) {
 		t.Errorf("structured-only result = %q", got)
 	}
 }
+
+// A voice turn says which integration a tool belongs to: the label is the server's name, not its id.
+func TestMCPToolLabelIsTheServerName(t *testing.T) {
+	tool := &MCPTools{Client: liveSearch(&fakeMCP{})}
+	rc := chat.RunContext{BotID: "b1", Bot: mcpBot("b1", "live")}
+	if got := tool.ToolLabel(context.Background(), rc, "mcp__live__search"); got != "Server live" {
+		t.Fatalf("label %q", got)
+	}
+	if got := tool.ToolLabel(context.Background(), rc, "mcp__live__other"); got != "" {
+		t.Fatalf("label of an unknown tool %q", got)
+	}
+	var _ chat.ToolLabeler = tool
+}

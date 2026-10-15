@@ -58,7 +58,9 @@ type VoiceRequest struct {
 	// "" adds no language line to the voice prompt.
 	Language string
 	OnText   func(string)
-	OnTool   func(name string)
+	// OnTool runs just before a tool runs, with its function name and a label for it ("" when it has none): for an MCP
+	// tool, the name the owner gave its server (see ToolLabeler).
+	OnTool func(name, label string)
 }
 
 // VoiceTurn answers one spoken utterance with the bot's own model and tools. It runs under its own run key, so a

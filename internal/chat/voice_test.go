@@ -176,11 +176,14 @@ func TestVoiceTurnCallsOnToolBeforeRunning(t *testing.T) {
 	b := e.bot("Atlas", func(in *BotInput) { in.Config.ToolAccess = ToolAccessAll })
 	var tools []string
 	var seenAtCall int
-	req := VoiceRequest{BotID: b.ID, CallID: "c1", Text: "go", OnTool: func(n string) { tools = append(tools, n); seenAtCall = ft.callCount() }}
+	req := VoiceRequest{BotID: b.ID, CallID: "c1", Text: "go", OnTool: func(n, label string) {
+		tools = append(tools, n+"|"+label)
+		seenAtCall = ft.callCount()
+	}}
 	if _, err := e.m.VoiceTurn(context.Background(), req); err != nil {
 		t.Fatal(err)
 	}
-	if len(tools) != 1 || tools[0] != "probe" || ft.callCount() != 1 || seenAtCall != 0 {
+	if len(tools) != 1 || tools[0] != "probe|" || ft.callCount() != 1 || seenAtCall != 0 {
 		t.Fatalf("tools=%v calls=%d beforeRun=%d", tools, ft.callCount(), seenAtCall)
 	}
 }
@@ -708,5 +711,30 @@ func TestVoiceTurnSeesTheHandoffsThatAreOut(t *testing.T) {
 	e.idle(callee.ID)
 	if sys := voiceSystem("c3"); !strings.HasSuffix(sys, brief) || strings.Contains(sys, "have not reported back") {
 		t.Fatalf("a finished task is still listed: %q", sys)
+	}
+}
+
+// labeledTool is a fakeTool that labels its function (see ToolLabeler).
+type labeledTool struct{ *fakeTool }
+
+func (labeledTool) ToolLabel(context.Context, RunContext, string) string { return "Canvas" }
+
+func TestVoiceTurnPassesTheToolLabel(t *testing.T) {
+	ft := labeledTool{&fakeTool{id: "mcp__x__probe"}}
+	e := newEnv(t, func(call int, _ llm.Request) []llm.Delta {
+		if call == 0 {
+			return llmtest.Call("t1", "mcp__x__probe", `{}`)
+		}
+		return []llm.Delta{llmtest.Text("done")}
+	})
+	e.m.AddTools(ft)
+	b := e.bot("Atlas", func(in *BotInput) { in.Config.ToolAccess = ToolAccessAll })
+	var got []string
+	req := VoiceRequest{BotID: b.ID, CallID: "c1", Text: "go", OnTool: func(n, label string) { got = append(got, n+"|"+label) }}
+	if _, err := e.m.VoiceTurn(context.Background(), req); err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0] != "mcp__x__probe|Canvas" {
+		t.Fatalf("OnTool got %v", got)
 	}
 }

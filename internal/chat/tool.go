@@ -64,6 +64,12 @@ type Tool interface {
 	Call(ctx context.Context, rc RunContext, name string, args json.RawMessage) (ToolResult, error)
 }
 
+// ToolLabeler is a Tool that can say, in a few words, what one of its functions reaches: an MCP tool names its server
+// as the owner named it. A voice turn passes it to VoiceRequest.OnTool, so the bot can say which integration it uses.
+type ToolLabeler interface {
+	ToolLabel(ctx context.Context, rc RunContext, name string) string
+}
+
 // Memory is the engine's view of the memory subsystem (implemented in internal/chat/memory).
 type Memory interface {
 	// Snapshot renders the always-in-prompt core memory for a bot (own + granted scopes). It is taken

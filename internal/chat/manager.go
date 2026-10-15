@@ -45,8 +45,11 @@ func busyf(format string, args ...any) error {
 }
 
 const (
-	storeTimeout       = 10 * time.Second // bounds the store work of a report delivered in the background
-	maxQueued          = 20               // queued user messages per bot
+	storeTimeout = 10 * time.Second // bounds the store work of a report delivered in the background
+	// answerLaterFor is how long AnswerFollowUp's request for a follow-up not stored yet is kept: far longer than the
+	// follow-up's own way into the store (its hook, then at most storeTimeout).
+	answerLaterFor     = 5 * time.Minute
+	maxQueued          = 20 // queued user messages per bot
 	maxDelegationDepth = 2
 	defaultIdleAfter   = 2 * time.Minute
 	catalogTTL         = 5 * time.Minute
@@ -92,8 +95,9 @@ type Manager struct {
 	mcpNames     func(context.Context) map[string]string // MCP server id -> display name; nil when there are no integrations
 	runs         map[string]*runState                    // active runs by bot id or "draft:<id>"
 	handoffs     map[string][]*handoff                   // bot id -> tasks it handed to other bots that have not reported back
-	// answerLater holds the message ids of follow-ups AnswerFollowUp was asked to answer before they were stored.
-	answerLater map[string]bool
+	// answerLater holds the message ids of follow-ups AnswerFollowUp was asked to answer before they were stored, with
+	// when it was asked; a request older than answerLaterFor is dropped (that message is never stored).
+	answerLater map[string]time.Time
 	idle        map[string]*idleJob
 	nonces      nonceCache
 	closed      bool
@@ -141,7 +145,7 @@ func New(cfg Config) (*Manager, error) {
 		store:       &store{db: cfg.DB, now: cfg.Clock},
 		runs:        map[string]*runState{},
 		handoffs:    map[string][]*handoff{},
-		answerLater: map[string]bool{},
+		answerLater: map[string]time.Time{},
 		idle:        map[string]*idleJob{},
 		catalog:     map[string]catalogEntry{},
 	}
@@ -239,7 +243,7 @@ func (m *Manager) liveFollowUp(f FollowUp) bool {
 func (m *Manager) takeAnswerLater(id string) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	ok := m.answerLater[id]
+	_, ok := m.answerLater[id]
 	delete(m.answerLater, id)
 	return ok
 }
@@ -261,7 +265,13 @@ func (m *Manager) AnswerFollowUp(ctx context.Context, f FollowUp) error {
 	if errors.Is(err, ErrNotFound) {
 		// Still on its way into the store (awaitReport, ReportTask): it takes this bot lock next and answers it.
 		m.mu.Lock()
-		m.answerLater[f.MessageID] = true
+		now := time.Now()
+		for id, at := range m.answerLater {
+			if now.Sub(at) > answerLaterFor {
+				delete(m.answerLater, id) // its store path already ran and failed: it will never be stored
+			}
+		}
+		m.answerLater[f.MessageID] = now
 		m.mu.Unlock()
 		return nil
 	}

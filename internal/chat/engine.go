@@ -33,8 +33,8 @@ type turnEnv struct {
 	history   []llm.Message // ends with the current user message
 	tools     toolset
 	sink      *sink
-	onText    func(string) // voice: every text delta, as it streams
-	onTool    func(string) // voice: a tool name, just before the tool runs
+	onText    func(string)             // voice: every text delta, as it streams
+	onTool    func(name, label string) // voice: a tool name and its label (see ToolLabeler), just before the tool runs
 }
 
 // toolset is the tool registry for one run: specs offered to the model and the client tools that
@@ -211,7 +211,7 @@ type prep struct {
 	// language is the call language of a voice turn (VoiceRequest.Language).
 	language string
 	onText   func(string)
-	onTool   func(string)
+	onTool   func(name, label string)
 }
 
 // prepare resolves the model, gates attachments by capability, gathers memory and history and
@@ -532,7 +532,11 @@ func drain(ch <-chan llm.Delta) {
 // A tool that shows the user a question reports it as asked: the turn must then end and wait for the answer.
 func (m *Manager) runTool(ctx context.Context, env *turnEnv, step int, c llm.ToolCall) (llm.Part, bool) {
 	if env.onTool != nil {
-		env.onTool(c.Name)
+		label := ""
+		if l, ok := env.tools.route[c.Name].(ToolLabeler); ok {
+			label = l.ToolLabel(ctx, env.rc, c.Name)
+		}
+		env.onTool(c.Name, label)
 	}
 	row := MsgPart{Type: PartTool, ID: fmt.Sprintf("s%d-%s", step, c.ID), Name: c.Name, Status: "running"}
 	env.sink.upsertTool(row)
