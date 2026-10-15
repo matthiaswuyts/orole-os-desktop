@@ -18,7 +18,7 @@ function event(name: string) {
 }
 
 /** Delivers a bridge event to every current subscriber. */
-export function emit(name: "sandboxStatus" | "sandboxScreen" | "terminalOutput" | "terminalChanged", payload: unknown) {
+export function emit(name: "sandboxStatus" | "sandboxScreen" | "sandboxAvailability" | "sandboxRuntime" | "sandboxSetup" | "sandboxHandoff" | "terminalOutput" | "terminalChanged", payload: unknown) {
   for (const listener of [...(listeners.get(name) ?? [])]) listener(payload);
 }
 
@@ -26,7 +26,7 @@ export const listenerCount = (name: string) => listeners.get(name)?.size ?? 0;
 
 export const sandbox = {
   availability: vi.fn(), status: vi.fn(), enable: vi.fn(), install: vi.fn(), setViewer: vi.fn(), takeOver: vi.fn(),
-  release: vi.fn(), openScreen: vi.fn(), screenInput: vi.fn(), closeScreen: vi.fn(), openTerminal: vi.fn(),
+  release: vi.fn(), handoff: vi.fn(), openScreen: vi.fn(), screenInput: vi.fn(), closeScreen: vi.fn(), openTerminal: vi.fn(),
 };
 export const terminalsBridge = { attach: vi.fn(), write: vi.fn(), resize: vi.fn(), close: vi.fn() };
 
@@ -42,6 +42,8 @@ export const mygoMock = {
   Terminals: terminalsBridge,
   events: {
     sandboxStatus: event("sandboxStatus"), sandboxScreen: event("sandboxScreen"),
+    sandboxAvailability: event("sandboxAvailability"), sandboxRuntime: event("sandboxRuntime"),
+    sandboxSetup: event("sandboxSetup"), sandboxHandoff: event("sandboxHandoff"),
     terminalOutput: event("terminalOutput"), terminalChanged: event("terminalChanged"), daemonState: event("daemonState"),
   },
 };
