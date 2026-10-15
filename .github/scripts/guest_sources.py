@@ -100,6 +100,14 @@ def main():
             p = v.get("path") if isinstance(v, dict) else None
             if p:
                 out2drv[base(p)] = kb
+    # Newer `nix derivation show` formats leave out the path of fixed-output (fetched) outputs: ask the store.
+    pathless = [kb for kb, d in drvs.items()
+                if any(not (isinstance(v, dict) and v.get("path")) for v in (d.get("outputs") or {}).values())]
+    print(f"{len(drvs)} derivations, {len(pathless)} with output paths to look up", file=sys.stderr)
+    for i in range(0, len(pathless), 500):
+        for kb in pathless[i:i + 500]:
+            for p in run("nix-store", "-q", "--outputs", STORE + kb).split():
+                out2drv[base(p)] = kb
 
     pk = json.load(open(a.packages))
     pk = pk.get("packages", pk)
@@ -111,8 +119,22 @@ def main():
         if p.get("pname"):
             by_pname.setdefault(p["pname"], entry)
 
+    env_cache = {}
+
     def env(kd):
-        return drvs[kd].get("env") or {}
+        """The derivation's environment; structured-attrs derivations keep theirs in __json."""
+        if kd not in env_cache:
+            e = dict(drvs[kd].get("env") or {})
+            if "__json" in e:
+                for k, v in json.loads(e.pop("__json")).items():
+                    if isinstance(v, str):
+                        e.setdefault(k, v)
+                    elif isinstance(v, (int, float)) and not isinstance(v, bool):
+                        e.setdefault(k, str(v))
+                    elif isinstance(v, list) and all(isinstance(x, str) for x in v):
+                        e.setdefault(k, " ".join(v))
+            env_cache[kd] = e
+        return env_cache[kd]
 
     def drv_name(kd):
         e = env(kd)
@@ -138,7 +160,7 @@ def main():
         outs = d.get("outputs") or {}
         o = outs.get("out") if isinstance(outs, dict) else None
         return bool((isinstance(o, dict) and (o.get("hash") or o.get("hashAlgo") or o.get("method")))
-                    or (d.get("env") or {}).get("outputHash"))
+                    or env(kd).get("outputHash"))
 
     def fod_info(src_base):
         kd = out2drv.get(src_base)
@@ -188,6 +210,12 @@ def main():
                 want[s] = fod
         rows.append({"drv": kd, "name": drv_name(kd), "version": e.get("version", ""), "licence": lic,
                      "attr": attr, "homepage": home, "paths": paths, "srcs": src_rows, "include": copyleft})
+
+    kernel = [r for r in rows if re.match(r"linux-\d+\.\d+(\.\d+)?$", r["name"])]
+    if not kernel or not all(r["srcs"] for r in kernel):
+        raise SystemExit(f"the kernel derivation has no source: {[(r['name'], r['srcs']) for r in kernel]}")
+    nosrc = sorted(r["name"] for r in rows if r["include"] and r["licence"] and not r["srcs"])
+    print(f"copyleft without a source of their own ({len(nosrc)}): {', '.join(nosrc)}", file=sys.stderr)
 
     # Realise the wanted sources.
     targets = sorted({(STORE + f) if f else s for s, f in want.items()})
