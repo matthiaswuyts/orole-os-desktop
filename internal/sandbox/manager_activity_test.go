@@ -152,3 +152,32 @@ func TestTakenOverVMIsNeverEvicted(t *testing.T) {
 		t.Fatalf("a = %+v", st)
 	}
 }
+
+// The idleLoop goroutine itself reaps (real clock, short timeout), not just reapIdle called by hand.
+func TestIdleLoopReapsIdleVM(t *testing.T) {
+	h := newHarness(t, func(c *Config) { c.IdleTimeout = 40 * time.Millisecond; c.Now = time.Now })
+	ensure(t, h, "bot1")
+	eventually(t, func() bool { return h.m.Status("bot1").State == StateOff })
+	select {
+	case <-h.b.vmFor("bot1").Done():
+	default:
+		t.Fatal("status is off but the VM is still running")
+	}
+}
+
+// A VM that was busy is reaped once its call ends and the timeout passes.
+func TestBusyVMIsReapedAfterCallEnds(t *testing.T) {
+	h := newHarness(t, func(c *Config) { c.IdleTimeout = 40 * time.Millisecond; c.Now = time.Now })
+	g := ensure(t, h, "bot1")
+	ctx, cancel := context.WithCancel(context.Background())
+	errc := make(chan error, 1)
+	go func() { _, err := g.Exec(ctx, wire.ExecRequest{Command: "sleep 10s"}); errc <- err }()
+	eventually(t, func() bool { return h.active("bot1") == 1 })
+	time.Sleep(200 * time.Millisecond) // well past the timeout while busy
+	if st := h.m.Status("bot1"); st.State != StateRunning {
+		t.Fatalf("busy VM = %+v, want running", st)
+	}
+	cancel()
+	<-errc
+	eventually(t, func() bool { return h.m.Status("bot1").State == StateOff })
+}
