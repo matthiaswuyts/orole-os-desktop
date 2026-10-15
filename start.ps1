@@ -21,10 +21,9 @@ try {
     $null = Get-Command go -ErrorAction Stop
     $null = Get-Command bun -ErrorAction Stop
 
-    if (-not (Test-Path "frontend/node_modules" -PathType Container)) {
-        bun install --cwd frontend
-        if ($LASTEXITCODE) { throw "frontend dependency installation failed" }
-    }
+    # Always sync: a branch switch can add dependencies to an existing node_modules (a no-op when up to date).
+    bun install --cwd frontend
+    if ($LASTEXITCODE) { throw "frontend dependency installation failed" }
 
     if ($RestartDaemon) {
         $stale = Get-CimInstance Win32_Process -Filter "Name='orole-daemon.exe'" |
