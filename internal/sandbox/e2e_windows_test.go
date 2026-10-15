@@ -19,6 +19,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -68,7 +69,15 @@ func TestRealGuestImageThroughTheManager(t *testing.T) {
 	if av := backend.Availability(context.Background()); !av.Ready {
 		t.Skipf("this PC cannot run the computer: %+v", av)
 	}
-	m := NewManager(Config{Paths: paths, Image: rt.Image, BootTimeout: 3 * time.Minute, IdleTimeout: time.Hour}, backend, NewStore(testDB(t)))
+	t.Logf("E2E RESULT this PC's keyboard layout: %s (the guest gets be below)", HostKeymap())
+	// The guest gets a Belgian keyboard whatever this PC uses, so the key check below is the same everywhere.
+	backend.(*hostBackend).keymap = func() string { return "be" }
+	// Bot names: the computer's account, home and host name follow them; e2e-bot is renamed between boots.
+	var namesMu sync.Mutex
+	names := map[string]string{"e2e-bot": "Élodie Test", "e2e-other": "Atlas 2"}
+	botName := func(id string) string { namesMu.Lock(); defer namesMu.Unlock(); return names[id] }
+	m := NewManager(Config{Paths: paths, Image: rt.Image, BootTimeout: 3 * time.Minute, IdleTimeout: time.Hour, BotName: botName},
+		backend, NewStore(testDB(t)))
 	defer func() {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 		defer cancel()
@@ -118,9 +127,7 @@ func TestRealGuestImageThroughTheManager(t *testing.T) {
 	g := ensure("e2e-bot", "first boot (fresh overlay)")
 	t.Logf("E2E RESULT QEMU process after first boot: %s", qemuMemory(t, m, "e2e-bot"))
 
-	if out := strings.TrimSpace(run(g, "id -un").Stdout); out != "bot" {
-		t.Fatalf("id -un = %q, want bot", out)
-	}
+	e2eIdentity(t, g, run, "elodie-test")
 	if out := strings.TrimSpace(run(g, `python3 -c "print(1+1)"`).Stdout); out != "2" {
 		t.Fatalf("python3: %q", out)
 	}
@@ -194,12 +201,14 @@ func TestRealGuestImageThroughTheManager(t *testing.T) {
 	e2eBrowser(t, ctx, g, run)
 	e2eLongStreams(t, ctx, g)
 
-	// Files are written as bot, in its home.
+	e2eKeyboardAndPointer(t, ctx, g, run)
+
+	// Files are written as the bot's account, in its home.
 	if _, err := g.WriteFile(ctx, "persist.txt", []byte("kept")); err != nil {
 		t.Fatal(err)
 	}
-	if owner := strings.TrimSpace(run(g, "stat -c %U ~/persist.txt").Stdout); owner != "bot" {
-		t.Fatalf("persist.txt owner %q, want bot", owner)
+	if out := strings.TrimSpace(run(g, "stat -c %U ~/persist.txt; ls /home/elodie-test/persist.txt").Stdout); out != "elodie-test\n/home/elodie-test/persist.txt" {
+		t.Fatalf("persist.txt owner and place %q, want elodie-test in /home/elodie-test", out)
 	}
 	run(g, "sync")
 
@@ -207,10 +216,24 @@ func TestRealGuestImageThroughTheManager(t *testing.T) {
 	start = time.Now()
 	e2eStop(t, m, "e2e-bot")
 	t.Logf("E2E RESULT clean shutdown = %s", time.Since(start).Round(time.Millisecond))
-	g = ensure("e2e-bot", "second boot (same overlay)")
+	// Renamed while off: the next boot uses the new name, with the same files.
+	namesMu.Lock()
+	names["e2e-bot"] = "Élodie Renamed"
+	namesMu.Unlock()
+	g = ensure("e2e-bot", "second boot (same overlay, bot renamed)")
+	e2eIdentity(t, g, run, "elodie-renamed")
 	if f, err := g.ReadFile(ctx, "persist.txt"); err != nil || string(f.Content) != "kept" {
 		t.Fatalf("persist.txt after a clean restart: %q %v", f.Content, err)
 	}
+	if out := strings.TrimSpace(run(g, "LC_ALL=C ls -A /home; stat -c %U ~/persist.txt").Stdout); out != ".orole-user\nelodie-renamed\nelodie-renamed" {
+		t.Fatalf("after the rename /home and the owner = %q, want only .orole-user and elodie-renamed", out)
+	}
+	t.Logf("E2E RESULT rename: elodie-test -> elodie-renamed, persist.txt kept, old home gone")
+	waitFor(g, "Chromium CDP after the rename", "ss -ltn", "127.0.0.1:9222", 90*time.Second)
+	if res, err := g.Browser(ctx, wire.BrowserRequest{Action: wire.BrowserOpen, URL: "https://example.com"}); err != nil || !strings.Contains(res.Title, "Example") {
+		t.Fatalf("browser after the rename: %+v %v", res, err)
+	}
+	t.Logf("E2E RESULT browser after the rename: open https://example.com works")
 
 	// Hard kill (what a crashed daemon's job object does), then the overlay still boots and kept a synced file.
 	if _, err := g.WriteFile(ctx, "marker.txt", []byte("synced before the kill")); err != nil {
@@ -226,7 +249,7 @@ func TestRealGuestImageThroughTheManager(t *testing.T) {
 	// Two bots run at once on the one read-only base image.
 	baseBefore, _ := os.Stat(filepath.Join(paths.Image(pins.ImageVersion), imageBase))
 	g2 := ensure("e2e-other", "second bot (shared base image)")
-	if out := strings.TrimSpace(run(g2, "id -un; test -e ~/persist.txt && echo leaked || echo separate").Stdout); out != "bot\nseparate" {
+	if out := strings.TrimSpace(run(g2, "id -un; test -e ~/persist.txt && echo leaked || echo separate").Stdout); out != "atlas-2\nseparate" {
 		t.Fatalf("second bot: %q", out)
 	}
 	if out := strings.TrimSpace(run(g, "cat ~/marker.txt").Stdout); out != "synced before the kill" {
@@ -589,4 +612,190 @@ func e2eLongStreams(t *testing.T, ctx context.Context, g *Guest) {
 		}
 	}
 	t.Logf("E2E RESULT screen and terminal streams still work after %s idle", idle)
+}
+
+// e2eIdentity checks the account, home, host name and keyboard layout the guest took from fw_cfg (bot names, the
+// "be" keymap), and that cage and wayvnc run as that account with the layout and the drawn pointer.
+func e2eIdentity(t *testing.T, g *Guest, run func(*Guest, string) wire.ExecResult, user string) {
+	t.Helper()
+	got := strings.TrimSpace(run(g, `id -un; id -u; echo "$HOME"; pwd; hostname; cat /proc/sys/kernel/hostname`).Stdout)
+	want := strings.Join([]string{user, "1000", "/home/" + user, "/home/" + user, user + "-computer", user + "-computer"}, "\n")
+	if got != want {
+		diag := run(g, `ls -l /etc/*.orole; grep -E " /etc/| /home/" /proc/self/mountinfo; grep 1000 /etc/passwd; `+
+			`systemctl show -p Id,ActiveState,Result,ExecMainStatus orole-identity-reset userborn orole-identity orole-guest cage-tty1`)
+		t.Fatalf("identity = %q, want %q\n--- diagnostics ---\n%s%s", got, want, diag.Stdout, diag.Stderr)
+	}
+	// userborn's read-only binds of the account files are back after the rename, and no edit was left behind.
+	if out := strings.TrimSpace(run(g, `grep -cE " /etc/(passwd|group|shadow) ro," /proc/self/mountinfo; ls /etc/*.orole 2>/dev/null | wc -l`).Stdout); out != "3\n0" {
+		t.Fatalf("read-only binds of passwd, group, shadow and leftovers = %q, want 3 and 0", out)
+	}
+	env := strings.TrimSpace(run(g, "cat /run/orole/session.env").Stdout)
+	if env != "XKB_DEFAULT_LAYOUT=be\nXKB_DEFAULT_VARIANT=\nWAYVNC_KEYBOARD=be" {
+		t.Fatalf("session.env = %q", env)
+	}
+	var procs string
+	for start := time.Now(); ; time.Sleep(time.Second) {
+		procs = run(g, `for p in /proc/[0-9]*; do c=$(tr '\0' ' ' < $p/cmdline 2>/dev/null); case "$c" in *bin/wayv[n]c*|*bin/cag[e]*) echo "$(stat -c %U $p) $c";; esac; done`).Stdout
+		if strings.Contains(procs, "bin/wayvnc") && strings.Contains(procs, "bin/cage") || time.Since(start) > time.Minute {
+			break
+		}
+	}
+	for _, want := range []string{user + " ", "--render-cursor", "--keyboard=be ", "bin/cage"} {
+		if !strings.Contains(procs, want) {
+			diag := run(g, `systemctl show -p Id,ActiveState,SubState,NRestarts,Result,ExecMainStatus cage-tty1 wayvnc orole-identity systemd-logind; ls -la /run/user /home /home/.orole-user; ls -la /run/orole; cat /proc/sys/kernel/hostname; uptime`)
+			t.Fatalf("cage/wayvnc processes lack %q:\n%s\n--- diagnostics ---\n%s%s", want, procs, diag.Stdout, diag.Stderr)
+		}
+	}
+	for _, line := range strings.Split(strings.TrimSpace(procs), "\n") {
+		if !strings.HasPrefix(line, user+" ") {
+			t.Fatalf("a cage/wayvnc process runs as another account: %q", line)
+		}
+	}
+	t.Logf("E2E RESULT identity %s: %s | %s | %s", user, strings.ReplaceAll(got, "\n", " "), strings.ReplaceAll(env, "\n", " "),
+		strings.Join(strings.Fields(procs), " "))
+}
+
+// e2eKeyboardAndPointer types through the screen relay the way the Computer tab does: client bytes pass the daemon's
+// RFB filter (with the user in control), which must keep the cursor pseudo-encodings, and reach wayvnc, which maps
+// keysyms with the guest's "be" layout. eacute (0xe9) is a plain key on a Belgian keyboard and absent from a US one,
+// so the field showing "é" proves the layout reached wayvnc.
+func e2eKeyboardAndPointer(t *testing.T, ctx context.Context, g *Guest, run func(*Guest, string) wire.ExecResult) {
+	t.Helper()
+	page := `<!doctype html><title>Keys</title><input id="k" autofocus oninput="document.getElementById('o').textContent='typed:'+this.value"><p id="o">typed:</p>`
+	if _, err := g.WriteFile(ctx, "keys/index.html", []byte(page)); err != nil {
+		t.Fatal(err)
+	}
+	run(g, "setsid -f python3 -m http.server 8766 --bind 127.0.0.1 --directory ~/keys >/dev/null 2>&1; for i in $(seq 50); do curl -s -o /dev/null http://127.0.0.1:8766/ && break; sleep 0.1; done")
+	defer run(g, "pkill -f 'http.server 8766' || true")
+	if res, err := g.Browser(ctx, wire.BrowserRequest{Action: wire.BrowserOpen, URL: "http://127.0.0.1:8766/index.html"}); err != nil || res.Title != "Keys" {
+		t.Fatalf("open key page: %+v %v", res, err)
+	}
+	if _, err := g.Browser(ctx, wire.BrowserRequest{Action: wire.BrowserClick, Target: "#k"}); err != nil {
+		t.Fatalf("focus the field: %v", err)
+	}
+
+	scr, err := g.OpenScreen(ctx)
+	if err != nil {
+		t.Fatalf("OpenScreen: %v", err)
+	}
+	defer scr.Close()
+	f := newRFBFilter(func() bool { return true })
+	send := func(what string, b []byte) {
+		t.Helper()
+		out, err := f.Feed(b)
+		if err != nil {
+			t.Fatalf("filter %s: %v", what, err)
+		}
+		if _, err := scr.Write(out); err != nil {
+			t.Fatalf("write %s: %v", what, err)
+		}
+	}
+	read := func(n int, what string) []byte {
+		t.Helper()
+		b := make([]byte, n)
+		if _, err := io.ReadFull(scr, b); err != nil {
+			t.Fatalf("screen %s: %v", what, err)
+		}
+		return b
+	}
+	read(12, "banner")
+	send("version", []byte("RFB 003.008\n"))
+	read(int(read(1, "security type count")[0]), "security types")
+	send("security None", []byte{1})
+	if r := binary.BigEndian.Uint32(read(4, "security result")); r != 0 {
+		t.Fatalf("security result %d", r)
+	}
+	send("client init", []byte{1})
+	init := read(24, "server init")
+	w, h := binary.BigEndian.Uint16(init[0:2]), binary.BigEndian.Uint16(init[2:4])
+	name := read(int(binary.BigEndian.Uint32(init[20:24])), "desktop name")
+	t.Logf("E2E RESULT keyboard screen ServerInit: %dx%d, %d bpp, name %q", w, h, init[4], name)
+
+	// noVNC's encodings: raw, copyrect, cursor (-239), xcursor (-240), pointer position (-232), desktop size (-223).
+	encodings := []int32{0, 1, -239, -240, -232, -223}
+	enc := []byte{2, 0, 0, byte(len(encodings))}
+	for _, e := range encodings {
+		enc = binary.BigEndian.AppendUint32(enc, uint32(e))
+	}
+	out, err := f.Feed(enc)
+	if err != nil || !bytes.Equal(out, enc) {
+		t.Fatalf("the filter changed noVNC's encodings: %x -> %x (%v)", enc, out, err)
+	}
+	if _, err := scr.Write(out); err != nil {
+		t.Fatal(err)
+	}
+	// Raw 32 bpp keeps the first update readable here.
+	send("pixel format", []byte{0, 0, 0, 0, 32, 24, 0, 1, 0, 255, 0, 255, 0, 255, 16, 8, 0, 0, 0, 0})
+	req := []byte{3, 0, 0, 0, 0, 0, 0, 0, 0, 0}
+	binary.BigEndian.PutUint16(req[6:8], w)
+	binary.BigEndian.PutUint16(req[8:10], h)
+	send("update request", req)
+	hdr := read(4, "first update")
+	if hdr[0] != 0 {
+		t.Fatalf("first server message type %d, want FramebufferUpdate", hdr[0])
+	}
+	rects := int(binary.BigEndian.Uint16(hdr[2:4]))
+	var kinds []string
+	for i := 0; i < rects; i++ {
+		r := read(12, "rectangle")
+		rw, rh := int(binary.BigEndian.Uint16(r[4:6])), int(binary.BigEndian.Uint16(r[6:8]))
+		e := int32(binary.BigEndian.Uint32(r[8:12]))
+		kinds = append(kinds, fmt.Sprintf("%dx%d enc %d", rw, rh, e))
+		stop := false
+		switch e {
+		case 0:
+			read(rw*rh*4, "raw pixels")
+		case 1:
+			read(4, "copyrect")
+		case -239: // cursor: pixels, then a bitmask
+			read(rw*rh*4+(rw+7)/8*rh, "cursor shape")
+		case -232, -223:
+		default:
+			stop = true
+		}
+		if stop {
+			kinds = append(kinds, "(stopped reading)")
+			break
+		}
+	}
+	t.Logf("E2E RESULT first framebuffer update: %d rectangles (%s); cursor encodings passed the filter unchanged", rects, strings.Join(kinds, ", "))
+
+	// A pointer move (drawn into the picture by --render-cursor), then é and a. wayvnc creates its virtual keyboard
+	// when the viewer connects; a person types well after that, so the keys wait a moment. A second try re-focuses the
+	// field first and is reported.
+	send("pointer", []byte{5, 0, 0, 100, 0, 100})
+	time.Sleep(time.Second)
+	var text string
+	tries := 0
+	for tries < 2 && !strings.Contains(text, "typed:éa") {
+		tries++
+		if tries > 1 {
+			if _, err := g.Browser(ctx, wire.BrowserRequest{Action: wire.BrowserClick, Target: "#k"}); err != nil {
+				t.Fatalf("focus the field again: %v", err)
+			}
+			run(g, "true") // a guest round trip before typing again
+		}
+		for _, sym := range []uint32{0xe9, 'a'} {
+			k := []byte{4, 1, 0, 0, 0, 0, 0, 0}
+			binary.BigEndian.PutUint32(k[4:], sym)
+			send("key down", k)
+			k[1] = 0
+			send("key up", k)
+		}
+		for start := time.Now(); time.Since(start) < 5*time.Second; time.Sleep(300 * time.Millisecond) {
+			res, err := g.Browser(ctx, wire.BrowserRequest{Action: wire.BrowserRead})
+			if err != nil {
+				t.Fatalf("read: %v", err)
+			}
+			text = res.Text
+			if strings.Contains(text, "éa") {
+				break
+			}
+		}
+		t.Logf("E2E RESULT keys try %d: the page says %q", tries, strings.TrimSpace(text))
+	}
+	if !strings.Contains(text, "typed:éa") {
+		t.Fatalf("after typing eacute and a through the screen, the page says %q, want typed:éa", text)
+	}
+	t.Logf("E2E RESULT keys through the screen relay with the be layout: eacute + a -> %q", strings.TrimSpace(text))
 }
