@@ -22,7 +22,7 @@ already attributed local primitives. The custom `components/tip.tsx` layer was r
 ### Bot computer: QEMU and the guest image (downloaded at runtime, not in the repository)
 
 Nothing here is committed to the repository. The daemon downloads both from this repository's GitHub releases and
-pins every file by size and SHA-256 in `internal/sandbox/pins.go`. The releases are drafts until the owner publishes them.
+pins every file by size and SHA-256 in `internal/sandbox/pins.go`. The releases `qemu-v20260811` and `guest-v0.1.3` are published (prereleases).
 
 | Upstream | Orole artifact | Modification |
 |---|---|---|
@@ -30,13 +30,26 @@ pins every file by size and SHA-256 in `internal/sandbox/pins.go`. The releases 
 | NixOS / nixpkgs revision `55bfb4d7437bd4e09ab7cba58a43bd68eb310044` (`guest/flake.lock`; nixpkgs is MIT, packages keep their own licences: Linux GPL-2.0, Chromium BSD-3-Clause and others, cage MIT, wayvnc ISC) | release assets `guest-v0.1.1/{vmlinuz,initrd,cmdline,base.qcow2,SHA256SUMS}` built from `guest/` | configuration only (`guest/configuration.nix`, `guest/orole-guest.nix`); no package sources modified. `orole-guest` is Orole's own code |
 
 **GPL source availability.** QEMU (GPL-2.0) and the guest image (Linux and other GPL packages) are distributed as
-binaries. QEMU: `SOURCE.txt` inside the zip names the exact installer build and points to
-https://gitlab.com/qemu-project/qemu and https://qemu.weilnetz.de/, and the licence files are in the zip. Guest
-image: the corresponding source is every package source of nixpkgs revision `55bfb4d7437bd4e09ab7cba58a43bd68eb310044`
-(https://github.com/NixOS/nixpkgs/tree/55bfb4d7437bd4e09ab7cba58a43bd68eb310044), which together with `guest/` and
-`docs/development/guest-image.md` rebuilds the image. Before the owner publishes the draft releases, the release notes
-should repeat this revision and the SOURCE.txt pointer, and the licence texts of the image's packages
-(`nix path-info` / the closure's `share/doc` licence files) should be checked for a notice that must ship with it.
+binaries, and their corresponding source is attached to the same releases, each with a `SOURCES.md` manifest
+(component, version, licence, asset, upstream URL, SHA-256):
+
+- `qemu-v20260811`: `qemu-src-e470268ff4.tar.xz` is the tree the binaries report (`v11.1.0-12130-ge470268ff4`, commit
+  `e470268ff446ec56728215a987ed166d5ed8fb64` of the installer maintainer's https://repo.or.cz/qemu/ar7.git, not on
+  gitlab.com/qemu-project/qemu) with its `roms/` firmware submodules and meson subprojects. Every bundled DLL was
+  matched byte for byte against MSYS2 `mingw64` binary packages, and the MSYS2 source package of each copyleft one
+  (GPL, LGPL, AGPL, MPL, dual licences included) is attached; `qemu-third-party-licenses.zip` holds the licence texts.
+  Two DLLs could not be matched exactly: `libssp-0.dll` (MSYS2 gcc 13.1.0-3, no longer on repo.msys2.org; GCC 13.1.0
+  tarball plus the MSYS2 recipe at that revision attached) and `brlapi-0.8.dll` (built by the installer maintainer,
+  not an MSYS2 package; BRLTTY 6.4, the closest determinable release, attached). Built by
+  `.github/workflows/qemu-sources.yml` (tag `sources-qemu-v20260811`).
+- `guest-v0.1.3`: the sources of every copyleft (or licence-unknown) package in the image's runtime closure, by
+  nixpkgs `meta.license` at revision `55bfb4d7437bd4e09ab7cba58a43bd68eb310044`, in `guest-v0.1.3-sources-partNN.tar.zst`
+  parts, plus that nixpkgs tree and this repository at the tag (flake files and the `orole-guest` source). Permissive
+  packages (Chromium and others) are listed with their upstream URL only. Built by
+  `.github/workflows/guest-sources.yml` (tag `sources-guest-v0.1.3`), which checks that the evaluated system is the
+  one in the release's `cmdline`.
+
+A new `qemu-v*` or `guest-v*` release needs the matching `sources-*` tag pushed once it is published.
 
 ### DiceBear bot avatars
 

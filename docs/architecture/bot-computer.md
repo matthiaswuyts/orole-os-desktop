@@ -9,9 +9,8 @@ Windows, with the runtime download, the setup helper and the NixOS guest image, 
 (see "Guest image checks"). A bot with "Has its own computer" switched on gets terminal, file and browser tools and can
 ask the user to take over (see "Bot tools"), and the Computer tab shows the screen, a terminal and the Take over and
 Done buttons (see "What the user sees" and "Computer tab streams"). **Release gate:** the pinned release assets are
-drafts until the owner publishes them, so a user's build cannot download them yet (the pinned URLs answer 404); publish
-the drafts `qemu-v20260811` and `guest-v0.1.3` before shipping, and decide how the GPL source offer is made (see
-"Licences"). The manual checklist is `docs/development/bot-computer-e2e.md`.
+published (`qemu-v20260811`, `guest-v0.1.3`, both prereleases) and carry their corresponding source (see "Licences").
+The manual checklist is `docs/development/bot-computer-e2e.md`.
 
 **A bot's computer lives in the daemon: it survives GUI restarts, not a daemon exit or reboot. Its disk persists;
 running commands do not.**
@@ -473,11 +472,14 @@ answers `not_found` ("it starts when the bot uses it"; `Manager.RunningGuest` ne
   (`docs/development/guest-image.md`).
 - **IPC.** `sandbox.availability`, `sandbox.status`, `sandbox.setup.enable`, `sandbox.runtime.install` and the
   events listed under "Daemon wiring". Archiving a bot stops its VM and deletes its overlay and row.
-- **Licences.** QEMU is GPL-2.0 and the guest image contains GPL software (the Linux kernel among it). The QEMU
-  zip carries `SOURCE.txt` and the licence files of the installer; the corresponding source of the image is
-  reproducible from the pinned nixpkgs revision. Both are recorded in `docs/research/upstream-attribution.md`.
-  Before shipping, publish the draft releases `qemu-v20260811` and `guest-v0.1.3` and decide how the GPL source offer
-  is made (for example a written offer or hosting the source next to the assets).
+- **Licences.** QEMU is GPL-2.0 and the guest image contains GPL software (the Linux kernel among it). The source
+  is hosted next to the binaries: `qemu-v20260811` carries the QEMU tree of the binaries' commit, the MSYS2 source
+  package of every copyleft DLL and the licence texts; `guest-v0.1.3` carries the sources of every copyleft package in
+  the image's runtime closure (nixpkgs `55bfb4d7437bd4e09ab7cba58a43bd68eb310044`), the nixpkgs tree and the flake
+  and `orole-guest` source. Each release has a `SOURCES.md` manifest; `.github/workflows/qemu-sources.yml` and
+  `guest-sources.yml` build them from a `sources-<release tag>` tag. Details, including the two QEMU DLLs that could
+  not be matched byte for byte, are in `docs/research/upstream-attribution.md`. **Release gate:** a new `qemu-v*` or
+  `guest-v*` release ships only after its `sources-*` tag has attached the source.
 
 ## Phase 2 spike (WHPX on build 22000)
 
