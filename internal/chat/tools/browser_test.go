@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/netip"
 	"slices"
 	"strings"
 	"testing"
@@ -245,6 +246,9 @@ func TestBrowserOpenRefusesLocalAddresses(t *testing.T) {
 		"http://%31%32%37.0.0.1/", "http://%6c%6f%63%61%6c%68%6f%73%74/",
 		// IPv6 forms that carry a private IPv4 address: NAT64, local-use NAT64, 6to4, IPv4-compatible.
 		"http://[64:ff9b::a00:202]/", "http://[64:ff9b::7f00:1]/", "http://[64:ff9b:1::c0a8:101]/", "http://[2002:a00:202::1]/", "http://[2002:c0a8:101::]/", "http://[::a00:202]/", "http://[::127.0.0.1]/",
+		// Zoned IPv6 literals and repeated trailing dots.
+		"http://[64:ff9b::a00:202%25eth0]/", "http://[2002:a00:202::1%25x]/", "http://[fe80::1%25eth0]/", "http://[::ffff:10.0.2.2%251]/",
+		"http://localhost../", "http://LOCALHOST.../", "http://app.localhost../", "http://127.0.0.1../", "http://10.0.2.2.../",
 	} {
 		rt, pol := &fakeComputer{}, &computerPolicy{}
 		args, _ := json.Marshal(map[string]string{"url": u})
@@ -356,5 +360,26 @@ func TestBrowserErrorsAndCancel(t *testing.T) {
 		if c.Status == chat.ComputerFailed {
 			t.Fatalf("failed card after cancel: %+v", cards)
 		}
+	}
+}
+
+func TestPublicIPIgnoresZones(t *testing.T) {
+	for _, c := range []struct {
+		ip     string
+		public bool
+	}{
+		{"64:ff9b::a00:202%eth0", false}, {"2002:c0a8:101::1%2", false}, {"fe80::1%eth0", false}, {"::1%lo", false},
+		{"2606:4700::1111%eth0", true}, {"64:ff9b::808:808%eth0", true},
+	} {
+		if got := publicIP(netip.MustParseAddr(c.ip)); got != c.public {
+			t.Errorf("publicIP(%s) = %v", c.ip, got)
+		}
+	}
+	// The policy resource names the host without its zone.
+	if h, err := openHost("http://[2606:4700::1111%25eth0]/"); err != nil || h != "2606:4700::1111" {
+		t.Fatalf("host %q %v", h, err)
+	}
+	if h, err := openHost("https://example.com../"); err != nil || h != "example.com" {
+		t.Fatalf("host %q %v", h, err)
 	}
 }

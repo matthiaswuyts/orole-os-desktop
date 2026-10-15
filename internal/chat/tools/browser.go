@@ -186,6 +186,7 @@ func openHost(raw string) (string, error) {
 		if err != nil {
 			return "", fmt.Errorf("url's host %q is not a valid IPv6 address", host)
 		}
+		ip = ip.WithZone("") // a zone (fe80::1%eth0) names an interface, not another host
 		if !publicIP(ip) {
 			return "", refused
 		}
@@ -194,7 +195,7 @@ func openHost(raw string) (string, error) {
 	// Map the host the way the browser does (UTS-46: case folding, fullwidth forms, ideographic full stops) before any
 	// check, so no Unicode spelling of a local address gets through.
 	ascii, err := hostProfile.ToASCII(host)
-	ascii = strings.TrimSuffix(ascii, ".")
+	ascii = strings.TrimRight(ascii, ".") // localhost.. is still localhost
 	if err != nil || ascii == "" {
 		return "", fmt.Errorf("url's host %q is not a valid host name", host)
 	}
@@ -310,7 +311,7 @@ var thisNetwork = netip.MustParsePrefix("0.0.0.0/8")
 
 // publicIP reports whether ip is not on the user's PC or network.
 func publicIP(ip netip.Addr) bool {
-	ip = ip.Unmap()
+	ip = ip.WithZone("").Unmap() // prefixes never contain a zoned address
 	if v4, ok := embeddedIPv4(ip); ok && !publicIP(v4) {
 		return false
 	}
