@@ -6,7 +6,7 @@ behaviour: `docs/architecture/jarvis.md`.
 You need: a Twilio account with a voice-capable number, an ElevenLabs account and API key (Agents, Voices and
 Text-to-Speech), a Cloudflare account with Workers, and your own mobile number. ElevenLabs' inbound and post-call
 webhooks are workspace-wide, so use a workspace without other agents you rely on. Use a dev data dir
-(`.\start.ps1`, data in `profiles\dev`) if you do not want to touch your real data.
+(`OROLE_HOME=.orole-dev`) if you do not want to touch your real data.
 
 ## 0. Live smoke test of the unverified ElevenLabs fields
 
@@ -167,11 +167,13 @@ Speak Dutch (the default call language) or English. Watch `logs/daemon.log` for 
       with me, I'm still working on it.") once, then the answer; the call is not dropped and no "dropped" notice follows.
 - [ ] **Tool lines.** The moment a tool starts the bot says what it is doing, once per tool, and no "Even geduld, ik
       ben er nog mee bezig" follows: an MCP integration "Ik gebruik nu je <integratie> koppeling. Even geduld, dan heb
-      ik de resultaten." (the app's own MCP servers are named by an id in the tool name, so for them it says "Ik
-      gebruik nu een van je koppelingen. ..."), a page "Ik open die pagina even.", research "Ik start het onderzoek, dat
-      kan even duren.", a code task "Ik start die codetaak nu.", another bot "Ik geef het door.". Memory, task status,
-      call rules and other quick local tools say nothing. The provider's own web search runs at the provider and has no
-      line: if it takes more than 4 s the long-wait line covers it.
+      ik de resultaten.", with the name you gave the MCP server in the app (a leading "Orole" dropped; a name it cannot
+      say gives "Ik gebruik nu een van je koppelingen. ..."), research "Ik start het onderzoek, dat kan even duren.", a
+      code task "Ik start die codetaak nu.", another bot "Ik geef het door.". A page says "Ik open die pagina even."
+      only when the daemon fetches it (`fetch_url`, for a model whose provider cannot fetch pages). Memory, task
+      status, call rules and other quick local tools say nothing, and so does a tool right after the bot said in its
+      own words what it is doing ("Even kijken in Canvas."). The provider's own web search and page fetch run at the
+      provider and have no line: if they take more than 4 s the long-wait line covers them.
 - [ ] **Silence.** Say nothing. The bot stays quiet (no "I didn't hear anything", no repeated requests in
       `wrangler tail`). After about 30 s it asks "Ben je er nog?"; keep quiet and after about 90 s it says it is
       hanging up and the call ends. Speaking at any point starts the count over. Only `kind=silence` requests count;
@@ -186,6 +188,10 @@ Speak Dutch (the default call language) or English. Watch `logs/daemon.log` for 
       ElevenLabs left the call open and the daemon's fallback hung up, 4 s after the goodbye's estimated end. "Wat draait er?"
       never ends the call, even if the bot says goodbye. The silence goodbye (`reason="no answer"`) ends the call the
       same way.
+- [ ] Hand work to another bot; when it has reported back but before the bot mentions it, say "nee, dat was het"
+      (the report reaches the goodbye turn as news). The call ends and the report is not lost: the call pane shows it
+      with the bot's written answer, a "<other bot> reported back" notification arrives, a once call-back rule is still
+      listed, and your phone does not ring.
 - [ ] Say "nee, wacht": the call does not end, even if the bot tries to hang up. Say "nee, bedankt" and, while the
       goodbye is still being spoken, "oh wacht, nog één ding". ElevenLabs decides whether that keeps the call open
       (its `end_call` runs once the goodbye has been said); note in the test log what happened. If the call goes on,
