@@ -97,6 +97,8 @@ daemon start sweeps away computers whose bot is archived or gone, finishing dele
 
 Events: `sandbox.status`, `sandbox.availability`, `sandbox.runtime`, `sandbox.setup`. Setup and download run with
 the daemon's lifetime, not the call's, and only for the user: a context acting for a bot or an automation is refused.
+A download has no overall time limit (the base image is ~1.5 GB) but fails when nothing arrives for 2 minutes; each
+install first removes `.staging-*` folders a killed daemon left in `runtime\` and `images\`.
 
 ### Storage
 
@@ -154,14 +156,38 @@ Linux binaries and `#!/bin/bash` scripts run; fontconfig with DejaVu and Noto fo
 
 #### Guest image checks
 
-Not run yet: no local Nix (the image is built in CI, `.github/workflows/guest-image.yml`). Boot the debug image
-(`docs/development/guest-image.md`) and record here: `systemd-analyze`; `systemctl is-active cage-tty1 wayvnc
-orole-guest`; `ls -l` of the fw_cfg token (0400 root) and `/dev/virtio-ports/org.orole.guest.0` (0600 root);
-`ss -ltnp` (5900 and 9222 on 127.0.0.1 only); wayvnc input works (cage's virtual keyboard and pointer: type and
-click through a VNC client); text renders with real glyphs in Chromium (fonts); `runuser -u bot -- curl -s http://127.0.0.1:9222/json/version`;
-`nft list ruleset`; `runuser -u bot -- curl -m 5 http://10.0.2.2:<port>` refused; internet as bot; `df -h /`;
-`free -m`; and the NixOS report's criteria as bot (uv + numpy/pandas, a native npm module, a downloaded Node binary
-through nix-ld, a `#!/bin/bash` script, Playwright's browser download, expected to fail).
+Run on 2026-10-15 on the developer PC (Windows 11 Pro 21H2, build 22000, Hyper-V running, 32 GB RAM, unelevated)
+with `TestRealGuestImageThroughTheManager` (`internal/sandbox/e2e_windows_test.go`): the pinned `guest-v0.1.0` and
+`qemu-v20260811` assets (draft releases at the time, read with `gh`) installed through the real `Runtime` (size and
+SHA-256 against `DefaultPins`, unzip) from a local stand-in for the release server, then booted through the real
+`Manager` and host backend (`-accel whpx,kernel-irqchip=off`, 2048 MB, 2 vCPU). Every command below ran as `bot`
+through `orole-guest`. Two full runs, same results; times from the second.
+
+| Check | Result |
+|---|---|
+| Boot to guest ready (`Manager.Ensure`, fresh overlay) | 8.3 s (first run 8.6 s); `systemd-analyze`: 0.99 s kernel + 3.05 s initrd + 3.42 s userspace = 7.46 s |
+| Boot to ready again: clean restart / after a hard kill / a second bot | 8.2 s / 8.3 s / 9.5 s |
+| Clean shutdown (agent power-off, then QMP) | 2.4 s |
+| QEMU process RAM (host) | one bot: working set 502 MB, private 2139 MB; with two bots running: 1280 MB and 523 MB working set, 2337 MB and 2137 MB private (the guest touches its RAM lazily; private bytes are the 2 GB reservation) |
+| Guest memory (`free -m`) | 485 MB used of 1969 MB, idle with Chromium open |
+| `id -un` | `bot` |
+| Services (`systemctl is-active cage-tty1 wayvnc orole-guest`) | active, active, active |
+| Chromium CDP (`curl -s 127.0.0.1:9222/json/version`) | up 4.2 s after guest ready, `Chrome/155.0.8059.79` |
+| wayvnc (`ss -ltn`) | listening on `127.0.0.1:5900` only, 40 ms after guest ready |
+| Fonts (`fc-list`) | 921 faces (DejaVu, Noto) |
+| fw_cfg token / channel device | `400 root` / `600 root`; `cat` of the token as bot fails |
+| Host loopback (`curl http://10.0.2.2:<port>` to a Go listener on the host's 127.0.0.1) | refused at once (`curl: (7)`, the nftables reject); the listener accepted nothing |
+| Internet (`curl -sI https://example.com`) | HTTP 200 |
+| Tools as bot | Python 3.14.7, Node v24.21.0, uv 0.13.0, git 2.55.0, `bash -c` works |
+| Disk (`df -h /`) | `/dev/vda` 9.8 G, 4.1 G used (ext4 grown to the 10 GB overlay on first boot) |
+| File write through `/files/write` | owner `bot`; read back after a clean restart |
+| Hard kill (`TerminateProcess`, what the job object does), then boot on the same overlay | boots; a file written and `sync`ed before the kill is there; the manager reports the kill as a crash |
+| Two bots at once on one base image | both run; separate homes; `base.qcow2` size and mtime unchanged |
+| Guest tokens in the console logs (`sandbox-<bot>.log`) | none (3.2 KB and 0.8 KB of log) |
+| Test binary killed with `taskkill /F` mid-run (a crashed daemon) | its QEMU was gone 3 s later (job object, kill on close) |
+
+Not checked here yet: input through wayvnc and glyphs on screen (phase 3, the screen relay), the NixOS report's
+package criteria (numpy/pandas through uv, a native npm module, a downloaded Node binary through nix-ld).
 
 ### Testing
 
@@ -171,7 +197,15 @@ Linux CI lane also runs the real `/bin/sh` exec tests and the real PTY test, and
 switch to another user (`TestRunAsSwitchesUser`, `TestFilesRunAsBot`) need root and skip otherwise.
 On Windows the QEMU backend is tested against a fake QEMU (it connects the sockets and answers QMP like the real
 one); `TestRealBootConnectsTheGuestAgent` boots real QEMU with the spike's Alpine kernel and `orole-guest` and talks h2c
-to it when `OROLE_SPIKE_QEMU` and `OROLE_SPIKE_ALPINE` are set.
+to it when `OROLE_SPIKE_QEMU` and `OROLE_SPIKE_ALPINE` are set. `TestRealGuestImageThroughTheManager` boots the pinned
+release image end to end (`$env:OROLE_SANDBOX_E2E = "1"`; it fetches the pinned assets with `gh` into
+`%TEMP%\orole-realboot` once, or `OROLE_SANDBOX_E2E_ASSETS`), with the checks in "Guest image checks".
+
+`DefaultPins` (`internal/sandbox/pins.go`) is generated: `./scripts/sandbox-pins.ps1 -QemuTag qemu-v<date> -GuestTag
+guest-v<version>` reads both releases (drafts too) with `gh`, takes each hash from the release's `SHA256SUMS`, checks it
+against GitHub's own asset digest, and writes the file. The pinned URLs
+(`https://github.com/rayorole/orole-os-desktop/releases/download/<tag>/<name>`) work for users only once both releases
+are published.
 
 ## Phase 2 spike (WHPX on build 22000)
 
