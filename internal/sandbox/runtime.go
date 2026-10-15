@@ -70,12 +70,19 @@ type RuntimeState struct {
 
 // RuntimeConfig wires a Runtime. Zero values use production defaults.
 type RuntimeConfig struct {
-	Paths    Paths
-	Pins     Pins
-	BaseURL  string       // default: GitHub releases of rayorole/orole-os-desktop
-	HTTP     *http.Client // default: 60 minute timeout
-	OnChange func(RuntimeState)
+	Paths   Paths
+	Pins    Pins
+	BaseURL string       // default: GitHub releases of rayorole/orole-os-desktop
+	HTTP    *http.Client // default: no whole-request timeout (the image is ~1.5 GB); IdleTimeout bounds stalls
+	// IdleTimeout fails a download that receives no bytes (headers included) for this long. Default 2 minutes.
+	IdleTimeout time.Duration
+	OnChange    func(RuntimeState)
 }
+
+const defaultDownloadIdle = 2 * time.Minute
+
+// errStalled is the cause a download's context is cancelled with when no bytes arrive for IdleTimeout.
+var errStalled = errors.New("the download stalled")
 
 // QEMUFiles are the installed QEMU executables and firmware folder.
 type QEMUFiles struct{ System, Img, Share string }
@@ -97,7 +104,10 @@ func NewRuntime(cfg RuntimeConfig) *Runtime {
 	}
 	cfg.BaseURL = strings.TrimRight(cfg.BaseURL, "/")
 	if cfg.HTTP == nil {
-		cfg.HTTP = &http.Client{Timeout: 60 * time.Minute}
+		cfg.HTTP = &http.Client{} // no overall timeout: a slow link may need hours for the image
+	}
+	if cfg.IdleTimeout <= 0 {
+		cfg.IdleTimeout = defaultDownloadIdle
 	}
 	return &Runtime{cfg: cfg}
 }
@@ -193,6 +203,7 @@ func (r *Runtime) Install(ctx context.Context) error {
 	}
 	r.installMu.Lock()
 	defer r.installMu.Unlock()
+	r.sweepStaging()
 	if err := r.installQEMU(ctx); err != nil {
 		return fmt.Errorf("could not install QEMU: %w", err)
 	}
@@ -264,6 +275,22 @@ func (r *Runtime) installImage(ctx context.Context) error {
 	return finishStage(files, dest)
 }
 
+// sweepStaging removes the staging folders an earlier install left when the daemon died mid-download. Only
+// one install runs at a time (installMu), so none of them is in use.
+func (r *Runtime) sweepStaging() {
+	for _, parent := range []string{filepath.Dir(r.cfg.Paths.Runtime("x")), filepath.Dir(r.cfg.Paths.Image("x"))} {
+		entries, err := os.ReadDir(parent)
+		if err != nil {
+			continue
+		}
+		for _, e := range entries {
+			if e.IsDir() && strings.HasPrefix(e.Name(), ".staging-") {
+				_ = os.RemoveAll(filepath.Join(parent, e.Name()))
+			}
+		}
+	}
+}
+
 func makeStage(parent string) (string, error) {
 	if err := os.MkdirAll(parent, 0o700); err != nil {
 		return "", err
@@ -283,8 +310,18 @@ func finishStage(src, dest string) error {
 	return os.Rename(src, dest)
 }
 
-// fetch streams one release asset into dst, checking its size and SHA-256 against the pin.
-func (r *Runtime) fetch(ctx context.Context, step, tag string, a Asset, dst string) error {
+// fetch streams one release asset into dst, checking its size and SHA-256 against the pin. It fails when no
+// bytes arrive for IdleTimeout, however long the whole transfer takes.
+func (r *Runtime) fetch(ctx context.Context, step, tag string, a Asset, dst string) (err error) {
+	ctx, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil)
+	idle := time.AfterFunc(r.cfg.IdleTimeout, func() { cancel(errStalled) })
+	defer idle.Stop()
+	defer func() {
+		if err != nil && errors.Is(context.Cause(ctx), errStalled) {
+			err = fmt.Errorf("%s: %w (nothing received for %s)", a.Name, errStalled, r.cfg.IdleTimeout)
+		}
+	}()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, r.cfg.BaseURL+"/"+tag+"/"+a.Name, nil)
 	if err != nil {
 		return err
@@ -294,6 +331,7 @@ func (r *Runtime) fetch(ctx context.Context, step, tag string, a Asset, dst stri
 	if err != nil {
 		return err
 	}
+	body := &idleReader{r: resp.Body, timer: idle, idle: r.cfg.IdleTimeout}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("%s: %s answered %s", a.Name, req.URL.Host, resp.Status)
@@ -304,7 +342,7 @@ func (r *Runtime) fetch(ctx context.Context, step, tag string, a Asset, dst stri
 	}
 	h := sha256.New()
 	r.progress(step, 0, a.Size, true)
-	n, copyErr := io.Copy(io.MultiWriter(f, h, &progressWriter{r: r, step: step, total: a.Size}), io.LimitReader(resp.Body, a.Size+1))
+	n, copyErr := io.Copy(io.MultiWriter(f, h, &progressWriter{r: r, step: step, total: a.Size}), io.LimitReader(body, a.Size+1))
 	if err := f.Close(); copyErr == nil {
 		copyErr = err
 	}
@@ -320,6 +358,21 @@ func (r *Runtime) fetch(ctx context.Context, step, tag string, a Asset, dst stri
 	}
 	r.progress(step, a.Size, a.Size, true)
 	return nil
+}
+
+// idleReader restarts the stall timer whenever bytes arrive.
+type idleReader struct {
+	r     io.Reader
+	timer *time.Timer
+	idle  time.Duration
+}
+
+func (i *idleReader) Read(p []byte) (int, error) {
+	n, err := i.r.Read(p)
+	if n > 0 {
+		i.timer.Reset(i.idle)
+	}
+	return n, err
 }
 
 type progressWriter struct {

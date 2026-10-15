@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -243,5 +244,119 @@ func TestInstallKeepsAnOlderImageVersionOnDisk(t *testing.T) {
 	}
 	if !pathExists(old) {
 		t.Fatal("installing a new image version removed an older one that overlays may still use")
+	}
+}
+
+func TestInstallSweepsOrphanStagingFolders(t *testing.T) {
+	f := newFixture(t)
+	rt, paths := f.runtime(t)
+	// A daemon killed mid-download leaves its staging folders behind.
+	for _, parent := range []string{filepath.Join(paths.Root, "runtime"), filepath.Join(paths.Root, "images")} {
+		if err := os.MkdirAll(filepath.Join(parent, ".staging-123", "files"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(parent, ".staging-123", "files", "base.qcow2"), []byte("partial"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	keep := filepath.Join(paths.Image("0.0.9"), completeMark) // another installed version is not staging
+	if err := os.MkdirAll(filepath.Dir(keep), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(keep, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := rt.Install(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	noStaging(t, filepath.Join(paths.Root, "runtime"))
+	noStaging(t, filepath.Join(paths.Root, "images"))
+	if !pathExists(keep) {
+		t.Fatal("the sweep removed an installed image version")
+	}
+}
+
+func TestInstallSweepsStagingEvenWhenAlreadyInstalled(t *testing.T) {
+	f := newFixture(t)
+	rt, paths := f.runtime(t)
+	if err := rt.Install(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	orphan := filepath.Join(paths.Root, "images", ".staging-9")
+	if err := os.MkdirAll(orphan, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := rt.Install(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if pathExists(orphan) {
+		t.Fatal("orphan staging folder kept")
+	}
+}
+
+// A download that stops sending fails after the idle timeout, however long the whole transfer may take.
+func TestInstallFailsAStalledDownload(t *testing.T) {
+	f := newFixture(t)
+	release := make(chan struct{})
+	t.Cleanup(func() { close(release) })
+	stall := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", "1000")
+		w.Write([]byte("some bytes"))
+		w.(http.Flusher).Flush()
+		select {
+		case <-release:
+		case <-r.Context().Done():
+		}
+	}))
+	t.Cleanup(stall.Close)
+	paths := Paths{Root: t.TempDir()}
+	rt := NewRuntime(RuntimeConfig{Paths: paths, Pins: f.pins, BaseURL: stall.URL, IdleTimeout: 200 * time.Millisecond})
+	start := time.Now()
+	err := rt.Install(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "stalled") {
+		t.Fatalf("err = %v, want a stalled download", err)
+	}
+	if d := time.Since(start); d > 5*time.Second {
+		t.Fatalf("took %s to notice the stall", d)
+	}
+	noStaging(t, filepath.Join(paths.Root, "runtime"))
+}
+
+// A slow but steady download outlives the idle timeout many times over.
+func TestInstallKeepsASlowSteadyDownload(t *testing.T) {
+	f := newFixture(t)
+	slow := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, ok := f.served[r.URL.Path]
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Length", strconv.Itoa(len(b)))
+		for len(b) > 0 {
+			n := min(len(b), 64)
+			w.Write(b[:n])
+			w.(http.Flusher).Flush()
+			b = b[n:]
+			time.Sleep(40 * time.Millisecond)
+		}
+	}))
+	t.Cleanup(slow.Close)
+	rt := NewRuntime(RuntimeConfig{Paths: Paths{Root: t.TempDir()}, Pins: f.pins, BaseURL: slow.URL, IdleTimeout: 150 * time.Millisecond})
+	start := time.Now()
+	if err := rt.Install(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if d := time.Since(start); d < 300*time.Millisecond {
+		t.Fatalf("the download took only %s: the test does not exercise a long transfer", d)
+	}
+}
+
+func TestDefaultHTTPClientHasNoWholeRequestTimeout(t *testing.T) {
+	rt := NewRuntime(RuntimeConfig{})
+	if rt.cfg.HTTP.Timeout != 0 {
+		t.Fatalf("whole-request timeout %s would cut a slow 1.5 GB download", rt.cfg.HTTP.Timeout)
+	}
+	if rt.cfg.IdleTimeout <= 0 {
+		t.Fatal("no idle timeout: a stalled download would hang forever")
 	}
 }
