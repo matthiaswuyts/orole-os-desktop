@@ -20,7 +20,7 @@ const (
 	// A bot with its own computer works in longer loops (shell, browser), so its defaults are higher.
 	computerMaxSteps     = 30
 	computerMaxToolCalls = 60
-	doomLoopRepeats      = 3 // the third identical tool call is not executed
+	doomLoopRepeats      = 3 // the third identical tool call is not executed (except repeatableTool observation tools)
 	maxToolResultBytes   = 100 << 10
 	toolSummaryBytes     = 160
 )
@@ -379,9 +379,10 @@ func (m *Manager) loop(ctx context.Context, env *turnEnv) (string, string) {
 		}
 		results := llm.Message{Role: llm.RoleTool}
 		asked := false
+		var images []llm.Part
 		for _, c := range res.calls {
 			key := callKey(c)
-			if seen[key]++; seen[key] >= doomLoopRepeats {
+			if seen[key]++; seen[key] >= doomLoopRepeats && !repeatableTool(c.Name) {
 				env.sink.addPart(MsgPart{Type: PartNotice, Text: fmt.Sprintf("Stopped: the model kept repeating the same %s call without making progress.", c.Name)})
 				return StatusComplete, ""
 			}
@@ -397,7 +398,8 @@ func (m *Manager) loop(ctx context.Context, env *turnEnv) (string, string) {
 				continue
 			}
 			used++
-			part, q := m.runTool(ctx, env, step, c)
+			part, q, imgs := m.runTool(ctx, env, step, c)
+			images = append(images, imgs...)
 			results.Parts = append(results.Parts, part)
 			asked = q
 			if ctx.Err() != nil {
@@ -411,6 +413,13 @@ func (m *Manager) loop(ctx context.Context, env *turnEnv) (string, string) {
 			return StatusComplete, "" // the answer arrives as the next message
 		}
 		msgs = append(msgs, asst, results)
+		if len(images) > MaxToolImages {
+			images = images[:MaxToolImages]
+		}
+		if len(images) > 0 {
+			// Transient: msgs lives for this turn only; the images are never stored or logged.
+			msgs = append(msgs, llm.Message{Role: llm.RoleUser, Parts: append([]llm.Part{{Kind: llm.PartText, Text: toolImagesNote}}, images...)})
+		}
 	}
 }
 
@@ -541,7 +550,8 @@ func drain(ch <-chan llm.Delta) {
 
 // runTool executes one client tool call and records its row and parts on the message.
 // A tool that shows the user a question reports it as asked: the turn must then end and wait for the answer.
-func (m *Manager) runTool(ctx context.Context, env *turnEnv, step int, c llm.ToolCall) (llm.Part, bool) {
+// It also returns the tool's usable images (ToolResult.Images), only when the model of this turn has vision.
+func (m *Manager) runTool(ctx context.Context, env *turnEnv, step int, c llm.ToolCall) (llm.Part, bool, []llm.Part) {
 	if env.onTool != nil {
 		label := ""
 		if l, ok := env.tools.route[c.Name].(ToolLabeler); ok {
@@ -598,7 +608,15 @@ func (m *Manager) runTool(ctx context.Context, env *turnEnv, step int, c llm.Too
 		env.sink.addPart(p)
 		asked = asked || p.Type == PartQuestion
 	}
-	return part, asked
+	var images []llm.Part
+	if err == nil && env.rc.Caps.Vision {
+		for _, img := range res.Images {
+			if img.Kind == llm.PartImage && len(img.Data) > 0 && len(img.Data) <= MaxToolImageBytes {
+				images = append(images, img)
+			}
+		}
+	}
+	return part, asked, images
 }
 
 // callTool runs a tool and converts a panic into an error: one broken tool must not take the daemon down.

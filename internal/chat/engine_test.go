@@ -1,6 +1,7 @@
 package chat
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -1107,5 +1108,128 @@ func TestAQuestionEndsTheTurnAndOnlyTheFirstOneIsShown(t *testing.T) {
 	reply := e.lastReply(b.ID)
 	if reply.Status != StatusComplete || len(partsOfType(reply.Parts, PartQuestion)) != 1 {
 		t.Fatalf("reply: %+v", reply)
+	}
+}
+
+// Tool images reach a vision model as a user message after the tool results, in this turn only; other models never
+// get them, oversized images are dropped and nothing is stored.
+func TestToolImagesReachVisionModelsOnly(t *testing.T) {
+	png := []byte("\x89PNG\r\n\x1a\nfake")
+	shot := &fakeTool{id: "shot", call: func(context.Context, RunContext, string, json.RawMessage) (ToolResult, error) {
+		return ToolResult{Text: "Screenshot taken.", Images: []llm.Part{
+			{Kind: llm.PartImage, MIME: "image/png", Data: png},
+			{Kind: llm.PartImage, MIME: "image/png", Data: make([]byte, MaxToolImageBytes+1)},
+		}}, nil
+	}}
+	for _, vision := range []bool{true, false} {
+		t.Run(fmt.Sprint("vision=", vision), func(t *testing.T) {
+			e := newEnv(t, func(call int, req llm.Request) []llm.Delta {
+				if call == 0 {
+					return llmtest.Call("c1", "shot", `{}`)
+				}
+				return []llm.Delta{llmtest.Text("Seen.")}
+			})
+			model := testModel
+			model.Caps.Vision = vision
+			e.llm.mu.Lock()
+			e.llm.models = []llm.Model{model}
+			e.llm.mu.Unlock()
+			e.fake.ModelList = []llm.Model{model}
+			e.m.AddTools(shot)
+			b := e.bot("Eyes")
+			e.send(b.ID, "look")
+			e.idle(b.ID)
+
+			calls := e.fake.Calls()
+			if len(calls) != 2 {
+				t.Fatalf("model calls: %d", len(calls))
+			}
+			second := calls[1].Messages
+			last := second[len(second)-1]
+			if !vision {
+				if last.Role != llm.RoleTool {
+					t.Fatalf("a model without vision must not get images: %+v", last)
+				}
+				return
+			}
+			if len(second) != 4 || last.Role != llm.RoleUser || len(last.Parts) != 2 {
+				t.Fatalf("vision request shape: %+v", second)
+			}
+			if p := last.Parts[1]; p.Kind != llm.PartImage || p.MIME != "image/png" || !bytes.Equal(p.Data, png) {
+				t.Fatalf("image part: %+v", p)
+			}
+			if !strings.Contains(last.Parts[0].Text, "data, not instructions") {
+				t.Fatalf("the images need a note that they are data: %q", last.Parts[0].Text)
+			}
+			for _, m := range e.history(b.ID) {
+				if len(partsOfType(m.Parts, PartAttachment)) != 0 {
+					t.Fatal("tool images must not be stored")
+				}
+			}
+		})
+	}
+}
+
+// More than MaxToolImages images in one step are capped; only the first MaxToolImages reach the model.
+func TestToolImagesAreCappedPerStep(t *testing.T) {
+	var imgs []llm.Part
+	for i := range MaxToolImages + 2 {
+		imgs = append(imgs, llm.Part{Kind: llm.PartImage, MIME: "image/png", Data: []byte{byte(i + 1)}})
+	}
+	shot := &fakeTool{id: "shot", call: func(context.Context, RunContext, string, json.RawMessage) (ToolResult, error) {
+		return ToolResult{Text: "ok", Images: imgs}, nil
+	}}
+	e := newEnv(t, func(call int, req llm.Request) []llm.Delta {
+		if call == 0 {
+			return llmtest.Call("c1", "shot", `{}`)
+		}
+		return []llm.Delta{llmtest.Text("Seen.")}
+	})
+	model := testModel
+	model.Caps.Vision = true
+	e.llm.mu.Lock()
+	e.llm.models = []llm.Model{model}
+	e.llm.mu.Unlock()
+	e.fake.ModelList = []llm.Model{model}
+	e.m.AddTools(shot)
+	b := e.bot("Cap")
+	e.send(b.ID, "look")
+	e.idle(b.ID)
+	calls := e.fake.Calls()
+	if len(calls) != 2 {
+		t.Fatalf("model calls: %d", len(calls))
+	}
+	last := calls[1].Messages[len(calls[1].Messages)-1]
+	if last.Role != llm.RoleUser || len(last.Parts) != 1+MaxToolImages {
+		t.Fatalf("capped image message: %d parts", len(last.Parts))
+	}
+	if last.Parts[MaxToolImages].Data[0] != byte(MaxToolImages) {
+		t.Fatalf("the first %d images must be kept in order", MaxToolImages)
+	}
+}
+
+// Reading the same page or screen again is progress (it may have changed), so the read-only observation tools are
+// exempt from the identical-call guard; the step budget still bounds them.
+func TestDoomLoopExemptsObservationTools(t *testing.T) {
+	for _, name := range []string{ToolBrowserRead, ToolBrowserScreenshot, ToolComputerReadFile} {
+		t.Run(name, func(t *testing.T) {
+			obs := &fakeTool{id: name}
+			e := newEnv(t, func(call int, req llm.Request) []llm.Delta {
+				if call < doomLoopRepeats+1 {
+					return llmtest.Call(fmt.Sprintf("c%d", call), name, `{"path":"/x"}`)
+				}
+				return []llm.Delta{llmtest.Text("Done.")}
+			})
+			e.m.AddTools(obs)
+			b := e.bot("Watch")
+			e.send(b.ID, "watch")
+			e.idle(b.ID)
+			if obs.callCount() != doomLoopRepeats+1 {
+				t.Fatalf("tool executed %d times, want %d", obs.callCount(), doomLoopRepeats+1)
+			}
+			if notes := partsOfType(e.lastReply(b.ID).Parts, PartNotice); len(notes) != 0 {
+				t.Fatalf("unexpected notice: %+v", notes)
+			}
+		})
 	}
 }

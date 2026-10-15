@@ -287,6 +287,7 @@ const (
 	PartUI         = "ui"         // structured component (table, chart, diagram, ...) shown by the `show` tool
 	PartTask       = "task"       // code task started by start_task: ID task id, Title its title, Name the harness
 	PartCall       = "call"       // phone call card: ID call id, Name direction, Status, Title reason, DurationMs, Summary cost
+	PartComputer   = "computer"   // "Using the computer" card: one per message (ID "computer"); Name the last computer tool, Status running|done|failed|waiting, Text a short human summary, Summary what it did, BotID whose computer
 )
 
 // MsgPart is one renderable piece of a message; fields are used per Type.
