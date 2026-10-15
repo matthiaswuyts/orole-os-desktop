@@ -1233,3 +1233,129 @@ func TestDoomLoopExemptsObservationTools(t *testing.T) {
 		})
 	}
 }
+
+// newVisionEnv is newEnv with a model that has vision.
+func newVisionEnv(t *testing.T, script func(call int, req llm.Request) []llm.Delta) *env {
+	t.Helper()
+	e := newEnv(t, script)
+	model := testModel
+	model.Caps.Vision = true
+	e.llm.mu.Lock()
+	e.llm.models = []llm.Model{model}
+	e.llm.mu.Unlock()
+	e.fake.ModelList = []llm.Model{model}
+	return e
+}
+
+// Only the latest step's images stay live; earlier ones become placeholders, without rewriting earlier requests.
+func TestToolImagesOnlyLatestStepIsLive(t *testing.T) {
+	n := 0
+	shot := &fakeTool{id: "shot", call: func(context.Context, RunContext, string, json.RawMessage) (ToolResult, error) {
+		n++
+		return ToolResult{Text: "ok", Images: []llm.Part{{Kind: llm.PartImage, MIME: "image/png", Data: []byte{byte(n)}}}}, nil
+	}}
+	e := newVisionEnv(t, func(call int, req llm.Request) []llm.Delta {
+		if call < 2 {
+			return llmtest.Call(fmt.Sprintf("c%d", call), "shot", fmt.Sprintf(`{"n":%d}`, call))
+		}
+		return []llm.Delta{llmtest.Text("Seen.")}
+	})
+	e.m.AddTools(shot)
+	b := e.bot("Steps")
+	e.send(b.ID, "look twice")
+	e.idle(b.ID)
+	calls := e.fake.Calls()
+	if len(calls) != 3 {
+		t.Fatalf("model calls: %d", len(calls))
+	}
+	imageMsgs := func(msgs []llm.Message) []llm.Message {
+		var out []llm.Message
+		for _, m := range msgs {
+			if m.Role == llm.RoleUser && len(m.Parts) == 2 && m.Parts[0].Text == toolImagesNote {
+				out = append(out, m)
+			}
+		}
+		return out
+	}
+	second := imageMsgs(calls[1].Messages)
+	if len(second) != 1 || second[0].Parts[1].Kind != llm.PartImage || second[0].Parts[1].Data[0] != 1 {
+		t.Fatalf("second request must carry the first image: %+v", second)
+	}
+	third := imageMsgs(calls[2].Messages)
+	if len(third) != 2 {
+		t.Fatalf("third request image messages: %+v", third)
+	}
+	if p := third[0].Parts[1]; p.Kind != llm.PartText || p.Text != omittedToolImage || len(p.Data) != 0 {
+		t.Fatalf("first image must be a placeholder: %+v", p)
+	}
+	if p := third[1].Parts[1]; p.Kind != llm.PartImage || p.Data[0] != 2 {
+		t.Fatalf("second image must be live: %+v", p)
+	}
+}
+
+// Only PNG, JPEG, GIF and WebP images reach the model.
+func TestToolImagesAllowOnlyKnownTypes(t *testing.T) {
+	shot := &fakeTool{id: "shot", call: func(context.Context, RunContext, string, json.RawMessage) (ToolResult, error) {
+		return ToolResult{Text: "ok", Images: []llm.Part{
+			{Kind: llm.PartImage, MIME: "image/svg+xml", Data: []byte("<svg/>")},
+			{Kind: llm.PartImage, MIME: "image/jpeg", Data: []byte("jpg")},
+			{Kind: llm.PartImage, MIME: "image/gif", Data: []byte("gif")},
+			{Kind: llm.PartImage, MIME: "image/webp", Data: []byte("webp")},
+			{Kind: llm.PartImage, MIME: "", Data: []byte("none")},
+		}}, nil
+	}}
+	e := newVisionEnv(t, func(call int, req llm.Request) []llm.Delta {
+		if call == 0 {
+			return llmtest.Call("c1", "shot", `{}`)
+		}
+		return []llm.Delta{llmtest.Text("Seen.")}
+	})
+	e.m.AddTools(shot)
+	b := e.bot("Types")
+	e.send(b.ID, "look")
+	e.idle(b.ID)
+	calls := e.fake.Calls()
+	last := calls[1].Messages[len(calls[1].Messages)-1]
+	var got []string
+	for _, p := range last.Parts[1:] {
+		got = append(got, p.MIME)
+	}
+	if want := []string{"image/jpeg", "image/gif", "image/webp"}; !slices.Equal(got, want) {
+		t.Fatalf("image types: %v, want %v", got, want)
+	}
+}
+
+// A tool's Go error drops its images; an IsError result keeps them (a screenshot of the failure helps).
+func TestToolImagesOnErrors(t *testing.T) {
+	img := []llm.Part{{Kind: llm.PartImage, MIME: "image/png", Data: []byte("png")}}
+	for _, tc := range []struct {
+		name   string
+		res    ToolResult
+		err    error
+		images bool
+	}{
+		{"go error", ToolResult{Images: img}, errors.New("boom"), false},
+		{"IsError result", ToolResult{Text: "click failed", IsError: true, Images: img}, nil, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			shot := &fakeTool{id: "shot", call: func(context.Context, RunContext, string, json.RawMessage) (ToolResult, error) {
+				return tc.res, tc.err
+			}}
+			e := newVisionEnv(t, func(call int, req llm.Request) []llm.Delta {
+				if call == 0 {
+					return llmtest.Call("c1", "shot", `{}`)
+				}
+				return []llm.Delta{llmtest.Text("Seen.")}
+			})
+			e.m.AddTools(shot)
+			b := e.bot("Errs")
+			e.send(b.ID, "look")
+			e.idle(b.ID)
+			calls := e.fake.Calls()
+			last := calls[1].Messages[len(calls[1].Messages)-1]
+			if got := last.Role == llm.RoleUser; got != tc.images {
+				t.Fatalf("images reached the model: %v, want %v (%+v)", got, tc.images, last)
+			}
+		})
+	}
+}

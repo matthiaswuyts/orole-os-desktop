@@ -335,6 +335,7 @@ func (m *Manager) loop(ctx context.Context, env *turnEnv) (string, string) {
 	msgs := slices.Clone(env.history)
 	used := 0
 	seen := map[string]int{}
+	imageMsgs := []int{} // indexes in msgs of the transient tool-image messages
 	for step := 1; ; step++ {
 		if ctx.Err() != nil {
 			return StatusCanceled, ""
@@ -417,10 +418,33 @@ func (m *Manager) loop(ctx context.Context, env *turnEnv) (string, string) {
 			images = images[:MaxToolImages]
 		}
 		if len(images) > 0 {
-			// Transient: msgs lives for this turn only; the images are never stored or logged.
+			// Transient: msgs lives for this turn only; the images are never stored or logged. Only the latest step's
+			// images stay live: earlier ones become placeholders so a long computer turn does not re-send every
+			// screenshot on every call.
+			msgs = omitImages(msgs, imageMsgs)
+			imageMsgs = append(imageMsgs, len(msgs))
 			msgs = append(msgs, llm.Message{Role: llm.RoleUser, Parts: append([]llm.Part{{Kind: llm.PartText, Text: toolImagesNote}}, images...)})
 		}
 	}
+}
+
+// omitImages returns msgs with the image parts of the messages at idx replaced by a text placeholder. It copies what
+// it changes: earlier requests share msgs' backing array.
+func omitImages(msgs []llm.Message, idx []int) []llm.Message {
+	if len(idx) == 0 {
+		return msgs
+	}
+	msgs = slices.Clone(msgs)
+	for _, i := range idx {
+		parts := slices.Clone(msgs[i].Parts)
+		for j, p := range parts {
+			if p.Kind == llm.PartImage {
+				parts[j] = llm.Part{Kind: llm.PartText, Text: omittedToolImage}
+			}
+		}
+		msgs[i].Parts = parts
+	}
+	return msgs
 }
 
 // turnBudget resolves a bot's per-turn model-call and tool-call budgets. Unset limits use the engine
@@ -611,7 +635,7 @@ func (m *Manager) runTool(ctx context.Context, env *turnEnv, step int, c llm.Too
 	var images []llm.Part
 	if err == nil && env.rc.Caps.Vision {
 		for _, img := range res.Images {
-			if img.Kind == llm.PartImage && len(img.Data) > 0 && len(img.Data) <= MaxToolImageBytes {
+			if img.Kind == llm.PartImage && toolImageMIME[img.MIME] && len(img.Data) > 0 && len(img.Data) <= MaxToolImageBytes {
 				images = append(images, img)
 			}
 		}
