@@ -161,23 +161,24 @@ Linux binaries and `#!/bin/bash` scripts run; fontconfig with DejaVu and Noto fo
 #### Guest image checks
 
 Run on 2026-10-15 on the developer PC (Windows 11 Pro 21H2, build 22000, Hyper-V running, 32 GB RAM, unelevated)
-with `TestRealGuestImageThroughTheManager` (`internal/sandbox/e2e_windows_test.go`): the pinned `guest-v0.1.0` and
+with `TestRealGuestImageThroughTheManager` (`internal/sandbox/e2e_windows_test.go`): the pinned `guest-v0.1.1` and
 `qemu-v20260811` assets (draft releases at the time, read with `gh`) installed through the real `Runtime` (size and
 SHA-256 against `DefaultPins`, unzip) from a local stand-in for the release server, then booted through the real
 `Manager` and host backend (`-accel whpx,kernel-irqchip=off`, 2048 MB, 2 vCPU). Every command below ran as `bot`
-through `orole-guest`. Two full runs, same results; times from the second.
+through `orole-guest`. Two full runs on `guest-v0.1.0` and one on `guest-v0.1.1`, same results; times from the
+`guest-v0.1.1` run.
 
 | Check | Result |
 |---|---|
-| Boot to guest ready (`Manager.Ensure`, fresh overlay) | 8.3 s (first run 8.6 s); `systemd-analyze`: 0.99 s kernel + 3.05 s initrd + 3.42 s userspace = 7.46 s |
-| Boot to ready again: clean restart / after a hard kill / a second bot | 8.2 s / 8.3 s / 9.5 s |
-| Clean shutdown (agent power-off, then QMP) | 2.4 s |
-| QEMU process RAM (host) | one bot: working set 502 MB, private 2139 MB; with two bots running: 1280 MB and 523 MB working set, 2337 MB and 2137 MB private (the guest touches its RAM lazily; private bytes are the 2 GB reservation) |
-| Guest memory (`free -m`) | 485 MB used of 1969 MB, idle with Chromium open |
+| Boot to guest ready (`Manager.Ensure`, fresh overlay) | 8.1 s; `systemd-analyze`: 1.02 s kernel + 3.00 s initrd + 3.22 s userspace = 7.24 s |
+| Boot to ready again: clean restart / after a hard kill / a second bot | 7.6 s / 7.4 s / 7.9 s |
+| Clean shutdown (agent power-off, then QMP) | 1.8 s |
+| QEMU process RAM (host) | one bot: working set 503 MB, private 2130 MB; with two bots running: 1276 MB and 507 MB working set, 2418 MB and 2132 MB private (the guest touches its RAM lazily; private bytes are the 2 GB reservation) |
+| Guest memory (`free -m`) | 461 MB used of 1969 MB, idle with Chromium open |
 | `id -un` | `bot` |
 | Services (`systemctl is-active cage-tty1 wayvnc orole-guest`) | active, active, active |
 | Chromium CDP (`curl -s 127.0.0.1:9222/json/version`) | up 4.2 s after guest ready, `Chrome/155.0.8059.79` |
-| wayvnc (`ss -ltn`) | listening on `127.0.0.1:5900` only, 40 ms after guest ready |
+| wayvnc (`ss -ltn`) | listening on `127.0.0.1:5900` only, 33 ms after guest ready |
 | Fonts (`fc-list`) | 921 faces (DejaVu, Noto) |
 | fw_cfg token / channel device | `400 root` / `600 root`; `cat` of the token as bot fails |
 | Host loopback (`curl http://10.0.2.2:<port>` to a Go listener on the host's 127.0.0.1) | refused at once (`curl: (7)`, the nftables reject); the listener accepted nothing |
@@ -188,7 +189,7 @@ through `orole-guest`. Two full runs, same results; times from the second.
 | Hard kill (`TerminateProcess`, what the job object does), then boot on the same overlay | boots; a file written and `sync`ed before the kill is there; the manager reports the kill as a crash |
 | Two bots at once on one base image | both run; separate homes; `base.qcow2` size and mtime unchanged |
 | Guest tokens in the console logs (`sandbox-<bot>.log`) | none (3.2 KB and 0.8 KB of log) |
-| Test binary killed with `taskkill /F` mid-run (a crashed daemon) | its QEMU was gone 3 s later (job object, kill on close) |
+| Test binary killed with `taskkill /F` mid-run (a crashed daemon; `guest-v0.1.0` run) | its QEMU was gone 3 s later (job object, kill on close) |
 
 Not checked here yet: input through wayvnc and glyphs on screen (phase 3, the screen relay), the NixOS report's
 package criteria (numpy/pandas through uv, a native npm module, a downloaded Node binary through nix-ld).
