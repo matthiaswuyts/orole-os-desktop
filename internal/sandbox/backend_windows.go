@@ -46,8 +46,7 @@ type hostBackend struct {
 	accel  string        // empty: defaultAccel
 	accept time.Duration // how long QEMU may take to connect its two sockets and finish initialising
 
-	runMu         sync.Mutex
-	runRestricted bool // the run folder's DACL was set during this daemon run
+	runMu sync.Mutex // serialises restrictRun
 }
 
 // NewHostBackend returns the QEMU/WHPX backend.
@@ -138,19 +137,12 @@ func (b *hostBackend) Boot(ctx context.Context, spec BootSpec) (VM, error) {
 	return vm, nil
 }
 
-// restrictRun gives the run folder its user-only DACL once per backend (it is created if missing). A failure
-// is retried on the next boot.
+// restrictRun gives the run folder its user-only DACL (it is created if missing). It runs on every boot, so a
+// folder deleted and recreated while the daemon runs never keeps the inherited DACL; setting it is cheap.
 func (b *hostBackend) restrictRun(dir string) error {
 	b.runMu.Lock()
 	defer b.runMu.Unlock()
-	if b.runRestricted && pathExists(dir) {
-		return nil
-	}
-	if err := restrictDir(dir); err != nil {
-		return err
-	}
-	b.runRestricted = true
-	return nil
+	return restrictDir(dir)
 }
 
 // connectQMP negotiates QMP and waits until QEMU has built the machine, giving up when QEMU exits or ctx ends.

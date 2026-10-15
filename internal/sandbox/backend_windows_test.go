@@ -383,6 +383,31 @@ func TestTheRunFolderIsUserOnly(t *testing.T) {
 	checkUserOnly(t, filepath.Dir(sock), true)
 }
 
+func TestEveryBootRestrictsARecreatedRunFolder(t *testing.T) {
+	f := &fakeQEMU{}
+	b, spec, _ := testBackend(t, f)
+	dir := filepath.Dir(b.paths.Socket("bot-1"))
+	vm, err := b.Boot(context.Background(), spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	vm.Kill()
+	<-vm.Done()
+	// Someone deletes the run folder and something recreates it with the inherited DACL.
+	if err := os.RemoveAll(dir); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	vm, err = b.Boot(context.Background(), spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { vm.Kill(); <-vm.Done() }()
+	checkUserOnly(t, dir, true)
+}
+
 func TestWriteUserOnlyFileHasAProtectedUserOnlyDACL(t *testing.T) {
 	p := filepath.Join(shortRoot(t), "x.tok")
 	if err := writeUserOnlyFile(p, []byte("secret")); err != nil {
