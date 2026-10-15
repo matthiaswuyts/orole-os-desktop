@@ -307,6 +307,11 @@
   html, body, #root {
     height: 100%;
   }
+  /* The window is the app: panes scroll, the document never does. Without this, a popup portalled to <body> that
+     overhangs the viewport (the notification center) makes a document scrollbar appear and shifts the whole window. */
+  html, body {
+    overflow: hidden;
+  }
   body {
     @apply text-sm select-none;
   }
