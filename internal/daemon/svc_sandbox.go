@@ -206,6 +206,9 @@ func (d *Daemon) deleteBotComputerNow(botID, why string) {
 	}
 	running := d.Sandbox.Status(botID).State != sandbox.StateOff
 	if err := d.Sandbox.Delete(ctx, botID); err != nil {
+		if errors.Is(err, sandbox.ErrDeleting) {
+			return // already in progress: that delete finishes the job and audits it
+		}
 		d.Log.Warn("delete bot computer", "bot", botID, "err", err)
 		if d.sandboxLife.Err() != nil {
 			return // cut short by daemon exit: the next start's sweep finishes it

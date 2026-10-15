@@ -122,3 +122,66 @@ func TestSandboxBackgroundWorkIsRefusedAfterShutdown(t *testing.T) {
 type nopCloser struct{}
 
 func (nopCloser) Close() error { return nil }
+
+// A second delete while one is in progress (archive, then the start sweep, or two archives) is not a failure:
+// the first one finishes the job, so only it is audited.
+func TestASecondDeleteWhileOneRunsIsNotAuditedAsFailed(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("OROLE_HOME", dir)
+	defer UseMemoryLLMCredentials()()
+	d, err := New(dir, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.cleanup(nopCloser{})
+	paths := sandbox.Paths{Root: filepath.Join(dir, "sandbox")}
+	b := &bootBlocker{booting: make(chan struct{}), release: make(chan struct{})}
+	released := false
+	defer func() {
+		if !released {
+			close(b.release)
+		}
+	}()
+	d.Sandbox = sandbox.NewManager(sandbox.Config{Paths: paths, BootTimeout: time.Minute, Now: time.Now,
+		Image: func() (sandbox.ImageSet, error) { return sandbox.ImageSet{Version: "0.1.0"}, nil }}, b, d.sandboxStore)
+
+	const bot = "twice-deleted"
+	go func() { _, _ = d.Sandbox.Ensure(context.Background(), bot) }()
+	<-b.booting
+	first := make(chan struct{})
+	go func() { defer close(first); d.deleteBotComputerNow(bot, "Bot archived") }() // waits for the boot
+	deadline := time.Now().Add(5 * time.Second)
+	deleting := func() bool { // Ensure fails at once while a delete runs, and otherwise waits for the boot
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+		defer cancel()
+		_, err := d.Sandbox.Ensure(ctx, bot)
+		return errors.Is(err, sandbox.ErrDeleting)
+	}
+	for !deleting() {
+		if time.Now().After(deadline) {
+			t.Fatal("the first delete never started")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	d.deleteBotComputerNow(bot, "Bot archived") // the second one, while the first waits
+
+	close(b.release)
+	released = true
+	<-first
+	rows, err := d.DB.Query(`SELECT outcome FROM audit_events WHERE action='sandbox.delete' AND target=?`, bot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var outcomes []string
+	for rows.Next() {
+		var o string
+		if err := rows.Scan(&o); err != nil {
+			t.Fatal(err)
+		}
+		outcomes = append(outcomes, o)
+	}
+	if len(outcomes) != 1 || outcomes[0] != "allowed" {
+		t.Fatalf("audit outcomes %q, want one allowed delete", outcomes)
+	}
+}

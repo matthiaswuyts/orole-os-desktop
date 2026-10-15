@@ -161,7 +161,7 @@ func (m *Manager) Ensure(ctx context.Context, botID string) (*Guest, error) {
 		}
 		if m.deleting[botID] {
 			m.mu.Unlock()
-			return nil, errDeleting
+			return nil, ErrDeleting
 		}
 		if inst := m.vms[botID]; inst != nil {
 			switch inst.state {
