@@ -22,12 +22,21 @@ let
       head -c 64 "$fw/$1/raw" | tr -d '\000\n'
     }
 
-    # edit FILE AWK-ARGS...: rewrite FILE through awk, keeping its mode and owner.
+    # edit FILE AWK-ARGS...: rewrite FILE through awk, keeping its mode and owner. userborn bind-mounts passwd, group
+    # and shadow read-only onto themselves; such a file is unmounted for the edit and mounted read-only again.
     edit() {
       f=$1
       shift
       [ -f "$f" ] || return 0
+      bound=
+      if awk -v f="$f" '$5 == f { found = 1 } END { exit !found }' /proc/self/mountinfo; then
+        umount "$f" && bound=1
+      fi
       awk "$@" "$f" > "$f.orole" && chmod --reference="$f" "$f.orole" && chown --reference="$f" "$f.orole" && mv "$f.orole" "$f"
+      rm -f "$f.orole"
+      if [ -n "$bound" ]; then
+        mount --bind "$f" "$f" && mount -o remount,bind,ro "$f"
+      fi
     }
 
     swap='function swap(list, n, i, a, out) { n = split(list, a, ","); out = ""; for (i = 1; i <= n; i++) { if (a[i] == old) a[i] = new; out = out (i > 1 ? "," : "") a[i] } return out }'
