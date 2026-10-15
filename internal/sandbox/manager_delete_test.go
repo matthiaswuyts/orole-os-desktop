@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -116,6 +118,34 @@ func TestDeleteWithoutRunningVM(t *testing.T) {
 	}
 	if err := h.m.Delete(ctx, "../x"); err == nil {
 		t.Fatal("Delete accepted an invalid id")
+	}
+}
+
+// A tampered record must not make Delete remove a file outside the sandbox directory.
+func TestDeleteRefusesOverlayOutsideRoot(t *testing.T) {
+	h := newHarness(t, nil)
+	ctx := context.Background()
+	ensure(t, h, "bot1")
+	h.advance(16 * time.Minute)
+	h.m.reapIdle()
+	outside := filepath.Join(t.TempDir(), "precious.txt")
+	if err := os.WriteFile(outside, []byte("keep"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	rec, _, _ := h.store.Get(ctx, "bot1")
+	rec.OverlayPath = outside
+	if err := h.store.Upsert(ctx, rec); err != nil {
+		t.Fatal(err)
+	}
+	err := h.m.Delete(ctx, "bot1")
+	if err == nil || !strings.Contains(err.Error(), "outside") {
+		t.Fatalf("Delete = %v, want an error about the overlay path being outside the sandbox directory", err)
+	}
+	if _, statErr := os.Stat(outside); statErr != nil {
+		t.Fatalf("file outside the sandbox directory was removed: %v", statErr)
+	}
+	if _, statErr := os.Stat(h.paths.Overlay("bot1")); !os.IsNotExist(statErr) {
+		t.Fatalf("the bot's own overlay should still be removed: %v", statErr)
 	}
 }
 

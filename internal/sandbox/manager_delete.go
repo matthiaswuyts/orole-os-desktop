@@ -3,8 +3,11 @@ package sandbox
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
+	"path/filepath"
+	"strings"
 )
 
 // Delete stops the bot's VM if any (waiting for a boot in progress), then removes its overlay disk, socket and
@@ -64,10 +67,15 @@ func (m *Manager) Delete(ctx context.Context, botID string) error {
 	if err != nil {
 		return err
 	}
-	if found && rec.OverlayPath != paths[0] {
-		paths = append(paths, rec.OverlayPath)
-	}
 	var errs []error
+	if found && rec.OverlayPath != paths[0] {
+		// The record comes from the database: never delete a file outside the sandbox directory because of it.
+		if underRoot(m.cfg.Paths.Root, rec.OverlayPath) {
+			paths = append(paths, rec.OverlayPath)
+		} else {
+			errs = append(errs, fmt.Errorf("sandbox: overlay path %q is outside %q, not removing it", rec.OverlayPath, m.cfg.Paths.Root))
+		}
+	}
 	for _, p := range paths {
 		if err := os.Remove(p); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			errs = append(errs, err)
@@ -83,4 +91,13 @@ func (m *Manager) Delete(ctx context.Context, botID string) error {
 	m.mu.Unlock()
 	m.publish(st)
 	return errors.Join(errs...)
+}
+
+// underRoot reports whether p resolves to a location strictly inside root.
+func underRoot(root, p string) bool {
+	rel, err := filepath.Rel(root, p)
+	if err != nil {
+		return false
+	}
+	return rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
