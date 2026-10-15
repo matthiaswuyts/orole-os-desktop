@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/rayorole/orole-os-desktop/internal/daemon/api"
 	"github.com/rayorole/orole-os-desktop/internal/sandbox"
@@ -160,5 +161,34 @@ func TestScreenInputEmptyIsANoOp(t *testing.T) {
 	call := func(context.Context, string, any, any) error { t.Fatal("empty input was sent"); return nil }
 	if err := screenInput(t.Context(), call, "s1", ""); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestEnableBoundsTheHealthCall(t *testing.T) {
+	old := enableHealthTimeout
+	enableHealthTimeout = 20 * time.Millisecond
+	t.Cleanup(func() { enableHealthTimeout = old })
+	enabled := false
+	call := func(ctx context.Context, method string, _ any, _ any) error {
+		switch method {
+		case "daemon.health":
+			if _, ok := ctx.Deadline(); !ok {
+				t.Error("daemon.health called without a deadline")
+			}
+			<-ctx.Done() // a daemon that never answers
+			return ctx.Err()
+		case "sandbox.setup.enable":
+			if ctx.Err() != nil {
+				t.Error("setup called with the expired health context")
+			}
+			enabled = true
+		}
+		return nil
+	}
+	if _, err := enableSandbox(t.Context(), call, func(int) error { t.Error("allow called"); return nil }); err != nil {
+		t.Fatalf("enable: %v", err)
+	}
+	if !enabled {
+		t.Fatal("sandbox.setup.enable was not called after the health call timed out")
 	}
 }

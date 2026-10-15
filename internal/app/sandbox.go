@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/egoist/mygo"
 	"github.com/rayorole/orole-os-desktop/internal/daemon/api"
@@ -104,11 +105,17 @@ func (s Sandbox) Enable(ctx context.Context) (sandbox.SetupState, error) {
 	return enableSandbox(ctx, s.L.call, allowSetForeground)
 }
 
+// enableHealthTimeout bounds the daemon.health call that finds the daemon's process before the setup starts.
+var enableHealthTimeout = 3 * time.Second
+
 // enableSandbox lets the daemon, which launches the UAC prompt, take the foreground before asking it to start the
 // setup: without that the prompt can open behind this window. The grant is best effort.
 func enableSandbox(ctx context.Context, call callFunc, allow func(pid int) error) (sandbox.SetupState, error) {
 	var h api.Health
-	if call(ctx, "daemon.health", struct{}{}, &h) == nil && h.PID > 0 {
+	hctx, cancel := context.WithTimeout(ctx, enableHealthTimeout) // a slow daemon must not hold up the setup
+	err := call(hctx, "daemon.health", struct{}{}, &h)
+	cancel()
+	if err == nil && h.PID > 0 {
 		_ = allow(h.PID)
 	}
 	var out sandbox.SetupState
