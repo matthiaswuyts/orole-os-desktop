@@ -124,14 +124,19 @@ func TestRealGuestImageThroughTheManager(t *testing.T) {
 	if out := strings.TrimSpace(run(g, `python3 -c "print(1+1)"`).Stdout); out != "2" {
 		t.Fatalf("python3: %q", out)
 	}
-	cdp := waitFor(g, "Chromium CDP (127.0.0.1:9222)", "curl -s http://127.0.0.1:9222/json/version || true", `"Browser"`, 90*time.Second)
-	t.Logf("E2E RESULT chromium: %s", firstLine(cdp, `"Browser"`))
+	// The bot user cannot connect to Chromium's DevTools port or wayvnc (guest nftables), so both are checked by
+	// their listening sockets, and the connections are checked to fail.
+	waitFor(g, "Chromium CDP (127.0.0.1:9222)", "ss -ltn", "127.0.0.1:9222", 90*time.Second)
 	ss := waitFor(g, "wayvnc (127.0.0.1:5900)", "ss -ltn", "127.0.0.1:5900", 60*time.Second)
 	for _, line := range strings.Split(ss, "\n") {
-		if strings.Contains(line, ":5900") && !strings.Contains(line, "127.0.0.1:5900") {
-			t.Fatalf("wayvnc listens beyond guest loopback: %q", line)
+		for _, port := range []string{":5900", ":9222"} {
+			if strings.Contains(line, port+" ") && !strings.Contains(line, "127.0.0.1"+port) {
+				t.Fatalf("a %s listener is reachable beyond guest loopback: %q", port, line)
+			}
 		}
 	}
+	t.Logf("E2E RESULT chromium: %s", strings.TrimSpace(run(g, "chromium --version").Stdout))
+	e2eBotCannotReachCDPOrVNC(t, g, run)
 	fonts := run(g, "fc-list | wc -l; fc-list : family | sort -u | head -5")
 	if n, _ := strconv.Atoi(strings.TrimSpace(strings.SplitN(fonts.Stdout, "\n", 2)[0])); n == 0 {
 		t.Fatalf("no fonts: %q %q", fonts.Stdout, fonts.Stderr)
@@ -373,15 +378,6 @@ func qemuMemory(t *testing.T, m *Manager, botID string) string {
 	return fmt.Sprintf("pid %d working set %d MB, private %d MB", pid, ws>>20, priv>>20)
 }
 
-func firstLine(s, containing string) string {
-	for _, l := range strings.Split(s, "\n") {
-		if strings.Contains(l, containing) {
-			return strings.TrimSpace(l)
-		}
-	}
-	return ""
-}
-
 func logTail(b []byte, n int) string {
 	if len(b) > n {
 		b = b[len(b)-n:]
@@ -389,8 +385,30 @@ func logTail(b []byte, n int) string {
 	return string(b)
 }
 
+// e2eBotCannotReachCDPOrVNC checks that commands, which run as bot, cannot connect to Chromium's DevTools port or
+// wayvnc on guest loopback (IPv4 and IPv6): only orole-guest (root) can. The image has no nc; bash's /dev/tcp is the
+// same TCP connect.
+func e2eBotCannotReachCDPOrVNC(t *testing.T, g *Guest, run func(*Guest, string) wire.ExecResult) {
+	t.Helper()
+	for _, c := range []struct{ label, cmd string }{
+		{"curl -s 127.0.0.1:9222/json/version", "curl -s -m 5 http://127.0.0.1:9222/json/version; echo \" exit=$?\""},
+		{"curl -s [::1]:9222/json/version", "curl -s -m 5 'http://[::1]:9222/json/version'; echo \" exit=$?\""},
+		{"connect 127.0.0.1:5900 (nc -z)", "timeout 5 bash -c 'exec 3<>/dev/tcp/127.0.0.1/5900' 2>&1; echo \" exit=$?\""},
+		{"connect [::1]:5900", "timeout 5 bash -c 'exec 3<>/dev/tcp/::1/5900' 2>&1; echo \" exit=$?\""},
+		{"connect 127.0.0.2:9222", "timeout 5 bash -c 'exec 3<>/dev/tcp/127.0.0.2/9222' 2>&1; echo \" exit=$?\""},
+	} {
+		res := run(g, c.cmd)
+		out := strings.Join(strings.Fields(res.Stdout+" "+res.Stderr), " ")
+		if strings.Contains(out, "exit=0") || strings.Contains(out, `"Browser"`) {
+			t.Fatalf("bot reached it: %s: %s", c.label, out)
+		}
+		t.Logf("E2E RESULT bot %s refused: %s", c.label, out)
+	}
+}
+
 // e2eBrowser drives the guest's visible Chromium through Guest.Browser: open, read, screenshot, click (by text, and a
-// clear error for a missing target) and a target=_blank link whose new tab the next action must follow.
+// clear error for a missing target), a target=_blank link whose new tab the next action must follow, and typing,
+// which a password field refuses.
 func e2eBrowser(t *testing.T, ctx context.Context, g *Guest, run func(*Guest, string) wire.ExecResult) {
 	t.Helper()
 	browse := func(label string, req wire.BrowserRequest) (wire.BrowserResult, error) {
@@ -439,6 +457,7 @@ func e2eBrowser(t *testing.T, ctx context.Context, g *Guest, run func(*Guest, st
 		"www/index.html":  `<!doctype html><title>First tab</title><p><a href="/info.html">More information...</a></p><p><a href="/second.html" target="_blank">Open second</a></p>`,
 		"www/info.html":   `<!doctype html><title>Info page</title><p>orole info page</p>`,
 		"www/second.html": `<!doctype html><title>Second tab</title><p>orole second tab</p>`,
+		"www/login.html":  `<!doctype html><title>Login</title><input id="user" aria-label="User"><input id="pw" type="password" aria-label="Password">`,
 	}
 	for name, body := range pages {
 		if _, err := g.WriteFile(ctx, name, []byte(body)); err != nil {
@@ -473,6 +492,18 @@ func e2eBrowser(t *testing.T, ctx context.Context, g *Guest, run func(*Guest, st
 	}
 	must("click target=_blank link", wire.BrowserRequest{Action: wire.BrowserClick, Target: "text=Open second"})
 	waitTitle("read after target=_blank", "Second tab", "orole second tab")
+
+	// Typing: an ordinary field takes the text; a password field is refused (the bot asks the user to take over).
+	if res = must("open login page", wire.BrowserRequest{Action: wire.BrowserOpen, URL: "http://127.0.0.1:8765/login.html"}); res.Title != "Login" {
+		t.Fatalf("title = %q, want Login", res.Title)
+	}
+	must("type into #user", wire.BrowserRequest{Action: wire.BrowserType, Target: "#user", Text: "orole"})
+	for _, target := range []string{"#pw", "text=Password"} {
+		_, err := browse("type into "+target, wire.BrowserRequest{Action: wire.BrowserType, Target: target, Text: "secret"})
+		if err == nil || !strings.Contains(err.Error(), "password field") || !strings.Contains(err.Error(), "ask_user_to_take_over") {
+			t.Fatalf("type into the password field %s = %v, want the password refusal", target, err)
+		}
+	}
 }
 
 // e2eLongStreams opens the VNC screen relay (the RFB handshake with wayvnc) and a guest terminal, keeps both idle for
