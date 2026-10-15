@@ -4,9 +4,11 @@ Every chat bot can have its own small Linux computer on the user's PC: its own d
 visible browser. Design: `docs/superpowers/specs/2026-10-15-bot-computer-design.md`. Plans:
 `docs/superpowers/plans/2026-10-15-bot-computer*.md`.
 
-**Status: phase 1 (sandbox core and guest agent).** The manager, store, guest protocol and `orole-guest` exist
-and are tested with a fake backend. Nothing starts a real VM yet: the Windows QEMU backend, runtime download and
-setup come in phase 2; bot tools in phase 3; the Computer tab in phase 4.
+**Status: phase 2 (Windows backend).** The manager, store, guest protocol and `orole-guest` (phase 1) now run on
+a real QEMU backend on Windows, with the runtime download, the setup helper and the NixOS guest image, all
+checked end to end on build 22000 (see "Guest image checks"). The pinned release assets are drafts until the owner
+publishes them, so a user's build cannot download them yet (the pinned URLs answer 404). Nothing is visible in the
+app: bot tools come in phase 3, the Computer tab and its setup screens in phase 4.
 
 **A bot's computer lives in the daemon: it survives GUI restarts, not a daemon exit or reboot. Its disk persists;
 running commands do not.**
@@ -19,7 +21,7 @@ running commands do not.**
  internal/sandbox.Manager ---- Store (table sandboxes)
         |  Ensure(bot) -> *Guest
         v
- Backend.Boot (phase 2: QEMU + WHPX) ---> VM.Conn(): one byte stream (virtio-serial <-> AF_UNIX socket / pipe)
+ Backend.Boot (Windows: QEMU + WHPX) ---> VM.Conn(): one byte stream (virtio-serial <-> AF_UNIX socket / pipe)
         |                                          |
  Guest (h2c client, golang.org/x/net/http2)  <---->  orole-guest (h2c server) in the Linux guest
                                                      internal/sandbox/guestagent
@@ -135,7 +137,8 @@ gone the boot fails with `ErrImageGone` instead of booting the overlay against a
   update) kills the bot's running commands and terminals.
 - Inside the guest, nftables rejects everything to 10.0.2.2 and fec0::2 (QEMU user networking's aliases for the
   host's loopback) except DHCP renewals from port 68, which only root can bind.
-- The guest has open internet and can reach the home network (phase 2 documents this in the UI).
+- The guest has open internet and can reach the home network (printers, NAS, router pages, other PCs); only the host's
+  own loopback is blocked, and only for `bot` (guest root could bypass it). Phase 4 states this in the UI.
 
 ### Guest image
 
@@ -207,6 +210,66 @@ against GitHub's own asset digest, and writes the file. The pinned URLs
 (`https://github.com/rayorole/orole-os-desktop/releases/download/<tag>/<name>`) work for users only once both releases
 are published.
 
+## Windows backend (phase 2)
+
+- **Process.** `backend_windows.go` starts `qemu-system-x86_64.exe -machine q35 -accel whpx,kernel-irqchip=off`
+  (`qemu.go`, `qemuArgs`) as a child of the daemon, assigned to a job object with `KILL_ON_JOB_CLOSE`
+  (`job_windows.go`). VMs stop with the daemon and a daemon crash kills them (checked: `taskkill /F` of the
+  host process took its QEMU down within 3 s). Running commands do not survive; disks do. The command line is
+  never logged without `redactArgs`, and QEMU's own output is kept only as a token-redacted tail.
+- **Why `kernel-irqchip=off`.** On build 22000 with Hyper-V running, plain `-accel whpx` fails
+  (`Failed to enable nested virtualization`, see the spike). The software `tcg` accelerator is only a
+  configuration fallback.
+- **Disk.** `<data>\sandbox\images\<version>\base.qcow2` (compressed, ext4, read-only backing file shared by all
+  bots) and a per-bot overlay `<data>\sandbox\bots\<bot>.qcow2` made with `qemu-img create -F qcow2 -b` on first
+  boot (10 GB virtual). Boot is direct: `vmlinuz`, `initrd` and the `cmdline` file of the same image folder.
+- **Guest channel.** virtio-serial port `org.orole.guest.0`; its QEMU chardev *connects* to an AF_UNIX socket the
+  daemon listens on in `<data>\sandbox\run\<16 hex of sha256(bot)>.sock`. That folder has an explicit protected
+  user-only DACL (user and SYSTEM) set by the daemon, because the data folder's inherited ACL is not user-only.
+  QEMU opens no listener. A second socket (`.qmp`) carries QMP, used for `system_powerdown` and as the signal that
+  machine initialization is done. The path uses a hash of the bot id to stay under the 107-character AF_UNIX limit.
+- **Token.** 32 random bytes per boot, written to a user-only file in `run\` and handed to QEMU as
+  `-fw_cfg name=opt/orole/token,file=`; the file is deleted once QMP answers a command that is only valid after
+  machine initialization, and on every failed boot. It is never in argv and never on the kernel command line,
+  because the serial console is logged to `<data>\logs\sandbox-<bot>.log` (checked: no token in the logs). In the
+  guest it is a root-only sysfs file read by `orole-guest`.
+- **Stop.** `VM.Shutdown`: QMP ACPI power-down, then systemd powers off and QEMU exits (`-no-reboot`); after the
+  deadline the process is killed. An exit the daemon did not ask for is `ErrCrashed`.
+- **Network.** `-netdev user` (slirp NAT). The guest has open internet **and can reach the home LAN**. QEMU maps
+  10.0.2.2 and fec0::2 to the host's loopback; the guest's nftables rejects both (DHCP renewals aside), so a bot
+  cannot reach services listening on the host's 127.0.0.1, including the daemon's IPC. The rule binds the `bot` user
+  (uid 1000, no sudo); guest root is only `orole-guest` and is not restricted.
+- **What runs as whom in the guest.** `orole-guest` is a root service (it must read the token and open the
+  channel). `/exec`, `/pty` and `/files/*` run as `bot`, so the bot reaches exactly what its own commands can.
+- **Availability** (`availability.go`, `probes_windows.go`, no admin). `WHvCreatePartition` succeeds: ready (or
+  `runtime-missing` while no pinned runtime is installed). Otherwise the reason: Windows build below 19041
+  (`unsupported-os`); a servicing or Orole reboot marker (`reboot-required`); the `HypervisorPlatform` optional
+  feature (WMI `Win32_OptionalFeature`) not enabled (`whp-disabled`); else `virtualization-off`.
+  `WinHvPlatform.dll` exists even with the feature off, so its presence is never used.
+- **Setup.** `sandbox.setup.enable` runs `orole-sandbox-setup.exe enable-whp` through `ShellExecuteExW` with verb
+  `runas`: one UAC prompt, only for the user (never for a bot or automation). The helper takes that one fixed
+  argument, exits 740 when not elevated, and runs `System32\Dism.exe /Online /Enable-Feature
+  /FeatureName:HypervisorPlatform /All /NoRestart` by full path; 3010 means restart. It sits next to
+  `orole-daemon.exe`, a user-writable folder, so before the elevated start the daemon opens it (refusing a
+  symbolic link or other reparse point) denying writes, renames and deletes, compares its SHA-256 with the hash
+  embedded at build time and keeps the handle until the elevated process has started. A build without the hash
+  refuses ("setup helper not verified"). The daemon itself is never elevated.
+- **Runtime.** `runtime.go` downloads `qemu-v<build>` (a repackaged subset of the official QEMU for Windows) and
+  `guest-v<version>` (vmlinuz, initrd, cmdline, base.qcow2) from this repository's GitHub releases, checks every
+  file's size and SHA-256 against `pins.go` while streaming, unpacks into a `.staging-*` folder and renames it into
+  place with a `.complete` marker written last. A mismatch or a partial download leaves nothing. The release assets
+  are produced by `.github/workflows/qemu-asset.yml` and `guest-image.yml` as **draft** releases; the owner
+  publishes them after review, and until then the pinned URLs return 404 and the install fails.
+  `scripts/sandbox-pins.ps1` regenerates `pins.go` from the releases (drafts included) and cross-checks each hash
+  against GitHub's asset digest.
+- **Guest image** (`guest/`, NixOS): see "Guest image" below. It is built in CI or locally through WSL
+  (`docs/development/guest-image.md`).
+- **IPC.** `sandbox.availability`, `sandbox.status`, `sandbox.setup.enable`, `sandbox.runtime.install` and the
+  events listed under "Daemon wiring". Archiving a bot stops its VM and deletes its overlay and row.
+- **Licences.** QEMU is GPL-2.0 and the guest image contains GPL software (the Linux kernel among it). The QEMU
+  zip carries `SOURCE.txt` and the licence files of the installer; the corresponding source of the image is
+  reproducible from the pinned nixpkgs revision. Both are recorded in `docs/research/upstream-attribution.md`.
+
 ## Phase 2 spike (WHPX on build 22000)
 
 Run on 2026-10-15 on the developer PC (Windows 11 Pro 21H2, build 22000, Hyper-V running), unelevated. Re-run with
@@ -236,5 +299,5 @@ serial console moved from a file to a socket so the test can drive the guest's `
 Decisions: `-accel whpx,kernel-irqchip=off` on Windows (Task 3: `defaultAccel`); `-cpu host` (`defaultCPU`; `max`
 also works); channel: AF_UNIX (the pipe chardev grants Everyone and Anonymous read, so it is not a fallback without
 changing QEMU); host loopback: reachable, so the guest's nftables rules block 10.0.2.2 (Task 8). The
-data folder's ACL is inherited, not user-only: the backend should set an explicit user-only DACL on
-`<data>\sandbox\run\` rather than rely on inheritance.
+data folder's ACL is inherited, not user-only, so the backend sets an explicit protected DACL (the user and SYSTEM
+only) on `<data>\sandbox\run\` (`acl_windows.go`) instead of relying on inheritance.
