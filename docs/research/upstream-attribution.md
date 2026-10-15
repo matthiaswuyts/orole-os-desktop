@@ -3,7 +3,7 @@
 Source: https://github.com/cosscom/shipyard @ c809c5eccfc31a386be6bb82b8b0839eaf7ec89b, MIT, Copyright (c) 2026 Sean Brydon.
 | Upstream path | Orole path | Modification |
 |---|---|---|
-| app/src/components/ui/*.tsx | frontend/src/components/ui/*.tsx | import stubs for lib/focus-home and lib/platform; tooltip root uses coss/Base UI directly instead of Shipyard's global keyboard-focus timer |
+| app/src/components/ui/*.tsx | frontend/src/components/ui/*.tsx | import stubs for lib/focus-home and lib/platform; tooltip root uses coss/Base UI directly instead of Shipyard's global keyboard-focus timer; scroll-area scrollbar 4px wide with a 2px inset |
 | app/src/lib/utils.ts | frontend/src/lib/utils.ts | none |
 | app/src/index.css (tokens, density, base layer) | frontend/src/index.css | removed plugin @source, Tauri/sidebar-resize/worktree-tone rules; Orole additions appended |
 | app/src/themes/builtin.ts (colours) | frontend/src/themes/builtin.ts | renamed Orole Midnight/Obsidian/Light; expanded to a shared UI/terminal registry with Solarized and Catppuccin palettes |
@@ -270,4 +270,9 @@ the public demos of the AI SDK Agents "Mention menu", "Slash command menu" and "
 `elements/agent-run-tree.tsx`, `elements/tool-call-card.tsx` and `elements/terminal-result.tsx` (the task feed's run tree,
 tool call rows and shell command card) are Orole's own code. Their layout follows the public demos of the AI SDK Agents
 "Agent run tree", "Tool call card" and "Terminal result" components (https://www.aisdkagents.com/ai-components/); none of
+that (paid) source was copied.
+
+The session rail beside a code task (`frontend/src/features/tasks/rail/`) and the shared `ContextWindow` in
+`features/tasks/ComposerContext.tsx` are Orole's own code. Their layout follows the public demos of the AI SDK Agents
+"Context window", "MCP server list" and "Agent list" components (https://www.aisdkagents.com/ai-components/); none of
 that (paid) source was copied.
