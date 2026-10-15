@@ -282,5 +282,8 @@ func statusError(path string, resp *http.Response) error {
 	if resp.StatusCode == http.StatusNotImplemented {
 		return fmt.Errorf("sandbox: guest %s: %w: %s", path, errors.ErrUnsupported, text)
 	}
+	if resp.StatusCode == http.StatusServiceUnavailable && strings.Contains(text, screenNotReadyText) {
+		return fmt.Errorf("sandbox: guest %s: %s: %s: %w", path, resp.Status, text, ErrScreenNotReady)
+	}
 	return fmt.Errorf("sandbox: guest %s: %s: %s", path, resp.Status, text)
 }

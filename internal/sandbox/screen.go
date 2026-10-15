@@ -29,9 +29,18 @@ var (
 	ErrScreenInputTooLarge = errors.New("sandbox: screen input too large")
 	// ErrScreenStalled is returned for input the guest did not take within the write timeout; the screen is closed.
 	ErrScreenStalled = errors.New("sandbox: the screen stopped responding")
+	// ErrScreenNotReady is the guest's 503 for a screen server (wayvnc) that is not listening yet; it starts a few
+	// seconds after the guest agent is ready, so Connect retries it.
+	ErrScreenNotReady = errors.New("sandbox: the guest screen is not ready")
 )
 
+// screenNotReadyText is the guest agent's 503 body prefix (guestagent/screen.go) when it cannot reach the VNC server.
+const screenNotReadyText = "the screen is not available"
+
 const (
+	// ScreenReadyWait and ScreenReadyInterval bound and pace Connect's retries while the guest screen server starts.
+	ScreenReadyWait     = 20 * time.Second
+	ScreenReadyInterval = 500 * time.Millisecond
 	// ScreenChunkMax bounds one sandbox.screen.data event and one Input. The RFB filter keeps the stream
 	// client-pull (it drops EnableContinuousUpdates and strips the ContinuousUpdates pseudo-encoding), so the guest
 	// sends an update only after the viewer asks for one and a stream cannot flood the IPC queue.
@@ -59,6 +68,8 @@ type ScreenHub struct {
 	releaseTimeout time.Duration // screenReleaseTimeout; shorter in tests
 	byteRate       float64       // ScreenByteRate; smaller in tests
 	byteBurst      float64       // ScreenByteBurst; smaller in tests
+	readyWait      time.Duration // ScreenReadyWait; shorter in tests
+	readyInterval  time.Duration // ScreenReadyInterval; shorter in tests
 
 	mu      sync.Mutex
 	screens map[string]*screenStream
@@ -88,7 +99,7 @@ type screenStream struct {
 func NewScreenHub(publish func(ScreenChunk), takenOver func(botID string) bool) *ScreenHub {
 	return &ScreenHub{
 		publish: publish, takenOver: takenOver, releaseTimeout: screenReleaseTimeout,
-		byteRate: ScreenByteRate, byteBurst: ScreenByteBurst, screens: map[string]*screenStream{},
+		byteRate: ScreenByteRate, byteBurst: ScreenByteBurst, readyWait: ScreenReadyWait, readyInterval: ScreenReadyInterval, screens: map[string]*screenStream{},
 	}
 }
 
@@ -97,9 +108,24 @@ func NewScreenHub(publish func(ScreenChunk), takenOver func(botID string) bool) 
 func (h *ScreenHub) Connect(ctx context.Context, botID string, open func(context.Context) (io.ReadWriteCloser, error)) (string, error) {
 	octx, cancel := context.WithTimeout(ctx, ScreenOpenTimeout)
 	defer cancel()
-	stream, err := open(octx)
-	if err != nil {
-		return "", err
+	// The guest's screen server starts a few seconds after the guest agent: retry its "not available" answer for a
+	// while; any other error, or the caller's ctx ending, returns at once.
+	waitUntil := time.Now().Add(h.readyWait)
+	var stream io.ReadWriteCloser
+	for {
+		var err error
+		stream, err = open(octx)
+		if err == nil {
+			break
+		}
+		if !errors.Is(err, ErrScreenNotReady) || !time.Now().Add(h.readyInterval).Before(waitUntil) {
+			return "", err
+		}
+		select {
+		case <-time.After(h.readyInterval):
+		case <-octx.Done():
+			return "", err
+		}
 	}
 	return h.Open(botID, stream), nil
 }

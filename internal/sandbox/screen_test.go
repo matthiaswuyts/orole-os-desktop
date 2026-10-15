@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"sync"
@@ -472,4 +473,58 @@ func TestScreenHubConnectBoundsOnlyTheOpen(t *testing.T) {
 	if _, err := h.Connect(context.Background(), "b1", func(context.Context) (io.ReadWriteCloser, error) { return nil, boom }); !errors.Is(err, boom) {
 		t.Fatalf("err = %v", err)
 	}
+}
+
+func TestScreenHubConnectWaitsForTheGuestScreen(t *testing.T) {
+	newHub := func() *ScreenHub {
+		h := NewScreenHub((&chunkLog{}).publish, func(string) bool { return false })
+		h.readyInterval, h.readyWait = time.Millisecond, 50*time.Millisecond
+		t.Cleanup(h.CloseAll)
+		return h
+	}
+	notReady := fmt.Errorf("sandbox: guest /screen: 503 Service Unavailable: the screen is not available: refused: %w", ErrScreenNotReady)
+
+	t.Run("retries until the screen opens", func(t *testing.T) {
+		calls := 0
+		hostEnd, _ := net.Pipe()
+		id, err := newHub().Connect(context.Background(), "b1", func(context.Context) (io.ReadWriteCloser, error) {
+			if calls++; calls <= 2 {
+				return nil, notReady
+			}
+			return hostEnd, nil
+		})
+		if err != nil || id == "" || calls != 3 {
+			t.Fatalf("id=%q err=%v calls=%d", id, err, calls)
+		}
+	})
+	t.Run("gives up after the budget", func(t *testing.T) {
+		calls := 0
+		_, err := newHub().Connect(context.Background(), "b1", func(context.Context) (io.ReadWriteCloser, error) {
+			calls++
+			return nil, notReady
+		})
+		if !errors.Is(err, ErrScreenNotReady) || calls < 2 {
+			t.Fatalf("err=%v calls=%d", err, calls)
+		}
+	})
+	t.Run("other errors are not retried", func(t *testing.T) {
+		calls := 0
+		boom := errors.New("boom")
+		_, err := newHub().Connect(context.Background(), "b1", func(context.Context) (io.ReadWriteCloser, error) {
+			calls++
+			return nil, boom
+		})
+		if !errors.Is(err, boom) || calls != 1 {
+			t.Fatalf("err=%v calls=%d", err, calls)
+		}
+	})
+	t.Run("stops when the request ends", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		h := newHub()
+		h.readyWait, h.readyInterval = time.Minute, time.Hour
+		go func() { time.Sleep(10 * time.Millisecond); cancel() }()
+		if _, err := h.Connect(ctx, "b1", func(context.Context) (io.ReadWriteCloser, error) { return nil, notReady }); !errors.Is(err, ErrScreenNotReady) {
+			t.Fatalf("err=%v", err)
+		}
+	})
 }
