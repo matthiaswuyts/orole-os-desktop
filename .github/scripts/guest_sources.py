@@ -213,6 +213,15 @@ def main():
 
     kernel = [r for r in rows if re.match(r"linux-\d+\.\d+(\.\d+)?$", r["name"])]
     if not kernel or not all(r["srcs"] for r in kernel):
+        for r in kernel:
+            e = env(r["drv"])
+            print(f"kernel drv {r['drv']}: keys {sorted(e)[:80]}", file=sys.stderr)
+            for k in SRC_ATTRS:
+                for tok in (e.get(k) or "").split():
+                    top = base(tok).split("/", 1)[0]
+                    prod = out2drv.get(top)
+                    print(f"  {k}: {tok} producer={prod} fod={prod and is_fod(prod)} "
+                          f"outputs={prod and json.dumps(drvs[prod].get('outputs'))[:300]}", file=sys.stderr)
         raise SystemExit(f"the kernel derivation has no source: {[(r['name'], r['srcs']) for r in kernel]}")
     nosrc = sorted(r["name"] for r in rows if r["include"] and r["licence"] and not r["srcs"])
     print(f"copyleft without a source of their own ({len(nosrc)}): {', '.join(nosrc)}", file=sys.stderr)
