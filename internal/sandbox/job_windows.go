@@ -47,3 +47,13 @@ func (j *jobObject) assign(pid int) error {
 	defer windows.CloseHandle(ph)
 	return windows.AssignProcessToJobObject(j.h, ph)
 }
+
+// close releases the handle; with KILL_ON_JOB_CLOSE this kills every process still in the job.
+func (j *jobObject) close() {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	if j.h != 0 {
+		windows.CloseHandle(j.h)
+		j.h = 0
+	}
+}

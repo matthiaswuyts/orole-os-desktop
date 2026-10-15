@@ -139,7 +139,8 @@ func TestEnsureRecordsSandboxAndBootSpec(t *testing.T) {
 }
 
 // An overlay is a qcow2 delta on the base image it was made from, so a bot keeps booting the kernel, initrd
-// and base of its recorded image version while those files are still installed.
+// and base of its recorded image version while those files are still installed, and never boots it against
+// another base.
 func TestEnsureBootsTheImageVersionTheOverlayWasMadeFrom(t *testing.T) {
 	for _, tc := range []struct {
 		name      string
@@ -162,14 +163,21 @@ func TestEnsureBootsTheImageVersionTheOverlayWasMadeFrom(t *testing.T) {
 			if err := h.store.Upsert(context.Background(), rec); err != nil {
 				t.Fatal(err)
 			}
-			ensure(t, h, "bot1")
-			spec := h.b.spec(0)
-			want := ImageSet{Kernel: "k", Initrd: "i", BaseImage: "base.qcow2"}
-			if tc.installed {
-				want = ImageSet{Kernel: filepath.Join(old, imageKernel), Initrd: filepath.Join(old, imageInitrd), BaseImage: filepath.Join(old, imageBase)}
-			}
-			if spec.Kernel != want.Kernel || spec.Initrd != want.Initrd || spec.BaseImage != want.BaseImage {
-				t.Fatalf("spec = %+v, want %+v", spec, want)
+			if !tc.installed {
+				_, err := h.m.Ensure(context.Background(), "bot1")
+				if !errors.Is(err, ErrImageGone) || !errors.Is(err, ErrBootFailed) || !strings.Contains(err.Error(), "v0") {
+					t.Fatalf("Ensure = %v, want ErrImageGone naming v0", err)
+				}
+				if h.b.bootCount() != 0 {
+					t.Fatal("booted the overlay against another image version")
+				}
+			} else {
+				ensure(t, h, "bot1")
+				spec := h.b.spec(0)
+				want := ImageSet{Kernel: filepath.Join(old, imageKernel), Initrd: filepath.Join(old, imageInitrd), BaseImage: filepath.Join(old, imageBase)}
+				if spec.Kernel != want.Kernel || spec.Initrd != want.Initrd || spec.BaseImage != want.BaseImage {
+					t.Fatalf("spec = %+v, want %+v", spec, want)
+				}
 			}
 			if got, _, _ := h.store.Get(context.Background(), "bot1"); got.ImageVersion != "v0" {
 				t.Fatalf("recorded image version changed to %q", got.ImageVersion)

@@ -14,7 +14,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
-	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -45,7 +44,10 @@ type hostBackend struct {
 	run    commandRunner
 	cpu    string
 	accel  string        // empty: defaultAccel
-	accept time.Duration // how long QEMU may take to connect its two sockets and answer QMP
+	accept time.Duration // how long QEMU may take to connect its two sockets and finish initialising
+
+	runMu         sync.Mutex
+	runRestricted bool // the run folder's DACL was set during this daemon run
 }
 
 // NewHostBackend returns the QEMU/WHPX backend.
@@ -84,8 +86,7 @@ func (b *hostBackend) Boot(ctx context.Context, spec BootSpec) (VM, error) {
 	if err := prepareLog(spec.LogPath); err != nil {
 		return nil, err
 	}
-	runDir := filepath.Dir(guestPath)
-	if err := restrictDir(runDir); err != nil {
+	if err := b.restrictRun(filepath.Dir(guestPath)); err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrBootFailed, err)
 	}
 	guestLn, err := listenUnix(guestPath)
@@ -99,9 +100,9 @@ func (b *hostBackend) Boot(ctx context.Context, spec BootSpec) (VM, error) {
 	}
 	defer qmpLn.Close()
 
-	// QEMU reads the token into fw_cfg while it starts; the file goes as soon as QMP answers (QEMU is past
-	// its setup then) and on every failure path.
-	tokenPath := strings.TrimSuffix(guestPath, ".sock") + ".tok"
+	// QEMU reads the token into fw_cfg while it builds the machine; the file goes once QMP says the machine
+	// is initialised, and on every failure path.
+	tokenPath := b.paths.Token(spec.BotID)
 	if err := os.Remove(tokenPath); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return nil, fmt.Errorf("%w: %v", ErrBootFailed, err)
 	}
@@ -137,7 +138,22 @@ func (b *hostBackend) Boot(ctx context.Context, spec BootSpec) (VM, error) {
 	return vm, nil
 }
 
-// connectQMP negotiates QMP, giving up when QEMU exits or ctx ends.
+// restrictRun gives the run folder its user-only DACL once per backend (it is created if missing). A failure
+// is retried on the next boot.
+func (b *hostBackend) restrictRun(dir string) error {
+	b.runMu.Lock()
+	defer b.runMu.Unlock()
+	if b.runRestricted && pathExists(dir) {
+		return nil
+	}
+	if err := restrictDir(dir); err != nil {
+		return err
+	}
+	b.runRestricted = true
+	return nil
+}
+
+// connectQMP negotiates QMP and waits until QEMU has built the machine, giving up when QEMU exits or ctx ends.
 func connectQMP(ctx context.Context, conn net.Conn, exited <-chan struct{}) (*qmpClient, error) {
 	finished := make(chan struct{})
 	defer close(finished)
@@ -151,6 +167,9 @@ func connectQMP(ctx context.Context, conn net.Conn, exited <-chan struct{}) (*qm
 		}
 	}()
 	c, err := qmpConnect(ctx, conn)
+	if err == nil {
+		err = c.waitMachineReady(ctx)
+	}
 	if err != nil {
 		conn.Close()
 		select {
@@ -356,9 +375,16 @@ func (v *qemuVM) Shutdown(ctx context.Context) error {
 	case <-v.done:
 		return nil
 	case <-ctx.Done():
-		err := v.Kill()
+		if err := v.Kill(); err != nil {
+			select {
+			case <-v.done: // it exited meanwhile: the kill error does not matter
+				return nil
+			default:
+				return err
+			}
+		}
 		<-v.done
-		return err
+		return nil
 	}
 }
 

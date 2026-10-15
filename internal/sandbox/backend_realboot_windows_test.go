@@ -83,7 +83,7 @@ func TestRealBootConnectsTheGuestAgent(t *testing.T) {
 	}
 	defer func() { vm.Kill(); <-vm.Done() }()
 	t.Logf("REALBOOT channel connected after %s", time.Since(start).Round(time.Millisecond))
-	if pathExists(strings.TrimSuffix(paths.Socket("real"), ".sock") + ".tok") {
+	if pathExists(paths.Token("real")) {
 		t.Error("token file still there after the boot")
 	}
 	g, err := newGuestCtx(ctx, vm.Conn(), token)

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"strings"
 	"time"
 )
 
@@ -19,9 +20,9 @@ type qmpClient struct {
 	dec  *json.Decoder
 }
 
-// qmpConnect reads QEMU's greeting and negotiates capabilities. QEMU dispatches commands from its main
-// loop, which only starts after the machine (fw_cfg files included) is built, so the reply also proves
-// QEMU has finished reading its command-line files.
+// qmpConnect reads QEMU's greeting and negotiates capabilities. The reply proves nothing about QEMU's setup:
+// QEMU can dispatch QMP while it still initialises (from aio_poll, e.g. while opening a qcow2 image), and
+// qmp_capabilities is allowed before the machine exists. waitMachineReady is that proof.
 func qmpConnect(ctx context.Context, conn net.Conn) (*qmpClient, error) {
 	defer qmpDeadline(ctx, conn)()
 	dec := json.NewDecoder(conn)
@@ -37,6 +38,31 @@ func qmpConnect(ctx context.Context, conn net.Conn) (*qmpClient, error) {
 		return nil, err
 	}
 	return c, nil
+}
+
+// qmpMachineReadyPoll is how often waitMachineReady asks again.
+const qmpMachineReadyPoll = 50 * time.Millisecond
+
+// waitMachineReady returns once QEMU has built the machine, which includes reading its -fw_cfg files. It asks
+// query-cpus-fast, which QEMU refuses ("permitted only after machine initialization") until then, and retries
+// until ctx ends.
+func (c *qmpClient) waitMachineReady(ctx context.Context) error {
+	for {
+		err := c.execute(ctx, "query-cpus-fast")
+		if err == nil {
+			return nil
+		}
+		if !strings.Contains(err.Error(), "only after machine initialization") {
+			return err
+		}
+		t := time.NewTimer(qmpMachineReadyPoll)
+		select {
+		case <-ctx.Done():
+			t.Stop()
+			return fmt.Errorf("qmp: the machine was not initialised in time: %w", ctx.Err())
+		case <-t.C:
+		}
+	}
 }
 
 // execute runs one argument-less command and waits for its reply; asynchronous events are skipped.

@@ -361,11 +361,13 @@ func (m *Manager) start(ctx context.Context, botID string) (VM, *Guest, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	// The overlay is a delta on the base image it was made from: keep booting that version while it is installed.
+	// The overlay is a delta on the base image it was made from: boot that version, and never another one.
 	if found && rec.ImageVersion != img.Version {
-		if prev, ok := installedImage(m.cfg.Paths, rec.ImageVersion); ok {
-			img = prev
+		prev, ok := installedImage(m.cfg.Paths, rec.ImageVersion)
+		if !ok {
+			return nil, nil, fmt.Errorf("%w (version %s)", ErrImageGone, rec.ImageVersion)
 		}
+		img = prev
 	}
 	now := m.cfg.Now()
 	if !found {

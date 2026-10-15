@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"path/filepath"
+	"strings"
 )
 
 // Paths lays out <data>\sandbox. Bot ids must pass checkBotID before they reach these methods.
@@ -23,6 +24,12 @@ const MaxSocketPath = 107
 func (p Paths) Socket(botID string) string {
 	sum := sha256.Sum256([]byte(botID))
 	return filepath.Join(p.Root, "run", hex.EncodeToString(sum[:8])+".sock")
+}
+
+// Token is the file that hands the per-boot guest token to QEMU (fw_cfg), next to the bot's socket. It exists
+// only while QEMU starts.
+func (p Paths) Token(botID string) string {
+	return strings.TrimSuffix(p.Socket(botID), ".sock") + ".tok"
 }
 
 // CheckSocketPath returns a readable error when path is too long to bind as an AF_UNIX socket.

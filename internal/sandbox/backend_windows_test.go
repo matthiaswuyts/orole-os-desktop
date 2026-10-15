@@ -10,6 +10,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -41,9 +42,11 @@ type fakeQEMU struct {
 	proc              *fakeProc
 	guest             net.Conn // the guest's end of the channel
 	token             string   // what QEMU read from the fw_cfg token file
+	machineNotReady   int      // query-cpus-fast answers "only after machine initialization" this many times
 
-	mu       sync.Mutex
-	commands []string
+	mu           sync.Mutex
+	commands     []string
+	tokenAtQuery []bool // whether the token file existed at each query-cpus-fast
 }
 
 func chardevPath(args []string, id string) string {
@@ -90,8 +93,16 @@ func (f *fakeQEMU) Start(exe string, args []string, out io.Writer) (process, err
 		for sc.Scan() {
 			f.mu.Lock()
 			f.commands = append(f.commands, sc.Text())
+			reply := `{"return": {}}`
+			if strings.Contains(sc.Text(), "query-cpus-fast") {
+				f.tokenAtQuery = append(f.tokenAtQuery, pathExists(tokenFileArg(args)))
+				if f.machineNotReady > 0 {
+					f.machineNotReady--
+					reply = `{"error": {"class": "GenericError", "desc": "The command query-cpus-fast is permitted only after machine initialization has completed"}}`
+				}
+			}
 			f.mu.Unlock()
-			fmt.Fprintln(q, `{"return": {}}`)
+			fmt.Fprintln(q, reply)
 			if strings.Contains(sc.Text(), "system_powerdown") && !f.ignorePowerdown {
 				f.proc.exitWith(nil)
 			}
@@ -245,6 +256,25 @@ func TestBootFailsWhenQEMUImgFails(t *testing.T) {
 	}
 }
 
+func TestBootKeepsTheTokenFileUntilTheMachineIsInitialised(t *testing.T) {
+	f := &fakeQEMU{machineNotReady: 2}
+	b, spec, _ := testBackend(t, f)
+	vm, err := b.Boot(context.Background(), spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { vm.Kill(); <-vm.Done() }()
+	f.mu.Lock()
+	seen := append([]bool(nil), f.tokenAtQuery...)
+	f.mu.Unlock()
+	if len(seen) != 3 || !seen[0] || !seen[1] || !seen[2] {
+		t.Fatalf("token file present at each readiness query: %v (want 3 x true)", seen)
+	}
+	if pathExists(b.paths.Token("bot-1")) {
+		t.Fatal("token file still there after the machine was initialised")
+	}
+}
+
 func TestBootPassesTheTokenInAFileAndDeletesIt(t *testing.T) {
 	f := &fakeQEMU{}
 	b, spec, _ := testBackend(t, f)
@@ -257,8 +287,8 @@ func TestBootPassesTheTokenInAFileAndDeletesIt(t *testing.T) {
 		t.Fatalf("QEMU read token %q", f.token)
 	}
 	file := tokenFileArg(f.args)
-	if filepath.Dir(file) != filepath.Dir(b.paths.Socket("bot-1")) {
-		t.Fatalf("token file %s is not in the run folder", file)
+	if file != b.paths.Token("bot-1") || filepath.Dir(file) != filepath.Dir(b.paths.Socket("bot-1")) {
+		t.Fatalf("token file %s is not Paths.Token in the run folder", file)
 	}
 	if pathExists(file) {
 		t.Fatal("token file still there after the guest channel connected")
@@ -484,6 +514,37 @@ func TestBootReadsTheCmdlineNextToTheKernel(t *testing.T) {
 	defer func() { vm.Kill(); <-vm.Done() }()
 	if !hasPair(f.args, "-append", "init=/nix/store/old-system/init console=ttyS0 panic=-1") {
 		t.Fatalf("args %q", f.args)
+	}
+}
+
+// Closing the job handle (what Windows does when the daemon dies) kills the processes in it.
+func TestTheJobKillsItsProcessesWhenClosed(t *testing.T) {
+	j, err := newJobObject()
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := &execStarter{job: j}
+	ping, err := exec.LookPath("ping.exe")
+	if err != nil {
+		t.Skip(err)
+	}
+	p, err := s.Start(ping, []string{"-n", "30", "127.0.0.1"}, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	exited := make(chan error, 1)
+	go func() { exited <- p.Wait() }()
+	select {
+	case err := <-exited:
+		t.Fatalf("ping exited early: %v", err)
+	case <-time.After(300 * time.Millisecond):
+	}
+	j.close()
+	select {
+	case <-exited:
+	case <-time.After(5 * time.Second):
+		p.Kill()
+		t.Fatal("closing the job did not kill its process")
 	}
 }
 

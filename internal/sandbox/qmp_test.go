@@ -109,3 +109,75 @@ func TestQMPConnectRejectsANonQMPGreeting(t *testing.T) {
 		t.Fatal("accepted a greeting without QMP")
 	}
 }
+
+// qmp_capabilities is allowed before the machine exists (QEMU can dispatch QMP from aio_poll during init), so
+// readiness is a command QEMU refuses until machine initialization is done.
+func TestQMPWaitMachineReadyRetriesUntilTheMachineExists(t *testing.T) {
+	host, qemu := net.Pipe()
+	queries := 0
+	got := fakeQMP(qemu, func(cmd string) string {
+		if strings.Contains(cmd, "query-cpus-fast") {
+			queries++
+			if queries < 3 {
+				return `{"error": {"class": "GenericError", "desc": "The command query-cpus-fast is permitted only after machine initialization has completed"}}`
+			}
+			return `{"return": [{"cpu-index": 0}]}`
+		}
+		if strings.Contains(cmd, "system_powerdown") {
+			return `{"return": {}}`
+		}
+		return `{"return": {}}`
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	c, err := qmpConnect(ctx, host)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.waitMachineReady(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if queries != 3 {
+		t.Fatalf("queries = %d", queries)
+	}
+	c.execute(ctx, "system_powerdown")
+	<-got
+}
+
+func TestQMPWaitMachineReadyGivesUpAtTheDeadline(t *testing.T) {
+	host, qemu := net.Pipe()
+	fakeQMP(qemu, func(cmd string) string {
+		if strings.Contains(cmd, "query-cpus-fast") {
+			return `{"error": {"class": "GenericError", "desc": "The command query-cpus-fast is permitted only after machine initialization has completed"}}`
+		}
+		return `{"return": {}}`
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	c, err := qmpConnect(ctx, host)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.waitMachineReady(ctx); err == nil {
+		t.Fatal("ready although QEMU never finished initialising")
+	}
+}
+
+func TestQMPWaitMachineReadyReportsOtherErrors(t *testing.T) {
+	host, qemu := net.Pipe()
+	fakeQMP(qemu, func(cmd string) string {
+		if strings.Contains(cmd, "query-cpus-fast") {
+			return `{"error": {"class": "CommandNotFound", "desc": "nope"}}`
+		}
+		return `{"return": {}}`
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	c, err := qmpConnect(ctx, host)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.waitMachineReady(ctx); err == nil || !strings.Contains(err.Error(), "nope") {
+		t.Fatalf("err = %v", err)
+	}
+}

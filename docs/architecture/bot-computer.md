@@ -63,8 +63,9 @@ running commands do not.**
 ### Guest protocol
 
 HTTP/2 without TLS (prior knowledge) over the VM's one byte stream; base URL `http://guest`. Every request
-carries `X-Orole-Token`, a 32-byte random hex token generated per boot, passed to the guest on the kernel
-command line (`orole.token=`) and held only in daemon memory; the guest answers 401 otherwise.
+carries `X-Orole-Token`, a 32-byte random hex token generated per boot, passed to the guest through QEMU fw_cfg
+(`opt/orole/token`, from a user-only file that is deleted once QEMU has read it) and otherwise held only in daemon
+memory; the guest answers 401 otherwise.
 
 | Route | Purpose | Limits |
 |---|---|---|
@@ -84,20 +85,22 @@ The host never trusts the guest: answers over 8 MiB are refused, exec output is 
 `<data>\sandbox\runtime\<version>\` (QEMU), `images\<version>\` (base image), `bots\<bot>.qcow2` (overlay),
 `run\<16 hex>.sock` (guest channel; the name is a hash of the bot id so the path stays under the 107-character AF_UNIX limit) with `.qmp` (QEMU monitor) and `.tok` (the per-boot token, only while QEMU starts) next to it, `<data>\logs\sandbox-<bot>.log`.
 The overlay is created with `qemu-img create -F qcow2 -b <base>` on first boot only, never recreated, and a bot keeps
-booting the kernel, initrd, cmdline and base of the image version recorded for it while that version is installed. Bot ids are checked against
+booting the kernel, initrd, cmdline and base of the image version recorded for it while that version is installed; when it is
+gone the boot fails with `ErrImageGone` instead of booting the overlay against another base. Bot ids are checked against
 `^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$` before they become file names.
 
 ### Security notes
 
 - No network listener on the host; the guest channel is a local stream. QEMU connects out to two AF_UNIX sockets the
   daemon listens on (guest channel and QMP) and opens no listener of its own.
-- `<data>\sandboxun\` gets an explicit protected DACL (the user and SYSTEM only) on every boot, because
+- `<data>\sandbox\run\` gets an explicit protected DACL (the user and SYSTEM only), once per daemon run, because
   `%LOCALAPPDATA%\Orole` inherits read access for other local groups; the sockets inherit it. The token reaches QEMU
   in a file there with its own user-only DACL (`-fw_cfg name=opt/orole/token,file=`), never in argv; the file is
-  deleted once QMP answers (QEMU has read it by then) and on every failed boot, and the token is never logged.
+  deleted once QMP answers a command that is only allowed after machine initialization (QEMU has read its fw_cfg
+  files by then) and on every failed boot, and the token is never logged.
 - QEMU runs in a job object with kill-on-close, so VMs never outlive the daemon.
 - The VM is the security boundary. The token authenticates the daemon's connection to the guest; code inside the
-  guest can read the kernel command line, which is acceptable because it already controls the guest.
+  guest can read it from fw_cfg, which is acceptable because it already controls the guest.
 - The guest has open internet and can reach the home network (phase 2 documents this in the UI).
 
 ### Testing
