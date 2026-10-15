@@ -95,5 +95,5 @@ describe("task view under an event flood", () => {
     expect(api.groups).toBe(100);
     expect(api.renders.assistant).toBeLessThan(100);
     expect(api.renders.run).toBeLessThan(100);
-  });
+  }, 30_000); // counts renders, not time: a 600-event history takes ~6 s on a CI runner
 });
