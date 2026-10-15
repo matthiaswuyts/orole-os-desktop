@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/rayorole/orole-os-desktop/internal/sandbox/wire"
@@ -21,11 +22,17 @@ type Config struct {
 	Ready    func() bool                      // /health "ready"; nil means ready
 	PowerOff func() error                     // called 100 ms after /poweroff answers 202; nil answers 501
 	Logf     func(format string, args ...any) // nil discards
+
+	LoginShell []string                   // argv for /pty; default /bin/sh -l
+	StartPTY   func(PTYSpec) (PTY, error) // nil uses the platform terminal (Linux only; elsewhere /pty answers 501)
 }
 
 type Agent struct {
 	cfg Config
 	mux *http.ServeMux
+
+	ptyMu sync.Mutex
+	ptys  map[string]PTY // open terminals by id, for /pty/resize
 }
 
 func New(cfg Config) *Agent {
@@ -38,7 +45,15 @@ func New(cfg Config) *Agent {
 	if cfg.Logf == nil {
 		cfg.Logf = func(string, ...any) {}
 	}
-	a := &Agent{cfg: cfg, mux: http.NewServeMux()}
+	if len(cfg.LoginShell) == 0 {
+		cfg.LoginShell = []string{"/bin/sh", "-l"}
+	}
+	if cfg.StartPTY == nil {
+		cfg.StartPTY = startPTY
+	}
+	a := &Agent{cfg: cfg, mux: http.NewServeMux(), ptys: map[string]PTY{}}
+	a.mux.HandleFunc("POST /pty", a.handlePTY)
+	a.mux.HandleFunc("POST /pty/resize", a.handleResize)
 	a.mux.HandleFunc("GET /health", a.handleHealth)
 	a.mux.HandleFunc("POST /exec", a.handleExec)
 	a.mux.HandleFunc("POST /files/read", a.handleReadFile)

@@ -229,3 +229,13 @@ func TestPowerOff(t *testing.T) {
 		t.Fatalf("poweroff without a hook = %d", rec.Code)
 	}
 }
+
+func TestPTYResizeErrors(t *testing.T) {
+	a, _ := newAgent(t, nil)
+	if rec := call(t, a, "POST", "/pty/resize", token, wire.ResizeRequest{ID: "nope", Cols: 80, Rows: 24}); rec.Code != http.StatusNotFound {
+		t.Errorf("unknown terminal = %d", rec.Code)
+	}
+	if rec := call(t, a, "POST", "/pty/resize", token, wire.ResizeRequest{ID: "nope", Cols: 0, Rows: 24}); rec.Code != http.StatusBadRequest {
+		t.Errorf("zero columns = %d", rec.Code)
+	}
+}
