@@ -45,6 +45,9 @@ type Host interface {
 	Notify(title, body, target, level string)
 	Audit(action, target, outcome, detail string)
 	DisableJarvis(ctx context.Context, botID, reason string)
+	// AnswerFollowUp queues the bot's written answer to a follow-up a call took over but ended without telling (see
+	// chat.Manager.AnswerFollowUp).
+	AnswerFollowUp(ctx context.Context, f chat.FollowUp) error
 }
 
 type Dialer interface {
@@ -84,7 +87,7 @@ type live struct {
 	lang    string     // call language, fixed when the call starts (PhoneSettings.callLanguage)
 	inject  []injected // news folded into the call; inject[:delivered] reached the bot in a finished turn
 	history []chat.VoiceLine
-	// delivered counts inject lines a completed model turn has seen; the rest become a notification at the end.
+	// delivered counts inject lines a model turn has seen and finished without an error; finish deals with the rest.
 	delivered int
 	spoken    bool // the first turn (opener) has been taken
 	ended     bool
@@ -124,8 +127,14 @@ type live struct {
 	persistMu sync.Mutex
 }
 
-// injected is a call request folded into the call in progress.
-type injected struct{ bot, reason string }
+// injected is news folded into the call in progress: a second call request (see Place) or a follow-up (see
+// InjectFollowUp). follow is the follow-up it is, if any; claimed is set when the call took over that follow-up's
+// written answer (the chat hook returned true).
+type injected struct {
+	bot, reason string
+	follow      *chat.FollowUp
+	claimed     bool
+}
 
 type Calls struct {
 	store    *Store
@@ -152,6 +161,11 @@ type Calls struct {
 	Retry func(ctx context.Context, req PlaceRequest)
 	// Changed, if set, is called (and must not block) when a call is recorded or ends.
 	Changed func()
+	// FollowUpTold, if set, is called (and must not block) for each follow-up folded into a call (InjectFollowUp) once a
+	// completed model turn has had it. FollowUpMissed is called for each one the call ended without telling, with
+	// whether the call had taken over its written answer.
+	FollowUpTold   func(f chat.FollowUp)
+	FollowUpMissed func(f chat.FollowUp, claimed bool)
 	// afterAnswer, if set, runs after a turn marks the call answered and before that is persisted (tests only).
 	afterAnswer func()
 
@@ -315,17 +329,36 @@ const maxNews = 500
 // the model unfenced, so it must be a name the owner chose (a bot's name) or a fixed label; anything a bot or task wrote
 // belongs in reason, which is fenced. It reports whether callID is the call in progress; a verification call takes none.
 func (c *Calls) Inject(callID, from, reason string) bool {
+	told, _ := c.inject(callID, from, reason, nil)
+	return told
+}
+
+// InjectFollowUp folds a follow-up into the call callID as news, like Inject. claimed reports whether the call also
+// takes over its written answer: only a follow-up of work started on this very call, and never while the call is
+// hanging up (an accepted end_call), since it would most likely end untold. The call reports what became of it through
+// FollowUpTold and FollowUpMissed.
+func (c *Calls) InjectFollowUp(callID, from, news string, f chat.FollowUp) (told, claimed bool) {
+	return c.inject(callID, from, news, &f)
+}
+
+func (c *Calls) inject(callID, from, reason string, f *chat.FollowUp) (told, claimed bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	l := c.cur
 	if l == nil || l.ended || l.verify != "" || callID == "" || l.call.ID != callID {
-		return false
+		return false, false
 	}
 	// Even a trusted name is kept to one short line.
 	from = clipRunes(strings.Join(strings.Fields(from), " "), maxTitle)
-	l.inject = append(l.inject, injected{bot: from, reason: clipRunes(reason, maxNews)})
-	return true
+	in := injected{bot: from, reason: clipRunes(reason, maxNews), follow: f}
+	in.claimed = f != nil && f.CallID == callID && !l.ending()
+	l.inject = append(l.inject, in)
+	return true, in.claimed
 }
+
+// ending reports whether the call is on its way out: end_call was accepted for the running turn. The caller holds
+// Calls.mu.
+func (l *live) ending() bool { return l.hangFor != nil }
 
 // openerInstruction asks for a name-only greeting in the call language. It carries no reason and no context: the call
 // may reach voicemail, and the opener is spoken before anyone has answered.
@@ -1310,16 +1343,28 @@ func (c *Calls) modelTurn(ctx context.Context, l *live, f Frame, sp *speaker, a 
 		sp.say(sp.lines.failed + firstSentence(err.Error()))
 	}
 	c.mu.Lock()
+	var told []chat.FollowUp
 	if err == nil {
 		l.reasonGiven = true
+		// The news in this turn's brief reached the bot in a finished turn.
+		for _, in := range l.inject[min(l.delivered, seen):seen] {
+			if in.follow != nil {
+				told = append(told, *in.follow)
+			}
+		}
+		l.delivered = max(l.delivered, seen)
 	}
-	l.delivered = max(l.delivered, seen)
 	l.remember(chat.VoiceLine{Role: "user", Text: a.text})
 	if reply != "" {
 		l.remember(chat.VoiceLine{Role: "assistant", Text: reply})
 	}
 	hang := l.hangFor == sp && !l.ended
 	c.mu.Unlock()
+	if c.FollowUpTold != nil {
+		for _, f := range told {
+			c.FollowUpTold(f)
+		}
+	}
 	if hang && strings.TrimSpace(reply) == "" {
 		sp.say(sp.lines.bye)
 	}
@@ -1686,11 +1731,16 @@ func (c *Calls) finish(ctx context.Context, l *live, status string, durationSecs
 	call := l.call
 	name := l.botName
 	brief := strings.TrimSuffix(l.brief, "\n\n"+openedNote)
+	// News folded into this call that never reached a finished turn. A follow-up has a written answer of its own (in
+	// chat, in the call thread, or queued now for one the call took over); other news becomes one notification.
 	var missed []string
-	if l.delivered < len(l.inject) {
-		for _, in := range l.inject[l.delivered:] {
-			missed = append(missed, in.bot+": "+in.reason)
+	var untold []injected
+	for _, in := range l.inject[min(l.delivered, len(l.inject)):] {
+		if in.follow != nil {
+			untold = append(untold, in)
+			continue
 		}
+		missed = append(missed, in.bot+": "+in.reason)
 	}
 	if c.cur == l {
 		c.cur = nil
@@ -1701,8 +1751,12 @@ func (c *Calls) finish(ctx context.Context, l *live, status string, durationSecs
 	c.host.Audit("jarvis.call.ended", call.ID, "allowed", status)
 	c.changed()
 	if len(missed) > 0 {
-		// News folded into this call never reached a finished turn: tell the owner in writing instead.
 		c.host.Notify("News you missed on the call", strings.Join(missed, "\n"), "bot:"+call.BotID, "info")
+	}
+	if c.FollowUpMissed != nil {
+		for _, in := range untold {
+			c.FollowUpMissed(*in.follow, in.claimed)
+		}
 	}
 	if (status == StatusNoAnswer || status == StatusVoicemail) && l.verify == "" && call.Direction == Outbound {
 		c.host.Notify(name+" tried to call", call.Reason, "bot:"+call.BotID, "warning")

@@ -87,6 +87,11 @@ func (h jarvisHost) DisableJarvis(ctx context.Context, botID, reason string) {
 	h.Notify("Jarvis turned off for "+b.Name, reason, "bot:"+botID, "warning")
 }
 
+// AnswerFollowUp queues the written answer to a follow-up a call took over but never told.
+func (h jarvisHost) AnswerFollowUp(ctx context.Context, f chat.FollowUp) error {
+	return h.d.Chat.AnswerFollowUp(ctx, f)
+}
+
 const jarvisSource = "jarvis"
 
 // jarvisGateInput resolves a bot's effective permissions the same way tool calls and task starts do.

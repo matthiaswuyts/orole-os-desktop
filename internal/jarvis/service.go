@@ -166,6 +166,7 @@ func NewService(cfg ServiceConfig) *Service {
 	s.calls = NewCalls(s.store, cfg.Host, dial, phone, s.sender, s.callSettings, cfg.Now, s.log)
 	s.calls.Retry = func(ctx context.Context, req PlaceRequest) { s.fire(ctx, req, Ask{QuietOverride: req.QuietOverride}) }
 	s.calls.Changed = s.notifyChanged
+	s.calls.FollowUpTold, s.calls.FollowUpMissed = s.followUpTold, s.followUpMissed
 	return s
 }
 
@@ -588,9 +589,11 @@ func (s *Service) OnEvent(ev Event) {
 // code task it started changed state. It never blocks the caller beyond a few lookups under the call manager's lock.
 //
 //   - While a call is live with the bot (or is the call the work was started on), the follow-up is folded into it as
-//     news and told there. The hook returns true only when the follow-up belongs to that call (f.CallID is the live
-//     call): its written answer is then not needed. A follow-up that started in chat is also told on the phone, but
-//     still gets its written answer in chat.
+//     news and told there. The hook returns true (the call takes over the written answer) only when the follow-up
+//     belongs to that call (f.CallID is the live call) and the call is not hanging up. A follow-up that started in chat
+//     is also told on the phone, but still gets its written answer in chat. What the call does with the news is
+//     settled later: told, a report uses up the once bot_reported rules it matches (followUpTold); untold when the
+//     call ends, a report goes to the rules after all and a taken-over answer is queued (followUpMissed).
 //   - Otherwise a report goes to the call rules as a bot_reported event (task follow-ups already reach the rules as
 //     task events and must not fire twice).
 //   - A follow-up of a call that has ended is also announced in a notification: its written answer lands in the call's
@@ -602,22 +605,73 @@ func (s *Service) OnFollowUp(f chat.FollowUp) bool {
 		// A task's title is written by a bot: it goes into the fenced news, never into the label.
 		from, news = taskNewsFrom, followUpPhrase(f)+": "+f.Text
 	}
-	told := live && (rec.BotID == f.BotID || f.CallID == rec.ID) && s.calls.Inject(rec.ID, from, news)
-	onCall := told && f.CallID == rec.ID
+	var told, onCall bool
+	if live && (rec.BotID == f.BotID || f.CallID == rec.ID) {
+		told, onCall = s.calls.InjectFollowUp(rec.ID, from, news, f)
+	}
 	if f.CallID != "" && !onCall {
-		s.noticeEndedCall(f) // the call it was started on is not live: it ended
+		s.noticeEndedCall(f) // the call it was started on is not live (it ended) or is hanging up
 	}
 	if !told && f.Kind == chat.FollowUpReport {
-		title := f.From + " reported back"
-		switch f.Status {
-		case "failed":
-			title += " (failed)"
-		case "stopped":
-			title += " (stopped)"
-		}
-		s.OnEvent(Event{Trigger: BotReported, OwnerBotID: f.BotID, Source: f.From, Title: title, Detail: f.Text})
+		s.OnEvent(reportEvent(f))
 	}
 	return onCall
+}
+
+// reportEvent is the bot_reported event of a report follow-up.
+func reportEvent(f chat.FollowUp) Event {
+	title := f.From + " reported back"
+	switch f.Status {
+	case "failed":
+		title += " (failed)"
+	case "stopped":
+		title += " (stopped)"
+	}
+	return Event{Trigger: BotReported, OwnerBotID: f.BotID, Source: f.From, Title: title, Detail: f.Text}
+}
+
+// followUpTold runs when a call told a follow-up (a finished model turn had it): a report uses up the once
+// bot_reported rules it matches, without placing a call. Repeating rules stay. It never blocks the caller.
+func (s *Service) followUpTold(f chat.FollowUp) {
+	if f.Kind != chat.FollowUpReport || !s.track() {
+		return
+	}
+	ctx := s.ctx()
+	go func() {
+		defer s.wg.Done()
+		rules, err := s.store.Rules(ctx, f.BotID)
+		if err != nil {
+			s.log.Warn("jarvis: cannot read rules", "err", err)
+			return
+		}
+		ev, nowMs := reportEvent(f), s.now().UnixMilli()
+		for _, r := range rules {
+			if !r.Repeat && Matches(r, ev, nowMs) {
+				_ = s.store.DeleteRule(ctx, r.ID)
+			}
+		}
+	}()
+}
+
+// followUpMissed runs for each follow-up a call ended without telling. A report reaches the rules now (a "call me back"
+// rule phones the owner); one whose written answer the call had taken over gets it after all, in the call's thread,
+// and the owner is told where to read it. A follow-up the call did not take over was already answered in writing. It
+// never blocks the caller.
+func (s *Service) followUpMissed(f chat.FollowUp, claimed bool) {
+	if f.Kind == chat.FollowUpReport {
+		s.OnEvent(reportEvent(f))
+	}
+	if !claimed || !s.track() {
+		return
+	}
+	ctx := s.ctx()
+	go func() {
+		defer s.wg.Done()
+		if err := s.cfg.Host.AnswerFollowUp(ctx, f); err != nil {
+			s.log.Warn("jarvis: follow-up not answered", "bot", f.BotID, "call", f.CallID, "err", err)
+		}
+	}()
+	s.noticeEndedCall(f)
 }
 
 // taskNewsFrom labels news from a code task on a call.

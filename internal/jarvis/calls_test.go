@@ -34,6 +34,7 @@ type fakeHost struct {
 	instructions   []string                  // what Compose was asked
 	release        chan struct{}             // if set, every VoiceTurn waits for it before answering
 	onTurn         func(r chat.VoiceRequest) // runs inside VoiceTurn, before the reply
+	answered       []chat.FollowUp           // what AnswerFollowUp was asked
 }
 
 func newFakeHost() *fakeHost {
@@ -137,6 +138,17 @@ func (h *fakeHost) DisableJarvis(_ context.Context, id, _ string) {
 	h.mu.Lock()
 	h.disabled = append(h.disabled, id)
 	h.mu.Unlock()
+}
+func (h *fakeHost) AnswerFollowUp(_ context.Context, f chat.FollowUp) error {
+	h.mu.Lock()
+	h.answered = append(h.answered, f)
+	h.mu.Unlock()
+	return nil
+}
+func (h *fakeHost) answeredList() []chat.FollowUp {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return append([]chat.FollowUp(nil), h.answered...)
 }
 func (h *fakeHost) noticeList() []string {
 	h.mu.Lock()

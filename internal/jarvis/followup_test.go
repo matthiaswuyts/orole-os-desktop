@@ -2,7 +2,11 @@ package jarvis
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -461,5 +465,165 @@ func TestInjectRefusesAVerificationCall(t *testing.T) {
 	}
 	if e.c.Inject(call.ID, "Nova", "x") {
 		t.Fatal("injected into a verification call")
+	}
+}
+
+// ---- what a call does with the follow-ups folded into it ----
+
+// A follow-up the call took over but ended without telling (the owner hung up first) is not lost: its report reaches
+// the rules (a "call me back" rule phones the owner), the bot's written answer is queued in the call thread, and the
+// owner is told where to read it. It is not repeated as "News you missed".
+func TestClaimedFollowUpTheCallNeverToldIsHandedBackAtTheEnd(t *testing.T) {
+	svc, host, dial, _, _ := newTestService(t)
+	ctx := context.Background()
+	if _, err := svc.CallOwner(ctx, "b1", "first", false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.AddRule(ctx, JarvisRule{BotID: "b1", Trigger: BotReported, Target: "nova"}); err != nil {
+		t.Fatal(err)
+	}
+	rec, _ := svc.calls.Active()
+	f := nova(rec.ID, "complete", "found 3 flights")
+	f.MessageID = "m-report"
+	if !svc.OnFollowUp(f) {
+		t.Fatal("a follow-up of the live call was not handed to it")
+	}
+	endCall(svc, rec.ID)
+	svc.wait()
+	if got := host.answeredList(); len(got) != 1 || got[0] != f {
+		t.Fatalf("answered %+v, want %+v", got, f)
+	}
+	if got := reportedNotices(host); len(got) != 1 || !strings.HasPrefix(got[0], "Nova reported back: From your call with Atlas.") {
+		t.Fatalf("notices %v", host.noticeList())
+	}
+	if d := dial.dialed(); len(d) != 2 {
+		t.Fatalf("the call-back rule did not phone: dials=%d", len(d))
+	}
+	if rules, _ := svc.Rules(ctx, "b1"); len(rules) != 0 {
+		t.Fatalf("once rule kept: %+v", rules)
+	}
+	for _, n := range host.noticeList() {
+		if strings.Contains(n, "News you missed") {
+			t.Fatalf("a follow-up became a missed-news notice: %q", n)
+		}
+	}
+}
+
+// A report told on the call uses up the once bot_reported rules it matches without placing a call; repeating rules and
+// rules for another callee stay. That holds for a report of the call's own work and for one that came from chat.
+func TestToldReportUsesUpOnceRules(t *testing.T) {
+	for name, callID := range map[string]func(CallRecord) string{
+		"call's own work": func(r CallRecord) string { return r.ID },
+		"from chat":       func(CallRecord) string { return "" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			svc, host, dial, _, _ := newTestService(t)
+			ctx := context.Background()
+			if _, err := svc.CallOwner(ctx, "b1", "first", false); err != nil {
+				t.Fatal(err)
+			}
+			once, _ := svc.AddRule(ctx, JarvisRule{BotID: "b1", Trigger: BotReported, Target: "any"})
+			repeat, _ := svc.AddRule(ctx, JarvisRule{BotID: "b1", Trigger: BotReported, Target: "Nova", Repeat: true})
+			other, _ := svc.AddRule(ctx, JarvisRule{BotID: "b1", Trigger: BotReported, Target: "Atlas"})
+			rec, _ := svc.calls.Active()
+			svc.OnFollowUp(nova(callID(rec), "complete", "found 3 flights"))
+			svc.wait()
+			if rules, _ := svc.Rules(ctx, "b1"); len(rules) != 3 {
+				t.Fatalf("rules used before the report was told: %+v", rules)
+			}
+			askOnCall(t, svc, host, rec.ID) // a finished turn has the report
+			svc.wait()
+			rules, _ := svc.Rules(ctx, "b1")
+			var ids []string
+			for _, r := range rules {
+				ids = append(ids, r.ID)
+			}
+			if len(ids) != 2 || !slices.Contains(ids, repeat.ID) || !slices.Contains(ids, other.ID) || slices.Contains(ids, once.ID) {
+				t.Fatalf("rules %+v", rules)
+			}
+			endCall(svc, rec.ID)
+			svc.wait()
+			if len(dial.dialed()) != 1 || len(host.answeredList()) != 0 || len(reportedNotices(host)) != 0 {
+				t.Fatalf("dials=%d answered=%d notices=%v", len(dial.dialed()), len(host.answeredList()), host.noticeList())
+			}
+		})
+	}
+}
+
+// After an accepted end_call the call is hanging up: a follow-up of its work is not taken over (chat answers it in the
+// call thread at once and the owner is told), and at the end its report reaches the rules.
+func TestFollowUpIsNotClaimedWhileTheCallHangsUp(t *testing.T) {
+	svc, host, dial, _, _ := newTestService(t)
+	ctx := context.Background()
+	if _, err := svc.CallOwner(ctx, "b1", "first", false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.AddRule(ctx, JarvisRule{BotID: "b1", Trigger: BotReported, Target: "nova"}); err != nil {
+		t.Fatal(err)
+	}
+	rec, _ := svc.calls.Active()
+	claimed := make(chan bool, 1)
+	host.onTurn = func(chat.VoiceRequest) {
+		if err := svc.EndCall(rec.ID); err != nil {
+			t.Error(err)
+		}
+		claimed <- svc.OnFollowUp(nova(rec.ID, "complete", "found 3 flights"))
+	}
+	svc.calls.HandleFrame(ctx, Frame{Type: FrameLLMRequest, ID: "r0", CallID: rec.ID})
+	svc.calls.HandleFrame(ctx, llmFrame("r1", rec.ID, "nee, dat was het"))
+	if <-claimed {
+		t.Fatal("claimed by a call that is hanging up")
+	}
+	svc.wait()
+	if got := reportedNotices(host); len(got) != 1 {
+		t.Fatalf("notices %v", host.noticeList())
+	}
+	if len(dial.dialed()) != 1 {
+		t.Fatal("the rule fired during the call")
+	}
+	endCall(svc, rec.ID)
+	svc.wait()
+	if len(dial.dialed()) != 2 || len(host.answeredList()) != 0 || len(reportedNotices(host)) != 1 {
+		t.Fatalf("dials=%d answered=%d notices=%v", len(dial.dialed()), len(host.answeredList()), host.noticeList())
+	}
+}
+
+// The call reports each follow-up once: told when a turn that had it finished without an error, otherwise missed at the
+// end (with whether it took over the answer). Plain news is a "News you missed" notice as before.
+func TestCallReportsWhatBecameOfItsFollowUps(t *testing.T) {
+	e := newCallEnv(t)
+	var mu sync.Mutex
+	var told, missed []string
+	e.c.FollowUpTold = func(f chat.FollowUp) { mu.Lock(); told = append(told, f.Text); mu.Unlock() }
+	e.c.FollowUpMissed = func(f chat.FollowUp, claimed bool) {
+		mu.Lock()
+		missed = append(missed, fmt.Sprintf("%s %v", f.Text, claimed))
+		mu.Unlock()
+	}
+	call := e.openCall(t)
+	fu := func(callID, text string) chat.FollowUp {
+		return chat.FollowUp{BotID: "b1", CallID: callID, Kind: chat.FollowUpReport, From: "Nova", Status: "complete", Text: text}
+	}
+	if told, claimed := e.c.InjectFollowUp(call.ID, "Nova", "complete: one", fu(call.ID, "one")); !told || !claimed {
+		t.Fatalf("told %v claimed %v", told, claimed)
+	}
+	if told, claimed := e.c.InjectFollowUp(call.ID, "Nova", "complete: two", fu("", "two")); !told || claimed {
+		t.Fatalf("a chat follow-up: told %v claimed %v", told, claimed)
+	}
+	e.c.HandleFrame(context.Background(), llmFrame("r1", call.ID, "what's new?")) // has one and two
+	e.c.InjectFollowUp(call.ID, "Nova", "complete: three", fu(call.ID, "three"))
+	e.c.Inject(call.ID, "Atlas", "the nightly build failed")
+	e.host.mu.Lock()
+	e.host.botErr = errors.New("store down")
+	e.host.mu.Unlock()
+	e.c.HandleFrame(context.Background(), llmFrame("r2", call.ID, "and now?"))                           // fails: nothing more is delivered
+	e.c.HandleFrame(context.Background(), Frame{Type: FrameCallStatus, CallID: call.ID, Status: "done"}) // finish reports synchronously
+	mu.Lock()
+	defer mu.Unlock()
+	if !slices.Equal(told, []string{"one", "two"}) || !slices.Equal(missed, []string{"three true"}) {
+		t.Fatalf("told %v missed %v", told, missed)
+	}
+	if n := e.host.noticeList(); len(n) != 1 || n[0] != "News you missed on the call: Atlas: the nightly build failed" {
+		t.Fatalf("notices %v", n)
 	}
 }
