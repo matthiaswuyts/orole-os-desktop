@@ -34,7 +34,7 @@ func TestQEMUArgsBootTheImageWithWHPX(t *testing.T) {
 	c := testQEMUConfig()
 	args := qemuArgs(c)
 	for _, want := range [][2]string{
-		{"-machine", "q35"}, {"-accel", "whpx"}, {"-cpu", "host"}, {"-m", "2048"}, {"-smp", "2"},
+		{"-machine", "q35"}, {"-accel", "whpx,kernel-irqchip=off"}, {"-cpu", "host"}, {"-m", "2048"}, {"-smp", "2"},
 		{"-L", c.Share}, {"-display", "none"}, {"-vga", "none"},
 		{"-kernel", c.Spec.Kernel}, {"-initrd", c.Spec.Initrd},
 		{"-append", "init=/nix/store/abc-nixos-system/init root=/dev/disk/by-label/nixos console=ttyS0 panic=-1"},
@@ -129,7 +129,8 @@ func TestQEMUArgsAcceleratorIsAParameter(t *testing.T) {
 
 func TestQEMUArgsCPUDefaults(t *testing.T) {
 	for _, tc := range []struct{ accel, cpu, want string }{
-		{"", "", defaultCPU}, {"whpx", "host", "host"}, {"tcg", "", "max"}, {"tcg", "host", "max"}, {"tcg", "qemu64", "qemu64"},
+		{"", "", defaultCPU}, {"whpx", "host", "host"}, {"whpx,kernel-irqchip=off", "", "host"},
+		{"tcg", "", "max"}, {"tcg", "host", "max"}, {"tcg,thread=multi", "host", "max"}, {"tcg", "qemu64", "qemu64"},
 	} {
 		c := testQEMUConfig()
 		c.Accel, c.CPU = tc.accel, tc.cpu

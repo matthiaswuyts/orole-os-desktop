@@ -12,15 +12,17 @@ const guestPortName = "org.orole.guest.0"
 // defaultCPU is QEMU's -cpu model under WHPX; the phase 2 spike (docs/architecture/bot-computer.md) chose it.
 const defaultCPU = "host"
 
-// defaultAccel is the QEMU accelerator on Windows. The phase 2 spike may fall back to "tcg" via qemuConfig.Accel.
-const defaultAccel = "whpx"
+// defaultAccel is the QEMU accelerator on Windows. Plain "whpx" fails on build 22000 with Hyper-V running
+// (QEMU's in-kernel irqchip path asks WHP for nested virtualization, hr=80370302); the phase 2 spike
+// (docs/architecture/bot-computer.md) found kernel-irqchip=off works. "tcg" is the software fallback via qemuConfig.Accel.
+const defaultAccel = "whpx,kernel-irqchip=off"
 
 // qemuConfig is everything one QEMU command line needs.
 type qemuConfig struct {
 	Spec        BootSpec
 	Share       string // QEMU firmware folder (-L), <runtime>\share
 	CPU         string // -cpu model
-	Accel       string // -accel value; empty means defaultAccel (whpx). "tcg" is the software fallback
+	Accel       string // -accel value; empty means defaultAccel. "tcg" (with or without options) is the software fallback
 	TokenFile   string // file holding the guest token (user-only dir); QEMU reads it into fw_cfg, so the token is never in argv
 	Cmdline     string // the image's kernel command line (the cmdline file next to the kernel)
 	GuestSocket string // AF_UNIX path the virtio-serial chardev connects to (the daemon listens)
@@ -40,7 +42,7 @@ func qemuArgs(c qemuConfig) []string {
 	if cpu == "" {
 		cpu = defaultCPU
 	}
-	if accel == "tcg" && cpu == "host" {
+	if strings.HasPrefix(accel, "tcg") && cpu == "host" {
 		cpu = "max" // host is only valid with a hardware accelerator
 	}
 	appendLine := strings.Join(strings.Fields(c.Cmdline+" console=ttyS0 panic=-1"), " ")

@@ -28,7 +28,7 @@ running commands do not.**
 | Unit | Location | Responsibility |
 |---|---|---|
 | Types, paths | `internal/sandbox/sandbox.go`, `paths.go` | `Limits` (2048 MB, 2 vCPU, 10 GB by default), `State`, `Status`, `Availability`, errors; files under `<data>\sandbox\` |
-| Backend | `internal/sandbox/backend.go` | `Backend.Boot(BootSpec) -> VM`; `VM.Conn/Shutdown/Kill/Done/ExitErr`. Phase 1 has only the test fake. |
+| Backend | `internal/sandbox/backend.go`, `backend_windows.go`, `qmp.go` | `Backend.Boot(BootSpec) -> VM`; `VM.Conn/Shutdown/Kill/Done/ExitErr`. Windows: `qemu-system-x86_64 -accel whpx,kernel-irqchip=off` in the daemon's kill-on-close job object; QMP `system_powerdown`, then kill. Other platforms: `unsupported-os`. |
 | Store | `internal/sandbox/store.go`, `migrations/0112_sandboxes.sql` | one row per bot: image version, overlay path, limits, last use |
 | Manager | `internal/sandbox/manager*.go` | lifecycle, cap, idle stop, crash detection, takeover lock, delete |
 | Guest client | `internal/sandbox/guestclient*.go` | typed calls over h2c; caps every answer; maps a dead channel to the manager's reason |
@@ -82,12 +82,20 @@ The host never trusts the guest: answers over 8 MiB are refused, exec output is 
 ### Storage
 
 `<data>\sandbox\runtime\<version>\` (QEMU), `images\<version>\` (base image), `bots\<bot>.qcow2` (overlay),
-`run\<16 hex>.sock` (guest channel; the name is a hash of the bot id so the path stays under the 107-character AF_UNIX limit), `<data>\logs\sandbox-<bot>.log`. Bot ids are checked against
+`run\<16 hex>.sock` (guest channel; the name is a hash of the bot id so the path stays under the 107-character AF_UNIX limit) with `.qmp` (QEMU monitor) and `.tok` (the per-boot token, only while QEMU starts) next to it, `<data>\logs\sandbox-<bot>.log`.
+The overlay is created with `qemu-img create -F qcow2 -b <base>` on first boot only, never recreated, and a bot keeps
+booting the kernel, initrd, cmdline and base of the image version recorded for it while that version is installed. Bot ids are checked against
 `^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$` before they become file names.
 
 ### Security notes
 
-- No network listener on the host; the guest channel is a local stream (phase 2).
+- No network listener on the host; the guest channel is a local stream. QEMU connects out to two AF_UNIX sockets the
+  daemon listens on (guest channel and QMP) and opens no listener of its own.
+- `<data>\sandboxun\` gets an explicit protected DACL (the user and SYSTEM only) on every boot, because
+  `%LOCALAPPDATA%\Orole` inherits read access for other local groups; the sockets inherit it. The token reaches QEMU
+  in a file there with its own user-only DACL (`-fw_cfg name=opt/orole/token,file=`), never in argv; the file is
+  deleted once QMP answers (QEMU has read it by then) and on every failed boot, and the token is never logged.
+- QEMU runs in a job object with kill-on-close, so VMs never outlive the daemon.
 - The VM is the security boundary. The token authenticates the daemon's connection to the guest; code inside the
   guest can read the kernel command line, which is acceptable because it already controls the guest.
 - The guest has open internet and can reach the home network (phase 2 documents this in the UI).
@@ -97,6 +105,9 @@ The host never trusts the guest: answers over 8 MiB are refused, exec output is 
 `go test -race ./internal/sandbox/... ./cmd/orole-guest/...` runs everywhere: the fake backend serves the real
 guest handler over `net.Pipe`, and the test binary doubles as the guest's shell (`guestagent/agenttest`). The
 Linux CI lane also runs the real `/bin/sh` exec tests and the real PTY test, and builds `orole-guest`.
+On Windows the QEMU backend is tested against a fake QEMU (it connects the sockets and answers QMP like the real
+one); `TestRealBootConnectsTheGuestAgent` boots real QEMU with the spike's Alpine kernel and `orole-guest` and talks h2c
+to it when `OROLE_SPIKE_QEMU` and `OROLE_SPIKE_ALPINE` are set.
 
 ## Phase 2 spike (WHPX on build 22000)
 

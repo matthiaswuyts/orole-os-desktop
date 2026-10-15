@@ -125,6 +125,22 @@ func (r *Runtime) Image() (ImageSet, error) {
 		Initrd: filepath.Join(dir, imageInitrd), BaseImage: filepath.Join(dir, imageBase)}, nil
 }
 
+// installedImage resolves an installed image version by name, whether or not it is the pinned one: bots
+// whose overlay was made from an older version keep booting it while its files exist.
+func installedImage(p Paths, version string) (ImageSet, bool) {
+	if version == "" || filepath.Base(version) != version || !filepath.IsLocal(version) {
+		return ImageSet{}, false
+	}
+	dir := p.Image(version)
+	for _, f := range []string{completeMark, imageKernel, imageInitrd, imageCmdline, imageBase} {
+		if !pathExists(filepath.Join(dir, f)) {
+			return ImageSet{}, false
+		}
+	}
+	return ImageSet{Version: version, Kernel: filepath.Join(dir, imageKernel),
+		Initrd: filepath.Join(dir, imageInitrd), BaseImage: filepath.Join(dir, imageBase)}, true
+}
+
 func (r *Runtime) State() RuntimeState {
 	r.mu.Lock()
 	s := r.state
