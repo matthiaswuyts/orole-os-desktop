@@ -33,7 +33,8 @@ $ld = "-s -w -X github.com/rayorole/orole-os-desktop.Version=$Version"
 # then move to the Authenticode digest (which excludes the signature) or the helper must be signed here first.
 go build -trimpath -ldflags "$ld -H windowsgui" -o build\orole-sandbox-setup.exe ./cmd/orole-sandbox-setup
 if ($LASTEXITCODE) { throw "sandbox setup helper build failed" }
-$helperSHA = (Get-FileHash build\orole-sandbox-setup.exe -Algorithm SHA256).Hash.ToLowerInvariant()
+# .NET instead of Get-FileHash: Windows PowerShell 5.1 started from PowerShell 7 cannot load that cmdlet.
+$helperSHA = -join ([System.Security.Cryptography.SHA256]::Create().ComputeHash([System.IO.File]::ReadAllBytes((Resolve-Path build\orole-sandbox-setup.exe).Path)) | ForEach-Object { $_.ToString("x2") })
 go build -trimpath -ldflags "$ld -X github.com/rayorole/orole-os-desktop/internal/sandbox.SetupHelperSHA256=$helperSHA" -o build\orole-daemon.exe ./cmd/daemon
 if ($LASTEXITCODE) { throw "daemon build failed" }
 go build -trimpath -ldflags $ld -o build\orole.exe ./cmd/orole-cli
