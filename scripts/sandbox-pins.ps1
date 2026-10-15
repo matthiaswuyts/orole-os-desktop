@@ -31,7 +31,9 @@ function Get-Assets([string]$tag) {
   }
   $out = @{}
   foreach ($a in $rel.assets | Where-Object { $_.name -ne "SHA256SUMS" }) {
-    if (-not $sums.ContainsKey($a.name)) { throw "${tag}: $($a.name) is not listed in SHA256SUMS" }
+    # Corresponding-source files attached to the release (qemu-sources, guest-sources) are not pinned; the files
+    # pinned below must be listed, which the "has no" checks enforce.
+    if (-not $sums.ContainsKey($a.name)) { continue }
     $sha = $sums[$a.name]
     if ($sha -notmatch '^[0-9a-f]{64}$') { throw "${tag}: bad SHA-256 for $($a.name): $sha" }
     # GitHub hashes every uploaded asset itself: a mismatch means the upload is not what the workflow hashed.
