@@ -3,10 +3,13 @@
 package sandbox
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"fmt"
+	"image/png"
 	"io"
 	"net"
 	"net/http"
@@ -181,6 +184,10 @@ func TestRealGuestImageThroughTheManager(t *testing.T) {
 	t.Logf("E2E RESULT host loopback 10.0.2.2:%d blocked: %s %s", port, strings.TrimSpace(hostRes.Stdout), strings.TrimSpace(hostRes.Stderr))
 	inet := run(g, "curl -sS -I -m 20 -o /dev/null -w 'http=%{http_code}' https://example.com 2>&1; echo \" exit=$?\"")
 	t.Logf("E2E RESULT internet (curl -sI https://example.com): %s", strings.Join(strings.Fields(inet.Stdout+" "+inet.Stderr), " "))
+
+	// The bot's browser (chromedp on the visible Chromium) and the VNC screen relay, through the real Guest.
+	e2eBrowser(t, ctx, g, run)
+	e2eLongStreams(t, ctx, g)
 
 	// Files are written as bot, in its home.
 	if _, err := g.WriteFile(ctx, "persist.txt", []byte("kept")); err != nil {
@@ -380,4 +387,175 @@ func logTail(b []byte, n int) string {
 		b = b[len(b)-n:]
 	}
 	return string(b)
+}
+
+// e2eBrowser drives the guest's visible Chromium through Guest.Browser: open, read, screenshot, click (by text, and a
+// clear error for a missing target) and a target=_blank link whose new tab the next action must follow.
+func e2eBrowser(t *testing.T, ctx context.Context, g *Guest, run func(*Guest, string) wire.ExecResult) {
+	t.Helper()
+	browse := func(label string, req wire.BrowserRequest) (wire.BrowserResult, error) {
+		t.Helper()
+		start := time.Now()
+		res, err := g.Browser(ctx, req)
+		t.Logf("E2E RESULT browser %s = %s (title %q, url %q, err %v)", label, time.Since(start).Round(time.Millisecond), res.Title, res.URL, err)
+		return res, err
+	}
+	must := func(label string, req wire.BrowserRequest) wire.BrowserResult {
+		t.Helper()
+		res, err := browse(label, req)
+		if err != nil {
+			t.Fatalf("browser %s: %v", label, err)
+		}
+		return res
+	}
+
+	res := must("open https://example.com", wire.BrowserRequest{Action: wire.BrowserOpen, URL: "https://example.com"})
+	if !strings.Contains(res.Title, "Example") {
+		t.Fatalf("title after open = %q, want it to contain Example", res.Title)
+	}
+	// example.com's body changed in 2026: only a paragraph (several languages), no "Example Domain" heading and no link.
+	res = must("read", wire.BrowserRequest{Action: wire.BrowserRead})
+	if !strings.Contains(res.Text, "documentation examples") {
+		t.Fatalf("page text = %q, want example.com's paragraph", res.Text)
+	}
+	res = must("screenshot", wire.BrowserRequest{Action: wire.BrowserScreenshot})
+	img, err := png.Decode(bytes.NewReader(res.PNG))
+	if err != nil {
+		t.Fatalf("screenshot is not a PNG (%d bytes): %v", len(res.PNG), err)
+	}
+	if b := img.Bounds(); b.Dx() < 200 || b.Dy() < 200 || len(res.PNG) < 2000 {
+		t.Fatalf("screenshot too small: %dx%d, %d bytes", b.Dx(), b.Dy(), len(res.PNG))
+	}
+	t.Logf("E2E RESULT screenshot: %dx%d PNG, %d bytes", img.Bounds().Dx(), img.Bounds().Dy(), len(res.PNG))
+
+	// A missing target is a clear error, not a hang.
+	if _, err := browse("click #orole-missing", wire.BrowserRequest{Action: wire.BrowserClick, Target: "#orole-missing"}); err == nil || !strings.Contains(err.Error(), "nothing visible") {
+		t.Fatalf("click on a missing element = %v, want a 'nothing visible' error", err)
+	}
+
+	// Links: pages from a server on the guest's own loopback. A same-tab link clicked by its text navigates; a
+	// target=_blank link opens a new front tab, which the next action must drive.
+	pages := map[string]string{
+		"www/index.html":  `<!doctype html><title>First tab</title><p><a href="/info.html">More information...</a></p><p><a href="/second.html" target="_blank">Open second</a></p>`,
+		"www/info.html":   `<!doctype html><title>Info page</title><p>orole info page</p>`,
+		"www/second.html": `<!doctype html><title>Second tab</title><p>orole second tab</p>`,
+	}
+	for name, body := range pages {
+		if _, err := g.WriteFile(ctx, name, []byte(body)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	run(g, "setsid -f python3 -m http.server 8765 --bind 127.0.0.1 --directory ~/www >/dev/null 2>&1; for i in $(seq 50); do curl -s -o /dev/null http://127.0.0.1:8765/ && break; sleep 0.1; done")
+	defer run(g, "pkill -f 'http.server 8765' || true")
+	const local = "http://127.0.0.1:8765/index.html"
+	if res = must("open local page", wire.BrowserRequest{Action: wire.BrowserOpen, URL: local}); res.Title != "First tab" {
+		t.Fatalf("title = %q, want First tab", res.Title)
+	}
+	must("click text=More information", wire.BrowserRequest{Action: wire.BrowserClick, Target: "text=More information"})
+	waitTitle := func(label, title, text string) {
+		t.Helper()
+		start := time.Now()
+		for {
+			res = must(label, wire.BrowserRequest{Action: wire.BrowserRead})
+			if res.Title == title && strings.Contains(res.Text, text) {
+				t.Logf("E2E RESULT %s: on %q %s after the click", label, title, time.Since(start).Round(time.Millisecond))
+				return
+			}
+			if time.Since(start) > 15*time.Second {
+				t.Fatalf("%s: title %q url %q, want %q", label, res.Title, res.URL, title)
+			}
+			time.Sleep(500 * time.Millisecond)
+		}
+	}
+	waitTitle("read after the link click", "Info page", "orole info page")
+	if res = must("open local page again", wire.BrowserRequest{Action: wire.BrowserOpen, URL: local}); res.Title != "First tab" {
+		t.Fatalf("title = %q, want First tab", res.Title)
+	}
+	must("click target=_blank link", wire.BrowserRequest{Action: wire.BrowserClick, Target: "text=Open second"})
+	waitTitle("read after target=_blank", "Second tab", "orole second tab")
+}
+
+// e2eLongStreams opens the VNC screen relay (the RFB handshake with wayvnc) and a guest terminal, keeps both idle for
+// longer than a minute and then uses both again: nothing on the path (guest http2.Server, host transport) may cut a
+// long-lived stream.
+func e2eLongStreams(t *testing.T, ctx context.Context, g *Guest) {
+	t.Helper()
+	start := time.Now()
+	scr, err := g.OpenScreen(ctx)
+	if err != nil {
+		t.Fatalf("OpenScreen: %v", err)
+	}
+	defer scr.Close()
+	read := func(n int, what string) []byte {
+		t.Helper()
+		b := make([]byte, n)
+		if _, err := io.ReadFull(scr, b); err != nil {
+			t.Fatalf("screen %s: %v", what, err)
+		}
+		return b
+	}
+	banner := read(12, "banner")
+	if !strings.HasPrefix(string(banner), "RFB 003.0") {
+		t.Fatalf("screen banner = %q, want RFB 003.0xx", banner)
+	}
+	t.Logf("E2E RESULT screen banner %q after %s", strings.TrimSpace(string(banner)), time.Since(start).Round(time.Millisecond))
+	// RFB 3.8: version, security types, None, SecurityResult, ClientInit (shared), ServerInit.
+	if _, err := scr.Write([]byte("RFB 003.008\n")); err != nil {
+		t.Fatal(err)
+	}
+	types := read(int(read(1, "security type count")[0]), "security types")
+	if !bytes.Contains(types, []byte{1}) {
+		t.Fatalf("wayvnc offers security types %v, want None (1) on the guest loopback", types)
+	}
+	if _, err := scr.Write([]byte{1}); err != nil {
+		t.Fatal(err)
+	}
+	if r := binary.BigEndian.Uint32(read(4, "security result")); r != 0 {
+		t.Fatalf("security result %d", r)
+	}
+	if _, err := scr.Write([]byte{1}); err != nil {
+		t.Fatal(err)
+	}
+	init := read(24, "server init")
+	w, h := binary.BigEndian.Uint16(init[0:2]), binary.BigEndian.Uint16(init[2:4])
+	read(int(binary.BigEndian.Uint32(init[20:24])), "desktop name")
+	t.Logf("E2E RESULT screen RFB handshake done: framebuffer %dx%d", w, h)
+
+	pty, err := g.OpenPTY(ctx, 80, 24)
+	if err != nil {
+		t.Fatalf("OpenPTY: %v", err)
+	}
+	defer pty.Close()
+
+	const idle = 65 * time.Second
+	time.Sleep(idle)
+
+	// The screen still answers: a full FramebufferUpdateRequest gets a FramebufferUpdate (message type 0).
+	req := []byte{3, 0, 0, 0, 0, 0, 0, 0, 0, 0}
+	binary.BigEndian.PutUint16(req[6:8], w)
+	binary.BigEndian.PutUint16(req[8:10], h)
+	if _, err := scr.Write(req); err != nil {
+		t.Fatalf("screen write after %s idle: %v", idle, err)
+	}
+	if typ := read(1, "update after idle")[0]; typ != 0 {
+		t.Fatalf("screen message after idle = type %d, want FramebufferUpdate (0)", typ)
+	}
+	// The terminal still runs commands.
+	if _, err := pty.Write([]byte("echo alive-$((40+2))\n")); err != nil {
+		t.Fatalf("pty write after %s idle: %v", idle, err)
+	}
+	var out []byte
+	buf := make([]byte, 4096)
+	deadline := time.Now().Add(15 * time.Second)
+	for !bytes.Contains(out, []byte("alive-42")) {
+		if time.Now().After(deadline) {
+			t.Fatalf("pty after %s idle: %q", idle, out)
+		}
+		n, err := pty.Read(buf)
+		out = append(out, buf[:n]...)
+		if err != nil {
+			t.Fatalf("pty read after %s idle: %v (%q)", idle, err, out)
+		}
+	}
+	t.Logf("E2E RESULT screen and terminal streams still work after %s idle", idle)
 }

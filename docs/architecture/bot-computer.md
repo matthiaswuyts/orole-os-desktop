@@ -161,37 +161,45 @@ Linux binaries and `#!/bin/bash` scripts run; fontconfig with DejaVu and Noto fo
 #### Guest image checks
 
 Run on 2026-10-15 on the developer PC (Windows 11 Pro 21H2, build 22000, Hyper-V running, 32 GB RAM, unelevated)
-with `TestRealGuestImageThroughTheManager` (`internal/sandbox/e2e_windows_test.go`): the pinned `guest-v0.1.1` and
+with `TestRealGuestImageThroughTheManager` (`internal/sandbox/e2e_windows_test.go`): the pinned `guest-v0.1.2` and
 `qemu-v20260811` assets (draft releases at the time, read with `gh`) installed through the real `Runtime` (size and
 SHA-256 against `DefaultPins`, unzip) from a local stand-in for the release server, then booted through the real
 `Manager` and host backend (`-accel whpx,kernel-irqchip=off`, 2048 MB, 2 vCPU). Every command below ran as `bot`
-through `orole-guest`. Two full runs on `guest-v0.1.0` and one on `guest-v0.1.1`, same results; times from the
-`guest-v0.1.1` run.
+through `orole-guest`. Two full runs on `guest-v0.1.0`, one on `guest-v0.1.1` and one on `guest-v0.1.2` (the first
+image with the browser and screen relay: `orole-guest` with chromedp v0.14.2), same results; times from the
+`guest-v0.1.2` run.
 
 | Check | Result |
 |---|---|
-| Boot to guest ready (`Manager.Ensure`, fresh overlay) | 8.1 s; `systemd-analyze`: 1.02 s kernel + 3.00 s initrd + 3.22 s userspace = 7.24 s |
-| Boot to ready again: clean restart / after a hard kill / a second bot | 7.6 s / 7.4 s / 7.9 s |
+| Boot to guest ready (`Manager.Ensure`, fresh overlay) | 8.1 s; `systemd-analyze`: 0.99 s kernel + 3.03 s initrd + 3.17 s userspace = 7.18 s |
+| Boot to ready again: clean restart / after a hard kill / a second bot | 7.6 s / 7.5 s / 7.8 s |
 | Clean shutdown (agent power-off, then QMP) | 1.8 s |
-| QEMU process RAM (host) | one bot: working set 503 MB, private 2130 MB; with two bots running: 1276 MB and 507 MB working set, 2418 MB and 2132 MB private (the guest touches its RAM lazily; private bytes are the 2 GB reservation) |
-| Guest memory (`free -m`) | 461 MB used of 1969 MB, idle with Chromium open |
+| QEMU process RAM (host) | one bot: working set 510 MB, private 2139 MB; with two bots running (the first after the browser checks): 1305 MB and 524 MB working set, 2136 MB and 2132 MB private (the guest touches its RAM lazily; private bytes are the 2 GB reservation) |
+| Guest memory (`free -m`) | 477 MB used of 1969 MB, idle with Chromium open |
 | `id -un` | `bot` |
 | Services (`systemctl is-active cage-tty1 wayvnc orole-guest`) | active, active, active |
-| Chromium CDP (`curl -s 127.0.0.1:9222/json/version`) | up 4.2 s after guest ready, `Chrome/155.0.8059.79` |
-| wayvnc (`ss -ltn`) | listening on `127.0.0.1:5900` only, 33 ms after guest ready |
+| Chromium CDP (`curl -s 127.0.0.1:9222/json/version`) | up 3.2 s after guest ready, `Chrome/155.0.8059.79` |
+| wayvnc (`ss -ltn`) | listening on `127.0.0.1:5900` only, 46 ms after guest ready |
 | Fonts (`fc-list`) | 921 faces (DejaVu, Noto) |
 | fw_cfg token / channel device | `400 root` / `600 root`; `cat` of the token as bot fails |
 | Host loopback (`curl http://10.0.2.2:<port>` to a Go listener on the host's 127.0.0.1) | refused at once (`curl: (7)`, the nftables reject); the listener accepted nothing |
 | Internet (`curl -sI https://example.com`) | HTTP 200 |
 | Tools as bot | Python 3.14.7, Node v24.21.0, uv 0.13.0, git 2.55.0, `bash -c` works |
 | Disk (`df -h /`) | `/dev/vda` 9.8 G, 4.1 G used (ext4 grown to the 10 GB overlay on first boot) |
+| Browser `open https://example.com` (`Guest.Browser`, chromedp v0.14.2 attaching to the visible tab) | 0.50 s, title `Example Domain` (no CDP decode errors) |
+| Browser `read` / `screenshot` | 3 ms, text has example.com's paragraph (its 2026 page has no "Example Domain" heading and no link) / 160 ms, valid 1280x630 PNG, 59.8 KB |
+| Browser `click` on a missing target | 6 ms, `502: nothing visible on the page matches "#orole-missing"` |
+| Browser `click text=More information` (same-tab link on a page served from the guest's loopback) | 64 ms, the result already reports the new page |
+| Browser `click` on a `target=_blank` link | 137 ms; the result and the next `read` drive the new front tab |
+| Screen relay (`Guest.OpenScreen`, wayvnc) | banner `RFB 003.008` 1 ms after opening; RFB 3.8 handshake with security None, framebuffer 1280x720 |
+| Long streams: `/screen` and `/pty` open and idle for 65 s | both still work (a FramebufferUpdate after the idle, a shell command echoes); the guest's `http2.Server` sets no timeouts and the host transport only pings (15 s read idle, 10 s ping timeout) |
 | File write through `/files/write` | owner `bot`; read back after a clean restart |
 | Hard kill (`TerminateProcess`, what the job object does), then boot on the same overlay | boots; a file written and `sync`ed before the kill is there; the manager reports the kill as a crash |
 | Two bots at once on one base image | both run; separate homes; `base.qcow2` size and mtime unchanged |
 | Guest tokens in the console logs (`sandbox-<bot>.log`) | none (3.2 KB and 0.8 KB of log) |
 | Test binary killed with `taskkill /F` mid-run (a crashed daemon; `guest-v0.1.0` run) | its QEMU was gone 3 s later (job object, kill on close) |
 
-Not checked here yet: input through wayvnc and glyphs on screen (phase 3, the screen relay), the NixOS report's
+Not checked here yet: input through wayvnc and glyphs on screen (phase 4, the viewer), the NixOS report's
 package criteria (numpy/pandas through uv, a native npm module, a downloaded Node binary through nix-ld).
 
 ### Testing
