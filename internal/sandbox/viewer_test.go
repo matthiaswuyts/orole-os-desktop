@@ -71,15 +71,13 @@ func TestViewerUnwatchClearsAtOnceAndCloseStopsTimers(t *testing.T) {
 	}
 }
 
-func TestViewerLeaseExpiryCallsOnExpireOnlyOnExpiry(t *testing.T) {
+func TestViewerLeaseExpiryCallsOnExpire(t *testing.T) {
 	log := &viewerLog{}
 	expired := make(chan string, 4)
 	v := NewViewerLeases(log.set, 20*time.Millisecond)
 	t.Cleanup(v.Close)
 	v.OnExpire(func(botID string) { expired <- botID })
 	v.Watch("b1")
-	v.Watch("b2")
-	v.Unwatch("b2") // an explicit unwatch is not an expiry
 	select {
 	case id := <-expired:
 		if id != "b1" {
@@ -91,10 +89,57 @@ func TestViewerLeaseExpiryCallsOnExpireOnlyOnExpiry(t *testing.T) {
 	if log.last() != "b1:off" {
 		t.Fatalf("flag not cleared before the expiry callback: %q", log.last())
 	}
-	select {
-	case id := <-expired:
-		t.Fatalf("unexpected expiry of %q", id)
-	case <-time.After(60 * time.Millisecond):
+}
+
+// An Unwatch clears the flag at once, and unless a Watch supersedes it, the abandonment callback still runs one ttl
+// later without touching the flag again.
+func TestViewerUnwatchStillExpiresAbandonment(t *testing.T) {
+	tests := []struct {
+		name         string
+		taken, hand  bool
+		rewatch      bool
+		wantReleased bool
+	}{
+		{"takeover, unwatch, ttl: released", true, false, false, true},
+		{"takeover, unwatch, watch before ttl: kept", true, false, true, false},
+		{"pending handoff, unwatch, ttl: kept", true, true, false, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			log := &viewerLog{}
+			timers := &manualTimers{}
+			v := NewViewerLeases(log.set, time.Minute)
+			v.afterFunc = timers.afterFunc
+			var released []string
+			v.OnExpire(ReleaseAbandonedTakeover(
+				func(string) bool { return tt.taken },
+				func(string) bool { return tt.hand },
+				func(botID string) { released = append(released, botID) },
+			))
+			v.Watch("b1")   // timer 0
+			v.Unwatch("b1") // timer 1
+			if log.last() != "b1:off" {
+				t.Fatalf("unwatch did not clear at once: %q", log.last())
+			}
+			if tt.rewatch {
+				v.Watch("b1") // timer 2
+			}
+			timers.fire(0) // the superseded lease never acts
+			timers.fire(1)
+			if got := len(released) == 1 && released[0] == "b1"; got != tt.wantReleased {
+				t.Fatalf("released = %v", released)
+			}
+			want := "b1:off"
+			if tt.rewatch {
+				want = "b1:on"
+			}
+			log.mu.Lock()
+			n := len(log.calls)
+			log.mu.Unlock()
+			if wantN := map[bool]int{false: 2, true: 3}[tt.rewatch]; log.last() != want || n != wantN {
+				t.Fatalf("flag calls: last %q, %d calls", log.last(), n)
+			}
+		})
 	}
 }
 
@@ -177,13 +222,14 @@ func TestViewerStaleExpiryAfterRenewalDoesNothing(t *testing.T) {
 	if log.last() != "b1:on" || len(expired) != 0 {
 		t.Fatalf("stale expiry acted: last %q, expired %v", log.last(), expired)
 	}
-	v.Unwatch("b1")
-	v.Watch("b1") // lease 2
+	v.Unwatch("b1") // timer 2
+	v.Watch("b1")   // lease 3
 	timers.fire(1)
+	timers.fire(2)
 	if log.last() != "b1:on" || len(expired) != 0 {
 		t.Fatalf("expiry of an unwatched lease acted: last %q, expired %v", log.last(), expired)
 	}
-	timers.fire(2)
+	timers.fire(3)
 	if log.last() != "b1:off" || len(expired) != 1 {
 		t.Fatalf("current lease did not expire: last %q, expired %v", log.last(), expired)
 	}

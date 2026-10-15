@@ -33,7 +33,8 @@ func NewViewerLeases(set func(botID string, watching bool), ttl time.Duration) *
 }
 
 // OnExpire registers fn, called after the flag is cleared when botID's lease runs out without renewal. An explicit
-// Unwatch is not an expiry. The daemon passes ReleaseAbandonedTakeover.
+// Unwatch clears the flag at once but still counts as abandonment: fn runs one ttl later unless a Watch came in
+// between (a closed pane must not keep a takeover forever). The daemon passes ReleaseAbandonedTakeover.
 func (v *ViewerLeases) OnExpire(fn func(botID string)) {
 	v.mu.Lock()
 	v.onExpire = fn
@@ -52,25 +53,29 @@ func (v *ViewerLeases) Watch(botID string) {
 	}
 	v.gens[botID]++
 	gen := v.gens[botID]
-	v.leases[botID] = lease{timer: v.afterFunc(v.ttl, func() { v.expire(botID, gen) }), gen: gen}
+	v.leases[botID] = lease{timer: v.afterFunc(v.ttl, func() { v.expire(botID, gen, true) }), gen: gen}
 	v.set(botID, true)
 }
 
-// expire ends lease gen of botID unless it was renewed, unwatched or closed since.
-func (v *ViewerLeases) expire(botID string, gen uint64) {
+// expire ends lease gen of botID unless it was renewed, unwatched or closed since. clearFlag is false for the timer an
+// Unwatch arms: the flag is already off, only the abandonment callback is left to run.
+func (v *ViewerLeases) expire(botID string, gen uint64, clearFlag bool) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	if v.closed || v.gens[botID] != gen {
 		return
 	}
 	delete(v.leases, botID)
-	v.set(botID, false)
+	if clearFlag {
+		v.set(botID, false)
+	}
 	if v.onExpire != nil {
 		v.onExpire(botID)
 	}
 }
 
-// Unwatch ends botID's lease now.
+// Unwatch clears botID's viewer flag now and arms the abandonment timer: unless a Watch supersedes it within ttl,
+// OnExpire runs then (without touching the flag again).
 func (v *ViewerLeases) Unwatch(botID string) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
@@ -79,9 +84,10 @@ func (v *ViewerLeases) Unwatch(botID string) {
 	}
 	if l, ok := v.leases[botID]; ok {
 		l.timer.Stop()
-		delete(v.leases, botID)
 	}
 	v.gens[botID]++
+	gen := v.gens[botID]
+	v.leases[botID] = lease{timer: v.afterFunc(v.ttl, func() { v.expire(botID, gen, false) }), gen: gen}
 	v.set(botID, false)
 }
 
