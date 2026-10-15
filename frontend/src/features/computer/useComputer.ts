@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Sandbox, events } from "@/mygo";
 import { errorText, type Availability, type ComputerStatus, type Handoff, type RuntimeInfo, type SetupInfo } from "./computerState";
 
@@ -13,38 +13,50 @@ export function useComputer(botId: string) {
   const [runtime, setRuntime] = useState<RuntimeInfo | null>(null);
   const [setup, setSetup] = useState<SetupInfo | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // A refresh may only apply its answer if it is the newest refresh and no live event has already supplied
+  // something newer: `request` counts refreshes (and bot switches), `statusSeq`/`handoffSeq` count live events.
+  const request = useRef(0);
+  const statusSeq = useRef(0);
+  const handoffSeq = useRef(0);
   const refresh = useCallback(async () => {
+    const mine = ++request.current;
+    const statusAt = statusSeq.current;
+    const handoffAt = handoffSeq.current;
     try {
       const [a, s] = await Promise.all([Sandbox.availability(), Sandbox.status(botId)]);
+      if (mine !== request.current) return;
       setAvailability(a);
-      setStatus(s);
+      if (statusAt === statusSeq.current) setStatus(s);
       setError(null);
     } catch (e) {
-      setError(errorText(e));
+      if (mine === request.current) setError(errorText(e));
     }
     try {
-      setHandoff((await Sandbox.handoff(botId)) ?? null);
+      const h = await Sandbox.handoff(botId);
+      if (mine === request.current && handoffAt === handoffSeq.current) setHandoff(h);
     } catch {
       // the handoff banner is optional
     }
   }, [botId]);
   useEffect(() => {
+    request.current++;
     setAvailability(null);
     setStatus(null);
     setHandoff(null);
     const offs = [
-      events.sandboxStatus.on((s) => { if (s.botId === botId) setStatus(s); }),
-      events.sandboxHandoff.on((h) => { if (h.botId === botId) setHandoff(h); }),
+      events.sandboxStatus.on((s) => { if (s.botId === botId) { statusSeq.current++; setStatus(s); } }),
+      events.sandboxHandoff.on((h) => { if (h.botId === botId) { handoffSeq.current++; setHandoff(h); } }),
       events.sandboxAvailability.on((a) => setAvailability(a)),
       events.sandboxRuntime.on((r) => setRuntime(r)),
       events.sandboxSetup.on((s) => setSetup(s)),
     ];
     void refresh();
-    return () => offs.forEach((off) => off());
+    return () => { request.current++; offs.forEach((off) => off()); };
   }, [botId, refresh]);
   const enable = useCallback(async () => {
     try {
-      setSetup((await Sandbox.enable()) ?? null);
+      setRuntime((r) => (r?.error ? { ...r, error: "" } : r));
+      setSetup(await Sandbox.enable());
       setError(null);
     } catch (e) {
       setError(errorText(e));
@@ -52,7 +64,8 @@ export function useComputer(botId: string) {
   }, []);
   const install = useCallback(async () => {
     try {
-      setRuntime((await Sandbox.install()) ?? null);
+      setSetup((x) => (x?.error ? { ...x, error: "" } : x));
+      setRuntime(await Sandbox.install());
       setError(null);
     } catch (e) {
       setError(errorText(e));
@@ -70,7 +83,7 @@ export const VIEWER_REFRESH_MS = 45_000;
  */
 export function useViewerLease(botId: string) {
   useEffect(() => {
-    const set = (watching: boolean) => void Sandbox.setViewer(botId, watching)?.catch(() => {});
+    const set = (watching: boolean) => void Sandbox.setViewer(botId, watching).catch(() => {});
     let timer: ReturnType<typeof setInterval> | undefined;
     const start = () => {
       set(true);

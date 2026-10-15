@@ -14,12 +14,15 @@ const ascii = (s: string) => [...s].map((c) => c.charCodeAt(0));
 /** Every byte the client has sent so far, in order. */
 const sent = () => sandbox.screenInput.mock.calls.flatMap((call) => [...fromBase64(call[1] as string)]);
 
+const live: Array<[{ disconnect: () => void }, HTMLElement]> = [];
+
 beforeEach(() => {
   resetSandbox();
   vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
   vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockImplementation(() => fakeContext() as never);
 });
 afterEach(() => {
+  for (const [rfb, target] of live.splice(0)) { try { rfb.disconnect(); } catch { /* already disconnected */ } target.remove(); }
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
@@ -32,6 +35,7 @@ describe("screen channel with noVNC's RFB", () => {
     document.body.append(target);
     const ch = new ScreenChannel("b1");
     const rfb = new RFB(target, ch);
+    live.push([rfb, target]);
     const connected = vi.fn();
     rfb.addEventListener("connect", connected);
     await ch.open();

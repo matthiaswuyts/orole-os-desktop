@@ -18,7 +18,7 @@ function event(name: string) {
 }
 
 /** Delivers a bridge event to every current subscriber. */
-export function emit(name: "sandboxStatus" | "sandboxScreen" | "sandboxAvailability" | "sandboxRuntime" | "sandboxSetup" | "sandboxHandoff" | "terminalOutput" | "terminalChanged", payload: unknown) {
+export function emit(name: "sandboxStatus" | "sandboxScreen" | "sandboxAvailability" | "sandboxRuntime" | "sandboxSetup" | "sandboxHandoff" | "terminalOutput" | "terminalChanged" | "daemonState", payload: unknown) {
   for (const listener of [...(listeners.get(name) ?? [])]) listener(payload);
 }
 
@@ -34,7 +34,10 @@ export const terminalsBridge = { attach: vi.fn(), write: vi.fn(), resize: vi.fn(
 export function resetSandbox() {
   listeners.clear();
   for (const fn of [...Object.values(sandbox), ...Object.values(terminalsBridge)]) fn.mockReset();
-  for (const fn of [sandbox.setViewer, sandbox.takeOver, sandbox.release, sandbox.screenInput, sandbox.closeScreen, sandbox.enable, sandbox.install]) fn.mockResolvedValue(undefined);
+  for (const fn of [sandbox.setViewer, sandbox.takeOver, sandbox.release, sandbox.screenInput, sandbox.closeScreen]) fn.mockResolvedValue(undefined);
+  sandbox.enable.mockResolvedValue({ running: false, rebootRequired: false });
+  sandbox.install.mockResolvedValue({ ready: false, installing: false, done: 0, total: 0 });
+  sandbox.handoff.mockResolvedValue({ botId: "", pending: false });
 }
 
 export const mygoMock = {

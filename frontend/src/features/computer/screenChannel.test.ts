@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/mygo", async () => (await import("./testing")).mygoMock);
 
@@ -9,9 +9,22 @@ const bytesOf = (buffer: ArrayBuffer) => [...new Uint8Array(buffer)];
 const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 beforeEach(() => resetSandbox());
-afterEach(() => vi.useRealTimers());
 
 describe("screen channel", () => {
+  it("fails the channel instead of dropping bytes when too many arrive before the id is known", async () => {
+    sandbox.openScreen.mockReturnValue(new Promise<string>(() => {}));
+    const ch = new ScreenChannel("b1");
+    const onerror = vi.fn();
+    const onclose = vi.fn();
+    ch.onerror = onerror;
+    ch.onclose = onclose;
+    void ch.open();
+    for (let i = 0; i < 257; i++) emit("sandboxScreen", { id: "s1", data: b64([1]) });
+    expect(onerror).toHaveBeenCalledTimes(1);
+    expect(onclose).toHaveBeenCalledWith(expect.objectContaining({ code: 1006, wasClean: false }));
+    expect(ch.readyState).toBe("closed");
+  });
+
   it("has every property noVNC's Websock.attach checks", () => {
     const ch = new ScreenChannel("b1");
     const props = [...Object.keys(ch), ...Object.getOwnPropertyNames(Object.getPrototypeOf(ch))];

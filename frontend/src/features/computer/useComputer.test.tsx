@@ -49,6 +49,44 @@ describe("useComputer", () => {
     expect(result.current.runtime?.installing).toBe(true);
   });
 
+  it("ignores a refresh that a later one or a live event has overtaken, and one for a previous bot", async () => {
+    let resolveOld!: (s: unknown) => void;
+    sandbox.status.mockReturnValueOnce(new Promise((r) => { resolveOld = r; }));
+    const { result, rerender } = renderHook(({ id }) => useComputer(id), { initialProps: { id: "b1" } });
+    act(() => emit("sandboxStatus", { botId: "b1", state: "running", takenOver: false }));
+    await act(async () => { resolveOld({ botId: "b1", state: "off", takenOver: false }); });
+    expect(result.current.status?.state).toBe("running");
+
+    let resolveB1!: (s: unknown) => void;
+    sandbox.status.mockReturnValueOnce(new Promise((r) => { resolveB1 = r; }));
+    act(() => { void result.current.refresh(); });
+    sandbox.status.mockResolvedValue({ botId: "b2", state: "paused", takenOver: false });
+    rerender({ id: "b2" });
+    await waitFor(() => expect(result.current.status?.botId).toBe("b2"));
+    await act(async () => { resolveB1({ botId: "b1", state: "stopping", takenOver: false }); });
+    expect(result.current.status?.botId).toBe("b2");
+  });
+
+  it("clears the load error when a later refresh succeeds", async () => {
+    sandbox.availability.mockRejectedValueOnce(new Error("internal: daemon unavailable"));
+    const { result } = renderHook(() => useComputer("b1"));
+    await waitFor(() => expect(result.current.error).toBe("daemon unavailable"));
+    await act(async () => { await result.current.refresh(); });
+    expect(result.current.error).toBeNull();
+    expect(result.current.status?.state).toBe("off");
+  });
+
+  it("clears the other step's error when setup or download starts", async () => {
+    const { result } = renderHook(() => useComputer("b1"));
+    await waitFor(() => expect(result.current.status).not.toBeNull());
+    act(() => emit("sandboxRuntime", { ready: false, installing: false, done: 0, total: 0, error: "download failed" }));
+    await act(async () => { await result.current.enable(); });
+    expect(result.current.runtime?.error).toBe("");
+    act(() => emit("sandboxSetup", { running: false, rebootRequired: false, error: "setup failed" }));
+    await act(async () => { await result.current.install(); });
+    expect(result.current.setup?.error).toBe("");
+  });
+
   it("keeps the load error for the tab to show", async () => {
     sandbox.availability.mockRejectedValue(new Error("internal: daemon unavailable"));
     const { result } = renderHook(() => useComputer("b1"));

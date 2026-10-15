@@ -101,7 +101,8 @@ export class ScreenChannel {
   private onChunk(chunk: ScreenChunk): void {
     if (this.readyState === "closed") return;
     if (this.id === null) {
-      if (this.early.length < EARLY_MAX) this.early.push(chunk);
+      if (this.early.length >= EARLY_MAX) { this.fail("the screen stream outran the connection setup"); return; }
+      this.early.push(chunk);
       return;
     }
     if (chunk.id !== this.id) return;
