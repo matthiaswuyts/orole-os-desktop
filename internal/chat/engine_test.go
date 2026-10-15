@@ -1359,3 +1359,66 @@ func TestToolImagesOnErrors(t *testing.T) {
 		})
 	}
 }
+
+// On the bot's computer the same step is often repeated between others (click Next, read the page, click Next), so
+// for computer_* and browser_* tools only identical calls in a row are a doom loop; other tools keep counting every
+// identical call of the turn.
+func TestDoomLoopCountsOnlyConsecutiveComputerCalls(t *testing.T) {
+	t.Run("interleaved", func(t *testing.T) {
+		click, read := &fakeTool{id: "browser_click"}, &fakeTool{id: ToolBrowserRead}
+		const clicks = doomLoopRepeats + 2
+		e := newEnv(t, func(call int, req llm.Request) []llm.Delta {
+			switch {
+			case call >= 2*clicks:
+				return []llm.Delta{llmtest.Text("Done.")}
+			case call%2 == 0:
+				return llmtest.Call(fmt.Sprintf("c%d", call), "browser_click", `{"target":"text=Next"}`)
+			}
+			return llmtest.Call(fmt.Sprintf("c%d", call), ToolBrowserRead, `{}`)
+		})
+		e.m.AddTools(click, read)
+		b := e.bot("Pager", bigLimits)
+		e.send(b.ID, "page through")
+		e.idle(b.ID)
+		if click.callCount() != clicks {
+			t.Fatalf("click executed %d times, want %d", click.callCount(), clicks)
+		}
+		if notes := partsOfType(e.lastReply(b.ID).Parts, PartNotice); len(notes) != 0 {
+			t.Fatalf("unexpected notice: %+v", notes)
+		}
+	})
+	t.Run("in a row", func(t *testing.T) {
+		run := &fakeTool{id: "computer_run"}
+		e := newEnv(t, func(call int, req llm.Request) []llm.Delta {
+			return llmtest.Call(fmt.Sprintf("c%d", call), "computer_run", `{"command":"ls"}`)
+		})
+		e.m.AddTools(run)
+		b := e.bot("Runner")
+		e.send(b.ID, "loop")
+		e.idle(b.ID)
+		if run.callCount() != doomLoopRepeats-1 {
+			t.Fatalf("tool executed %d times, want %d", run.callCount(), doomLoopRepeats-1)
+		}
+		if notes := partsOfType(e.lastReply(b.ID).Parts, PartNotice); len(notes) != 1 || !strings.Contains(notes[0].Text, "repeating") {
+			t.Fatalf("notes: %+v", notes)
+		}
+	})
+	t.Run("other tools count every repeat", func(t *testing.T) {
+		lookup, other := &fakeTool{id: "lookup"}, &fakeTool{id: "other"}
+		e := newEnv(t, func(call int, req llm.Request) []llm.Delta {
+			if call%2 == 1 {
+				return llmtest.Call(fmt.Sprintf("c%d", call), "other", fmt.Sprintf(`{"n":%d}`, call))
+			}
+			return llmtest.Call(fmt.Sprintf("c%d", call), "lookup", `{"a":1}`)
+		})
+		e.m.AddTools(lookup, other)
+		b := e.bot("Doom", bigLimits)
+		e.send(b.ID, "loop")
+		e.idle(b.ID)
+		if lookup.callCount() != doomLoopRepeats-1 {
+			t.Fatalf("lookup executed %d times, want %d", lookup.callCount(), doomLoopRepeats-1)
+		}
+	})
+}
+
+func bigLimits(in *BotInput) { in.Config.Limits = BotLimits{MaxSteps: 25, MaxToolCalls: 50} }

@@ -91,6 +91,25 @@ func repeatableTool(name string) bool {
 	return false
 }
 
+// consecutiveRepeatTool reports whether only back-to-back identical calls of a tool count as a doom loop: on the bot's
+// computer the same step is often repeated between others (click Next, read, click Next, read), so for the computer_*
+// and browser_* tools the guard counts identical calls in a row only.
+func consecutiveRepeatTool(name string) bool {
+	return strings.HasPrefix(name, "computer_") || strings.HasPrefix(name, "browser_")
+}
+
+// repeated reports whether a tool call is a doom loop: total is how often the turn made this identical call, streak how
+// often in a row (this one included).
+func repeated(name string, total, streak int) bool {
+	switch {
+	case repeatableTool(name):
+		return false
+	case consecutiveRepeatTool(name):
+		return streak >= doomLoopRepeats
+	}
+	return total >= doomLoopRepeats
+}
+
 // Tool is a client-run tool. Hosted tools (web_search, web_fetch, datetime on providers that run
 // them) are llm.ToolSpec.Hosted entries produced by the hosted-tool Tool and never reach Call.
 type Tool interface {

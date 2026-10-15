@@ -20,7 +20,7 @@ const (
 	// A bot with its own computer works in longer loops (shell, browser), so its defaults are higher.
 	computerMaxSteps     = 30
 	computerMaxToolCalls = 60
-	doomLoopRepeats      = 3 // the third identical tool call is not executed (except repeatableTool observation tools)
+	doomLoopRepeats      = 3 // the third identical tool call is not executed (see repeated)
 	maxToolResultBytes   = 100 << 10
 	toolSummaryBytes     = 160
 )
@@ -335,7 +335,8 @@ func (m *Manager) loop(ctx context.Context, env *turnEnv) (string, string) {
 	msgs := slices.Clone(env.history)
 	used := 0
 	seen := map[string]int{}
-	imageMsgs := []int{} // indexes in msgs of the transient tool-image messages
+	lastKey, streak := "", 0 // the previous tool call and how many times in a row it was made
+	imageMsgs := []int{}     // indexes in msgs of the transient tool-image messages
 	for step := 1; ; step++ {
 		if ctx.Err() != nil {
 			return StatusCanceled, ""
@@ -383,7 +384,13 @@ func (m *Manager) loop(ctx context.Context, env *turnEnv) (string, string) {
 		var images []llm.Part
 		for _, c := range res.calls {
 			key := callKey(c)
-			if seen[key]++; seen[key] >= doomLoopRepeats && !repeatableTool(c.Name) {
+			if key == lastKey {
+				streak++
+			} else {
+				lastKey, streak = key, 1
+			}
+			seen[key]++
+			if repeated(c.Name, seen[key], streak) {
 				env.sink.addPart(MsgPart{Type: PartNotice, Text: fmt.Sprintf("Stopped: the model kept repeating the same %s call without making progress.", c.Name)})
 				return StatusComplete, ""
 			}
