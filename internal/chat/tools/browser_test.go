@@ -47,23 +47,26 @@ func TestBrowserToolsUseThePolicyActionTable(t *testing.T) {
 	for _, tt := range []struct {
 		name, args, action string
 		effect             policy.Effect
+		resource           string
 		want               wire.BrowserRequest
 		detail             string
 	}{
-		{BrowserOpenName, `{"url":"https://example.com"}`, "computer.browser.read", policy.EffectRead, wire.BrowserRequest{Action: wire.BrowserOpen, URL: "https://example.com"}, "Open https://example.com in the browser on its computer"},
-		{BrowserClickName, `{"target":"text=Sign in"}`, "computer.browser.write", policy.EffectWrite, wire.BrowserRequest{Action: wire.BrowserClick, Target: "text=Sign in"}, "Click text=Sign in in the browser on its computer"},
-		{BrowserTypeName, `{"target":"#q","text":"orole"}`, "computer.browser.write", policy.EffectWrite, wire.BrowserRequest{Action: wire.BrowserType, Target: "#q", Text: "orole"}, "Type into #q in the browser on its computer:\norole"},
-		{BrowserReadName, `{}`, "computer.browser.read", policy.EffectRead, wire.BrowserRequest{Action: wire.BrowserRead}, "Read the page open in the browser on its computer"},
-		{BrowserScreenshotName, `{}`, "computer.browser.read", policy.EffectRead, wire.BrowserRequest{Action: wire.BrowserScreenshot}, "Take a screenshot of the browser on its computer"},
+		{BrowserOpenName, `{"url":"https://Example.COM:8443/a?b"}`, "computer.browser.open", policy.EffectWrite, "computer/b1/browser/example.com", wire.BrowserRequest{Action: wire.BrowserOpen, URL: "https://Example.COM:8443/a?b"}, "Open https://Example.COM:8443/a?b in the browser on its computer"},
+		{BrowserOpenName, `{"url":"https://bücher.example./"}`, "computer.browser.open", policy.EffectWrite, "computer/b1/browser/xn--bcher-kva.example", wire.BrowserRequest{Action: wire.BrowserOpen, URL: "https://bücher.example./"}, "Open https://bücher.example./ in the browser on its computer"},
+		{BrowserOpenName, `{"url":"http://8.8.8.8/"}`, "computer.browser.open", policy.EffectWrite, "computer/b1/browser/8.8.8.8", wire.BrowserRequest{Action: wire.BrowserOpen, URL: "http://8.8.8.8/"}, "Open http://8.8.8.8/ in the browser on its computer"},
+		{BrowserClickName, `{"target":"text=Sign in"}`, "computer.browser.write", policy.EffectWrite, "computer/b1/browser", wire.BrowserRequest{Action: wire.BrowserClick, Target: "text=Sign in"}, `Click "text=Sign in" in the browser on its computer`},
+		{BrowserTypeName, `{"target":"#q","text":"orole"}`, "computer.browser.write", policy.EffectWrite, "computer/b1/browser", wire.BrowserRequest{Action: wire.BrowserType, Target: "#q", Text: "orole"}, "Type into \"#q\" in the browser on its computer:\norole"},
+		{BrowserReadName, `{}`, "computer.browser.read", policy.EffectRead, "computer/b1/browser", wire.BrowserRequest{Action: wire.BrowserRead}, "Read the page open in the browser on its computer"},
+		{BrowserScreenshotName, `{}`, "computer.browser.read", policy.EffectRead, "computer/b1/browser", wire.BrowserRequest{Action: wire.BrowserScreenshot}, "Take a screenshot of the browser on its computer"},
 	} {
-		t.Run(tt.name, func(t *testing.T) {
+		t.Run(tt.name+" "+tt.args, func(t *testing.T) {
 			rt, pol := &fakeComputer{running: true}, &computerPolicy{}
 			res, err := Browser{Runtime: rt, Policy: pol}.Call(context.Background(), pcRun(nil), tt.name, json.RawMessage(tt.args))
 			if err != nil || res.IsError || !res.Untrusted {
 				t.Fatalf("result: %+v %v", res, err)
 			}
 			reqs := pol.requests()
-			if len(reqs) != 1 || reqs[0].Actor != "bot:b1" || reqs[0].Action != tt.action || reqs[0].Resource != "computer/b1/browser" || reqs[0].Effect != tt.effect || reqs[0].Detail != tt.detail {
+			if len(reqs) != 1 || reqs[0].Actor != "bot:b1" || reqs[0].Action != tt.action || reqs[0].Resource != tt.resource || reqs[0].Effect != tt.effect || reqs[0].Detail != tt.detail {
 				t.Fatalf("policy: %+v", reqs)
 			}
 			if len(rt.browsed) != 1 || rt.browsed[0] != tt.want {
@@ -173,14 +176,14 @@ func TestBrowserRejectsBadInputBeforeAsking(t *testing.T) {
 		{BrowserOpenName, `{"url":"javascript:alert(1)"}`},
 		{BrowserOpenName, `{"url":"https://example.com","extra":1}`},
 		{BrowserOpenName, `{"url":"https://exa​mple.com"}`},
-		{BrowserOpenName, `{"url":"https://example.com/` + strings.Repeat("a", maxDetailBytes) + `"}`},
+		{BrowserOpenName, `{"url":"https://example.com/` + strings.Repeat("a", policy.MaxDetailBytes) + `"}`},
 		{BrowserClickName, `{"target":""}`},
 		{BrowserClickName, `{"target":"text="}`},
 		{BrowserClickName, `{"target":"text=Sign‮in"}`},
 		{BrowserTypeName, `{"target":"#q"}`},
 		{BrowserTypeName, `{"target":"#q","text":"a\rb"}`},
 		{BrowserTypeName, `{"target":"#q","text":"pay​"}`},
-		{BrowserTypeName, `{"target":"#q","text":"` + strings.Repeat("x", maxDetailBytes) + `"}`},
+		{BrowserTypeName, `{"target":"#q","text":"` + strings.Repeat("x", policy.MaxDetailBytes) + `"}`},
 		{"browser_unknown", `{}`},
 	} {
 		rt, pol := &fakeComputer{}, &computerPolicy{}
@@ -194,12 +197,12 @@ func TestBrowserRejectsBadInputBeforeAsking(t *testing.T) {
 // The approval names exactly what happens: the longest URL and typed text that pass validation are shown whole.
 func TestBrowserApprovalShowsEverything(t *testing.T) {
 	for _, tt := range []struct{ name, field, value string }{
-		{BrowserOpenName, "url", "https://example.com/" + strings.Repeat("a", maxDetailBytes)},
-		{BrowserTypeName, "text", "line one\n\tline two " + strings.Repeat("é", maxDetailBytes)},
+		{BrowserOpenName, "url", "https://example.com/" + strings.Repeat("a", policy.MaxDetailBytes)},
+		{BrowserTypeName, "text", "line one\n\tline two " + strings.Repeat("é", policy.MaxDetailBytes)},
 	} {
 		// Find the longest value that is accepted, then check the approval shows it unchanged.
 		var accepted string
-		for n := min(len(tt.value), maxDetailBytes); n > 0; n-- {
+		for n := min(len(tt.value), policy.MaxDetailBytes); n > 0; n-- {
 			v := tt.value[:n]
 			args := map[string]string{tt.field: v}
 			if tt.name == BrowserTypeName {
@@ -221,6 +224,38 @@ func TestBrowserApprovalShowsEverything(t *testing.T) {
 		if len(accepted) < 900 {
 			t.Fatalf("%s: only %d bytes accepted", tt.name, len(accepted))
 		}
+	}
+}
+
+// browser_open never reaches the user's PC or network by address, in any spelling a browser accepts.
+func TestBrowserOpenRefusesLocalAddresses(t *testing.T) {
+	for _, u := range []string{
+		"http://localhost/", "http://LOCALHOST.:8080/", "http://app.localhost/",
+		"http://127.0.0.1/", "http://127.1/", "http://2130706433/", "http://0x7f.0.0.1/", "http://0177.0.0.1/",
+		"http://10.0.2.2/", "http://10.1.2.3/", "http://172.16.0.1/", "http://192.168.1.1/",
+		"http://169.254.169.254/latest/meta-data", "http://100.64.0.1/", "http://100.127.255.254/",
+		"http://0.0.0.0/", "http://0/", "http://0.1.2.3/",
+		"http://[::1]/", "http://[::]/", "http://[fe80::1]/", "http://[fd00::1]/", "http://[fc12::1]/",
+		"http://[::ffff:127.0.0.1]/", "http://[::ffff:10.0.2.2]/", "http://[::ffff:169.254.1.1]/",
+		"http://1.2.3.4.5/", "http://08.1.1.1/", "http://256.1.1.1/",
+	} {
+		rt, pol := &fakeComputer{}, &computerPolicy{}
+		args, _ := json.Marshal(map[string]string{"url": u})
+		res, err := Browser{Runtime: rt, Policy: pol}.Call(context.Background(), pcRun(nil), BrowserOpenName, args)
+		if err != nil || !res.IsError || len(pol.requests()) != 0 || rt.browseCount() != 0 {
+			t.Errorf("%s: %+v %v", u, res, err)
+		}
+	}
+	for _, u := range []string{"https://example.com/", "http://100.128.0.1/", "http://[2606:4700::1111]/", "https://192.168.example.com/", "https://0x.example/"} {
+		pol := &computerPolicy{}
+		args, _ := json.Marshal(map[string]string{"url": u})
+		if res, _ := (Browser{Runtime: &fakeComputer{running: true}, Policy: pol}).Call(context.Background(), pcRun(nil), BrowserOpenName, args); res.IsError || len(pol.requests()) != 1 {
+			t.Errorf("%s refused: %+v", u, res)
+		}
+	}
+	res, _ := Browser{Runtime: &fakeComputer{}, Policy: &computerPolicy{}}.Call(context.Background(), pcRun(nil), BrowserOpenName, json.RawMessage(`{"url":"http://10.0.2.2/"}`))
+	if !strings.Contains(res.Text, "only opens public web sites") {
+		t.Fatalf("message: %q", res.Text)
 	}
 }
 

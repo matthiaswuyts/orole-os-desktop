@@ -5,6 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/netip"
+	"net/url"
+	"strconv"
+	"strings"
 
 	"github.com/rayorole/orole-os-desktop/internal/chat"
 	"github.com/rayorole/orole-os-desktop/internal/llm"
@@ -12,11 +16,8 @@ import (
 	"github.com/rayorole/orole-os-desktop/internal/sandbox"
 	"github.com/rayorole/orole-os-desktop/internal/sandbox/wire"
 	"github.com/rayorole/orole-os-desktop/internal/untrusted"
+	"golang.org/x/net/idna"
 )
-
-// maxDetailBytes is how much of an approval's Detail the policy engine keeps (untrusted.Text(Detail, 2000)). A
-// browser approval must fit whole, so the user sees the exact URL, target and typed text.
-const maxDetailBytes = 2000
 
 // Browser drives the visible Chromium on the bot's own computer. Calls are refused, without asking for approval,
 // while the user holds the takeover lock; a call that already runs is not interrupted.
@@ -50,13 +51,15 @@ func (t Browser) Specs(bot chat.Bot, caps llm.Caps) []llm.ToolSpec {
 type browserStep struct {
 	req                 wire.BrowserRequest
 	effect              policy.Effect
+	action              string // policy action
+	host                string // browser_open: the page's host, for the policy resource
 	detail              string // the approval: exactly what happens
 	doing, did, failure string // the card while it runs, after it ran, when it failed
 }
 
 // browserStepFor checks a call's arguments and describes it. Everything the approval shows must reach the user
 // unchanged: no invisible or control characters (other than newlines and tabs in typed text), and the whole detail
-// within maxDetailBytes.
+// within policy.MaxDetailBytes.
 func browserStepFor(name string, args json.RawMessage) (browserStep, error) {
 	var in struct {
 		URL    string `json:"url"`
@@ -69,26 +72,26 @@ func browserStepFor(name string, args json.RawMessage) (browserStep, error) {
 	var s browserStep
 	switch name {
 	case BrowserOpenName:
-		s = browserStep{req: wire.BrowserRequest{Action: wire.BrowserOpen, URL: in.URL}, effect: policy.EffectRead,
+		s = browserStep{req: wire.BrowserRequest{Action: wire.BrowserOpen, URL: in.URL}, effect: policy.EffectWrite, action: actionBrowserOpen,
 			detail: "Open " + in.URL + " in the browser on its computer",
 			doing:  "Opening " + code(in.URL), did: "Opened " + code(in.URL), failure: "Could not open " + code(in.URL)}
 	case BrowserClickName:
-		s = browserStep{req: wire.BrowserRequest{Action: wire.BrowserClick, Target: in.Target}, effect: policy.EffectWrite,
-			detail: "Click " + in.Target + " in the browser on its computer",
+		s = browserStep{req: wire.BrowserRequest{Action: wire.BrowserClick, Target: in.Target}, effect: policy.EffectWrite, action: actionBrowserWrite,
+			detail: "Click " + strconv.Quote(in.Target) + " in the browser on its computer",
 			doing:  "Clicking " + code(in.Target), did: "Clicked " + code(in.Target), failure: "Could not click " + code(in.Target)}
 	case BrowserTypeName:
 		if in.Text == "" {
 			return browserStep{}, errors.New("text is required")
 		}
-		s = browserStep{req: wire.BrowserRequest{Action: wire.BrowserType, Target: in.Target, Text: in.Text}, effect: policy.EffectWrite,
-			detail: "Type into " + in.Target + " in the browser on its computer:\n" + in.Text,
+		s = browserStep{req: wire.BrowserRequest{Action: wire.BrowserType, Target: in.Target, Text: in.Text}, effect: policy.EffectWrite, action: actionBrowserWrite,
+			detail: "Type into " + strconv.Quote(in.Target) + " in the browser on its computer:\n" + in.Text,
 			doing:  "Typing into " + code(in.Target), did: "Typed into " + code(in.Target), failure: "Could not type into " + code(in.Target)}
 	case BrowserReadName:
-		s = browserStep{req: wire.BrowserRequest{Action: wire.BrowserRead}, effect: policy.EffectRead,
+		s = browserStep{req: wire.BrowserRequest{Action: wire.BrowserRead}, effect: policy.EffectRead, action: actionBrowserRead,
 			detail: "Read the page open in the browser on its computer",
 			doing:  "Reading the page", did: "Read the page", failure: "Could not read the page"}
 	case BrowserScreenshotName:
-		s = browserStep{req: wire.BrowserRequest{Action: wire.BrowserScreenshot}, effect: policy.EffectRead,
+		s = browserStep{req: wire.BrowserRequest{Action: wire.BrowserScreenshot}, effect: policy.EffectRead, action: actionBrowserRead,
 			detail: "Take a screenshot of the browser on its computer",
 			doing:  "Taking a screenshot", did: "Took a screenshot", failure: "Could not take a screenshot"}
 	default:
@@ -102,12 +105,19 @@ func browserStepFor(name string, args json.RawMessage) (browserStep, error) {
 			return browserStep{}, fmt.Errorf("%s contains control or invisible characters (such as carriage returns, escape codes, zero-width or bidi marks) that the approval could not show; use only printable text, newlines and tabs", f.field)
 		}
 	}
-	if len(s.detail) > maxDetailBytes {
+	if name == BrowserOpenName {
+		host, err := openHost(in.URL)
+		if err != nil {
+			return browserStep{}, err
+		}
+		s.host = host
+	}
+	if len(s.detail) > policy.MaxDetailBytes {
 		switch name {
 		case BrowserTypeName:
-			return browserStep{}, fmt.Errorf("target and text together are too long to show the user for approval (at most about %d bytes); type the text in several shorter calls", maxDetailBytes-len(s.detail)+len(in.Target)+len(in.Text))
+			return browserStep{}, fmt.Errorf("target and text together are too long to show the user for approval (at most about %d bytes); type the text in several shorter calls", policy.MaxDetailBytes-len(s.detail)+len(in.Target)+len(in.Text))
 		default:
-			return browserStep{}, fmt.Errorf("url is too long to show the user for approval (at most %d bytes)", maxDetailBytes-len(s.detail)+len(in.URL))
+			return browserStep{}, fmt.Errorf("url is too long to show the user for approval (at most %d bytes)", policy.MaxDetailBytes-len(s.detail)+len(in.URL))
 		}
 	}
 	return s, nil
@@ -126,7 +136,14 @@ func (t Browser) Call(ctx context.Context, rc chat.RunContext, name string, args
 	if t.Runtime.TakenOver(rc.BotID) {
 		return computerFailure(ctx, sandbox.ErrTakenOver)
 	}
-	if res, stop, err := allow(ctx, t.Policy, rc, actionBrowserFor(s.effect), "computer/"+rc.BotID+"/browser", s.detail, s.effect); stop {
+	resource := "computer/" + rc.BotID + "/browser"
+	if s.host != "" {
+		resource += "/" + s.host
+	}
+	if len(resource) > maxResourceBytes {
+		return errResult("the url's host is too long")
+	}
+	if res, stop, err := allow(ctx, t.Policy, rc, s.action, resource, s.detail, s.effect); stop {
 		return res, err
 	}
 	// The approval can take minutes; the user may have taken over meanwhile.
@@ -149,11 +166,112 @@ func (t Browser) Call(ctx context.Context, rc chat.RunContext, name string, args
 	return res, nil
 }
 
-func actionBrowserFor(effect policy.Effect) string {
-	if effect == policy.EffectWrite {
-		return actionBrowserWrite
+// openHost is the host of a URL browser_open may open, lowercased and in its ASCII (punycode) form, without port or
+// user info: the policy resource names it so the user can allow one site for good. The bot's browser must not reach
+// the user's own machine or network by address: literal loopback, private, link-local, CGNAT and unspecified IPs (the
+// VM's gateway 10.0.2.2 among them) and localhost names are refused. Hostnames that resolve to such addresses are
+// not caught here; the user approves each host.
+func openHost(raw string) (string, error) {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return "", errors.New("url must be an absolute http or https address")
 	}
-	return actionBrowserRead
+	host := strings.TrimSuffix(strings.ToLower(u.Hostname()), ".")
+	if host == "" {
+		return "", errors.New("url must name a host")
+	}
+	refused := fmt.Errorf("%s is an address on the user's own PC or network; the browser on your computer only opens public web sites", host)
+	if host == "localhost" || strings.HasSuffix(host, ".localhost") {
+		return "", refused
+	}
+	if ip, ok := literalIP(host); ok {
+		if !publicIP(ip) {
+			return "", refused
+		}
+		return ip.String(), nil
+	}
+	ascii, err := idna.Punycode.ToASCII(host)
+	if err != nil || ascii == "" {
+		return "", fmt.Errorf("url's host %q is not a valid host name", host)
+	}
+	return ascii, nil
+}
+
+// literalIP reports whether a URL host is an IP address the way a browser reads it: an IPv6 literal, or an IPv4 address
+// in any of the WHATWG forms (a host whose last label is a number, such as 127.1, 0x7f.1 or 2130706433). An IPv4 form
+// that does not parse is returned as the unspecified address, so it is refused.
+func literalIP(host string) (netip.Addr, bool) {
+	if ip, err := netip.ParseAddr(host); err == nil {
+		return ip.Unmap(), true
+	}
+	labels := strings.Split(host, ".")
+	if last := labels[len(labels)-1]; !numericLabel(last) {
+		return netip.Addr{}, false
+	}
+	if len(labels) > 4 {
+		return netip.IPv4Unspecified(), true
+	}
+	var parts []uint64
+	for _, l := range labels {
+		n, ok := ipv4Number(l)
+		if !ok {
+			return netip.IPv4Unspecified(), true
+		}
+		parts = append(parts, n)
+	}
+	last := parts[len(parts)-1]
+	if last >= 1<<(8*(5-len(parts))) {
+		return netip.IPv4Unspecified(), true
+	}
+	v := last
+	for i, n := range parts[:len(parts)-1] {
+		if n > 255 {
+			return netip.IPv4Unspecified(), true
+		}
+		v |= n << (8 * (3 - i))
+	}
+	return netip.AddrFrom4([4]byte{byte(v >> 24), byte(v >> 16), byte(v >> 8), byte(v)}), true
+}
+
+// numericLabel is the WHATWG "ends in a number" test for one label.
+func numericLabel(l string) bool {
+	if l == "" {
+		return false
+	}
+	if strings.Trim(l, "0123456789") == "" {
+		return true
+	}
+	_, ok := ipv4Number(l)
+	return ok && (strings.HasPrefix(l, "0x") || strings.HasPrefix(l, "0X"))
+}
+
+// ipv4Number parses one IPv4 part: decimal, 0x hex or 0-prefixed octal.
+func ipv4Number(l string) (uint64, bool) {
+	base := 10
+	switch {
+	case len(l) >= 2 && (l[:2] == "0x" || l[:2] == "0X"):
+		l, base = l[2:], 16
+		if l == "" {
+			return 0, true
+		}
+	case len(l) > 1 && l[0] == '0':
+		l, base = l[1:], 8
+	}
+	if l == "" {
+		return 0, false
+	}
+	n, err := strconv.ParseUint(l, base, 32)
+	return n, err == nil
+}
+
+var cgnat = netip.MustParsePrefix("100.64.0.0/10")
+var thisNetwork = netip.MustParsePrefix("0.0.0.0/8")
+
+// publicIP reports whether ip is not on the user's PC or network.
+func publicIP(ip netip.Addr) bool {
+	ip = ip.Unmap()
+	return !(ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() ||
+		ip.IsInterfaceLocalMulticast() || ip.IsUnspecified() || cgnat.Contains(ip) || thisNetwork.Contains(ip))
 }
 
 // browserResult shapes what the model sees: page title and address always, page text for read, the image for a

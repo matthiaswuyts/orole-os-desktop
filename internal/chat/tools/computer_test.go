@@ -351,8 +351,8 @@ func TestComputerTurnCancelIsAnError(t *testing.T) {
 	}
 }
 
-// policyDetailLimit mirrors the policy engine, which keeps untrusted.Text(Detail, 2000) of an approval's detail.
-const policyDetailLimit = 2000
+// policyDetailLimit is how much of an approval's detail the policy engine keeps.
+const policyDetailLimit = policy.MaxDetailBytes
 
 func TestComputerApprovalShowsTheWholeCommand(t *testing.T) {
 	cmd := "set -e\n\tcd /tmp && " + strings.Repeat("echo ok; ", 197)

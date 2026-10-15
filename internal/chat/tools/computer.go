@@ -40,12 +40,13 @@ const (
 	actionComputerFileWrite = "computer.files.write"
 	actionBrowserRead       = "computer.browser.read"
 	actionBrowserWrite      = "computer.browser.write"
+	actionBrowserOpen       = "computer.browser.open"
 )
 
 const (
-	maxCommandBytes   = 1800 // the whole command must fit the approval prompt (policy keeps 2000 bytes of Detail)
-	maxResourceBytes  = 512  // policy.Request.Resource limit
-	maxWritePreview   = 300  // bytes of new content shown in a write approval
+	maxCommandBytes   = policy.MaxDetailBytes - 200 // the whole command must fit the approval prompt
+	maxResourceBytes  = 512                         // policy.Request.Resource limit
+	maxWritePreview   = 300                         // bytes of new content shown in a write approval
 	computerHome      = "/home/bot"
 	maxComputerWrite  = 16 << 20 // the guest's /files/write limit
 	maxComputerOutput = 64 << 10 // text returned to the model per call
@@ -148,7 +149,7 @@ var computerFailures = []struct {
 	{sandbox.ErrCrashed, "Your computer stopped unexpectedly. Your next computer call starts it again; files on its disk are kept.", "The computer stopped unexpectedly"},
 	{sandbox.ErrBusy, "All computers on this PC are busy (at most 4 run at once). Try again in a minute.", "All computers are busy"},
 	{sandbox.ErrLowMemory, "This PC does not have enough free memory to start your computer. Ask the user to close some programs, then try again.", "Not enough free memory"},
-	{sandbox.ErrTakenOver, "The user is controlling your computer right now. Do not use the browser until they hand it back.", "The user is controlling the computer"},
+	{sandbox.ErrTakenOver, "The user is controlling your computer right now. Do not use the computer until they hand it back.", "The user is controlling the computer"},
 	{errors.ErrUnsupported, "This computer runs an older image without this feature. Ask the user to reset the computer in its Computer tab.", "The computer's image is too old"},
 	{context.DeadlineExceeded, "The computer did not answer in time, so the call was stopped. It may still be starting or busy; try again, with a longer timeout for slow commands.", "The computer did not answer in time"},
 }
