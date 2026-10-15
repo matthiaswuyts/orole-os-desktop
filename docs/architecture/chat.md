@@ -96,7 +96,9 @@ Bots with Jarvis mode on can speak on the phone (`docs/architecture/jarvis.md`).
 - **Cue turns.** `VoiceRequest.Cue` marks `Text` as an instruction from the daemon (for example "Nobody spoke. News came
   in..."), not the owner's words. It is stored as the user message with author `cue` and the call id, so the model's
   history keeps it, but `CallMessages` (the transcript) leaves it out and it is never published to the call pane.
-- Callbacks: `OnText` streams the spoken text, `OnTool` is called as a tool starts (the call layer speaks a filler).
+- Callbacks: `OnText` streams the spoken text, `OnTool(name, label)` is called as a tool starts (the call layer may
+  speak a line for it). `label` is what a `ToolLabeler` tool says its function reaches: the MCP server's display name
+  for an MCP tool, "" otherwise. `AnswerFollowUp`'s requests for a follow-up not stored yet expire after 5 minutes.
 - **Follow-ups of a call stay in the call's thread.** `RunContext.CallThread` is the call whose thread a run writes
   into: voice turns set it with `CallID`; the written answer to a call follow-up sets only `CallThread` (it is not
   spoken, so `end_call` / `switch_bot` refuse and `call_owner` works after the call). Work a run starts remembers its
