@@ -104,7 +104,7 @@ func (a *Agent) runHelper(ctx context.Context, id *Identity, stdin []byte, stdou
 	if exe == "" {
 		var err error
 		if exe, err = os.Executable(); err != nil {
-			return nil, fmt.Errorf("file helper: %w", err)
+			return nil, helperStartError(err)
 		}
 	}
 	ctx, cancel := context.WithTimeout(ctx, helperTimeout)
@@ -113,17 +113,17 @@ func (a *Agent) runHelper(ctx context.Context, id *Identity, stdin []byte, stdou
 	cmd.Dir = "/"
 	cmd.Env = []string{}
 	cmd.Stdin = bytes.NewReader(stdin)
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
+	stderr := newHelperStderr()
+	cmd.Stderr = stderr
 	if err := setIdentity(cmd, id); err != nil {
-		return nil, err
+		return nil, helperStartError(err)
 	}
 	out, err := cmd.StdoutPipe()
 	if err != nil {
-		return nil, err
+		return nil, helperStartError(err)
 	}
 	if err := cmd.Start(); err != nil {
-		return nil, fmt.Errorf("file helper: %w", err)
+		return nil, helperStartError(err)
 	}
 	data, readErr := io.ReadAll(io.LimitReader(out, stdoutLimit+1))
 	over := int64(len(data)) > stdoutLimit
@@ -164,6 +164,20 @@ func (a *Agent) runHelper(ctx context.Context, id *Identity, stdin []byte, stdou
 	}
 	return nil, fmt.Errorf("file helper: %s (%v)", msg, waitErr)
 }
+
+// helperStartError reports that the helper could not run at all. It deliberately does not wrap err: a missing
+// helper binary (ENOENT) or a failed user switch (EPERM) is the agent's fault, a 500, not the requested file's
+// 404 or 403.
+func helperStartError(err error) error {
+	return fmt.Errorf("file helper could not start: %v", err)
+}
+
+// helperStderrMax bounds the helper's stderr kept in memory; only its first 512 bytes reach the error message.
+const helperStderrMax = 4 << 10
+
+// newHelperStderr collects at most helperStderrMax bytes of the helper's stderr and drops the rest (reporting it
+// written, so the helper never blocks on a full pipe).
+func newHelperStderr() *capWriter { return newCapped(helperStderrMax).writer() }
 
 // helperError carries the helper's own message and the class its exit code stands for.
 type helperError struct {
