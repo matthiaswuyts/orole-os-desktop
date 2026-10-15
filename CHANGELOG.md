@@ -8,6 +8,8 @@ notes. See `docs/development/updates.md`.
 
 ## Unreleased
 
+## 0.4.0-dev - 2026-10-15
+
 ### Changed
 - A bot's computer now uses your keyboard layout: what you type while you control it comes out as on your keyboard (AZERTY, QWERTZ, Swiss, Nordic, Dvorak and others; your Windows sign-in layout, read when the computer starts). You also see the mouse pointer on its screen while you control it. The computer is named after the bot: its account, home folder and computer name follow the bot's name ("Atlas 2" works as `atlas-2` in `/home/atlas-2` on `atlas-2-computer`), and a renamed bot gets its new name the next time its computer starts, with the same files. This needs computer image 0.1.4: a bot's existing computer keeps its image until the bot is archived and made again.
 - Phone call voices now follow the call language. For Dutch (and Auto) the voice pickers on a bot's Phone calls page and in Settings › Phone list Dutch voices from the ElevenLabs Voice Library, grouped as Standaard Nederlands, Vlaams and Andere; for English, a short "Best for calls" list of conversational voices. The top of the open list says which language the voices are for, and the list reloads when you change the call language. Picking a Voice Library voice adds it to your ElevenLabs voices first. Each voice in the open list has a play button to hear a short preview; the closed select shows only the chosen voice. On a bot's Phone calls page, Voice and Voice model have their own icons.
