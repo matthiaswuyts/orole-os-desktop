@@ -58,9 +58,9 @@ func TestStartPTYRunsShell(t *testing.T) {
 	}
 }
 
-// A shell that exits while a background job holds the terminal must still end the session with its exit code.
+// A shell that exits while a background job (ignoring SIGHUP) holds the terminal must still end the session with its exit code.
 func TestPTYSessionEndsWhenShellExitsWithBackgroundJob(t *testing.T) {
-	a := New(Config{Token: "t", Home: t.TempDir(), LoginShell: []string{"/bin/sh", "-c", "sleep 30 & exit 3"}})
+	a := New(Config{Token: "t", Home: t.TempDir(), LoginShell: []string{"/bin/sh", "-c", "trap '' HUP; sleep 30 & exit 3"}})
 	srv := httptest.NewServer(a.Handler())
 	defer srv.Close()
 	req, _ := http.NewRequest("POST", srv.URL+"/pty", nil)
@@ -70,12 +70,17 @@ func TestPTYSessionEndsWhenShellExitsWithBackgroundJob(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer resp.Body.Close()
+	start := time.Now()
 	done := make(chan struct{})
 	go func() { _, _ = io.Copy(io.Discard, resp.Body); close(done) }()
 	select {
 	case <-done:
 	case <-time.After(5 * time.Second):
 		t.Fatal("session still open after the shell exited")
+	}
+	// The job ignores SIGHUP and keeps the terminal open, so only the watcher (150 ms after the shell exits) can end this.
+	if d := time.Since(start); d < 100*time.Millisecond {
+		t.Fatalf("session ended after %v: the background job did not hold the terminal, so the watcher was not exercised", d)
 	}
 	if got := resp.Trailer.Get(wire.ExitTrailer); got != "3" {
 		t.Fatalf("exit trailer = %q, want 3", got)

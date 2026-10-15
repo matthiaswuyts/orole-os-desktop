@@ -57,6 +57,7 @@ func (p *linuxPTY) Resize(cols, rows int) error {
 }
 
 // Close hangs up the terminal (the shell gets SIGHUP) and kills the shell if it is still there 2 s later.
+// Background jobs that ignore SIGHUP are orphaned, not killed; they die with the VM.
 func (p *linuxPTY) Close() error {
 	p.once.Do(func() {
 		_ = p.f.Close()
