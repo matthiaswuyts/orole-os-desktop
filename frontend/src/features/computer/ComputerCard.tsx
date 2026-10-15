@@ -32,7 +32,7 @@ export function ComputerCard({ part }: { part: MsgPart }) {
   const status = part.status && part.status in STATUS_LABEL ? part.status : "running";
   const waiting = status === "waiting";
   return (
-    <Bubble className={cn("p-0", open && "ring-1 ring-ring/60", waiting && "ring-1 ring-warning/50")}>
+    <Bubble className={cn("p-0", waiting ? "ring-1 ring-warning/50" : open && "ring-1 ring-ring/60")}>
       <button type="button" data-slot="computer-card" data-status={status} aria-pressed={open} disabled={!botId}
         onClick={() => { if (botId) useChat.getState().openComputerPane(botId); }}
         className="flex w-full min-w-56 items-center gap-3 rounded-[inherit] px-3 py-1.5 text-start outline-none transition-colors hover:bg-foreground/5 focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none motion-reduce:transition-none">
@@ -40,11 +40,12 @@ export function ComputerCard({ part }: { part: MsgPart }) {
         <span className="flex min-w-0 flex-1 flex-col">
           <span className="font-medium">Using the computer</span>
           {part.text && <span className="line-clamp-2 break-words text-muted-foreground">{part.text}</span>}
+          {part.summary && part.summary !== part.text && <span data-slot="computer-card-summary" className="line-clamp-2 break-words text-muted-foreground">{part.summary}</span>}
         </span>
         <span className="flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
           <StatusGlyph status={status} />
           {STATUS_LABEL[status]}
-          {waiting && <span className="font-medium text-foreground">Take over</span>}
+          {waiting && <span data-slot="computer-card-action" className="ms-1 border-s ps-2 font-medium text-foreground">Take over</span>}
         </span>
       </button>
     </Bubble>

@@ -49,6 +49,16 @@ describe("message parts", () => {
     else expect(screen.queryByText("Take over")).toBeNull();
   });
 
+  it("shows what the computer did as plain text under the step, unless it repeats it", () => {
+    useChat.setState({ selectedBotId: "a", pane: null });
+    view(message([{ type: "computer", status: "done", text: "Same", summary: "Same" }]));
+    expect(screen.getAllByText("Same")).toHaveLength(1);
+    cleanup();
+    view(message([{ type: "computer", status: "done", text: "Opened site", summary: "<i>Read the page</i>" }]));
+    expect(screen.getByText("<i>Read the page</i>")).toBeInTheDocument();
+    expect(document.querySelector("[data-slot=computer-card] i")).toBeNull();
+  });
+
   it("draws a call part as a call card", () => {
     view(message([{ type: "call", id: "c1", name: "outbound", status: "completed", title: "deploy failed", durationMs: 75_000, summary: "est. $0.15" }]));
     expect(screen.getByText("Called you")).toBeInTheDocument();
