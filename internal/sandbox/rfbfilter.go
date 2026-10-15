@@ -15,6 +15,7 @@ const (
 	rfbMaxScreens   = 16
 	rfbMaxPending   = 8 + rfbMaxCutText
 	rfbMaxFence     = 64
+	rfbMaxHeld      = 256 // keys held down at once; further downs are dropped
 
 	encExtendedMouseButtons = -316 // makes PointerEvent 7 bytes; stripped so every PointerEvent is 6
 	encXvp                  = -309 // lets the client power off, reboot or reset the guest; stripped
@@ -134,6 +135,7 @@ func (f *rfbFilter) next() (n int, forward []byte, err error) {
 		if len(b) < size {
 			return 0, nil, nil
 		}
+		f.extClip = false // each SetEncodings replaces the client's whole list
 		for i := 4; i < size; i += 4 {
 			if int32(binary.BigEndian.Uint32(b[i:i+4])) == encExtendedClipboard {
 				f.extClip = true
@@ -206,6 +208,9 @@ func (f *rfbFilter) keyEvent() (int, []byte, error) {
 			if f.heldKeys == nil {
 				f.heldKeys = map[uint32]bool{}
 			}
+			if !f.heldKeys[sym] && len(f.heldKeys) >= rfbMaxHeld {
+				return 8, nil, nil
+			}
 			f.heldKeys[sym] = true
 		} else {
 			delete(f.heldKeys, sym)
@@ -233,17 +238,29 @@ func (f *rfbFilter) qemuKeyEvent() (int, []byte, error) {
 			if f.heldQemu == nil {
 				f.heldQemu = map[uint32]uint32{}
 			}
+			if _, held := f.heldQemu[code]; !held && len(f.heldQemu) >= rfbMaxHeld {
+				return 12, nil, nil
+			}
 			f.heldQemu[code] = sym
 		} else {
 			delete(f.heldQemu, code)
 		}
 		return 12, b[:12], nil
 	}
-	if _, held := f.heldQemu[code]; !down && held {
+	if recorded, held := f.heldQemu[code]; !down && held {
 		delete(f.heldQemu, code)
-		return 12, b[:12], nil
+		return 12, qemuKeyUp(recorded, code), nil // canonical: the client's other bytes never reach the guest
 	}
 	return 12, nil, nil
+}
+
+// qemuKeyUp is the QEMU extended key event releasing keycode code (keysym sym).
+func qemuKeyUp(sym, code uint32) []byte {
+	m := make([]byte, 12)
+	m[0] = 255
+	binary.BigEndian.PutUint32(m[4:], sym)
+	binary.BigEndian.PutUint32(m[8:], code)
+	return m
 }
 
 // pointerEvent handles PointerEvent. While input is not allowed, an event that releases buttons forwarded down is
@@ -293,11 +310,7 @@ func (f *rfbFilter) Release() []byte {
 	}
 	sort.Slice(codes, func(i, j int) bool { return codes[i] < codes[j] })
 	for _, c := range codes {
-		m := make([]byte, 12)
-		m[0] = 255
-		binary.BigEndian.PutUint32(m[4:], f.heldQemu[c])
-		binary.BigEndian.PutUint32(m[8:], c)
-		out = append(out, m...)
+		out = append(out, qemuKeyUp(f.heldQemu[c], c)...)
 	}
 	if f.buttons != 0 {
 		out = append(out, f.pointerBytes(0)...)

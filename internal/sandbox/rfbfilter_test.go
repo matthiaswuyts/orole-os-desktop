@@ -269,3 +269,86 @@ func rfbConcat(parts ...[]byte) []byte {
 	}
 	return b
 }
+
+func TestRFBFilterQEMUKeyUpWhileViewOnly(t *testing.T) {
+	allow := true
+	f := newRFBFilter(func() bool { return allow })
+	if _, err := f.Feed(rfbHandshake()); err != nil {
+		t.Fatal(err)
+	}
+	down := []byte{255, 0, 0, 1, 0, 0, 0xff, 0x0d, 0, 0, 0, 0x1c}
+	if out, _ := f.Feed(down); !bytes.Equal(out, down) {
+		t.Fatalf("down = %v", out)
+	}
+	allow = false
+	// An up for a key never forwarded down is dropped.
+	if out, _ := f.Feed([]byte{255, 0, 0, 0, 0, 0, 0, 0x41, 0, 0, 0, 0x1e}); len(out) != 0 {
+		t.Fatalf("unrelated up forwarded: %v", out)
+	}
+	// The up of the held key passes in canonical form with the recorded keysym, whatever the client sent.
+	if out, _ := f.Feed([]byte{255, 0, 0, 0, 0xde, 0xad, 0xbe, 0xef, 0, 0, 0, 0x1c}); !bytes.Equal(out, []byte{255, 0, 0, 0, 0, 0, 0xff, 0x0d, 0, 0, 0, 0x1c}) {
+		t.Fatalf("held up = %v", out)
+	}
+	if out, _ := f.Feed([]byte{255, 0, 0, 0, 0, 0, 0xff, 0x0d, 0, 0, 0, 0x1c}); len(out) != 0 {
+		t.Fatalf("second up forwarded: %v", out)
+	}
+}
+
+func TestRFBFilterCapsHeldKeys(t *testing.T) {
+	f := newRFBFilter(func() bool { return true })
+	if _, err := f.Feed(rfbHandshake()); err != nil {
+		t.Fatal(err)
+	}
+	key := func(sym uint32) []byte {
+		m := []byte{4, 1, 0, 0, 0, 0, 0, 0}
+		binary.BigEndian.PutUint32(m[4:], sym)
+		return m
+	}
+	qemu := func(code uint32) []byte {
+		m := []byte{255, 0, 0, 1, 0, 0, 0, 0x41, 0, 0, 0, 0}
+		binary.BigEndian.PutUint32(m[8:], code)
+		return m
+	}
+	for i := range uint32(rfbMaxHeld) {
+		if out, _ := f.Feed(key(i)); len(out) != 8 {
+			t.Fatalf("key %d dropped", i)
+		}
+		if out, _ := f.Feed(qemu(i)); len(out) != 12 {
+			t.Fatalf("qemu key %d dropped", i)
+		}
+	}
+	if out, _ := f.Feed(key(rfbMaxHeld)); len(out) != 0 {
+		t.Fatalf("key over the cap forwarded: %v", out)
+	}
+	if out, _ := f.Feed(qemu(rfbMaxHeld)); len(out) != 0 {
+		t.Fatalf("qemu key over the cap forwarded: %v", out)
+	}
+	if out, _ := f.Feed(key(0)); len(out) != 8 { // auto-repeat of a held key still passes
+		t.Fatal("held key repeat dropped")
+	}
+	if len(f.heldKeys) != rfbMaxHeld || len(f.heldQemu) != rfbMaxHeld {
+		t.Fatalf("held %d keys, %d qemu keys", len(f.heldKeys), len(f.heldQemu))
+	}
+}
+
+func TestRFBFilterExtendedClipboardFollowsTheLatestEncodings(t *testing.T) {
+	f := newRFBFilter(func() bool { return true })
+	if _, err := f.Feed(rfbConcat(rfbHandshake(), rfbEncodings(-1063131698), rfbEncodings(7))); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.Feed(rfbCutText(-3, 3)); !errors.Is(err, errRFBInput) {
+		t.Fatalf("negative length after the encoding was withdrawn: %v", err)
+	}
+}
+
+func TestRFBFilterFenceOfExactly64Passes(t *testing.T) {
+	f := newRFBFilter(func() bool { return false })
+	fence := append([]byte{248, 0, 0, 0, 0, 0, 0, 0, 64}, bytes.Repeat([]byte{'x'}, 64)...)
+	out, err := f.Feed(rfbConcat(rfbHandshake(), fence))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.HasSuffix(out, fence) {
+		t.Fatalf("fence not forwarded: %v", out)
+	}
+}
