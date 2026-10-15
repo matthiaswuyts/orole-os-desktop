@@ -16,6 +16,7 @@ import (
 	"github.com/rayorole/orole-os-desktop/internal/policy"
 	"github.com/rayorole/orole-os-desktop/internal/sandbox"
 	"github.com/rayorole/orole-os-desktop/internal/sandbox/wire"
+	"github.com/rayorole/orole-os-desktop/internal/untrusted"
 )
 
 // fakeComputer is a ComputerRuntime that records calls. browse and ask run without the lock held.
@@ -201,13 +202,14 @@ func TestComputerFileTools(t *testing.T) {
 		t.Fatalf("binary: %q", res.Text)
 	}
 	res, err = tool.Call(ctx, pcRun(nil), ComputerWriteFileName, json.RawMessage(`{"path":"notes/a.txt","content":"new text"}`))
-	if err != nil || res.IsError || string(rt.writes["notes/a.txt"]) != "new text" {
+	if err != nil || res.IsError || string(rt.writes["/home/bot/notes/a.txt"]) != "new text" {
 		t.Fatalf("write: %+v %v %v", res, err, rt.writes)
 	}
 	reqs := pol.requests()
 	if len(reqs) != 3 ||
-		reqs[0].Action != "computer.files.read" || reqs[0].Resource != "computer/b1/notes/a.txt" || reqs[0].Effect != policy.EffectRead ||
-		reqs[2].Action != "computer.files.write" || reqs[2].Resource != "computer/b1/notes/a.txt" || reqs[2].Effect != policy.EffectWrite {
+		reqs[0].Action != "computer.files.read" || reqs[0].Resource != "computer/b1/home/bot/notes/a.txt" || reqs[0].Effect != policy.EffectRead ||
+		reqs[2].Action != "computer.files.write" || reqs[2].Resource != "computer/b1/home/bot/notes/a.txt" || reqs[2].Effect != policy.EffectWrite ||
+		reqs[2].Detail != "Write 8 bytes to /home/bot/notes/a.txt on its computer, starting:\nnew text" {
 		t.Fatalf("policy: %+v", reqs)
 	}
 }
@@ -258,6 +260,11 @@ func TestComputerValidatesArgumentsBeforeAsking(t *testing.T) {
 		`{"command":"ls","timeout":-1}`,
 		`{"command":"ls","shell":"zsh"}`,
 		`{"command":"ls","cwd":"a\u0000b"}`,
+		`{"command":"ls\r\nrm -rf ~"}`,
+		`{"command":"echo \u001b[2Jhi"}`,
+		`{"command":"ls\u200b"}`,
+		`{"command":"ls \u202e~ fr- mr"}`,
+		`{"command":"` + strings.Repeat("x", maxCommandBytes+1) + `"}`,
 	} {
 		pol := &computerPolicy{}
 		res, err := Computer{Runtime: &fakeComputer{}, Policy: pol}.Call(context.Background(), pcRun(nil), ComputerRunName, json.RawMessage(args))
@@ -341,5 +348,111 @@ func TestComputerTurnCancelIsAnError(t *testing.T) {
 	rt := &fakeComputer{running: true, err: context.Canceled}
 	if _, err := (Computer{Runtime: rt, Policy: &computerPolicy{}}).Call(ctx, pcRun(nil), ComputerRunName, json.RawMessage(`{"command":"ls"}`)); !errors.Is(err, context.Canceled) {
 		t.Fatalf("err: %v", err)
+	}
+}
+
+// policyDetailLimit mirrors the policy engine, which keeps untrusted.Text(Detail, 2000) of an approval's detail.
+const policyDetailLimit = 2000
+
+func TestComputerApprovalShowsTheWholeCommand(t *testing.T) {
+	cmd := "set -e\n\tcd /tmp && " + strings.Repeat("echo ok; ", 197)
+	if len(cmd) > maxCommandBytes || len(cmd) < maxCommandBytes-20 {
+		t.Fatalf("test command is %d bytes", len(cmd))
+	}
+	pol := &computerPolicy{}
+	args, _ := json.Marshal(map[string]any{"command": cmd})
+	if res, err := (Computer{Runtime: &fakeComputer{}, Policy: pol}).Call(context.Background(), pcRun(nil), ComputerRunName, args); err != nil || res.IsError {
+		t.Fatalf("%+v %v", res, err)
+	}
+	reqs := pol.requests()
+	if len(reqs) != 1 {
+		t.Fatalf("policy: %+v", reqs)
+	}
+	shown := untrusted.Text(reqs[0].Detail, policyDetailLimit)
+	if !strings.HasSuffix(shown, "\n"+cmd) {
+		t.Fatalf("the approval does not show the whole command: %q", shown[max(0, len(shown)-80):])
+	}
+}
+
+func TestComputerFileResourcesAreCanonical(t *testing.T) {
+	long := "/" + strings.Repeat("d", 600)
+	for _, tt := range []struct{ path, resource string }{
+		{"a.txt", "computer/b1/home/bot/a.txt"},
+		{"./x/../a.txt", "computer/b1/home/bot/a.txt"},
+		{"/etc//hosts", "computer/b1/etc/hosts"},
+		{"/home/bot/../../etc/passwd", "computer/b1/etc/passwd"},
+		{"dir/", "computer/b1/home/bot/dir"},
+		{long, ""},
+		{"a​.txt", ""},
+	} {
+		pol := &computerPolicy{}
+		rt := &fakeComputer{running: true, file: wire.ReadFileResult{Content: []byte("x")}}
+		args, _ := json.Marshal(map[string]string{"path": tt.path})
+		res, _ := Computer{Runtime: rt, Policy: pol}.Call(context.Background(), pcRun(nil), ComputerReadFileName, args)
+		reqs := pol.requests()
+		if tt.resource == "" {
+			if !res.IsError || len(reqs) != 0 {
+				t.Errorf("%q: %+v (asked %d)", tt.path, res, len(reqs))
+			}
+			continue
+		}
+		if res.IsError || len(reqs) != 1 || reqs[0].Resource != tt.resource || len(reqs[0].Resource) > maxResourceBytes {
+			t.Errorf("%q: %+v %+v", tt.path, res, reqs)
+		}
+	}
+	// The longest path that fits still fits the policy's resource limit.
+	p := "/" + strings.Repeat("d", fileRoom("b1")-1)
+	pol := &computerPolicy{}
+	args, _ := json.Marshal(map[string]string{"path": p})
+	res, _ := Computer{Runtime: &fakeComputer{running: true}, Policy: pol}.Call(context.Background(), pcRun(nil), ComputerReadFileName, args)
+	if reqs := pol.requests(); res.IsError || len(reqs) != 1 || len(reqs[0].Resource) != maxResourceBytes {
+		t.Fatalf("longest path: %+v %+v", res, reqs)
+	}
+}
+
+func TestComputerReadKeepsTheTruncationNote(t *testing.T) {
+	rt := &fakeComputer{running: true, file: wire.ReadFileResult{Content: []byte(strings.Repeat("a\n", maxComputerOutput)), Truncated: true}}
+	res, _ := Computer{Runtime: rt, Policy: &computerPolicy{}}.Call(context.Background(), pcRun(nil), ComputerReadFileName, json.RawMessage(`{"path":"big"}`))
+	if !strings.Contains(res.Text, "showing the first 64 KiB") || !strings.HasSuffix(res.Text, "[file truncated at 4 MiB]") {
+		t.Fatalf("notes: %q", res.Text[len(res.Text)-200:])
+	}
+}
+
+func TestComputerWriteApprovalPreviewsContent(t *testing.T) {
+	pol := &computerPolicy{}
+	content := "\x1b[31m" + strings.Repeat("z", 1000)
+	args, _ := json.Marshal(map[string]string{"path": "a", "content": content})
+	if res, _ := (Computer{Runtime: &fakeComputer{}, Policy: pol}).Call(context.Background(), pcRun(nil), ComputerWriteFileName, args); res.IsError {
+		t.Fatalf("%+v", res)
+	}
+	d := pol.requests()[0].Detail
+	if strings.ContainsRune(d, 0x1b) || !strings.Contains(d, strings.Repeat("z", 200)) || strings.Contains(d, strings.Repeat("z", 400)) || len(d) > policyDetailLimit {
+		t.Fatalf("detail: %q", d)
+	}
+}
+
+func TestComputerCancelledTurnShowsNoFailure(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	var cards []chat.MsgPart
+	rt := &fakeComputer{running: true}
+	pol := &computerPolicy{}
+	tool := Computer{Runtime: rt, Policy: pol}
+	// The turn is cancelled while the command runs: the fake fails with the cancellation.
+	rt.err = context.Canceled
+	rc := pcRun(&cards)
+	inner := rc.Emit
+	rc.Emit = func(p chat.MsgPart) {
+		inner(p)
+		if p.Status == chat.ComputerRunning {
+			cancel()
+		}
+	}
+	if _, err := tool.Call(ctx, rc, ComputerRunName, json.RawMessage(`{"command":"sleep 100"}`)); !errors.Is(err, context.Canceled) {
+		t.Fatalf("err: %v", err)
+	}
+	for _, c := range cards {
+		if c.Status == chat.ComputerFailed {
+			t.Fatalf("failed card after cancel: %+v", cards)
+		}
 	}
 }

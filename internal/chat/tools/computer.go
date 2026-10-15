@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path"
 	"strings"
 	"time"
 	"unicode"
@@ -42,8 +43,10 @@ const (
 )
 
 const (
-	maxCommandBytes   = 16 << 10
-	maxComputerPath   = 4096
+	maxCommandBytes   = 1800 // the whole command must fit the approval prompt (policy keeps 2000 bytes of Detail)
+	maxResourceBytes  = 512  // policy.Request.Resource limit
+	maxWritePreview   = 300  // bytes of new content shown in a write approval
+	computerHome      = "/home/bot"
 	maxComputerWrite  = 16 << 20 // the guest's /files/write limit
 	maxComputerOutput = 64 << 10 // text returned to the model per call
 	maxCardText       = 120      // bytes of a command or path shown on the card
@@ -197,12 +200,38 @@ func busyText(rc chat.RunContext, rt ComputerRuntime, doing string) string {
 // code quotes a command or path for the card.
 func code(s string) string { return "`" + untrusted.Line(s, maxCardText) + "`" }
 
-// checkComputerPath accepts a guest path: valid text without control characters, at most maxComputerPath bytes.
-func checkComputerPath(field, path string) error {
-	if strings.TrimSpace(path) == "" || len(path) > maxComputerPath || !utf8.ValidString(path) || strings.ContainsFunc(path, unicode.IsControl) {
-		return fmt.Errorf("%s must be a path of at most %d bytes without control characters", field, maxComputerPath)
+// shownAsIs reports whether s reaches an approval prompt unchanged: untrusted.Text would strip nothing from it
+// (control characters other than newline and tab, ESC, zero-width and bidi marks, invalid UTF-8).
+func shownAsIs(s string) bool { return untrusted.Text(s, 0) == s }
+
+// computerPath checks a guest path and returns it absolute and clean (relative paths start in /home/bot), so the
+// policy resource and the approval name exactly the file the guest acts on. room is how many bytes it may take.
+func computerPath(field, p string, room int) (string, error) {
+	if strings.TrimSpace(p) == "" || !shownAsIs(p) || strings.ContainsFunc(p, unicode.IsControl) {
+		return "", fmt.Errorf("%s must be a path without control or invisible characters", field)
 	}
-	return nil
+	if !path.IsAbs(p) {
+		p = computerHome + "/" + p
+	}
+	p = path.Clean(p)
+	if len(p) > room {
+		return "", fmt.Errorf("%s is too long: at most %d bytes as an absolute path", field, room)
+	}
+	return p, nil
+}
+
+// fileResource is the policy resource of a guest file: computer/<botID><absolute path>.
+func fileResource(botID, abs string) string { return "computer/" + botID + abs }
+
+// fileRoom is how long a guest path of the bot may be for its resource to fit the policy limit.
+func fileRoom(botID string) int { return maxResourceBytes - len(fileResource(botID, "")) }
+
+// failed updates the card for a failed call and says what the model is told. A cancelled turn shows no failure.
+func failed(ctx context.Context, rc chat.RunContext, name, text string, err error) (chat.ToolResult, error) {
+	if ctx.Err() == nil {
+		emitComputer(rc, name, chat.ComputerFailed, text, failureSummary(err))
+	}
+	return computerFailure(ctx, err)
 }
 
 // capOutput bounds text for the model and says how to get the rest.
@@ -259,8 +288,14 @@ func (t Computer) run(ctx context.Context, rc chat.RunContext, args json.RawMess
 	if err := decode(args, &in); err != nil {
 		return errResult("invalid arguments: %s", err)
 	}
-	if strings.TrimSpace(in.Command) == "" || len(in.Command) > maxCommandBytes || !utf8.ValidString(in.Command) || strings.ContainsRune(in.Command, 0) {
-		return errResult("command is required (valid text, at most %d bytes)", maxCommandBytes)
+	if strings.TrimSpace(in.Command) == "" {
+		return errResult("command is required")
+	}
+	if len(in.Command) > maxCommandBytes {
+		return errResult("command is longer than %d bytes, too long to show the user for approval. Write it as a script with %s and run the script instead.", maxCommandBytes, ComputerWriteFileName)
+	}
+	if !shownAsIs(in.Command) {
+		return errResult("command contains control or invisible characters (such as carriage returns, escape codes, zero-width or bidi marks) that the approval could not show; use only printable text, newlines and tabs")
 	}
 	if in.Timeout == 0 {
 		in.Timeout = wire.DefaultExecTimeout
@@ -269,9 +304,11 @@ func (t Computer) run(ctx context.Context, rc chat.RunContext, args json.RawMess
 		return errResult("timeout must be 1 to %d seconds", wire.MaxExecTimeout)
 	}
 	if in.Cwd != "" {
-		if err := checkComputerPath("cwd", in.Cwd); err != nil {
+		cwd, err := computerPath("cwd", in.Cwd, maxResourceBytes)
+		if err != nil {
 			return errResult("%s", err)
 		}
+		in.Cwd = cwd
 	}
 	if res, stop, err := allow(ctx, t.Policy, rc, actionComputerExec, "computer/"+rc.BotID, "Run a command on its computer:\n"+in.Command, policy.EffectWrite); stop {
 		return res, err
@@ -281,8 +318,7 @@ func (t Computer) run(ctx context.Context, rc chat.RunContext, args json.RawMess
 	out, err := t.Runtime.Exec(cctx, rc.BotID, wire.ExecRequest{Command: in.Command, Timeout: in.Timeout, Cwd: in.Cwd})
 	cancel()
 	if err != nil {
-		emitComputer(rc, ComputerRunName, chat.ComputerFailed, "Could not run "+code(in.Command), failureSummary(err))
-		return computerFailure(ctx, err)
+		return failed(ctx, rc, ComputerRunName, "Could not run "+code(in.Command), err)
 	}
 	emitComputer(rc, ComputerRunName, chat.ComputerDone, "Ran "+code(in.Command), fmt.Sprintf("exit code %d", out.ExitCode))
 	var b strings.Builder
@@ -309,10 +345,12 @@ func (t Computer) read(ctx context.Context, rc chat.RunContext, args json.RawMes
 	if err := decode(args, &in); err != nil {
 		return errResult("invalid arguments: %s", err)
 	}
-	if err := checkComputerPath("path", in.Path); err != nil {
+	p, err := computerPath("path", in.Path, fileRoom(rc.BotID))
+	if err != nil {
 		return errResult("%s", err)
 	}
-	if res, stop, err := allow(ctx, t.Policy, rc, actionComputerFileRead, "computer/"+rc.BotID+"/"+in.Path, "Read "+in.Path+" on its computer", policy.EffectRead); stop {
+	in.Path = p
+	if res, stop, err := allow(ctx, t.Policy, rc, actionComputerFileRead, fileResource(rc.BotID, in.Path), "Read "+in.Path+" on its computer", policy.EffectRead); stop {
 		return res, err
 	}
 	emitComputer(rc, ComputerReadFileName, chat.ComputerRunning, "Reading "+code(in.Path), busyText(rc, t.Runtime, "Reading the file"))
@@ -320,18 +358,17 @@ func (t Computer) read(ctx context.Context, rc chat.RunContext, args json.RawMes
 	out, err := t.Runtime.ReadFile(cctx, rc.BotID, in.Path)
 	cancel()
 	if err != nil {
-		emitComputer(rc, ComputerReadFileName, chat.ComputerFailed, "Could not read "+code(in.Path), failureSummary(err))
-		return computerFailure(ctx, err)
+		return failed(ctx, rc, ComputerReadFileName, "Could not read "+code(in.Path), err)
 	}
 	emitComputer(rc, ComputerReadFileName, chat.ComputerDone, "Read "+code(in.Path), fmt.Sprintf("%d bytes", len(out.Content)))
 	if !utf8.Valid(out.Content) || strings.ContainsRune(string(out.Content), 0) {
 		return chat.ToolResult{Text: fmt.Sprintf("%s is a binary file (%d bytes); it is not shown. Use computer_run with file, xxd or base64 to inspect it.", in.Path, len(out.Content)), Untrusted: true}, nil
 	}
-	text := string(out.Content)
+	text := capOutput(string(out.Content), "showing the first 64 KiB; use computer_run with head, sed or rg to read more")
 	if out.Truncated {
 		text += "\n[file truncated at 4 MiB]"
 	}
-	return chat.ToolResult{Text: capOutput(text, "showing the first 64 KiB; use computer_run with head, sed or rg to read more"), Untrusted: true}, nil
+	return chat.ToolResult{Text: text, Untrusted: true}, nil
 }
 
 func (t Computer) write(ctx context.Context, rc chat.RunContext, args json.RawMessage) (chat.ToolResult, error) {
@@ -342,14 +379,19 @@ func (t Computer) write(ctx context.Context, rc chat.RunContext, args json.RawMe
 	if err := decode(args, &in); err != nil {
 		return errResult("invalid arguments: %s", err)
 	}
-	if err := checkComputerPath("path", in.Path); err != nil {
+	p, err := computerPath("path", in.Path, fileRoom(rc.BotID))
+	if err != nil {
 		return errResult("%s", err)
 	}
+	in.Path = p
 	if len(in.Content) > maxComputerWrite {
 		return errResult("content is limited to %d MiB", maxComputerWrite>>20)
 	}
 	detail := fmt.Sprintf("Write %d bytes to %s on its computer", len(in.Content), in.Path)
-	if res, stop, err := allow(ctx, t.Policy, rc, actionComputerFileWrite, "computer/"+rc.BotID+"/"+in.Path, detail, policy.EffectWrite); stop {
+	if in.Content != "" {
+		detail += ", starting:\n" + untrusted.Text(in.Content, maxWritePreview)
+	}
+	if res, stop, err := allow(ctx, t.Policy, rc, actionComputerFileWrite, fileResource(rc.BotID, in.Path), detail, policy.EffectWrite); stop {
 		return res, err
 	}
 	emitComputer(rc, ComputerWriteFileName, chat.ComputerRunning, "Writing "+code(in.Path), busyText(rc, t.Runtime, "Writing the file"))
@@ -357,8 +399,7 @@ func (t Computer) write(ctx context.Context, rc chat.RunContext, args json.RawMe
 	out, err := t.Runtime.WriteFile(cctx, rc.BotID, in.Path, []byte(in.Content))
 	cancel()
 	if err != nil {
-		emitComputer(rc, ComputerWriteFileName, chat.ComputerFailed, "Could not write "+code(in.Path), failureSummary(err))
-		return computerFailure(ctx, err)
+		return failed(ctx, rc, ComputerWriteFileName, "Could not write "+code(in.Path), err)
 	}
 	emitComputer(rc, ComputerWriteFileName, chat.ComputerDone, "Wrote "+code(in.Path), fmt.Sprintf("%d bytes", out.Bytes))
 	return chat.ToolResult{Text: fmt.Sprintf("Wrote %d bytes to %s.", out.Bytes, in.Path)}, nil
