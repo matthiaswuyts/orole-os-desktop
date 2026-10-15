@@ -350,6 +350,34 @@ older image answers 501 and the bot is told to ask the user to reset it. The vie
 Attaching chromedp to a tab has its own 20 s deadline: an attach that hangs is given up (and filed later if it ever
 finishes) instead of blocking every following action. Image 0.1.3 adds the password-field refusal and that deadline.
 
+### Computer tab streams (phase 4)
+
+The daemon serves the Computer tab from `internal/daemon/svc_sandbox_streams.go`. Every method is **desktop-only**
+(refused for a bot or an automation), and none of them starts a VM: a screen or terminal of a computer that is off
+answers `not_found` ("it starts when the bot uses it"; `Manager.RunningGuest` never boots).
+
+- **Viewer lease.** `sandbox.viewer{botId, watching}` starts, renews or ends the tab's lease (`sandbox.ViewerLeases`,
+  150 s; the UI renews every 60 s). A watched computer is not idle. A lease that runs out (the GUI went away without
+  saying so) clears the flag and, when the user holds the takeover lock with no handoff pending, gives the computer
+  back to the bot (`ReleaseAbandonedTakeover`, under the takeover mutex).
+- **Screen.** `sandbox.screen.open{botId}` -> `{id}` opens `/screen` (opening bounded at 30 s) in `sandbox.ScreenHub`,
+  at most two per bot. Guest bytes arrive as `sandbox.screen.data` events (`ScreenChunk{id, data, closed, error}`;
+  the last one has `closed`). `sandbox.screen.input{id, data}` passes viewer bytes through the RFB filter: keyboard and
+  mouse reach the guest only during a takeover. Unknown or closed screens are `not_found`; more than 128 KiB at once
+  or input outside the accepted RFB subset closes the screen and answers `bad_request`; a guest that stops taking
+  input answers `timeout`. `sandbox.screen.close{id}` is idempotent. A computer that stops closes its screens ("the
+  computer stopped"), and whenever the lock is released (Done, a hold timeout, a cancelled turn, an abandoned lease)
+  the keys and buttons the user still held are released in the guest.
+- **Terminal.** `sandbox.pty.open{botId, cols, rows}` -> `terminals.Info` opens a login shell in the guest and adopts
+  it as an ordinary daemon terminal (owner `sandbox:<botId>`, shell `orole-guest`), so `terminals.write`, resize,
+  attach and the `terminal.*` events serve it. A bot has at most one; an open one is returned. Like every terminal it
+  survives GUI restarts, not a daemon exit, and it ends when the computer stops.
+- **Command echo.** Each command the bot runs (`computer_run`) is echoed into that terminal when it is open: a dim
+  `[bot] $ command` line, the output (newlines as CRLF, at most 64 KiB after that) and a dim `(exit N, timed out,
+  output cut)` line. Escape sequences and control characters are removed from the command and the output, so neither
+  can drive the user's terminal. Delivery is ordered per bot and never delays the command: when the terminal falls
+  behind, echoes are dropped.
+
 ## Windows backend (phase 2)
 
 - **Process.** `backend_windows.go` starts `qemu-system-x86_64.exe -machine q35 -accel whpx,kernel-irqchip=off`

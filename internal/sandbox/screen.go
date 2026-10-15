@@ -27,6 +27,8 @@ var (
 	// ErrScreenInputTooLarge is returned for one Input larger than ScreenChunkMax; the screen is closed, since the
 	// dropped bytes would desynchronise the RFB stream. The UI splits larger writes (a big clipboard) itself.
 	ErrScreenInputTooLarge = errors.New("sandbox: screen input too large")
+	// ErrScreenStalled is returned for input the guest did not take within the write timeout; the screen is closed.
+	ErrScreenStalled = errors.New("sandbox: the screen stopped responding")
 )
 
 const (
@@ -56,9 +58,6 @@ type ScreenHub struct {
 
 	bg sync.WaitGroup // TakeoverEnded releases in flight (tests wait on it)
 }
-
-// errScreenStalled is a guest write that did not complete within releaseTimeout.
-var errScreenStalled = errors.New("sandbox: the screen stopped responding")
 
 type screenStream struct {
 	id, botID string
@@ -162,13 +161,13 @@ func (h *ScreenHub) write(s *screenStream, p []byte) error {
 	t := time.AfterFunc(h.releaseTimeout, func() { s.stalled.Store(true); _ = s.rwc.Close() })
 	_, err := s.rwc.Write(p)
 	if !t.Stop() && s.stalled.Load() {
-		return errScreenStalled
+		return ErrScreenStalled
 	}
 	return err
 }
 
 func writeFailure(err error) string {
-	if errors.Is(err, errScreenStalled) {
+	if errors.Is(err, ErrScreenStalled) {
 		return "the screen stopped responding"
 	}
 	return "the screen stream ended unexpectedly"
@@ -259,7 +258,7 @@ func (h *ScreenHub) pump(s *screenStream) {
 			reason := ""
 			switch {
 			case s.stalled.Load(): // the read failed because a stalled write closed the stream
-				reason = writeFailure(errScreenStalled)
+				reason = writeFailure(ErrScreenStalled)
 			case !errors.Is(err, io.EOF):
 				reason = "the screen stream ended unexpectedly"
 			}

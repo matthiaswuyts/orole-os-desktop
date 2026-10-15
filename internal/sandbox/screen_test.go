@@ -321,7 +321,7 @@ func stalledScreen(t *testing.T, log *chunkLog) (*ScreenHub, string) {
 func TestScreenHubInputToAStalledGuestIsBounded(t *testing.T) {
 	log := &chunkLog{}
 	h, id := stalledScreen(t, log)
-	if err := h.Input(id, []byte{4, 1, 0, 0, 0, 0, 0, 0x41}); !errors.Is(err, errScreenStalled) {
+	if err := h.Input(id, []byte{4, 1, 0, 0, 0, 0, 0, 0x41}); !errors.Is(err, ErrScreenStalled) {
 		t.Fatalf("err = %v", err)
 	}
 	cs := log.wait(t, closedFor(id))
