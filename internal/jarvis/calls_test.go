@@ -289,6 +289,29 @@ func (s *fakeSender) skipped(id string) bool {
 	}
 	return false
 }
+
+// ends lists how request id ended, in order: "tool:<name> <args>" for a function call and "done" for llm.done; text
+// after either shows as "text after the end".
+func (s *fakeSender) ends(id string) []string {
+	var out []string
+	for _, f := range s.all() {
+		if f.ID != id {
+			continue
+		}
+		switch f.Type {
+		case FrameLLMTool:
+			out = append(out, "tool:"+f.Tool+" "+f.Args)
+		case FrameLLMDone:
+			out = append(out, "done")
+		case FrameLLMDelta:
+			if len(out) > 0 {
+				out = append(out, "text after the end")
+			}
+		}
+	}
+	return out
+}
+
 func (s *fakeSender) done(id string) bool {
 	for _, f := range s.all() {
 		if f.ID == id && f.Type == FrameLLMDone {
@@ -305,6 +328,7 @@ type fakePhone struct {
 	mu      sync.Mutex
 	hangups []string
 	status  string
+	asked   int // CallStatus calls
 }
 
 func (p *fakePhone) Hangup(_ context.Context, sid string) error {
@@ -316,12 +340,14 @@ func (p *fakePhone) Hangup(_ context.Context, sid string) error {
 func (p *fakePhone) CallStatus(context.Context, string) (string, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	p.asked++
 	if p.status == "" {
 		return "", errors.New("twilio unavailable")
 	}
 	return p.status, nil
 }
 func (p *fakePhone) setStatus(s string) { p.mu.Lock(); p.status = s; p.mu.Unlock() }
+func (p *fakePhone) statusAsked() int   { p.mu.Lock(); defer p.mu.Unlock(); return p.asked }
 func (p *fakePhone) hungUp(sid string) bool {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -392,7 +418,8 @@ func newCallEnv(t *testing.T) *callEnv {
 	// English unless a test says otherwise, so the scripted lines below read as written.
 	e.settings = &PhoneSettings{OwnerNumber: "+32470000000", OwnerVerified: true, AgentID: "ag", PhoneNumberID: "pn", CallLanguage: LangEnglish}
 	e.c = NewCalls(st, e.host, e.dial, e.phone, e.relay, func() PhoneSettings { return *e.settings }, func() time.Time { return *e.now }, slog.Default())
-	e.c.speechWait = func(string) time.Duration { return 0 }
+	zero := func(string) time.Duration { return 0 }
+	e.c.speechWait, e.c.endFallback, e.c.quickHangup = zero, zero, zero
 	t.Cleanup(e.c.Close) // registered after testStore's cleanup, so it runs first
 	return e
 }
@@ -453,14 +480,14 @@ func TestOpenerFallbackWhenInvalid(t *testing.T) {
 	}
 }
 
-func TestSpokenTurnRunsVoiceTurnWithFiller(t *testing.T) {
+func TestSpokenTurnRunsVoiceTurnWithToolLine(t *testing.T) {
 	e := newCallEnv(t)
-	e.host.toolDuringTurn = "list_tasks"
+	e.host.toolDuringTurn = "start_task"
 	call, _ := e.c.Place(context.Background(), PlaceRequest{BotID: "b1", Reason: "x"})
 	e.c.HandleFrame(context.Background(), Frame{Type: FrameLLMRequest, ID: "r0", CallID: call.ID})
 	e.c.HandleFrame(context.Background(), llmFrame("r1", call.ID, "what's running?"))
 	got := e.relay.text("r1")
-	if !strings.HasPrefix(got, "Checking your tasks.") || !strings.HasSuffix(got, "Two tasks are running.") {
+	if got != "I'm starting that coding task now. Two tasks are running." {
 		t.Fatalf("spoken %q", got)
 	}
 	turns := e.host.turnList()
@@ -1463,7 +1490,7 @@ func TestDutchCallSpeaksDutch(t *testing.T) {
 			e.settings.CallLanguage = lang
 			e.settings.AgentLanguage = map[string]string{"": LangDutch, LangDutch: LangDutch, LangAuto: LangAuto}[lang]
 			e.host.opener = "not an opener" // fails CheckOpener: the Dutch fallback is used
-			e.host.toolDuringTurn = "list_tasks"
+			e.host.toolDuringTurn = "start_task"
 			call, err := e.c.Place(context.Background(), PlaceRequest{BotID: "b1", Reason: "x"})
 			if err != nil {
 				t.Fatal(err)
@@ -1480,7 +1507,7 @@ func TestDutchCallSpeaksDutch(t *testing.T) {
 				t.Errorf("opener instruction does not ask for Dutch: %q", instr)
 			}
 			e.c.HandleFrame(context.Background(), llmFrame("r1", call.ID, "wat draait er?"))
-			if got := e.relay.text("r1"); !strings.HasPrefix(got, "Ik kijk even naar je taken.") {
+			if got := e.relay.text("r1"); !strings.HasPrefix(got, "Ik start die codetaak nu. ") {
 				t.Fatalf("spoken %q", got)
 			}
 			want := LangDutch
@@ -1512,14 +1539,14 @@ func TestDutchVerificationAndRefusalLines(t *testing.T) {
 func TestCallsKeepTheProvisionedLanguage(t *testing.T) {
 	e := newCallEnv(t)
 	e.settings.CallLanguage, e.settings.AgentLanguage = LangDutch, ""
-	e.host.toolDuringTurn = "list_tasks"
+	e.host.toolDuringTurn = "start_task"
 	call, err := e.c.Place(context.Background(), PlaceRequest{BotID: "b1", Reason: "x"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	e.c.HandleFrame(context.Background(), Frame{Type: FrameLLMRequest, ID: "r0", CallID: call.ID})
 	e.c.HandleFrame(context.Background(), llmFrame("r1", call.ID, "what's running?"))
-	if got := e.relay.text("r1"); !strings.HasPrefix(got, "Checking your tasks.") {
+	if got := e.relay.text("r1"); !strings.HasPrefix(got, "I'm starting that coding task now. ") {
 		t.Fatalf("spoken %q, want English until the agent is switched", got)
 	}
 	if turns := e.host.turnList(); turns[0].Language != LangEnglish {
@@ -1662,11 +1689,11 @@ func TestSlowTurnSaysItIsOnIt(t *testing.T) {
 	close(e.host.release)
 	wg.Wait()
 	got := e.relay.text("r1")
-	if !slices.ContainsFunc(english.acks, func(a string) bool { return strings.HasPrefix(got, a+" ") }) || !strings.HasSuffix(got, "Two tasks are running.") {
+	if got != english.longWait+" Two tasks are running." {
 		t.Fatalf("owner heard %q", got)
 	}
-	// The buffer chunk went out first, at once; the acknowledgement followed it.
-	if st := e.relay.stream("r1"); len(st) < 2 || st[0] != bufferChunk || !slices.Contains(english.acks, strings.TrimSpace(st[1])) {
+	// The buffer chunk went out first, at once; the long-wait line followed it.
+	if st := e.relay.stream("r1"); len(st) < 2 || st[0] != bufferChunk || strings.TrimSpace(st[1]) != english.longWait {
 		t.Fatalf("stream %q", st)
 	}
 }
@@ -2253,7 +2280,7 @@ func TestSilenceDuringAHesitationIsAdopted(t *testing.T) {
 	}
 }
 
-// While a hesitation turn waits it sends only buffer chunks; the acknowledgement counts from the end of the wait.
+// While a hesitation turn waits it sends only buffer chunks; the long-wait line counts from the end of the wait.
 func TestHesitationWaitSendsOnlyBuffers(t *testing.T) {
 	e := newCallEnv(t)
 	e.c.hesitationWait, e.c.ackAfter, e.c.bufferEvery, e.c.stillAfter = 60*time.Millisecond, 30*time.Millisecond, 10*time.Millisecond, time.Hour
@@ -2272,7 +2299,7 @@ func TestHesitationWaitSendsOnlyBuffers(t *testing.T) {
 	}
 	st := e.relay.stream("r1")
 	i := slices.IndexFunc(st, func(s string) bool { return s != bufferChunk })
-	if i < 2 || !slices.Contains(english.acks, strings.TrimSpace(st[i])) {
+	if i < 2 || strings.TrimSpace(st[i]) != english.longWait {
 		t.Fatalf("stream %q", st)
 	}
 	close(e.host.release)
@@ -2461,12 +2488,12 @@ func TestRetargetedRequestWithoutWordsIsSkipped(t *testing.T) {
 	e := newCallEnv(t)
 	e.c.ackAfter = time.Hour
 	e.host.reply = ""
-	e.host.onTurn = func(r chat.VoiceRequest) { r.OnTool("list_tasks") }
+	e.host.onTurn = func(r chat.VoiceRequest) { r.OnTool("start_task") }
 	call, release, wait := e.heldTurn(t, "r1", "check my tasks")
 	e.c.HandleFrame(context.Background(), llmFrame("r2", call.ID, "check my tasks")) // ElevenLabs re-sends it
 	release()
 	wait()
-	if strings.TrimSpace(e.relay.text("r1")) != "Checking your tasks." || e.relay.skipped("r1") || !e.relay.done("r1") {
+	if strings.TrimSpace(e.relay.text("r1")) != "I'm starting that coding task now." || e.relay.skipped("r1") || !e.relay.done("r1") {
 		t.Fatalf("r1 heard %q (skipped %v)", e.relay.text("r1"), e.relay.skipped("r1"))
 	}
 	if e.relay.text("r2") != "" || !e.relay.skipped("r2") || !e.relay.done("r2") {
@@ -2533,20 +2560,30 @@ func TestBufferKeepsASilentTurnAlive(t *testing.T) {
 	}
 }
 
-func TestAckAfterAckAfter(t *testing.T) {
-	e := newCallEnv(t)
-	e.c.ackAfter, e.c.stillAfter, e.c.bufferEvery = 40*time.Millisecond, time.Hour, time.Hour
-	began := time.Now()
-	_, release, wait := e.heldTurn(t, "r1", "check my tasks")
-	waitFor(t, func() bool { return e.relay.text("r1") != "" })
-	if waited := time.Since(began); waited < e.c.ackAfter {
-		t.Fatalf("acknowledged after %v", waited)
+// A turn that has said nothing for ackAfter says the long-wait line, once, in the call language.
+func TestLongWaitLineAfterAckAfter(t *testing.T) {
+	for _, tc := range []struct{ lang, want string }{
+		{LangEnglish, "Bear with me, I'm still working on it."},
+		{LangDutch, "Even geduld, ik ben er nog mee bezig."},
+	} {
+		t.Run(tc.lang, func(t *testing.T) {
+			e := newCallEnv(t)
+			e.settings.CallLanguage, e.settings.AgentLanguage = tc.lang, tc.lang
+			e.c.ackAfter, e.c.stillAfter, e.c.bufferEvery = 40*time.Millisecond, time.Hour, 10*time.Millisecond
+			began := time.Now()
+			_, release, wait := e.heldTurn(t, "r1", "check my tasks")
+			waitFor(t, func() bool { return e.relay.text("r1") != "" })
+			if waited := time.Since(began); waited < e.c.ackAfter {
+				t.Fatalf("long-wait line after %v", waited)
+			}
+			time.Sleep(5 * e.c.ackAfter) // time for another one, were it repeated
+			release()
+			wait()
+			if got := e.relay.text("r1"); got != tc.want+" "+e.host.reply {
+				t.Fatalf("owner heard %q", got)
+			}
+		})
 	}
-	if got := strings.TrimSpace(e.relay.text("r1")); !slices.Contains(english.acks, got) {
-		t.Fatalf("owner heard %q", got)
-	}
-	release()
-	wait()
 }
 
 func TestStillLinesAreCapped(t *testing.T) {
@@ -2576,7 +2613,7 @@ func TestStillLinesAreCapped(t *testing.T) {
 
 func TestTurnDeadlineSpeaksTooLong(t *testing.T) {
 	e := newCallEnv(t)
-	// The deadline waits for stillAfter without words: the filler goes out long before that.
+	// The deadline waits for stillAfter without words: the tool line goes out long before that.
 	e.c.ackAfter, e.c.stillAfter, e.c.bufferEvery, e.c.turnDeadline = time.Hour, 250*time.Millisecond, time.Hour, 30*time.Millisecond
 	e.host.onTurn = func(r chat.VoiceRequest) {
 		if r.Text == "check my tasks" {
@@ -2586,7 +2623,7 @@ func TestTurnDeadlineSpeaksTooLong(t *testing.T) {
 	call, _, wait := e.heldTurn(t, "r1", "check my tasks")
 	wait() // the deadline ends the turn without a release
 	got := strings.TrimSpace(e.relay.text("r1"))
-	if !strings.HasPrefix(got, "Starting that coding task now.") || !strings.HasSuffix(got, "This is taking too long on the phone. Shall I run it as a background task instead?") || !e.relay.done("r1") {
+	if !strings.HasPrefix(got, "I'm starting that coding task now.") || !strings.HasSuffix(got, "This is taking too long on the phone. Shall I run it as a background task instead?") || !e.relay.done("r1") {
 		t.Fatalf("owner heard %q", got)
 	}
 	// The next turn learns what was asked and what already ran, so a "yes" can start it in the background.
@@ -2837,7 +2874,7 @@ func TestSpeakingDuringTheGoodbyeCallsOffTheHangUp(t *testing.T) {
 	e := newCallEnv(t)
 	fa := e.withClock()
 	const wait = 7 * time.Second // unlike every other timer of the call
-	e.c.speechWait = func(string) time.Duration { return wait }
+	e.c.endFallback = func(string) time.Duration { return wait }
 	e.host.reply = "Oké, tot later!"
 	call := e.openCall(t)
 	e.host.onTurn = func(r chat.VoiceRequest) {
@@ -3054,4 +3091,295 @@ func TestNewsBriefMarksWhatIsNew(t *testing.T) {
 	if told < 0 || !(told < build && build < fresh && fresh < deploy) {
 		t.Fatalf("cue brief %q", cue)
 	}
+}
+
+// ---- spoken feedback: tool lines and the long wait ----
+
+// A quick answer needs no acknowledgement: buffer chunks keep the request alive until the answer.
+func TestQuickAnswerSpeaksNoAcknowledgement(t *testing.T) {
+	e := newCallEnv(t)
+	if e.c.ackAfter != 4*time.Second {
+		t.Fatalf("ackAfter %v, want 4s", e.c.ackAfter)
+	}
+	e.c.bufferEvery = 10 * time.Millisecond
+	_, release, wait := e.heldTurn(t, "r1", "what time is it?")
+	waitFor(t, func() bool { return count(e.relay.stream("r1"), bufferChunk) >= 3 })
+	release()
+	wait()
+	st := e.relay.stream("r1")
+	if len(st) < 4 || st[len(st)-1] != e.host.reply || count(st, bufferChunk) != len(st)-1 {
+		t.Fatalf("stream %q, want buffer chunks then the answer", st)
+	}
+}
+
+// An MCP tool says at once which integration the bot is using, and no long-wait line follows it.
+func TestMCPToolSaysItsLineAtOnce(t *testing.T) {
+	for _, tc := range []struct{ lang, want string }{
+		{LangEnglish, "I'm using your canvas lms tools now. Give me a second to get the results."},
+		{LangDutch, "Ik gebruik nu je canvas lms koppeling. Even geduld, dan heb ik de resultaten."},
+	} {
+		t.Run(tc.lang, func(t *testing.T) {
+			e := newCallEnv(t)
+			e.settings.CallLanguage, e.settings.AgentLanguage = tc.lang, tc.lang
+			e.c.ackAfter, e.c.stillAfter = 100*time.Millisecond, time.Hour
+			heard := make(chan string, 1)
+			e.host.onTurn = func(r chat.VoiceRequest) {
+				r.OnTool("mcp__canvas_lms__get_assignment")
+				heard <- e.relay.text("r1") // what had gone out by the time OnTool returned
+			}
+			_, release, wait := e.heldTurn(t, "r1", "what's due this week?")
+			if got := <-heard; got != tc.want+" " {
+				t.Fatalf("as the tool started the owner heard %q", got)
+			}
+			time.Sleep(3 * e.c.ackAfter) // the long-wait line would be due by now
+			release()
+			wait()
+			if got := e.relay.text("r1"); got != tc.want+" "+e.host.reply {
+				t.Fatalf("owner heard %q", got)
+			}
+		})
+	}
+}
+
+// A fast local tool, or one not in the table, says nothing; if the turn then goes quiet, the long-wait line covers it.
+func TestFastLocalToolSaysNothing(t *testing.T) {
+	for _, tool := range []string{"memory", "knowledge_search", "search_history", "jarvis_rule_add", "call_owner", "end_call",
+		"list_tasks", "task_status", "datetime", "a_tool_nobody_listed"} {
+		t.Run(tool, func(t *testing.T) {
+			e := newCallEnv(t)
+			e.host.toolDuringTurn = tool
+			call := e.openCall(t)
+			e.c.HandleFrame(context.Background(), llmFrame("r1", call.ID, "remember that I like tea"))
+			if got := e.relay.text("r1"); got != e.host.reply {
+				t.Fatalf("owner heard %q", got)
+			}
+		})
+	}
+	t.Run("then quiet", func(t *testing.T) {
+		e := newCallEnv(t)
+		e.settings.CallLanguage, e.settings.AgentLanguage = LangDutch, LangDutch
+		e.c.ackAfter, e.c.stillAfter = 30*time.Millisecond, time.Hour
+		e.host.onTurn = func(r chat.VoiceRequest) { r.OnTool("memory") }
+		_, release, wait := e.heldTurn(t, "r1", "onthoud dat ik thee lekker vind")
+		waitFor(t, func() bool { return e.relay.text("r1") != "" })
+		release()
+		wait()
+		if got := e.relay.text("r1"); got != "Even geduld, ik ben er nog mee bezig. "+e.host.reply {
+			t.Fatalf("owner heard %q", got)
+		}
+	})
+}
+
+// A tool says its line once per turn, and a line is never said twice in a row.
+func TestToolLineOncePerToolNeverTwiceInARow(t *testing.T) {
+	e := newCallEnv(t)
+	e.host.onTurn = func(r chat.VoiceRequest) {
+		for _, tool := range []string{"mcp__canvas_lms__get_assignment", "mcp__canvas_lms__list_courses", "memory", "web_search",
+			"mcp__canvas_lms__get_assignment", "fetch_url", "web_fetch", "fetch_url", "ask_bot", "ask_bot"} {
+			r.OnTool(tool)
+		}
+	}
+	call := e.openCall(t)
+	e.c.HandleFrame(context.Background(), llmFrame("r1", call.ID, "check canvas and the web"))
+	want := "I'm using your canvas lms tools now. Give me a second to get the results. I'm searching the web for that now. " +
+		"I'm opening that page now. I'm passing it on. " + e.host.reply
+	if got := e.relay.text("r1"); got != want {
+		t.Fatalf("owner heard %q\nwant %q", got, want)
+	}
+}
+
+func TestToolLines(t *testing.T) {
+	const (
+		canvasEN = "I'm using your canvas lms tools now. Give me a second to get the results."
+		canvasNL = "Ik gebruik nu je canvas lms koppeling. Even geduld, dan heb ik de resultaten."
+		anyEN    = "I'm using one of your integrations now. Give me a second to get the results."
+		anyNL    = "Ik gebruik nu een van je koppelingen. Even geduld, dan heb ik de resultaten."
+	)
+	for _, tc := range []struct{ tool, en, nl string }{
+		{"web_search", "I'm searching the web for that now.", "Ik zoek het even op internet op."},
+		{"web_fetch", "I'm opening that page now.", "Ik open die pagina even."},
+		{"fetch_url", "I'm opening that page now.", "Ik open die pagina even."},
+		{"research", "I'm starting the research, that can take a moment.", "Ik start het onderzoek, dat kan even duren."},
+		{"ask_bot", "I'm passing it on.", "Ik geef het door."},
+		{"start_task", "I'm starting that coding task now.", "Ik start die codetaak nu."},
+		{"message_task", "I'm passing that on to the task.", "Ik geef het door aan de taak."},
+		{"stop_task", "I'm stopping that task.", "Ik stop die taak."},
+		{"list_automations", "I'm checking your automations.", "Ik kijk even naar je automatiseringen."},
+		{"automation_detail", "I'm looking at that automation and its runs.", "Ik bekijk die automatisering en de runs."},
+		{"switch_bot", "I'll put you through.", "Ik verbind je door."},
+		{"mcp__canvas_lms__get_assignment", canvasEN, canvasNL},
+		{"mcp__canvas_lms__a_very_long_tool_name_cut_short_9f3a12bc", canvasEN, canvasNL},
+		{"mcp__orole_mail__send_message", "I'm using your mail tools now. Give me a second to get the results.",
+			"Ik gebruik nu je mail koppeling. Even geduld, dan heb ik de resultaten."},
+		{"mcp__google-drive__search", "I'm using your google drive tools now. Give me a second to get the results.",
+			"Ik gebruik nu je google drive koppeling. Even geduld, dan heb ik de resultaten."},
+		// The app names its own MCP servers by UUID: that, a bare id, the app's name or no server part is not said.
+		{"mcp__1b4e28ba-2fa1-11d2-883f-0016d3cca427__search", anyEN, anyNL},
+		{"mcp__orole__search", anyEN, anyNL},
+		{"mcp__my_orole_box__search", anyEN, anyNL},
+		{"mcp__1234__search", anyEN, anyNL},
+		{"mcp__searchonly", anyEN, anyNL},
+		{"mcp__" + strings.Repeat("x", 41) + "__search", anyEN, anyNL},
+		// Fast local tools and tools nobody listed say nothing.
+		{"memory", "", ""}, {"memory_search", "", ""}, {"search_history", "", ""}, {"knowledge_search", "", ""},
+		{"knowledge_write", "", ""}, {"list_tasks", "", ""}, {"task_status", "", ""}, {"jarvis_rule_add", "", ""},
+		{"jarvis_rule_list", "", ""}, {"jarvis_rule_delete", "", ""}, {"call_owner", "", ""}, {"end_call", "", ""},
+		{"datetime", "", ""}, {"show_table", "", ""}, {"orole_get_skill", "", ""}, {"propose_automation", "", ""},
+		{"a_tool_nobody_listed", "", ""}, {"", "", ""},
+	} {
+		if got := english.toolLine(tc.tool); got != tc.en {
+			t.Errorf("english %q: %q, want %q", tc.tool, got, tc.en)
+		}
+		if got := dutch.toolLine(tc.tool); got != tc.nl {
+			t.Errorf("dutch %q: %q, want %q", tc.tool, got, tc.nl)
+		}
+	}
+	// Every kind in the table has a line in both languages, and no line names the app.
+	for tool, kind := range toolKinds {
+		if kind != toolSilent && (english.tools[kind] == "" || dutch.tools[kind] == "") {
+			t.Errorf("%s (%s) has no line", tool, kind)
+		}
+	}
+	for _, p := range []phrases{english, dutch} {
+		for kind, line := range p.tools {
+			if appNameRE.MatchString(line) {
+				t.Errorf("%s line %q names the app", kind, line)
+			}
+		}
+	}
+}
+
+// ---- ending: ElevenLabs' end_call, the carrier as the fallback ----
+
+// liveCall is the call in progress, for reading its state after it ended.
+func (e *callEnv) liveCall(t *testing.T) *live {
+	t.Helper()
+	e.c.mu.Lock()
+	defer e.c.mu.Unlock()
+	if e.c.cur == nil {
+		t.Fatal("no call in progress")
+	}
+	return e.c.cur
+}
+
+// An accepted end_call ends the turn in ElevenLabs' end_call tool after the goodbye, then llm.done, so ElevenLabs
+// hangs up as soon as the voice has said it. The carrier hang-up is only the fallback: endFallback (the speaking time
+// plus 4 s) after the stream ended, and only for a call that is still live then.
+func TestEndCallEndsTheStreamWithTheTool(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		status string // the carrier's status when the fallback is due ("" = it cannot be asked)
+		ended  bool   // the call ended on record before that
+		hangUp bool
+	}{
+		{"carrier cannot be asked", "", false, true},
+		{"still live at the carrier", "in-progress", false, true},
+		{"ended at the carrier", "completed", false, false},
+		{"ended on record", "", true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := newCallEnv(t)
+			fa := e.withClock()
+			e.c.endFallback = endFallbackTime
+			e.host.reply = "No problem, talk later!"
+			call := e.openCall(t)
+			l := e.liveCall(t)
+			e.host.onTurn = func(chat.VoiceRequest) { _ = e.c.EndAfterReply(call.ID) }
+			e.c.HandleFrame(context.Background(), llmFrame("r1", call.ID, "no thanks, that's all"))
+			if got := e.relay.text("r1"); got != e.host.reply {
+				t.Fatalf("owner heard %q", got)
+			}
+			if got, want := e.relay.ends("r1"), []string{`tool:end_call {"reason":"owner said goodbye"}`, "done"}; !slices.Equal(got, want) {
+				t.Fatalf("r1 ended with %q, want %q", got, want)
+			}
+			wait := 2*time.Second + 4*400*time.Millisecond + 4*time.Second // four words
+			fa.waitTimer(t, wait)
+			if e.phone.hungUp(testSID) {
+				t.Fatal("hung up at the carrier before the fallback was due")
+			}
+			e.phone.setStatus(tc.status)
+			if tc.ended {
+				e.c.HandleFrame(context.Background(), Frame{Type: FrameCallStatus, CallID: call.ID, Status: "done"})
+			}
+			fa.fire(t, wait)
+			if tc.hangUp {
+				waitFor(t, func() bool { return e.phone.hungUp(testSID) })
+				return
+			}
+			// The fallback has run once it let go of the hang-up (and, for a call still open on record, asked the carrier).
+			waitFor(t, func() bool { e.c.mu.Lock(); defer e.c.mu.Unlock(); return l.hanging == nil })
+			if !tc.ended {
+				waitFor(t, func() bool { return e.phone.statusAsked() > 0 })
+			}
+			if e.phone.hungUp(testSID) {
+				t.Fatal("hung up a call that had ended")
+			}
+		})
+	}
+}
+
+// The silence goodbye and the gate refusal end the call with end_call too, the carrier hang-up following as the
+// fallback; the refusal's cannot be called off.
+func TestSilenceGoodbyeAndGateRefusalEndWithTheTool(t *testing.T) {
+	t.Run("silence goodbye", func(t *testing.T) {
+		e := newCallEnv(t)
+		call := e.openCall(t)
+		var id string
+		for n := 1; n <= silencesHangUp; n++ {
+			id = fmt.Sprintf("s%d", n)
+			e.c.HandleFrame(context.Background(), llmFrame(id, call.ID, "..."))
+		}
+		if got := e.relay.text(id); got != english.byeSilent {
+			t.Fatalf("ninth silence spoke %q", got)
+		}
+		if got, want := e.relay.ends(id), []string{`tool:end_call {"reason":"no answer"}`, "done"}; !slices.Equal(got, want) {
+			t.Fatalf("ended with %q, want %q", got, want)
+		}
+		if !e.phone.hungUp(testSID) {
+			t.Fatal("no fallback hang-up")
+		}
+	})
+	t.Run("gate refusal", func(t *testing.T) {
+		e := newCallEnv(t)
+		fa := e.withClock()
+		e.c.endFallback = func(string) time.Duration { return 7 * time.Second }
+		call := e.openCall(t)
+		e.host.mu.Lock()
+		e.host.gateErr = &GateError{"tool access is off"}
+		e.host.mu.Unlock()
+		e.c.HandleFrame(context.Background(), llmFrame("r1", call.ID, "start the deploy"))
+		if got := e.relay.text("r1"); got != "I can't act on that: tool access is off" {
+			t.Fatalf("owner heard %q", got)
+		}
+		if got, want := e.relay.ends("r1"), []string{`tool:end_call {"reason":"not allowed"}`, "done"}; !slices.Equal(got, want) {
+			t.Fatalf("ended with %q, want %q", got, want)
+		}
+		fa.waitTimer(t, 7*time.Second)
+		e.c.HandleFrame(context.Background(), llmFrame("r2", call.ID, "wait, why?")) // refused again; nothing is called off
+		fa.fire(t, 7*time.Second)
+		waitFor(t, func() bool { return e.phone.hungUp(testSID) })
+	})
+}
+
+// With a relay known to be out of date, end_call cannot reach ElevenLabs: the turn ends plainly and the carrier hangs
+// up after the tighter estimate, 0.8 s plus 0.33 s a word from the end of the stream.
+func TestOldRelayHangsUpAtTheCarrierSooner(t *testing.T) {
+	e := newCallEnv(t)
+	fa := e.withClock()
+	e.c.endFallback, e.c.quickHangup = endFallbackTime, quickSpeechTime
+	e.c.relayOld = func() bool { return true }
+	e.host.reply = "No problem, talk later!"
+	call := e.openCall(t)
+	e.host.onTurn = func(chat.VoiceRequest) { _ = e.c.EndAfterReply(call.ID) }
+	e.c.HandleFrame(context.Background(), llmFrame("r1", call.ID, "no thanks, that's all"))
+	if got, want := e.relay.ends("r1"), []string{"done"}; !slices.Equal(got, want) || e.relay.text("r1") != e.host.reply {
+		t.Fatalf("r1 said %q and ended with %q, want %q", e.relay.text("r1"), got, want)
+	}
+	wait := 800*time.Millisecond + 4*330*time.Millisecond // four words
+	fa.waitTimer(t, wait)
+	if e.phone.hungUp(testSID) {
+		t.Fatal("hung up before the estimate")
+	}
+	fa.fire(t, wait)
+	waitFor(t, func() bool { return e.phone.hungUp(testSID) })
 }

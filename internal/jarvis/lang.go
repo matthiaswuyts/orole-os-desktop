@@ -2,7 +2,10 @@ package jarvis
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 )
 
 // phrases are the daemon's fixed spoken lines and model instructions for one call language. Auto uses the Dutch
@@ -15,11 +18,14 @@ type phrases struct {
 	cannot  string   // a turn that cannot run (bot missing, transient error)
 	refused string   // prefix of the gate refusal; the gate's reason follows
 	failed  string   // prefix of a model or tool error; its first sentence follows
-	fillers map[string]string
-	filler  string   // default filler
-	acks    []string // said when a turn is still silent after a moment ("one moment, I'm on it")
-	still   []string // said now and then during a long silence while a tool runs
-	bye     string   // goodbye when end_call ended the call without the bot saying one
+	// tools are the lines said the moment a tool of a kind starts (see toolKinds); mcp says an MCP tool started, with
+	// the integration's name for %s, and mcpAny when the tool's name gives no name to say (see phrases.toolLine).
+	tools       map[string]string
+	mcp, mcpAny string
+	// longWait is said once when a turn has had no words for Calls.ackAfter and said no tool line (see speaker.tick).
+	longWait string
+	still    []string // said now and then during a long silence while a tool runs
+	bye      string   // goodbye when end_call ended the call without the bot saying one
 	// tooLong ends a turn that ran past Calls.turnDeadline and offers to run it in the background; stillThere answers
 	// the third silence prompt in a row and byeSilent the ninth, before the call is hung up (see Calls.plan).
 	tooLong, stillThere, byeSilent string
@@ -40,14 +46,21 @@ var english = phrases{
 	cannot:  "I can't do that right now.",
 	refused: "I can't act on that: ",
 	failed:  " That failed: ",
-	fillers: map[string]string{
-		"list_tasks": "Checking your tasks.", "task_status": "Looking at that task.", "start_task": "Starting that coding task now.",
-		"message_task": "Passing that on.", "stop_task": "Stopping it.", "list_automations": "Checking your automations.",
-		"automation_runs": "Checking the runs.", "research": "Starting the research.", "web_search": "Looking that up.",
-		"web_fetch": "Reading that.", "switch_bot": "One moment.",
+	tools: map[string]string{
+		toolWeb:         "I'm searching the web for that now.",
+		toolPage:        "I'm opening that page now.",
+		toolResearch:    "I'm starting the research, that can take a moment.",
+		toolTaskStart:   "I'm starting that coding task now.",
+		toolTaskMessage: "I'm passing that on to the task.",
+		toolTaskStop:    "I'm stopping that task.",
+		toolAskBot:      "I'm passing it on.",
+		toolSwitchBot:   "I'll put you through.",
+		toolAutomations: "I'm checking your automations.",
+		toolAutomation:  "I'm looking at that automation and its runs.",
 	},
-	filler:     "One moment.",
-	acks:       []string{"One moment, I'm on it.", "Let me check.", "Sure, one sec."},
+	mcp:        "I'm using your %s tools now. Give me a second to get the results.",
+	mcpAny:     "I'm using one of your integrations now. Give me a second to get the results.",
+	longWait:   "Bear with me, I'm still working on it.",
 	still:      []string{"Still on it.", "Almost there, bear with me.", "Still working on it."},
 	bye:        "Okay, talk later!",
 	tooLong:    "This is taking too long on the phone. Shall I run it as a background task instead?",
@@ -70,14 +83,21 @@ var dutch = phrases{
 	cannot:  "Dat lukt me nu even niet.",
 	refused: "Dat kan ik niet doen: ",
 	failed:  " Dat is mislukt: ",
-	fillers: map[string]string{
-		"list_tasks": "Ik kijk even naar je taken.", "task_status": "Ik kijk even naar die taak.", "start_task": "Ik start die codetaak nu.",
-		"message_task": "Ik geef het door.", "stop_task": "Ik stop hem.", "list_automations": "Ik kijk even naar je automatiseringen.",
-		"automation_runs": "Ik bekijk de runs.", "research": "Ik start het onderzoek.", "web_search": "Ik zoek het even op.",
-		"web_fetch": "Ik lees het even.", "switch_bot": "Momentje.",
+	tools: map[string]string{
+		toolWeb:         "Ik zoek het even op internet op.",
+		toolPage:        "Ik open die pagina even.",
+		toolResearch:    "Ik start het onderzoek, dat kan even duren.",
+		toolTaskStart:   "Ik start die codetaak nu.",
+		toolTaskMessage: "Ik geef het door aan de taak.",
+		toolTaskStop:    "Ik stop die taak.",
+		toolAskBot:      "Ik geef het door.",
+		toolSwitchBot:   "Ik verbind je door.",
+		toolAutomations: "Ik kijk even naar je automatiseringen.",
+		toolAutomation:  "Ik bekijk die automatisering en de runs.",
 	},
-	filler:     "Momentje.",
-	acks:       []string{"Momentje, ik ben ermee bezig.", "Even kijken.", "Oké, momentje."},
+	mcp:        "Ik gebruik nu je %s koppeling. Even geduld, dan heb ik de resultaten.",
+	mcpAny:     "Ik gebruik nu een van je koppelingen. Even geduld, dan heb ik de resultaten.",
+	longWait:   "Even geduld, ik ben er nog mee bezig.",
 	still:      []string{"Nog even geduld.", "Ik ben er nog mee bezig.", "Bijna klaar."},
 	bye:        "Oké, tot later!",
 	tooLong:    "Dit duurt te lang voor aan de telefoon. Zal ik het als taak op de achtergrond laten doen?",
@@ -94,16 +114,99 @@ func phrasesFor(lang string) phrases {
 	return dutch
 }
 
-// fillerLine is the scripted line spoken as a tool starts.
-func (p phrases) fillerLine(tool string) string {
-	if f, ok := p.fillers[tool]; ok {
-		return f
-	}
-	return p.filler
+// Tool kinds: what the voice says the moment a tool starts on a call (see toolKinds). toolSilent says nothing.
+const (
+	toolSilent      = ""
+	toolWeb         = "web"
+	toolPage        = "page"
+	toolResearch    = "research"
+	toolTaskStart   = "task_start"
+	toolTaskMessage = "task_message"
+	toolTaskStop    = "task_stop"
+	toolAskBot      = "ask_bot"
+	toolSwitchBot   = "switch_bot"
+	toolAutomations = "automations"
+	toolAutomation  = "automation"
+)
+
+// toolKinds sorts every tool a bot can run on a call (the Specs of internal/chat/tools and internal/chat/memory) by
+// what the voice says the moment it starts. A tool that leaves the PC or hands work on says what it is doing; a fast
+// tool that only reads or writes local state says nothing, and if the turn then goes quiet the long-wait line covers it
+// (see speaker.tick). MCP tools (mcp__<server>__<tool>) are told by their prefix (see phrases.toolLine); any other tool
+// that is not listed is silent.
+//
+// Hosted tools (the provider's web_search, and web_fetch when the provider fetches pages itself) run at the provider
+// and never reach VoiceRequest.OnTool; their entries count only for a provider that runs them as client tools.
+var toolKinds = map[string]string{
+	// The web and research: slow, and outside the PC.
+	"web_search": toolWeb,
+	"web_fetch":  toolPage,
+	"fetch_url":  toolPage, // the daemon-side page fetch when the provider cannot fetch pages itself
+	"research":   toolResearch,
+	// Work handed on: a code task, another bot, another bot on the line.
+	"start_task":   toolTaskStart,
+	"message_task": toolTaskMessage,
+	"stop_task":    toolTaskStop,
+	"ask_bot":      toolAskBot,
+	"switch_bot":   toolSwitchBot,
+	// Automations the owner asks about.
+	"list_automations":  toolAutomations,
+	"automation_detail": toolAutomation, // one automation's definition and its recent runs
+	// Fast and local: silent.
+	"memory": toolSilent, "memory_search": toolSilent, "search_history": toolSilent, "knowledge_search": toolSilent,
+	"knowledge_write": toolSilent, "propose_skill": toolSilent, "automation_suggestion": toolSilent,
+	"orole_get_skill": toolSilent, "automation_reference": toolSilent, "propose_automation": toolSilent,
+	"list_tasks": toolSilent, "task_status": toolSilent, "datetime": toolSilent,
+	"jarvis_rule_add": toolSilent, "jarvis_rule_list": toolSilent, "jarvis_rule_delete": toolSilent,
+	"call_owner": toolSilent, "end_call": toolSilent,
+	"ask_user": toolSilent, "save_profile": toolSilent, "update_instructions": toolSilent,
+	"show_table": toolSilent, "show_chart": toolSilent, "show_diagram": toolSilent, "show_flow_graph": toolSilent,
+	"show_math": toolSilent, "show_spec_sheet": toolSilent, "show_comparison": toolSilent, "show_timeline": toolSilent,
+	"show_job_progress": toolSilent, "show_todo_list": toolSilent, "show_document": toolSilent,
 }
 
-// ackLine picks the acknowledgement for a turn that is taking a moment.
-func (p phrases) ackLine(seed int) string { return p.acks[seed%len(p.acks)] }
+// mcpPrefix starts the function name of every MCP tool: mcp__<server>__<tool> (see internal/chat/tools/mcp.go).
+const mcpPrefix = "mcp__"
+
+// toolLine is what the voice says the moment tool starts: the line of its kind (see toolKinds), the MCP line for an
+// MCP tool, or "" for a tool that runs silently.
+func (p phrases) toolLine(tool string) string {
+	if rest, ok := strings.CutPrefix(tool, mcpPrefix); ok {
+		if name := integrationName(rest); name != "" {
+			return fmt.Sprintf(p.mcp, name)
+		}
+		return p.mcpAny
+	}
+	return p.tools[toolKinds[tool]]
+}
+
+// maxIntegrationName caps the integration name an MCP line says.
+const maxIntegrationName = 40
+
+// uuidRE matches a UUID: the app's own MCP servers are named by one in their tools' names.
+var uuidRE = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
+
+// integrationName is the integration an MCP tool belongs to, as the voice can say it: the server part of
+// "<server>__<tool>" with underscores and dashes as spaces and an "orole_" prefix dropped ("canvas_lms" -> "canvas lms",
+// "orole_mail" -> "mail"). It is "" when there is no such name: no server part, an id (a UUID, or no letters at all),
+// a name longer than maxIntegrationName, or one that names the app.
+func integrationName(rest string) string {
+	server, _, ok := strings.Cut(rest, "__")
+	if !ok {
+		return ""
+	}
+	if len(server) > len("orole_") && strings.EqualFold(server[:len("orole_")], "orole_") {
+		server = server[len("orole_"):]
+	}
+	if uuidRE.MatchString(server) || !strings.ContainsFunc(server, unicode.IsLetter) {
+		return ""
+	}
+	name := strings.Join(strings.FieldsFunc(server, func(r rune) bool { return r == '_' || r == '-' }), " ")
+	if name == "" || utf8.RuneCountInString(name) > maxIntegrationName || appNameRE.MatchString(name) {
+		return ""
+	}
+	return name
+}
 
 // stillLine is the nth "still working" line (n from 1).
 func (p phrases) stillLine(n int) string { return p.still[(n-1)%len(p.still)] }

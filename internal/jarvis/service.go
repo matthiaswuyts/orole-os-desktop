@@ -170,6 +170,7 @@ func NewService(cfg ServiceConfig) *Service {
 	s.calls.Retry = func(ctx context.Context, req PlaceRequest) { s.fire(ctx, req, Ask{QuietOverride: req.QuietOverride}) }
 	s.calls.Changed = s.notifyChanged
 	s.calls.FollowUpTold, s.calls.FollowUpMissed = s.followUpTold, s.followUpMissed
+	s.calls.relayOld = func() bool { s.mu.Lock(); defer s.mu.Unlock(); return s.relayOld }
 	return s
 }
 

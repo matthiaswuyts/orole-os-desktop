@@ -911,3 +911,17 @@ func TestStatusFlagsAnOlderAgent(t *testing.T) {
 		t.Fatalf("status %q, want %q", got, want)
 	}
 }
+
+// The call manager reads the relay check: with a relay out of date it ends calls at the carrier (see Calls.endCall).
+func TestCallsSeeAnOldRelay(t *testing.T) {
+	e := newSvcEnv(t, nil)
+	if e.svc.calls.relayOld == nil || e.svc.calls.relayOld() {
+		t.Fatal("a relay not known to be old reads as old")
+	}
+	e.svc.mu.Lock()
+	e.svc.relayOld = true
+	e.svc.mu.Unlock()
+	if !e.svc.calls.relayOld() {
+		t.Fatal("the old relay is not seen by the call manager")
+	}
+}
