@@ -168,16 +168,29 @@ func TestIdleLoopReapsIdleVM(t *testing.T) {
 // A VM that was busy is reaped once its call ends and the timeout passes.
 func TestBusyVMIsReapedAfterCallEnds(t *testing.T) {
 	h := newHarness(t, func(c *Config) { c.IdleTimeout = 40 * time.Millisecond; c.Now = time.Now })
+	h.m.SetViewer("bot1", true) // keeps the idle loop away until the Exec below is registered
 	g := ensure(t, h, "bot1")
+	vm := h.b.vmFor("bot1")
 	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	errc := make(chan error, 1)
 	go func() { _, err := g.Exec(ctx, wire.ExecRequest{Command: "sleep 10s"}); errc <- err }()
 	eventually(t, func() bool { return h.active("bot1") == 1 })
+	h.m.SetViewer("bot1", false)       // from here only the in-flight call keeps the VM alive
 	time.Sleep(200 * time.Millisecond) // well past the timeout while busy
 	if st := h.m.Status("bot1"); st.State != StateRunning {
 		t.Fatalf("busy VM = %+v, want running", st)
 	}
 	cancel()
-	<-errc
+	select {
+	case <-errc:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Exec did not return after cancel")
+	}
 	eventually(t, func() bool { return h.m.Status("bot1").State == StateOff })
+	select {
+	case <-vm.Done():
+	case <-time.After(5 * time.Second):
+		t.Fatal("status is off but the VM is still running")
+	}
 }
