@@ -49,11 +49,12 @@ func browserHandler(page BrowserPage) http.HandlerFunc {
 		if req.Action == wire.BrowserOpen {
 			timeout = browserOpenTimeout
 		}
+		// Lock first so time spent waiting for an earlier action does not eat this one's budget.
+		mu.Lock()
+		defer mu.Unlock()
 		ctx, cancel := context.WithTimeout(r.Context(), timeout)
 		defer cancel()
-		mu.Lock()
 		res, err := runBrowser(ctx, page, req)
-		mu.Unlock()
 		if err != nil {
 			status := http.StatusBadGateway
 			switch {

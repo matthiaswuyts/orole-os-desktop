@@ -19,6 +19,13 @@ func TestValidateBrowser(t *testing.T) {
 		{"open javascript", BrowserRequest{Action: BrowserOpen, URL: "javascript:alert(1)"}, false},
 		{"open chrome", BrowserRequest{Action: BrowserOpen, URL: "chrome://settings"}, false},
 		{"open relative", BrowserRequest{Action: BrowserOpen, URL: "/path"}, false},
+		{"open data", BrowserRequest{Action: BrowserOpen, URL: "data:text/html,<b>x</b>"}, false},
+		{"open uppercase scheme", BrowserRequest{Action: BrowserOpen, URL: "HTTPS://Example.com/"}, true},
+		{"open no host", BrowserRequest{Action: BrowserOpen, URL: "http:///x"}, false},
+		{"open opaque", BrowserRequest{Action: BrowserOpen, URL: "http:example.com"}, false},
+		{"open leading space", BrowserRequest{Action: BrowserOpen, URL: " https://example.com"}, false},
+		{"open control char", BrowserRequest{Action: BrowserOpen, URL: "https://exa\x00mple.com"}, false},
+		{"open userinfo", BrowserRequest{Action: BrowserOpen, URL: "https://user:pw@example.com/"}, false},
 		{"open too long", BrowserRequest{Action: BrowserOpen, URL: "https://x.dev/" + long}, false},
 		{"click css", BrowserRequest{Action: BrowserClick, Target: "#submit"}, true},
 		{"click text", BrowserRequest{Action: BrowserClick, Target: "text=Sign in"}, true},
@@ -50,5 +57,25 @@ func TestCapTextKeepsWholeRunes(t *testing.T) {
 	}
 	if got, cut := CapText("short", 7); cut || got != "short" {
 		t.Fatalf("short text changed: %q %v", got, cut)
+	}
+}
+
+func TestParseTarget(t *testing.T) {
+	tests := []struct {
+		in    string
+		value string
+		text  bool
+	}{
+		{"#submit", "#submit", false},
+		{"  #submit ", "#submit", false},
+		{"text=Sign in", "Sign in", true},
+		{"  text= Sign in ", "Sign in", true},
+		{"TEXT=Sign in", "TEXT=Sign in", false},
+		{"text=", "", true},
+	}
+	for _, tt := range tests {
+		if v, b := ParseTarget(tt.in); v != tt.value || b != tt.text {
+			t.Errorf("ParseTarget(%q) = %q, %v; want %q, %v", tt.in, v, b, tt.value, tt.text)
+		}
 	}
 }

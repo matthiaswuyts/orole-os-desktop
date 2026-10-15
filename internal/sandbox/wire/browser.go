@@ -63,6 +63,9 @@ func validURL(raw string) error {
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
 		return errors.New("url must be an absolute http or https address")
 	}
+	if u.User != nil {
+		return errors.New("url must not contain a username or password")
+	}
 	return nil
 }
 
@@ -70,10 +73,21 @@ func validTarget(target string) error {
 	if len(target) > MaxBrowserTarget || !utf8.ValidString(target) || strings.ContainsFunc(target, unicode.IsControl) {
 		return fmt.Errorf("target must be a CSS selector or text=<visible text> of at most %d characters", MaxBrowserTarget)
 	}
-	if strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(target), TextTargetPrefix)) == "" {
+	if value, _ := ParseTarget(target); value == "" {
 		return errors.New("target is required: a CSS selector or text=<visible text>")
 	}
 	return nil
+}
+
+// ParseTarget splits a click or type target into the string to look for and whether it is matched by visible text.
+// Surrounding whitespace is ignored; the "text=" prefix is case-sensitive and the text after it is trimmed. The
+// validation here and the guest's element lookup both use it, so they cannot disagree.
+func ParseTarget(target string) (value string, byText bool) {
+	target = strings.TrimSpace(target)
+	if rest, ok := strings.CutPrefix(target, TextTargetPrefix); ok {
+		return strings.TrimSpace(rest), true
+	}
+	return target, false
 }
 
 // CapText cuts s to at most max bytes on a rune boundary and reports whether it cut.
