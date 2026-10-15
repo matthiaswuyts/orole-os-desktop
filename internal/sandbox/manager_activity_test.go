@@ -3,7 +3,9 @@ package sandbox
 import (
 	"context"
 	"errors"
+	"io"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -192,5 +194,75 @@ func TestBusyVMIsReapedAfterCallEnds(t *testing.T) {
 	case <-vm.Done():
 	case <-time.After(5 * time.Second):
 		t.Fatal("status is off but the VM is still running")
+	}
+}
+
+// An open terminal that stays silent is not bot activity and does not pin the VM.
+func TestSilentTerminalDoesNotBlockIdleStop(t *testing.T) {
+	h := newHarness(t, nil)
+	g := ensure(t, h, "bot1")
+	p, err := g.OpenPTY(context.Background(), 80, 24)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer p.Close()
+	if n := h.active("bot1"); n != 0 {
+		t.Fatalf("active with an open terminal = %d, want 0", n)
+	}
+	h.advance(15 * time.Minute)
+	h.m.reapIdle()
+	if st := h.m.Status("bot1"); st.State != StateOff {
+		t.Fatalf("silent terminal kept the VM: %+v", st)
+	}
+	if _, err := io.Copy(io.Discard, p); err == nil {
+		// the stream ended with the VM; a clean EOF is fine, a hang would have blocked the test
+	}
+}
+
+// Bytes moving on a terminal restart the idle clock.
+func TestTerminalTrafficKeepsVMAlive(t *testing.T) {
+	old := streamTouchEvery
+	streamTouchEvery = 0
+	t.Cleanup(func() { streamTouchEvery = old })
+	h := newHarness(t, nil)
+	g := ensure(t, h, "bot1")
+	p, err := g.OpenPTY(context.Background(), 80, 24)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer p.Close()
+	h.advance(10 * time.Minute)
+	if _, err := io.WriteString(p, "ls"); err != nil {
+		t.Fatal(err)
+	}
+	h.advance(10 * time.Minute)
+	h.m.reapIdle()
+	if st := h.m.Status("bot1"); st.State != StateRunning {
+		t.Fatalf("terminal traffic did not count as activity: %+v", st)
+	}
+	h.advance(5 * time.Minute)
+	h.m.reapIdle()
+	if st := h.m.Status("bot1"); st.State != StateOff {
+		t.Fatalf("not stopped 15 min after the last traffic: %+v", st)
+	}
+}
+
+// Stream activity reports at most once per streamTouchEvery.
+func TestStreamActivityIsRateLimited(t *testing.T) {
+	g, _ := startEchoAgent(t)
+	var touches atomic.Int32
+	g.setOnTouch(func() { touches.Add(1) })
+	p, err := g.OpenPTY(context.Background(), 80, 24)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer p.Close()
+	for range 20 {
+		if _, err := io.WriteString(p, "x"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if n := touches.Load(); n != 1 {
+		t.Fatalf("touches = %d, want 1 (the open; the writes fall inside the interval)", n)
 	}
 }

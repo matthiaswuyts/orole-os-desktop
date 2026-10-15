@@ -44,12 +44,18 @@ type Guest struct {
 	aborted   chan struct{}
 	abortErr  error
 
-	mu    sync.Mutex
-	onUse func(delta int)
+	mu      sync.Mutex
+	onUse   func(delta int)
+	onTouch func()
 }
 
 func NewGuest(conn net.Conn, token string) (*Guest, error) {
-	cc, err := (&http2.Transport{AllowHTTP: true, ReadIdleTimeout: guestReadIdleTimeout, PingTimeout: guestPingTimeout}).NewClientConn(conn)
+	cc, err := (&http2.Transport{
+		AllowHTTP: true, ReadIdleTimeout: guestReadIdleTimeout, PingTimeout: guestPingTimeout,
+		// Without this, CanTakeNewRequest (alive) turns false whenever the guest's stream limit is reached, and
+		// the manager would mistake a busy channel for a dead one and reboot the VM.
+		StrictMaxConcurrentStreams: true,
+	}).NewClientConn(conn)
 	if err != nil {
 		_ = conn.Close()
 		return nil, fmt.Errorf("sandbox: guest channel: %w", err)
@@ -149,7 +155,23 @@ func (g *Guest) setOnUse(fn func(delta int)) {
 	g.mu.Unlock()
 }
 
-// use reports a request or stream starting (+1) or ending (-1) to the manager.
+func (g *Guest) setOnTouch(fn func()) {
+	g.mu.Lock()
+	g.onTouch = fn
+	g.mu.Unlock()
+}
+
+// touch reports bot activity that is not a request in flight (bytes moving on an open stream).
+func (g *Guest) touch() {
+	g.mu.Lock()
+	fn := g.onTouch
+	g.mu.Unlock()
+	if fn != nil {
+		fn()
+	}
+}
+
+// use reports a unary request starting (+1) or ending (-1) to the manager. Open streams do not count as busy.
 func (g *Guest) use(delta int) {
 	g.mu.Lock()
 	fn := g.onUse

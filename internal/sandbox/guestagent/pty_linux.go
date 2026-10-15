@@ -59,10 +59,11 @@ func (p *linuxPTY) Resize(cols, rows int) error {
 // Close kills the shell's process group, closes the terminal, and kills the shell if it is still there 2 s later.
 func (p *linuxPTY) Close() error {
 	p.once.Do(func() {
-		// The shell leads its session and, without job control, its background jobs share its process group.
-		// Killing the group closes the terminal slave, which is what ends a blocked master Read (closing the
-		// master file does not interrupt it). Only processes that left the session (setsid) outlive this, until
-		// the VM stops. ESRCH (group already gone) is fine.
+		// The shell leads its session. A login shell on a tty is interactive and may have job control, which puts
+		// background jobs in their own process groups; those survive the group kill below until the VM stops, as
+		// do processes that left the session (setsid). Killing the shell's group closes the terminal slave, which
+		// is what ends a blocked master Read (closing the master file does not interrupt it). ESRCH (group
+		// already gone) is fine.
 		_ = syscall.Kill(-p.cmd.Process.Pid, syscall.SIGKILL)
 		_ = p.f.Close()
 		go func() {

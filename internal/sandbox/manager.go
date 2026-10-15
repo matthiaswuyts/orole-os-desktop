@@ -45,7 +45,8 @@ type instance struct {
 	gone      chan struct{} // closed when the VM has fully exited (or never started)
 	bootErr   error         // set before ready closes
 	lastUsed  time.Time
-	active    int // guest requests and streams in flight
+	active    int       // unary guest requests in flight (open streams do not count)
+	replaces  *instance // the stopped-for-eviction VM this one waits for before booting
 	takenOver bool
 }
 
@@ -220,6 +221,7 @@ func (m *Manager) Ensure(ctx context.Context, botID string) (*Guest, error) {
 		var after <-chan struct{}
 		var evicted Status
 		if victim != nil {
+			inst.replaces = victim
 			m.beginStopLocked(victim)
 			after = victim.gone
 			evicted = m.statusLocked(victim.botID)
@@ -256,10 +258,17 @@ func waitSlot(ctx context.Context, changed <-chan struct{}, until time.Time) err
 // reserveLocked reports whether a VM may start now. At the cap it picks the least recently used idle VM to stop
 // first; ok is false when every running VM is busy.
 func (m *Manager) reserveLocked() (victim *instance, ok bool) {
+	// Every QEMU process counts, a stopping one too. A starting VM that waits for its eviction victim has no
+	// process yet and is already represented by that victim.
 	n := 0
 	for _, inst := range m.vms {
-		if inst.state == StateStarting || inst.state == StateRunning {
+		switch inst.state {
+		case StateRunning, StateStopping:
 			n++
+		case StateStarting:
+			if r := inst.replaces; r == nil || m.vms[r.botID] != r {
+				n++
+			}
 		}
 	}
 	if n < m.cfg.MaxRunning {
@@ -273,7 +282,8 @@ func (m *Manager) reserveLocked() (victim *instance, ok bool) {
 	return victim, victim != nil
 }
 
-// idleLocked: running with no request or stream in flight, no viewer and no takeover.
+// idleLocked: running with no request in flight, no viewer and no takeover. Open streams (a terminal) are not
+// busy; the bytes moving on them refresh lastUsed instead.
 func (m *Manager) idleLocked(inst *instance) bool {
 	return inst.state == StateRunning && inst.active == 0 && !inst.takenOver && !m.viewers[inst.botID]
 }
@@ -325,6 +335,7 @@ func (m *Manager) boot(inst *instance, after <-chan struct{}) {
 	inst.state = StateRunning
 	inst.lastUsed = m.cfg.Now()
 	g.setOnUse(func(delta int) { m.use(inst, delta) })
+	g.setOnTouch(func() { m.touchInstance(inst) })
 	close(inst.ready)
 	m.signalLocked()
 	st := m.statusLocked(inst.botID)
@@ -380,7 +391,7 @@ func (m *Manager) start(ctx context.Context, botID string) (VM, *Guest, error) {
 		Overlay: rec.OverlayPath, Token: token, LogPath: logPath,
 	})
 	if err != nil {
-		m.logf(botID, "the computer failed to start: %v", err)
+		m.logf(botID, "the computer failed to start: %q", err.Error())
 		return nil, nil, fmt.Errorf("%w: %v", ErrBootFailed, err)
 	}
 	g, err := newGuestCtx(ctx, vm.Conn(), token)
@@ -393,7 +404,7 @@ func (m *Manager) start(ctx context.Context, botID string) (VM, *Guest, error) {
 		}
 		_ = vm.Kill()
 		<-vm.Done()
-		m.logf(botID, "the computer failed to start: %v", err)
+		m.logf(botID, "the computer failed to start: %q", err.Error())
 		return nil, nil, fmt.Errorf("%w: %v", ErrBootFailed, err)
 	}
 	return vm, g, nil
@@ -420,7 +431,16 @@ func waitReady(ctx context.Context, g *Guest, vm VM) error {
 	}
 }
 
-// use is the guest's activity hook: requests and streams count as busy and as bot activity.
+// touchInstance is the guest's stream-activity hook: bytes moved, so the bot is not idle.
+func (m *Manager) touchInstance(inst *instance) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if inst.state == StateRunning {
+		inst.lastUsed = m.cfg.Now()
+	}
+}
+
+// use is the guest's activity hook: unary requests count as busy and as bot activity.
 func (m *Manager) use(inst *instance, delta int) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -450,7 +470,7 @@ func (m *Manager) watch(inst *instance) {
 	m.last[inst.botID] = st
 	m.signalLocked()
 	m.mu.Unlock()
-	m.logf(inst.botID, "the computer stopped unexpectedly: %v", inst.vm.ExitErr())
+	m.logf(inst.botID, "the computer stopped unexpectedly: %q", fmt.Sprint(inst.vm.ExitErr()))
 	_ = inst.guest.Close()
 	m.publish(st)
 }

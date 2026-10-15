@@ -63,7 +63,7 @@ func (h *harness) advance(d time.Duration) { h.mu.Lock(); h.now = h.now.Add(d); 
 
 func (h *harness) setFree(n uint64) { h.mu.Lock(); h.free = n; h.mu.Unlock() }
 
-// active is the number of guest requests and streams in flight for botID, or -1 without a VM.
+// active is the number of guest unary requests in flight for botID, or -1 without a VM.
 func (h *harness) active(botID string) int {
 	h.m.mu.Lock()
 	defer h.m.mu.Unlock()
@@ -481,5 +481,40 @@ func TestShutdownPublishesStopping(t *testing.T) {
 	defer mu.Unlock()
 	if len(seen) < 2 || seen[0] != StateStopping || seen[len(seen)-1] != StateOff {
 		t.Fatalf("events = %v, want stopping ... off", seen)
+	}
+}
+
+// A VM that is stopping still holds a QEMU process, so it counts against MaxRunning.
+func TestStoppingVMCountsAgainstCap(t *testing.T) {
+	h := newHarness(t, func(c *Config) { c.MaxRunning = 1; c.BusyWait = 100 * time.Millisecond })
+	ensure(t, h, "a")
+	h.m.mu.Lock()
+	inst := h.m.vms["a"]
+	inst.state = StateStopping
+	h.m.mu.Unlock()
+	if _, err := h.m.Ensure(context.Background(), "b"); !errors.Is(err, ErrBusy) {
+		t.Fatalf("Ensure(b) while a stops = %v, want ErrBusy", err)
+	}
+	if n := h.b.bootCount(); n != 1 {
+		t.Fatalf("boots = %d, want 1: a second QEMU must not start while one stops", n)
+	}
+	h.m.mu.Lock()
+	inst.state = StateRunning
+	h.m.mu.Unlock()
+}
+
+// Text from the guest/VM goes into the log quoted, so it cannot forge log lines.
+func TestBootFailureLogQuotesGuestText(t *testing.T) {
+	h := newHarness(t, nil)
+	h.b.update(func(b *fakeBackend) { b.bootErr = errors.New("boom\n2026-01-01T00:00:00Z orole: forged") })
+	if _, err := h.m.Ensure(context.Background(), "bot1"); err == nil {
+		t.Fatal("want a boot error")
+	}
+	data, err := os.ReadFile(h.paths.Log(filepath.Dir(h.paths.Root), "bot1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lines := strings.Count(strings.TrimSpace(string(data)), "\n"); lines != 0 {
+		t.Fatalf("log has %d extra lines:\n%s", lines, data)
 	}
 }

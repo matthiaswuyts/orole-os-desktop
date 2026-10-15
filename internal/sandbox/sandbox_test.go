@@ -2,6 +2,7 @@ package sandbox
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -18,12 +19,12 @@ func TestDefaultLimits(t *testing.T) {
 }
 
 func TestCheckBotID(t *testing.T) {
-	for _, id := range []string{"b1", "0b6a2c1e-6f7d-4d0a-9a39-3f1c2b8f9e10", "bot_2"} {
+	for _, id := range []string{"b1", "0b6a2c1e-6f7d-4d0a-9a39-3f1c2b8f9e10", "bot_2", strings.Repeat("a", 64), "com0", "console", "lpt10"} {
 		if err := checkBotID(id); err != nil {
 			t.Errorf("checkBotID(%q) = %v, want nil", id, err)
 		}
 	}
-	for _, id := range []string{"", "../x", `a\b`, "a/b", "-lead", "a b", string(make([]byte, 65))} {
+	for _, id := range []string{"", "../x", `a\b`, "a/b", "-lead", "a b", strings.Repeat("a", 65), "con", "CON", "Nul", "aux", "prn", "com1", "COM9", "lpt1", "Lpt9"} {
 		if err := checkBotID(id); err == nil {
 			t.Errorf("checkBotID(%q) = nil, want an error", id)
 		}

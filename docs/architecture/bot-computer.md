@@ -16,7 +16,7 @@ running commands do not.**
 ```
  bot tool call (phase 3)
         |
- internal/sandbox.Manager ---- Store (table sandboxes) 
+ internal/sandbox.Manager ---- Store (table sandboxes)
         |  Ensure(bot) -> *Guest
         v
  Backend.Boot (phase 2: QEMU + WHPX) ---> VM.Conn(): one byte stream (virtio-serial <-> AF_UNIX socket / pipe)
@@ -44,12 +44,15 @@ running commands do not.**
   ready. A boot that fails or times out kills the VM, writes a line to `logs\sandbox-<bot>.log` and reports
   "the computer failed to start"; there is no retry loop, the next call tries again.
 - At most 4 VMs run. When a fifth is needed the least recently used idle VM is stopped first. Idle means no guest
-  request or stream in flight, no viewer and no takeover. When every VM is busy, `Ensure` waits up to 30 s for
+  request in flight, no viewer and no takeover. When every VM is busy, `Ensure` waits up to 30 s for
   one to become idle, then fails with "all computers are busy".
 - A VM idle for 15 min (no bot activity, no viewer, no takeover) is powered off (`/poweroff`, then the backend's
   shutdown, then kill). The overlay disk stays.
+  An open terminal does not keep the VM alive by itself: only bytes moving on it (at most once per second) count
+  as activity, so a forgotten, silent terminal is stopped with the VM and its session ends.
 - A VM that exits on its own is a crash: calls in flight fail with "the computer stopped unexpectedly", the
   status becomes off with that error, the takeover lock is dropped, and the next call boots again.
+- Restarting `orole-guest` inside the VM makes the host treat the channel as dead; the next call reboots the VM.
 - A VM that is stopping keeps its overlay open, so `Ensure` waits for it to be gone before booting again.
 - `TakeOver`/`Release` hold the takeover lock in the daemon; while it is held the VM is never idle-stopped or
   evicted, and (phase 3) bot browser tools are refused.

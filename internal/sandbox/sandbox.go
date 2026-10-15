@@ -74,8 +74,11 @@ var (
 // Bot ids become file names (overlay, socket, log), so only a safe alphabet is accepted.
 var botIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$`)
 
+// windowsReserved are device names Windows refuses as file names (with or without an extension).
+var windowsReserved = regexp.MustCompile(`(?i)^(con|prn|aux|nul|com[1-9]|lpt[1-9])$`)
+
 func checkBotID(id string) error {
-	if !botIDPattern.MatchString(id) {
+	if !botIDPattern.MatchString(id) || windowsReserved.MatchString(id) {
 		return fmt.Errorf("sandbox: invalid bot id %q", id)
 	}
 	return nil

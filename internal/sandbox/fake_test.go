@@ -69,6 +69,7 @@ func (b *fakeBackend) Boot(ctx context.Context, spec BootSpec) (VM, error) {
 	agent := guestagent.New(guestagent.Config{
 		Token: spec.Token, Version: "test", Home: scratchHome(b.t), Shell: agenttest.Shell(),
 		Ready:    func() bool { return !notReady },
+		StartPTY: func(s guestagent.PTYSpec) (guestagent.PTY, error) { return newEchoPTY(s), nil },
 		PowerOff: func() error { go vm.exit(nil); return nil },
 	})
 	go agent.ServeConn(context.Background(), guest)

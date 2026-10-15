@@ -8,30 +8,57 @@ import (
 	"net/http"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/rayorole/orole-os-desktop/internal/sandbox/wire"
 	"github.com/rayorole/orole-os-desktop/internal/terminals"
 )
 
-// stream is one full-duplex HTTP/2 request: writes go to the guest, reads come from it.
+// streamTouchEvery limits how often bytes on a stream report activity to the manager. A variable for tests.
+var streamTouchEvery = time.Second
+
+// stream is one full-duplex HTTP/2 request: writes go to the guest, reads come from it. An open stream is not
+// "busy" (a forgotten terminal must not pin the VM); bytes moving on it count as bot activity instead.
 type stream struct {
 	g         *Guest
 	w         *io.PipeWriter
 	resp      *http.Response
 	cancel    context.CancelFunc
 	closeOnce sync.Once
+	lastTouch atomic.Int64 // unix nanos of the last reported activity
 }
 
-func (s *stream) Read(p []byte) (int, error)  { return s.resp.Body.Read(p) }
-func (s *stream) Write(p []byte) (int, error) { return s.w.Write(p) }
+// activity reports bot activity, at most once per streamTouchEvery.
+func (s *stream) activity() {
+	now := time.Now().UnixNano()
+	last := s.lastTouch.Load()
+	if now-last >= int64(streamTouchEvery) && s.lastTouch.CompareAndSwap(last, now) {
+		s.g.touch()
+	}
+}
+
+func (s *stream) Read(p []byte) (int, error) {
+	n, err := s.resp.Body.Read(p)
+	if n > 0 {
+		s.activity()
+	}
+	return n, err
+}
+
+func (s *stream) Write(p []byte) (int, error) {
+	n, err := s.w.Write(p)
+	if n > 0 {
+		s.activity()
+	}
+	return n, err
+}
 
 func (s *stream) Close() error {
 	s.closeOnce.Do(func() {
 		_ = s.w.Close()
 		s.cancel()
 		_ = s.resp.Body.Close()
-		s.g.use(-1)
 	})
 	return nil
 }
@@ -83,8 +110,10 @@ func (g *Guest) openStream(ctx context.Context, path string) (*stream, error) {
 		_ = pw.Close()
 		return nil, err
 	}
-	g.use(+1)
-	return &stream{g: g, w: pw, resp: r.resp, cancel: cancel}, nil
+	s := &stream{g: g, w: pw, resp: r.resp, cancel: cancel}
+	s.lastTouch.Store(time.Now().UnixNano())
+	g.touch() // opening a stream is bot activity
+	return s, nil
 }
 
 // OpenScreen relays raw RFB bytes to the guest's VNC server (the guest side arrives in phase 4).
