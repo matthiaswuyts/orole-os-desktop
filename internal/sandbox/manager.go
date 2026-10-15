@@ -92,6 +92,7 @@ func NewManager(cfg Config, backend Backend, store *Store) *Manager {
 		vms: map[string]*instance{}, last: map[string]Status{}, viewers: map[string]bool{}, deleting: map[string]bool{},
 		changed: make(chan struct{}), stop: make(chan struct{}), subs: map[int]func(Status){},
 	}
+	go m.idleLoop()
 	return m
 }
 
