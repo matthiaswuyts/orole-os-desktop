@@ -49,6 +49,12 @@ describe("message parts", () => {
     else expect(screen.queryByText("Take over")).toBeNull();
   });
 
+  it("labels an unknown or inherited status as working", () => {
+    useChat.setState({ selectedBotId: "a", pane: null });
+    view(message([{ type: "computer", status: "toString", text: "step" }]));
+    expect(screen.getByRole("button", { name: /Using the computer/ })).toHaveTextContent("Working");
+  });
+
   it("shows what the computer did as plain text under the step, unless it repeats it", () => {
     useChat.setState({ selectedBotId: "a", pane: null });
     view(message([{ type: "computer", status: "done", text: "Same", summary: "Same" }]));

@@ -29,7 +29,7 @@ export function ComputerCard({ part }: { part: MsgPart }) {
   const selected = useChat((s) => s.selectedBotId);
   const botId = part.botId || selected;
   const open = useChat((s) => s.pane?.kind === "computer" && s.pane.id === botId);
-  const status = part.status && part.status in STATUS_LABEL ? part.status : "running";
+  const status = part.status && Object.hasOwn(STATUS_LABEL, part.status) ? part.status : "running";
   const waiting = status === "waiting";
   return (
     <Bubble className={cn("p-0", waiting ? "ring-1 ring-warning/50" : open && "ring-1 ring-ring/60")}>

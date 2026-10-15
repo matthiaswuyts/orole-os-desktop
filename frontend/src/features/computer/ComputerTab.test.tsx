@@ -141,7 +141,8 @@ describe("computer tab takeover", () => {
     expect(await screen.findByRole("button", { name: "Done" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Take over" })).toBeNull();
     expect(screen.getByTestId("live-screen")).toHaveAttribute("data-interactive", "true");
-    expect(screen.getByText(/The bot waits until you click Done/)).toBeInTheDocument();
+    expect(screen.getByText(/The bot can't use the computer until you click Done/)).toBeInTheDocument();
+    expect(screen.queryByText(/The bot waits/)).toBeNull();
     const note = screen.getByRole("textbox", { name: "Note for the bot" });
     expect(note).toHaveAttribute("maxLength", "500");
     fireEvent.change(note, { target: { value: "  Signed in to GitHub  " } });
@@ -167,6 +168,13 @@ describe("computer tab takeover", () => {
     expect(screen.getAllByRole("button", { name: "Take over" })).toHaveLength(1);
     fireEvent.click(screen.getByRole("button", { name: "Take over" }));
     await waitFor(() => expect(sandbox.takeOver).toHaveBeenCalledWith("b1"));
+  });
+
+  it("says the bot is waiting only while a handoff is pending", async () => {
+    sandbox.status.mockResolvedValue(running(true));
+    sandbox.handoff.mockResolvedValue({ botId: "b1", pending: true });
+    view();
+    expect(await screen.findByText(/The bot waits until you click Done/)).toBeInTheDocument();
   });
 
   it("follows a handoff request that arrives while the tab is open", async () => {

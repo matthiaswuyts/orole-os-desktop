@@ -71,7 +71,7 @@ export function ComputerTab({ botId, onClose }: { botId: string; onClose: () => 
                 </div>
                 <Button type="button" size="xs" disabled={busy} onClick={takeOver}>Take over</Button>
               </div>}
-              {view.takenOver && <Takeover reason={view.handoffReason} busy={busy} onDone={done} />}
+              {view.takenOver && <Takeover pending={handoff?.pending === true} reason={view.handoffReason} busy={busy} onDone={done} />}
               <LiveScreen botId={botId} interactive={view.takenOver} />
               <ComputerTerminal botId={botId} />
             </>
@@ -82,14 +82,16 @@ export function ComputerTab({ botId, onClose }: { botId: string; onClose: () => 
 }
 
 /** While the user has the computer: what that means, the bot's reason if it asked, and Done with an optional note. */
-function Takeover({ reason, busy, onDone }: { reason?: string; busy: boolean; onDone: (note: string) => void }) {
+function Takeover({ pending, reason, busy, onDone }: { pending: boolean; reason?: string; busy: boolean; onDone: (note: string) => void }) {
   const [note, setNote] = useState("");
   const submit = (event: FormEvent) => {
     event.preventDefault();
     onDone(note.trim().slice(0, NOTE_MAX));
   };
   return <form data-slot="computer-takeover" onSubmit={submit} className="flex flex-col gap-1.5 rounded-lg border p-2 text-xs">
-    <p role="status" className="text-muted-foreground">You have the mouse and keyboard. The bot waits until you click Done.</p>
+    <p role="status" className="text-muted-foreground">
+      {pending ? "You have the mouse and keyboard. The bot waits until you click Done." : "You have the mouse and keyboard. The bot can't use the computer until you click Done."}
+    </p>
     {reason && <p className="selectable"><span className="text-muted-foreground">The bot asked: </span>{reason}</p>}
     <div className="flex items-center gap-2">
       <Input size="sm" aria-label="Note for the bot" placeholder="Note for the bot (optional)" maxLength={NOTE_MAX}
