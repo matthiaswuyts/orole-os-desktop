@@ -84,7 +84,7 @@ first; if any item fails, fix `internal/jarvis/elevenlabs.go` (and `relay/` if t
 
 ## 5. On the call
 
-- [ ] "What's running?" The bot says a short filler, then summarises.
+- [ ] "What's running?" The bot summarises at once: no "one moment" first (reading tasks is quick and says nothing).
 - [ ] "Start a coding task to ..." The task appears in the app during the call and the bot says it started it.
 - [ ] Interrupt the bot mid-sentence: it stops and answers the new sentence.
 - [ ] Ask it to read a task title containing "Orole": the voice says "the app", not "Orole".
@@ -158,12 +158,20 @@ Speak Dutch (the default call language) or English. Watch `logs/daemon.log` for 
       the fragment; it answers the whole request once (`kind=hesitation`, then the next request).
 - [ ] Say "Ik wil weten, uhm" and stop. About 2.5 s later the bot answers what it heard; it does not wait for a
       silence prompt.
-- [ ] Say "Zet een herinnering om, uhm", wait about 3 s, then say "drie uur" before the bot has said anything of its own
-      (an acknowledgement may already have played). The bot answers the whole request once (`kind=hesitation`, then
-      `kind=bargein`), not "drie uur" alone.
-- [ ] **Slow answer.** Ask something that takes a while (a research question, "wat is er allemaal gebeurd?"). Within
-      about 2 s you hear a short acknowledgement ("Momentje, ik ben ermee bezig", "Even kijken"); the call is not dropped
-      and no "dropped" notice follows.
+- [ ] Say "Zet een herinnering om, uhm", wait about 3 s, then say "drie uur" before the bot has said anything of its own.
+      The bot answers the whole request once (`kind=hesitation`, then `kind=bargein`), not "drie uur" alone.
+- [ ] **Quick answer.** Ask a few simple questions ("hoe laat is het?", "wat draait er?", "wat weet je over mij?"):
+      the bot answers straight away, with no "momentje" or other acknowledgement before the answer.
+- [ ] **Slow answer.** Ask something the model needs a while for without a tool ("vat het gesprek van vanochtend
+      samen"). If it has said nothing after about 4 s you hear "Even geduld, ik ben er nog mee bezig." (English "Bear
+      with me, I'm still working on it.") once, then the answer; the call is not dropped and no "dropped" notice follows.
+- [ ] **Tool lines.** The moment a tool starts the bot says what it is doing, once per tool, and no "Even geduld, ik
+      ben er nog mee bezig" follows: an MCP integration "Ik gebruik nu je <integratie> koppeling. Even geduld, dan heb
+      ik de resultaten." (the app's own MCP servers are named by an id in the tool name, so for them it says "Ik
+      gebruik nu een van je koppelingen. ..."), a page "Ik open die pagina even.", research "Ik start het onderzoek, dat
+      kan even duren.", a code task "Ik start die codetaak nu.", another bot "Ik geef het door.". Memory, task status,
+      call rules and other quick local tools say nothing. The provider's own web search runs at the provider and has no
+      line: if it takes more than 4 s the long-wait line covers it.
 - [ ] **Silence.** Say nothing. The bot stays quiet (no "I didn't hear anything", no repeated requests in
       `wrangler tail`). After about 30 s it asks "Ben je er nog?"; keep quiet and after about 90 s it says it is
       hanging up and the call ends. Speaking at any point starts the count over. Only `kind=silence` requests count;
@@ -172,11 +180,19 @@ Speak Dutch (the default call language) or English. Watch `logs/daemon.log` for 
       the daemon hangs up 5 minutes after the last one (`jarvis: no requests, hanging up`) and the card ends as
       completed, instead of after 30 minutes.
 - [ ] **Closing.** Ask "wat draait er?". The bot answers and asks whether there is anything else; it does not hang up
-      by itself. Say "nee, bedankt": a short goodbye and the call ends (`end_call` was accepted). "Wat draait er?" never
-      ends the call, even if the bot says goodbye.
+      by itself. Say "nee, bedankt": a short goodbye and the line goes dead right after it, without a pause of several
+      seconds. `logs/daemon.log` has `jarvis: ending call` with `reason="owner said goodbye"` and `end_call=true` (the
+      turn ended in ElevenLabs' `end_call`), and no `jarvis: hanging up at the carrier` line: that line means
+      ElevenLabs left the call open and the daemon's fallback hung up, 4 s after the goodbye's estimated end. "Wat draait er?"
+      never ends the call, even if the bot says goodbye. The silence goodbye (`reason="no answer"`) ends the call the
+      same way.
 - [ ] Say "nee, wacht": the call does not end, even if the bot tries to hang up. Say "nee, bedankt" and, while the
-      goodbye is still being spoken, "oh wacht, nog één ding": the call goes on and the bot answers
-      (`jarvis: hang-up called off`).
+      goodbye is still being spoken, "oh wacht, nog één ding". ElevenLabs decides whether that keeps the call open
+      (its `end_call` runs once the goodbye has been said); note in the test log what happened. If the call goes on,
+      the bot answers, the log has `jarvis: hang-up called off`, and the daemon does not hang up a few seconds later.
+- [ ] With a relay older than version 2 (Settings > Phone says the relay is out of date), "nee, bedankt" still ends the
+      call: the log has `jarvis: ending call` with `end_call=false`, then `jarvis: hanging up at the carrier` about 1 to
+      2 s after the goodbye was streamed.
 
 ## 14. Delegation and follow-ups
 
