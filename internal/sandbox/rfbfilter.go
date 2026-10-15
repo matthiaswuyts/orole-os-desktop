@@ -3,6 +3,7 @@ package sandbox
 import (
 	"encoding/binary"
 	"errors"
+	"sort"
 )
 
 // errRFBInput is returned for screen input outside the RFB subset Orole accepts; the caller closes the stream.
@@ -13,9 +14,12 @@ const (
 	rfbMaxEncodings = 256
 	rfbMaxScreens   = 16
 	rfbMaxPending   = 8 + rfbMaxCutText
+	rfbMaxFence     = 64
 
 	encExtendedMouseButtons = -316 // makes PointerEvent 7 bytes; stripped so every PointerEvent is 6
 	encXvp                  = -309 // lets the client power off, reboot or reset the guest; stripped
+
+	encExtendedClipboard = -1063131698 // 0xC0A1E5CE; negative ClientCutText lengths are legal only after this
 )
 
 // rfbFilter checks the client half of an RFB 3.8 session (noVNC -> the guest's VNC server) before it reaches the
@@ -26,6 +30,16 @@ type rfbFilter struct {
 	allowInput func() bool
 	stage      int    // 0 version, 1 security type, 2 client init, 3 normal messages
 	buf        []byte // an incomplete message
+	failed     bool   // sticky: after an error every Feed fails
+
+	extClip bool // the client announced the extended clipboard pseudo-encoding
+
+	// Input forwarded to the guest and not yet released, so a takeover that ends mid-press cannot leave a key or
+	// button stuck down in the guest.
+	heldKeys map[uint32]bool   // keysyms of forwarded KeyEvent downs
+	heldQemu map[uint32]uint32 // keycode -> keysym of forwarded QEMU extended key downs
+	buttons  byte              // forwarded pointer button mask
+	px, py   uint16            // last forwarded pointer position
 }
 
 func newRFBFilter(allowInput func() bool) *rfbFilter { return &rfbFilter{allowInput: allowInput} }
@@ -33,17 +47,22 @@ func newRFBFilter(allowInput func() bool) *rfbFilter { return &rfbFilter{allowIn
 // Feed takes the next client bytes and returns those to forward to the guest. Complete messages are judged when they
 // complete; a partial message waits in the filter.
 func (f *rfbFilter) Feed(p []byte) ([]byte, error) {
+	if f.failed {
+		return nil, errRFBInput
+	}
 	f.buf = append(f.buf, p...)
 	var out []byte
 	for {
 		n, forward, err := f.next()
 		if err != nil {
 			f.buf = nil
+			f.failed = true
 			return nil, err
 		}
 		if n == 0 {
 			if len(f.buf) > rfbMaxPending {
 				f.buf = nil
+				f.failed = true
 				return nil, errRFBInput
 			}
 			if len(f.buf) == 0 {
@@ -115,6 +134,11 @@ func (f *rfbFilter) next() (n int, forward []byte, err error) {
 		if len(b) < size {
 			return 0, nil, nil
 		}
+		for i := 4; i < size; i += 4 {
+			if int32(binary.BigEndian.Uint32(b[i:i+4])) == encExtendedClipboard {
+				f.extClip = true
+			}
+		}
 		return size, stripEncodings(b[:size]), nil
 	case 3, 150: // FramebufferUpdateRequest, EnableContinuousUpdates
 		return fixed(10)
@@ -122,17 +146,23 @@ func (f *rfbFilter) next() (n int, forward []byte, err error) {
 		if len(b) < 9 {
 			return 0, nil, nil
 		}
+		if b[8] > rfbMaxFence {
+			return 0, nil, errRFBInput
+		}
 		return fixed(9 + int(b[8]))
 	case 4: // KeyEvent
-		return f.input(8)
+		return f.keyEvent()
 	case 5: // PointerEvent
-		return f.input(6)
+		return f.pointerEvent()
 	case 6: // ClientCutText; a negative length is the extended clipboard format
 		if len(b) < 8 {
 			return 0, nil, nil
 		}
 		length := int64(int32(binary.BigEndian.Uint32(b[4:8])))
 		if length < 0 {
+			if !f.extClip {
+				return 0, nil, errRFBInput
+			}
 			length = -length
 		}
 		if length > rfbMaxCutText {
@@ -146,7 +176,7 @@ func (f *rfbFilter) next() (n int, forward []byte, err error) {
 		if b[1] != 0 {
 			return 0, nil, errRFBInput
 		}
-		return f.input(12)
+		return f.qemuKeyEvent()
 	case 250: // xvp: power off, reboot, reset
 		return drop(4)
 	case 251: // SetDesktopSize: the bot's screen size is not the viewer's to change
@@ -163,15 +193,117 @@ func (f *rfbFilter) next() (n int, forward []byte, err error) {
 	}
 }
 
-// input forwards a complete input message only while the user holds the takeover lock.
-func (f *rfbFilter) input(size int) (int, []byte, error) {
-	if len(f.buf) < size {
+// keyEvent handles KeyEvent. While input is not allowed, the up event of a key forwarded down still passes.
+func (f *rfbFilter) keyEvent() (int, []byte, error) {
+	b := f.buf
+	if len(b) < 8 {
 		return 0, nil, nil
 	}
+	down := b[1] != 0
+	sym := binary.BigEndian.Uint32(b[4:8])
 	if f.allowInput() {
-		return size, f.buf[:size], nil
+		if down {
+			if f.heldKeys == nil {
+				f.heldKeys = map[uint32]bool{}
+			}
+			f.heldKeys[sym] = true
+		} else {
+			delete(f.heldKeys, sym)
+		}
+		return 8, b[:8], nil
 	}
-	return size, nil, nil
+	if !down && f.heldKeys[sym] {
+		delete(f.heldKeys, sym)
+		return 8, b[:8], nil
+	}
+	return 8, nil, nil
+}
+
+// qemuKeyEvent handles the QEMU extended key event (down flag u16 at 2, keysym u32 at 4, keycode u32 at 8).
+func (f *rfbFilter) qemuKeyEvent() (int, []byte, error) {
+	b := f.buf
+	if len(b) < 12 {
+		return 0, nil, nil
+	}
+	down := binary.BigEndian.Uint16(b[2:4]) != 0
+	sym := binary.BigEndian.Uint32(b[4:8])
+	code := binary.BigEndian.Uint32(b[8:12])
+	if f.allowInput() {
+		if down {
+			if f.heldQemu == nil {
+				f.heldQemu = map[uint32]uint32{}
+			}
+			f.heldQemu[code] = sym
+		} else {
+			delete(f.heldQemu, code)
+		}
+		return 12, b[:12], nil
+	}
+	if _, held := f.heldQemu[code]; !down && held {
+		delete(f.heldQemu, code)
+		return 12, b[:12], nil
+	}
+	return 12, nil, nil
+}
+
+// pointerEvent handles PointerEvent. While input is not allowed, an event that releases buttons forwarded down is
+// forwarded with new presses masked off, at the last forwarded position; anything else is dropped.
+func (f *rfbFilter) pointerEvent() (int, []byte, error) {
+	b := f.buf
+	if len(b) < 6 {
+		return 0, nil, nil
+	}
+	mask := b[1]
+	if f.allowInput() {
+		f.buttons, f.px, f.py = mask, binary.BigEndian.Uint16(b[2:4]), binary.BigEndian.Uint16(b[4:6])
+		return 6, b[:6], nil
+	}
+	next := mask & f.buttons
+	if next == f.buttons {
+		return 6, nil, nil
+	}
+	f.buttons = next
+	return 6, f.pointerBytes(next), nil
+}
+
+func (f *rfbFilter) pointerBytes(mask byte) []byte {
+	out := []byte{5, mask, 0, 0, 0, 0}
+	binary.BigEndian.PutUint16(out[2:4], f.px)
+	binary.BigEndian.PutUint16(out[4:6], f.py)
+	return out
+}
+
+// Release returns messages that release every key and pointer button forwarded down and not yet released, and
+// forgets them. The caller injects it into the guest stream when the takeover ends.
+func (f *rfbFilter) Release() []byte {
+	var out []byte
+	syms := make([]uint32, 0, len(f.heldKeys))
+	for s := range f.heldKeys {
+		syms = append(syms, s)
+	}
+	sort.Slice(syms, func(i, j int) bool { return syms[i] < syms[j] })
+	for _, s := range syms {
+		m := []byte{4, 0, 0, 0, 0, 0, 0, 0}
+		binary.BigEndian.PutUint32(m[4:], s)
+		out = append(out, m...)
+	}
+	codes := make([]uint32, 0, len(f.heldQemu))
+	for c := range f.heldQemu {
+		codes = append(codes, c)
+	}
+	sort.Slice(codes, func(i, j int) bool { return codes[i] < codes[j] })
+	for _, c := range codes {
+		m := make([]byte, 12)
+		m[0] = 255
+		binary.BigEndian.PutUint32(m[4:], f.heldQemu[c])
+		binary.BigEndian.PutUint32(m[8:], c)
+		out = append(out, m...)
+	}
+	if f.buttons != 0 {
+		out = append(out, f.pointerBytes(0)...)
+	}
+	f.heldKeys, f.heldQemu, f.buttons = nil, nil, 0
+	return out
 }
 
 // stripEncodings removes pseudo-encodings that would change message sizes or allow power actions.
@@ -187,4 +319,15 @@ func stripEncodings(msg []byte) []byte {
 	}
 	binary.BigEndian.PutUint16(out[2:4], uint16((len(out)-4)/4))
 	return out
+}
+
+// input forwards a complete stateless input message (the clipboard) only while the user holds the takeover lock.
+func (f *rfbFilter) input(size int) (int, []byte, error) {
+	if len(f.buf) < size {
+		return 0, nil, nil
+	}
+	if f.allowInput() {
+		return size, f.buf[:size], nil
+	}
+	return size, nil, nil
 }

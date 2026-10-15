@@ -7,11 +7,11 @@ import (
 	"testing"
 )
 
-func handshake() []byte { return append([]byte("RFB 003.008\n"), 1, 0) }
+func rfbHandshake() []byte { return append([]byte("RFB 003.008\n"), 1, 0) }
 
-func key(down byte) []byte { return []byte{4, down, 0, 0, 0, 0, 0xff, 0x0d} }
+func rfbKey(down byte) []byte { return []byte{4, down, 0, 0, 0, 0, 0xff, 0x0d} }
 
-func encodings(list ...int32) []byte {
+func rfbEncodings(list ...int32) []byte {
 	b := []byte{2, 0, 0, 0}
 	binary.BigEndian.PutUint16(b[2:], uint16(len(list)))
 	for _, e := range list {
@@ -20,7 +20,7 @@ func encodings(list ...int32) []byte {
 	return b
 }
 
-func cutText(n int32, payload int) []byte {
+func rfbCutText(n int32, payload int) []byte {
 	b := []byte{6, 0, 0, 0}
 	b = binary.BigEndian.AppendUint32(b, uint32(n))
 	return append(b, bytes.Repeat([]byte{'a'}, payload)...)
@@ -43,24 +43,30 @@ func TestRFBFilter(t *testing.T) {
 		want    []byte
 		wantErr bool
 	}{
-		{name: "handshake passes, client init forced shared", in: [][]byte{handshake()}, want: wantHandshake},
+		{name: "handshake passes, client init forced shared", in: [][]byte{rfbHandshake()}, want: wantHandshake},
 		{name: "wrong protocol version", in: [][]byte{[]byte("RFB 003.003\n")}, wantErr: true},
 		{name: "security type other than None", in: [][]byte{append([]byte("RFB 003.008\n"), 2)}, wantErr: true},
-		{name: "view messages pass while view-only", in: [][]byte{handshake(), fbReq, pixelFormat, fence, {150, 1, 0, 0, 0, 0, 4, 0, 3, 0}},
-			want: concat(wantHandshake, fbReq, pixelFormat, fence, []byte{150, 1, 0, 0, 0, 0, 4, 0, 3, 0})},
-		{name: "key, pointer, clipboard and qemu key dropped while view-only", in: [][]byte{handshake(), key(1), pointer, cutText(2, 2), qemuKey, fbReq},
-			want: concat(wantHandshake, fbReq)},
-		{name: "key, pointer, clipboard and qemu key pass after take over", allow: true, in: [][]byte{handshake(), key(1), pointer, cutText(2, 2), qemuKey},
-			want: concat(wantHandshake, key(1), pointer, cutText(2, 2), qemuKey)},
-		{name: "extended clipboard negative length", allow: true, in: [][]byte{handshake(), cutText(-3, 3)}, want: concat(wantHandshake, cutText(-3, 3))},
-		{name: "clipboard over 1 MiB is refused", allow: true, in: [][]byte{handshake(), cutText(1<<20+1, 0)}, wantErr: true},
-		{name: "xvp power actions always dropped", allow: true, in: [][]byte{handshake(), xvp, fbReq}, want: concat(wantHandshake, fbReq)},
-		{name: "desktop resize always dropped", allow: true, in: [][]byte{handshake(), desktopSize, fbReq}, want: concat(wantHandshake, fbReq)},
-		{name: "extended mouse buttons and xvp encodings stripped", in: [][]byte{handshake(), encodings(7, -316, 16, -309, -223)},
-			want: concat(wantHandshake, encodings(7, 16, -223))},
-		{name: "unknown message type", in: [][]byte{handshake(), {7, 0, 0, 0}}, wantErr: true},
-		{name: "qemu message other than extended key", allow: true, in: [][]byte{handshake(), {255, 1, 0, 0}}, wantErr: true},
-		{name: "too many encodings", in: [][]byte{handshake(), {2, 0, 0x10, 0x00}}, wantErr: true},
+		{name: "view messages pass while view-only", in: [][]byte{rfbHandshake(), fbReq, pixelFormat, fence, {150, 1, 0, 0, 0, 0, 4, 0, 3, 0}},
+			want: rfbConcat(wantHandshake, fbReq, pixelFormat, fence, []byte{150, 1, 0, 0, 0, 0, 4, 0, 3, 0})},
+		{name: "key, pointer, clipboard and qemu key dropped while view-only", in: [][]byte{rfbHandshake(), rfbKey(1), pointer, rfbCutText(2, 2), qemuKey, fbReq},
+			want: rfbConcat(wantHandshake, fbReq)},
+		{name: "key, pointer, clipboard and qemu key pass after take over", allow: true, in: [][]byte{rfbHandshake(), rfbKey(1), pointer, rfbCutText(2, 2), qemuKey},
+			want: rfbConcat(wantHandshake, rfbKey(1), pointer, rfbCutText(2, 2), qemuKey)},
+		{name: "extended clipboard negative length", allow: true, in: [][]byte{rfbHandshake(), rfbEncodings(-1063131698), rfbCutText(-3, 3)}, want: rfbConcat(wantHandshake, rfbEncodings(-1063131698), rfbCutText(-3, 3))},
+		{name: "negative clipboard length without extended clipboard encoding", allow: true, in: [][]byte{rfbHandshake(), rfbCutText(-3, 3)}, wantErr: true},
+		{name: "clipboard exactly 1 MiB passes", allow: true, in: [][]byte{rfbHandshake(), rfbCutText(1<<20, 1<<20)}, want: rfbConcat(wantHandshake, rfbCutText(1<<20, 1<<20))},
+		{name: "extended clipboard over 1 MiB is refused", allow: true, in: [][]byte{rfbHandshake(), rfbEncodings(-1063131698), rfbCutText(-(1<<20 + 1), 0)}, wantErr: true},
+		{name: "oversized clipboard refused while view-only", in: [][]byte{rfbHandshake(), rfbCutText(1<<20+1, 0)}, wantErr: true},
+		{name: "desktop size with more than 16 screens", in: [][]byte{rfbHandshake(), {251, 0, 4, 0, 3, 0, 17, 0}}, wantErr: true},
+		{name: "fence payload over 64", in: [][]byte{rfbHandshake(), {248, 0, 0, 0, 0, 0, 0, 0, 65}}, wantErr: true},
+		{name: "clipboard over 1 MiB is refused", allow: true, in: [][]byte{rfbHandshake(), rfbCutText(1<<20+1, 0)}, wantErr: true},
+		{name: "xvp power actions always dropped", allow: true, in: [][]byte{rfbHandshake(), xvp, fbReq}, want: rfbConcat(wantHandshake, fbReq)},
+		{name: "desktop resize always dropped", allow: true, in: [][]byte{rfbHandshake(), desktopSize, fbReq}, want: rfbConcat(wantHandshake, fbReq)},
+		{name: "extended mouse buttons and xvp encodings stripped", in: [][]byte{rfbHandshake(), rfbEncodings(7, -316, 16, -309, -223)},
+			want: rfbConcat(wantHandshake, rfbEncodings(7, 16, -223))},
+		{name: "unknown message type", in: [][]byte{rfbHandshake(), {7, 0, 0, 0}}, wantErr: true},
+		{name: "qemu message other than extended key", allow: true, in: [][]byte{rfbHandshake(), {255, 1, 0, 0}}, wantErr: true},
+		{name: "too many encodings", in: [][]byte{rfbHandshake(), {2, 0, 0x10, 0x00}}, wantErr: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -94,7 +100,7 @@ func TestRFBFilter(t *testing.T) {
 func TestRFBFilterReassemblesMessagesSplitAcrossFeeds(t *testing.T) {
 	allow := false
 	f := newRFBFilter(func() bool { return allow })
-	stream := concat(handshake(), key(1), []byte{3, 1, 0, 0, 0, 0, 4, 0, 3, 0})
+	stream := rfbConcat(rfbHandshake(), rfbKey(1), []byte{3, 1, 0, 0, 0, 0, 4, 0, 3, 0})
 	var got []byte
 	for i := range stream { // one byte at a time
 		out, err := f.Feed(stream[i : i+1])
@@ -103,13 +109,13 @@ func TestRFBFilterReassemblesMessagesSplitAcrossFeeds(t *testing.T) {
 		}
 		got = append(got, out...)
 	}
-	want := concat(append([]byte("RFB 003.008\n"), 1, 1), []byte{3, 1, 0, 0, 0, 0, 4, 0, 3, 0})
+	want := rfbConcat(append([]byte("RFB 003.008\n"), 1, 1), []byte{3, 1, 0, 0, 0, 0, 4, 0, 3, 0})
 	if !bytes.Equal(got, want) {
 		t.Fatalf("got %v want %v", got, want)
 	}
 	// The decision is taken when a message completes: a key that finishes after Take over passes.
 	allow = true
-	k := key(0)
+	k := rfbKey(0)
 	if out, _ := f.Feed(k[:3]); len(out) != 0 {
 		t.Fatalf("partial message forwarded: %v", out)
 	}
@@ -122,13 +128,13 @@ func TestRFBFilterReassemblesMessagesSplitAcrossFeeds(t *testing.T) {
 // time; the forwarded bytes must always equal the whole-stream result.
 func TestRFBFilterSplitAtEveryByte(t *testing.T) {
 	for _, allow := range []bool{false, true} {
-		stream := concat(
-			handshake(),
+		stream := rfbConcat(
+			rfbHandshake(),
 			[]byte{0}, make([]byte, 19), // SetPixelFormat
-			encodings(7, -316, 16, -309, -223),
+			rfbEncodings(7, -316, 16, -309, -223),
 			[]byte{3, 1, 0, 0, 0, 0, 4, 0, 3, 0},
-			key(1), []byte{5, 1, 0, 10, 0, 20},
-			cutText(5, 5), cutText(-3, 3),
+			rfbKey(1), []byte{5, 1, 0, 10, 0, 20},
+			rfbEncodings(-1063131698), rfbCutText(5, 5), rfbCutText(-3, 3),
 			append([]byte{255, 0, 0, 1}, make([]byte, 8)...),
 			[]byte{250, 0, 1, 2},
 			append([]byte{251, 0, 4, 0, 3, 0, 2, 0}, make([]byte, 32)...),
@@ -169,7 +175,7 @@ func TestRFBFilterSplitAtEveryByte(t *testing.T) {
 // TestRFBFilterRefusesEncodingCountOverCap checks the SetEncodings count cap (257 > 256).
 func TestRFBFilterRefusesEncodingCountOverCap(t *testing.T) {
 	f := newRFBFilter(func() bool { return true })
-	if _, err := f.Feed(handshake()); err != nil {
+	if _, err := f.Feed(rfbHandshake()); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := f.Feed([]byte{2, 0, 0x01, 0x01}); !errors.Is(err, errRFBInput) {
@@ -177,7 +183,86 @@ func TestRFBFilterRefusesEncodingCountOverCap(t *testing.T) {
 	}
 }
 
-func concat(parts ...[]byte) []byte {
+func TestRFBFilterErrorIsSticky(t *testing.T) {
+	f := newRFBFilter(func() bool { return true })
+	if _, err := f.Feed([]byte("RFB 003.003\n")); !errors.Is(err, errRFBInput) {
+		t.Fatal(err)
+	}
+	if _, err := f.Feed(rfbHandshake()); !errors.Is(err, errRFBInput) {
+		t.Fatalf("after error: %v", err)
+	}
+}
+
+func TestRFBFilterAllowInputSwitchesMidFeed(t *testing.T) {
+	calls := 0
+	f := newRFBFilter(func() bool { calls++; return calls == 1 }) // allowed for the first input message only
+	out, err := f.Feed(rfbConcat(rfbHandshake(), rfbKey(1), []byte{4, 1, 0, 0, 0, 0, 0, 0x41}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := rfbConcat(append([]byte("RFB 003.008\n"), 1, 1), rfbKey(1))
+	if !bytes.Equal(out, want) {
+		t.Fatalf("got %v want %v", out, want)
+	}
+}
+
+func TestRFBFilterReleasesPassAfterTakeoverEnds(t *testing.T) {
+	allow := true
+	f := newRFBFilter(func() bool { return allow })
+	if _, err := f.Feed(rfbHandshake()); err != nil {
+		t.Fatal(err)
+	}
+	ptr := func(mask byte, x, y byte) []byte { return []byte{5, mask, 0, x, 0, y} }
+	if out, _ := f.Feed(rfbConcat(rfbKey(1), ptr(1|4, 10, 20))); len(out) != 14 {
+		t.Fatalf("forwarded %v", out)
+	}
+	allow = false
+	// The up of a held key passes; a down and an unrelated up do not.
+	otherDown := []byte{4, 1, 0, 0, 0, 0, 0, 0x41}
+	otherUp := []byte{4, 0, 0, 0, 0, 0, 0, 0x41}
+	if out, _ := f.Feed(rfbConcat(otherDown, otherUp, rfbKey(0))); !bytes.Equal(out, rfbKey(0)) {
+		t.Fatalf("keys: %v", out)
+	}
+	// Moving with a new press and nothing released: dropped.
+	if out, _ := f.Feed(ptr(1|4|2, 50, 60)); len(out) != 0 {
+		t.Fatalf("pointer forwarded %v", out)
+	}
+	// Releasing the left button passes at the last forwarded position, middle still held.
+	if out, _ := f.Feed(ptr(4|2, 70, 80)); !bytes.Equal(out, ptr(4, 10, 20)) {
+		t.Fatalf("partial release: %v", out)
+	}
+	if out, _ := f.Feed(ptr(0, 70, 80)); !bytes.Equal(out, ptr(0, 10, 20)) {
+		t.Fatalf("full release: %v", out)
+	}
+	if out, _ := f.Feed(ptr(0, 70, 80)); len(out) != 0 {
+		t.Fatalf("idle move forwarded: %v", out)
+	}
+	if r := f.Release(); len(r) != 0 {
+		t.Fatalf("nothing held, Release = %v", r)
+	}
+}
+
+func TestRFBFilterRelease(t *testing.T) {
+	f := newRFBFilter(func() bool { return true })
+	qemu := []byte{255, 0, 0, 1, 0, 0, 0xff, 0x0d, 0, 0, 0, 0x1c}
+	in := rfbConcat(rfbHandshake(), rfbKey(1), []byte{4, 1, 0, 0, 0, 0, 0, 0x41}, qemu, []byte{5, 2, 0, 3, 0, 4})
+	if _, err := f.Feed(in); err != nil {
+		t.Fatal(err)
+	}
+	want := rfbConcat(
+		[]byte{4, 0, 0, 0, 0, 0, 0, 0x41}, []byte{4, 0, 0, 0, 0, 0, 0xff, 0x0d},
+		[]byte{255, 0, 0, 0, 0, 0, 0xff, 0x0d, 0, 0, 0, 0x1c},
+		[]byte{5, 0, 0, 3, 0, 4},
+	)
+	if got := f.Release(); !bytes.Equal(got, want) {
+		t.Fatalf("Release\n %v\nwant\n %v", got, want)
+	}
+	if got := f.Release(); len(got) != 0 {
+		t.Fatalf("second Release = %v", got)
+	}
+}
+
+func rfbConcat(parts ...[]byte) []byte {
 	var b []byte
 	for _, p := range parts {
 		b = append(b, p...)
