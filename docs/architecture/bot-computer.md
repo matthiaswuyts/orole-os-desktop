@@ -537,7 +537,7 @@ answers `not_found` ("it starts when the bot uses it"; `Manager.RunningGuest` ne
   events listed under "Daemon wiring". Archiving a bot stops its VM and deletes its overlay and row.
 - **Licences.** QEMU is GPL-2.0 and the guest image contains GPL software (the Linux kernel among it). The source
   is hosted next to the binaries: `qemu-v20260811` carries the QEMU tree of the binaries' commit, the MSYS2 source
-  package of every copyleft DLL and the licence texts; `guest-v0.1.3` carries the sources of every copyleft package in
+  package of every copyleft DLL and the licence texts; `guest-v0.1.3` and `guest-v0.1.4` (guest-sources run 38781470791) carry the sources of every copyleft package in
   the image's runtime closure (nixpkgs `55bfb4d7437bd4e09ab7cba58a43bd68eb310044`), the nixpkgs tree and the flake
   and `orole-guest` source. Each release has a `SOURCES.md` manifest; `.github/workflows/qemu-sources.yml` and
   `guest-sources.yml` build them from a `sources-<release tag>` tag. Details, including the two QEMU DLLs that could
