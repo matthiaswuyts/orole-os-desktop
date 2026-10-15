@@ -70,6 +70,9 @@ in
   };
 
   users.mutableUsers = false;
+  # No login path by design: root and bot have locked passwords, no sshd, no sudo. Agents reach the VM only
+  # through orole-guest; the debug image (debug.nix) adds root autologin on the serial console.
+  users.allowNoPasswordLogin = true;
   users.users.root.hashedPassword = "!";
   users.users.bot = { isNormalUser = true; uid = 1000; home = "/home/bot"; createHome = true; hashedPassword = "!"; };
   security.sudo.enable = false;
@@ -137,5 +140,5 @@ in
   };
   services.envfs.enable = true;
   nix.settings.experimental-features = [ "nix-command" "flakes" ];
-  services.journald.extraConfig = "SystemMaxUse=64M";
+  services.journald.settings.Journal.SystemMaxUse = "64M";
 }

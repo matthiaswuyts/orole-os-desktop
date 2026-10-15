@@ -28,6 +28,11 @@ jobs:
       contents: write # the draft release and its uploads
     env:
       GH_TOKEN: ${{ github.token }}
+    # `shell: bash` makes GitHub run every step with `bash --noprofile --norc -eo pipefail`, so a failing command
+    # in a pipeline (nix build | tee) fails the step.
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -51,11 +56,12 @@ jobs:
           extra_nix_config: |
             system-features = nixos-test benchmark big-parallel kvm
       - name: Build the image
+        id: build
         run: |
           # bash runs with pipefail, so nix's exit status survives the tee.
           nix build ./guest#image --print-build-logs --out-link result 2>&1 | tee build.log
       - name: Show hash mismatches (build failed)
-        if: failure()
+        if: failure() && steps.build.outcome == 'failure'
         run: |
           # A stale vendorHash (guest/orole-guest.nix) or flake input hash shows up as "specified: ... got: ...".
           if [ -f build.log ] && grep -qE 'hash mismatch|specified:|got: ' build.log; then

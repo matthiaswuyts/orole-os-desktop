@@ -142,7 +142,8 @@ size on boot) and `SHA256SUMS`. `nix build ./guest#image-debug` is the same with
 Building it: `docs/development/guest-image.md`.
 
 Facts later phases rely on: user `bot` (uid 1000, primary group `users` gid 100, home `/home/bot`, no sudo,
-locked password); Chromium in cage
+locked password); root's password is locked too and there is no sshd, so the image has no login method at all
+(`users.allowNoPasswordLogin = true`; the debug image's serial-console autologin is the only way in); Chromium in cage
 (wlroots headless backend, pixman) with CDP on `127.0.0.1:9222` and its profile in `/home/bot/.config/orole-chromium`;
 wayvnc on `127.0.0.1:5900`; `orole-guest` as a root systemd unit after module loading, restarted forever;
 `qemu_fw_cfg` loaded in the initrd; Python 3 + uv, Node.js, git, curl, jq, ripgrep; nix-ld and envfs so downloaded
