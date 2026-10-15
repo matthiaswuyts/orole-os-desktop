@@ -25,6 +25,9 @@ export function LiveScreen({ botId, interactive }: { botId: string; interactive:
     rfb.viewOnly = !interactiveRef.current;
     rfb.scaleViewport = true;
     rfb.resizeSession = false;
+    // The guest draws its pointer into the picture (wayvnc --render-cursor); the dot covers a server that sends an
+    // empty cursor shape instead, so the user always sees where the mouse is while in control.
+    rfb.showDotCursor = true;
     // A replaced RFB (reconnect, bot switch) may still fire; only the current one may change what is shown.
     rfb.addEventListener("connect", () => { if (rfbRef.current === rfb) setState("connected"); });
     rfb.addEventListener("disconnect", () => {

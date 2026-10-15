@@ -368,3 +368,21 @@ func TestRFBFilterKeyUpWhileViewOnlyIsCanonical(t *testing.T) {
 		t.Fatalf("held up = %v, want %v", out, rfbKey(0))
 	}
 }
+
+// The pointer must stay visible while the user controls the computer: the cursor pseudo-encodings noVNC offers (Cursor
+// -239, XCursor -240, VMware's alpha cursor 0x574d5664, PointerPos -232) reach the guest unchanged.
+func TestRFBFilterKeepsCursorEncodings(t *testing.T) {
+	cursors := []int32{-239, -240, 0x574d5664, -232}
+	for _, allow := range []bool{false, true} {
+		f := newRFBFilter(func() bool { return allow })
+		in := rfbEncodings(append(append([]int32{7, 1}, cursors...), -313, -316, -309, 0)...)
+		got, err := f.Feed(rfbConcat(rfbHandshake(), in))
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := rfbConcat(append([]byte("RFB 003.008\n"), 1, 1), rfbEncodings(append(append([]int32{7, 1}, cursors...), 0)...))
+		if !bytes.Equal(got, want) {
+			t.Fatalf("allow=%v: got %x, want %x", allow, got, want)
+		}
+	}
+}

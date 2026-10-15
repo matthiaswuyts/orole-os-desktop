@@ -1,7 +1,7 @@
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { rfbs } = vi.hoisted(() => ({ rfbs: [] as Array<EventTarget & { target: HTMLElement; channel: unknown; options: unknown; viewOnly: boolean; scaleViewport: boolean; resizeSession: boolean; disconnect: () => void; focus: () => void; blur: () => void }> }));
+const { rfbs } = vi.hoisted(() => ({ rfbs: [] as Array<EventTarget & { target: HTMLElement; channel: unknown; options: unknown; viewOnly: boolean; scaleViewport: boolean; resizeSession: boolean; showDotCursor: boolean; disconnect: () => void; focus: () => void; blur: () => void }> }));
 
 vi.mock("@novnc/novnc", async () => {
   const { vi: v } = await import("vitest");
@@ -12,6 +12,7 @@ vi.mock("@novnc/novnc", async () => {
     viewOnly = false;
     scaleViewport = false;
     resizeSession = true;
+    showDotCursor = false;
     disconnect = v.fn();
     focus = v.fn();
     blur = v.fn();
@@ -46,6 +47,7 @@ describe("live screen", () => {
     expect(rfb.viewOnly).toBe(true);
     expect(rfb.scaleViewport).toBe(true);
     expect(rfb.resizeSession).toBe(false);
+    expect(rfb.showDotCursor).toBe(true);
     expect(screen.getByRole("region", { name: "Live screen" })).toContainElement(rfb.target);
     expect(sandbox.openScreen).toHaveBeenCalledWith("b1");
     expect(screen.getByText("Connecting to the screen…")).toBeInTheDocument();
