@@ -242,6 +242,8 @@ func TestComputerErrorsAreExplained(t *testing.T) {
 		{sandbox.ErrBusy, "busy"},
 		{sandbox.ErrLowMemory, "free memory"},
 		{sandbox.ErrTakenOver, "controlling your computer"},
+		{sandbox.ErrDeleting, "being deleted"},
+		{fmt.Errorf("lookup: %w", ErrComputerGone), "no longer exist,"},
 		{errors.New("guest said \x1b[31mno"), "could not do that"},
 	} {
 		rt := &fakeComputer{running: true, err: tt.err}

@@ -179,3 +179,42 @@ func TestHandoffSimultaneousTakeOverBeatsTheAskTimeout(t *testing.T) {
 		}
 	}
 }
+
+func TestHandoffCancelEndsTheWaitWithTheError(t *testing.T) {
+	h := NewHandoffs(nil)
+	res := askAsync(h, context.Background(), "b1", "help", false)
+	waitPending(t, h, "b1")
+	h.Cancel("b2", ErrHandoffStopped) // nobody waits: no-op
+	h.Cancel("b1", ErrHandoffStopped)
+	if r := <-res; !errors.Is(r.err, ErrHandoffStopped) {
+		t.Fatalf("err = %v", r.err)
+	}
+	if h.State("b1").Pending {
+		t.Fatal("a canceled wait must not stay pending")
+	}
+}
+
+// Begin registers the wait at once, so a Take over or Done that arrives before Wait runs is not lost; the change
+// callback fires only once Wait runs (outside the caller's locks).
+func TestHandoffBeginRegistersBeforeWaiting(t *testing.T) {
+	changes := 0
+	h := NewHandoffs(func(HandoffState) { changes++ })
+	w, err := h.Begin(context.Background(), "b1", "help", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !h.State("b1").Pending || changes != 0 {
+		t.Fatalf("pending %v changes %d", h.State("b1").Pending, changes)
+	}
+	if _, err := h.Begin(context.Background(), "b1", "again", false); !errors.Is(err, ErrHandoffBusy) {
+		t.Fatalf("second Begin: %v", err)
+	}
+	h.Started("b1")
+	h.Finish("b1", "early")
+	if note, err := w.Wait(context.Background()); err != nil || note != "early" {
+		t.Fatalf("Wait = %q %v", note, err)
+	}
+	if h.State("b1").Pending || changes != 2 {
+		t.Fatalf("pending %v changes %d", h.State("b1").Pending, changes)
+	}
+}

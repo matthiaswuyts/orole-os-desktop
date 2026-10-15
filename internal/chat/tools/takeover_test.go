@@ -64,6 +64,8 @@ func TestTakeoverFailuresAreExplained(t *testing.T) {
 		{sandbox.ErrHandoffTimeout, "did not take over within 5 minutes"},
 		{sandbox.ErrHandoffHoldTimeout, "did not hand the computer back within 30 minutes"},
 		{sandbox.ErrHandoffBusy, "already waiting"},
+		{sandbox.ErrHandoffStopped, "Your computer stopped while you waited"},
+		{ErrComputerGone, "no longer exist,"},
 		{sandbox.ErrNotReady, "isn't set up yet"},
 	} {
 		rt := &fakeComputer{ask: func(context.Context, string) (string, error) { return "", tt.err }}

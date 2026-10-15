@@ -86,6 +86,10 @@ type ComputerRuntime interface {
 	AskTakeover(ctx context.Context, botID, reason string) (note string, err error)
 }
 
+// ErrComputerGone is what a ComputerRuntime answers for a bot that was archived or no longer exists: it has no
+// computer any more, and none is started for it.
+var ErrComputerGone = errors.New("this bot no longer exists, so it has no computer")
+
 type guestCallKey struct{}
 
 // GuestCallTimeout is how long the guest call itself may take, once the VM is up, for a context a computer tool
@@ -95,9 +99,14 @@ func GuestCallTimeout(ctx context.Context) time.Duration {
 	return d
 }
 
+// WithGuestCallTimeout returns ctx carrying d as its GuestCallTimeout, as a computer tool passes it to its runtime.
+func WithGuestCallTimeout(ctx context.Context, d time.Duration) context.Context {
+	return context.WithValue(ctx, guestCallKey{}, d)
+}
+
 // guestCall returns the context for one runtime call whose guest part may take d.
 func guestCall(ctx context.Context, d time.Duration) (context.Context, context.CancelFunc) {
-	return context.WithTimeout(context.WithValue(ctx, guestCallKey{}, d), ComputerStartTimeout+d)
+	return context.WithTimeout(WithGuestCallTimeout(ctx, d), ComputerStartTimeout+d)
 }
 
 // execTimeout is the guest call timeout of a command that may run for seconds (as the guest clamps it).
@@ -150,6 +159,8 @@ var computerFailures = []struct {
 	{sandbox.ErrBusy, "All computers on this PC are busy (at most 4 run at once). Try again in a minute.", "All computers are busy"},
 	{sandbox.ErrLowMemory, "This PC does not have enough free memory to start your computer. Ask the user to close some programs, then try again.", "Not enough free memory"},
 	{sandbox.ErrTakenOver, "The user is controlling your computer right now. Do not use the computer until they hand it back.", "The user is controlling the computer"},
+	{ErrComputerGone, "You were archived or no longer exist, so you have no computer any more. Do not use the computer tools.", "The bot no longer exists"},
+	{sandbox.ErrDeleting, "Your computer is being deleted. Do not use the computer tools; tell the user.", "The computer is being deleted"},
 	{errors.ErrUnsupported, "This computer runs an older image without this feature. Ask the user to reset the computer in its Computer tab.", "The computer's image is too old"},
 	{context.DeadlineExceeded, "The computer did not answer in time, so the call was stopped. It may still be starting or busy; try again, with a longer timeout for slow commands.", "The computer did not answer in time"},
 }
