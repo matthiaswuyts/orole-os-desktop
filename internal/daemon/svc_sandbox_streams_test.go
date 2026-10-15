@@ -589,3 +589,31 @@ func TestEndingATakeoverReleasesHeldKeys(t *testing.T) {
 	waitFor(t, "the abandoned takeover to end", func() bool { return !d.Sandbox.TakenOver("b1") })
 	waitFor(t, "the key up after the lease ran out", func() bool { got, _, _ := c.screenData(id); return strings.HasSuffix(got, keyUpA) })
 }
+
+func TestPTYSizeDefaultsAndClamps(t *testing.T) {
+	tests := []struct{ cols, rows, wantCols, wantRows int }{
+		{0, 0, 120, 30},
+		{-5, -1, 120, 30},
+		{100, 24, 100, 24},
+		{1, 1, 20, 5},
+		{9999, 9999, 500, 200},
+	}
+	for _, tt := range tests {
+		if c, r := ptySize(tt.cols, tt.rows); c != tt.wantCols || r != tt.wantRows {
+			t.Errorf("ptySize(%d, %d) = %d, %d; want %d, %d", tt.cols, tt.rows, c, r, tt.wantCols, tt.wantRows)
+		}
+	}
+}
+
+func TestSandboxPTYOpensWithTheNormalizedSize(t *testing.T) {
+	d := computerDaemon(t)
+	c := newStreamClient(t, d)
+	bootComputer(t, d, "b1")
+	var info terminals.Info
+	if err := c.Call(context.Background(), "sandbox.pty.open", map[string]any{"botId": "b1", "cols": 9999, "rows": 0}, &info); err != nil {
+		t.Fatalf("pty.open: %v", err)
+	}
+	if info.Cols != 500 || info.Rows != 30 {
+		t.Fatalf("terminal size %dx%d, want 500x30", info.Cols, info.Rows)
+	}
+}

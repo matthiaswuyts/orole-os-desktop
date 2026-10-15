@@ -15,7 +15,7 @@ import (
 	"github.com/rayorole/orole-os-desktop/internal/terminals"
 )
 
-// sandboxViewerTTL is how long a Computer tab's viewer lease lasts without renewal (the UI renews every 60 s). A
+// sandboxViewerTTL is how long a Computer tab's viewer lease lasts without renewal (the UI renews every 45 s). A
 // variable for tests.
 var sandboxViewerTTL = 150 * time.Second
 
@@ -191,20 +191,38 @@ func (d *Daemon) openSandboxPTY(ctx context.Context, p sandboxPTYParams) (termin
 	if err != nil {
 		return terminals.Info{}, err
 	}
+	cols, rows := ptySize(p.Cols, p.Rows)                    // the guest and the terminal's Info must agree
 	octx, cancel := context.WithTimeout(ctx, ptyOpenTimeout) // bounds only the opening
-	proc, err := g.OpenPTY(octx, p.Cols, p.Rows)
+	proc, err := g.OpenPTY(octx, cols, rows)
 	cancel()
 	if err != nil {
 		return terminals.Info{}, d.guestStreamError(p.BotID, "terminal", err)
 	}
 	info, err := d.Terminals.Adopt(proc, terminals.AdoptOptions{Title: "Computer", Shell: "orole-guest",
-		Owner: sandboxOwner(p.BotID), Cols: p.Cols, Rows: p.Rows})
+		Owner: sandboxOwner(p.BotID), Cols: cols, Rows: rows})
 	if err != nil {
 		return terminals.Info{}, err
 	}
 	d.audit("sandbox.pty.open", p.BotID, "allowed", info.ID)
 	d.IPC.Publish("terminal.changed", info)
 	return info, nil
+}
+
+// Computer terminal size: unset dimensions get the defaults, others are clamped to the range.
+const (
+	ptyDefaultCols, ptyMinCols, ptyMaxCols = 120, 20, 500
+	ptyDefaultRows, ptyMinRows, ptyMaxRows = 30, 5, 200
+)
+
+// ptySize normalizes a requested Computer terminal size before the guest sees it.
+func ptySize(cols, rows int) (int, int) {
+	if cols <= 0 {
+		cols = ptyDefaultCols
+	}
+	if rows <= 0 {
+		rows = ptyDefaultRows
+	}
+	return min(max(cols, ptyMinCols), ptyMaxCols), min(max(rows, ptyMinRows), ptyMaxRows)
 }
 
 func sandboxOwner(botID string) string { return "sandbox:" + botID }
