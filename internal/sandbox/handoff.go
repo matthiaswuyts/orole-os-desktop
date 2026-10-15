@@ -57,6 +57,9 @@ func NewHandoffs(onChange func(HandoffState)) *Handoffs {
 // Ask blocks until the user hands the bot's computer back and returns their note. takenOver says the user already
 // holds the computer, so the hold timeout applies at once.
 func (h *Handoffs) Ask(ctx context.Context, botID, reason string, takenOver bool) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err // the turn already ended: do not register a wait or notify anyone
+	}
 	w := &handoff{reason: reason, since: time.Now(), started: make(chan struct{}), done: make(chan string, 1)}
 	if takenOver {
 		w.took = true
@@ -93,8 +96,21 @@ func (h *Handoffs) Ask(ctx context.Context, botID, reason string, takenOver bool
 			started, takenOver = nil, true
 			timer.Reset(h.HoldTimeout) // Go 1.23+ timers: Reset never delivers a stale tick
 		case <-timer.C:
+			// A Done or Take over that raced the timer must not be lost: select picks among ready cases at random.
+			select {
+			case note := <-w.done:
+				return note, nil
+			default:
+			}
 			if takenOver {
 				return "", ErrHandoffHoldTimeout
+			}
+			select {
+			case <-started:
+				started, takenOver = nil, true
+				timer.Reset(h.HoldTimeout)
+				continue
+			default:
 			}
 			return "", ErrHandoffTimeout
 		case <-ctx.Done():

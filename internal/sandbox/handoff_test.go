@@ -120,3 +120,62 @@ func TestHandoffOneWaitPerBot(t *testing.T) {
 	h.Finish("b2", "nobody waits") // no-op
 	h.Started("b2")                // no-op
 }
+
+func TestHandoffAskWithEndedContextDoesNothing(t *testing.T) {
+	changes := 0
+	h := NewHandoffs(func(HandoffState) { changes++ })
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := h.Ask(ctx, "b1", "help", false); !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v", err)
+	}
+	if changes != 0 || h.State("b1").Pending {
+		t.Fatalf("an ended turn registered a wait (changes %d)", changes)
+	}
+}
+
+// A Done or Take over that arrives together with the timeout must win: the select picks a ready case at random.
+func TestHandoffSimultaneousFinishBeatsTheTimeout(t *testing.T) {
+	for _, takenOver := range []bool{false, true} {
+		for range 50 {
+			var h *Handoffs
+			first := true
+			h = NewHandoffs(func(s HandoffState) {
+				if s.Pending && first {
+					first = false
+					h.Finish("b1", "done")
+				}
+			})
+			h.AskTimeout, h.HoldTimeout = 0, 0
+			note, err := h.Ask(context.Background(), "b1", "help", takenOver)
+			if err != nil || note != "done" {
+				t.Fatalf("takenOver=%v: Ask = %q %v", takenOver, note, err)
+			}
+		}
+	}
+}
+
+func TestHandoffSimultaneousTakeOverBeatsTheAskTimeout(t *testing.T) {
+	for range 50 {
+		var h *Handoffs
+		first := true
+		h = NewHandoffs(func(s HandoffState) {
+			if s.Pending && first {
+				first = false
+				h.Started("b1")
+			}
+		})
+		h.AskTimeout, h.HoldTimeout = 0, 5*time.Second
+		res := askAsync(h, context.Background(), "b1", "help", false)
+		time.Sleep(20 * time.Millisecond)
+		select {
+		case r := <-res:
+			t.Fatalf("Ask ended early: %+v", r)
+		default:
+		}
+		h.Finish("b1", "ok")
+		if r := <-res; r.err != nil || r.note != "ok" {
+			t.Fatalf("Ask = %+v", r)
+		}
+	}
+}
