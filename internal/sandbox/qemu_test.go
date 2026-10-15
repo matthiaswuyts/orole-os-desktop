@@ -154,3 +154,17 @@ func TestTailBufferRedactsATokenSplitAcrossWrites(t *testing.T) {
 		t.Fatalf("partial token left: %q", s)
 	}
 }
+
+func TestQEMUArgsPassTheKeymapThroughFwCfg(t *testing.T) {
+	for _, tt := range []struct{ in, want string }{
+		{"be", "be"}, {"ch(fr)", "ch(fr)"}, {"us(intl)", "us(intl)"},
+		{"", "us"}, {"be,id=x", "us"}, {"BE", "us"}, {"fr\nx", "us"},
+	} {
+		c := testQEMUConfig()
+		c.Keymap = tt.in
+		args := qemuArgs(c)
+		if !hasPair(args, "-fw_cfg", "name=opt/orole/keymap,string="+tt.want) {
+			t.Errorf("keymap %q: no -fw_cfg name=opt/orole/keymap,string=%s in %q", tt.in, tt.want, args)
+		}
+	}
+}

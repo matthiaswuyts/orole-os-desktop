@@ -583,3 +583,22 @@ func TestAvailabilityNeedsTheRuntime(t *testing.T) {
 		t.Fatalf("%+v", a)
 	}
 }
+
+func TestBootPassesTheHostKeymapReadAtEachBoot(t *testing.T) {
+	f := &fakeQEMU{}
+	b, spec, _ := testBackend(t, f)
+	layout := "be"
+	b.keymap = func() string { return layout }
+	for _, want := range []string{"be", "ch(fr)"} {
+		layout = want
+		vm, err := b.Boot(context.Background(), spec)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !hasPair(f.args, "-fw_cfg", "name=opt/orole/keymap,string="+want) {
+			t.Errorf("boot with %q: args %q", want, f.args)
+		}
+		vm.Kill()
+		<-vm.Done()
+	}
+}

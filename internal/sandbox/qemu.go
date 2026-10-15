@@ -27,6 +27,7 @@ type qemuConfig struct {
 	Cmdline     string // the image's kernel command line (the cmdline file next to the kernel)
 	GuestSocket string // AF_UNIX path the virtio-serial chardev connects to (the daemon listens)
 	QMPSocket   string // AF_UNIX path the QMP monitor connects to (the daemon listens)
+	Keymap      string // XKB layout(variant) for the guest's keyboard (opt/orole/keymap); invalid or empty means DefaultKeymap
 }
 
 // qemuArgs builds the QEMU command line for one bot VM. QEMU only ever connects out to sockets the
@@ -46,6 +47,10 @@ func qemuArgs(c qemuConfig) []string {
 		cpu = "max" // host is only valid with a hardware accelerator
 	}
 	appendLine := strings.Join(strings.Fields(c.Cmdline+" console=ttyS0 panic=-1"), " ")
+	keymap := c.Keymap
+	if !ValidKeymap(keymap) {
+		keymap = DefaultKeymap
+	}
 	return []string{
 		"-nodefaults", "-no-user-config", "-no-reboot",
 		"-name", qemuOpt("orole-" + s.BotID),
@@ -55,6 +60,8 @@ func qemuArgs(c qemuConfig) []string {
 		"-display", "none", "-vga", "none",
 		"-kernel", s.Kernel, "-initrd", s.Initrd, "-append", appendLine,
 		"-fw_cfg", "name=opt/orole/token,file=" + qemuOpt(c.TokenFile),
+		// Not secret: the keyboard layout travels inline. ValidKeymap admits no comma, so it cannot add QEMU options.
+		"-fw_cfg", "name=opt/orole/keymap,string=" + keymap,
 		"-drive", "if=none,id=root,format=qcow2,cache=writeback,discard=unmap,file=" + qemuOpt(s.Overlay),
 		"-device", "virtio-blk-pci,drive=root",
 		"-netdev", "user,id=net0",

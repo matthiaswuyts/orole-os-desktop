@@ -45,6 +45,7 @@ type hostBackend struct {
 	cpu    string
 	accel  string        // empty: defaultAccel
 	accept time.Duration // how long QEMU may take to connect its two sockets and finish initialising
+	keymap func() string // the host keyboard layout as XKB layout(variant), read at each boot; nil means HostKeymap
 
 	runMu sync.Mutex // serialises restrictRun
 }
@@ -110,8 +111,12 @@ func (b *hostBackend) Boot(ctx context.Context, spec BootSpec) (VM, error) {
 	}
 	defer os.Remove(tokenPath)
 
+	keymap := HostKeymap
+	if b.keymap != nil {
+		keymap = b.keymap
+	}
 	args := qemuArgs(qemuConfig{Spec: spec, Share: q.Share, CPU: b.cpu, Accel: b.accel, TokenFile: tokenPath,
-		Cmdline: string(cmdline), GuestSocket: guestPath, QMPSocket: qmpPath})
+		Cmdline: string(cmdline), GuestSocket: guestPath, QMPSocket: qmpPath, Keymap: keymap()})
 	tail := newTailBuffer(qemuTailBytes, spec.Token)
 	proc, err := b.start.Start(q.System, args, tail)
 	if err != nil {
