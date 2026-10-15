@@ -3,8 +3,13 @@ import { Sandbox, events, type ScreenChunk } from "@/mygo";
 type CloseInfo = { code: number; reason: string; wasClean: boolean };
 type Receiver = ((event: { data: ArrayBuffer }) => void) | null;
 
-/** Chunks kept while the screen id is unknown (the guest's VNC server speaks first). */
+/**
+ * Chunks kept per screen id while this channel's id is unknown (the guest's VNC server speaks first). Events carry
+ * every open screen, so chunks are kept per id and only this screen's count once its id is known.
+ */
 const EARLY_MAX = 256;
+/** Distinct screen ids buffered while the id is unknown; chunks of further ids are only remembered as overflowed. */
+const EARLY_IDS_MAX = 16;
 
 /** Bytes to base64 in slices, so a large chunk never overflows the argument list. */
 export function toBase64(bytes: Uint8Array): string {
@@ -40,7 +45,9 @@ export class ScreenChannel {
   private id: string | null = null;
   private receiver: Receiver = null;
   private inbound: ArrayBuffer[] = [];
-  private early: ScreenChunk[] = [];
+  private early = new Map<string, ScreenChunk[]>();
+  /** Screen ids whose early chunks went past the cap: if this screen is one of them, bytes were lost. */
+  private overflowed = new Set<string>();
   private outbound: Uint8Array[] = [];
   private sending = false;
   private readonly off: () => void;
@@ -67,10 +74,15 @@ export class ScreenChannel {
       return;
     }
     if (this.readyState !== "connecting") { void Sandbox.closeScreen(id).catch(() => {}); return; }
+    const mine = this.early.get(id) ?? [];
+    const lost = this.overflowed.has(id);
+    this.early.clear();
+    this.overflowed.clear();
     this.id = id;
+    if (lost) { this.fail("the screen stream outran the connection setup"); return; }
     this.readyState = "open";
     this.onopen?.(new Event("open"));
-    for (const chunk of this.early.splice(0)) this.onChunk(chunk);
+    for (const chunk of mine) this.onChunk(chunk);
     this.pump();
   }
 
@@ -103,8 +115,15 @@ export class ScreenChannel {
   private onChunk(chunk: ScreenChunk): void {
     if (this.readyState === "closed") return;
     if (this.id === null) {
-      if (this.early.length >= EARLY_MAX) { this.fail("the screen stream outran the connection setup"); return; }
-      this.early.push(chunk);
+      if (this.overflowed.has(chunk.id)) return;
+      const kept = this.early.get(chunk.id);
+      if (kept ? kept.length >= EARLY_MAX : this.early.size >= EARLY_IDS_MAX) {
+        // Not a failure yet: these may be another screen's bytes. open() fails if they turn out to be ours.
+        this.early.delete(chunk.id);
+        this.overflowed.add(chunk.id);
+        return;
+      }
+      if (kept) kept.push(chunk); else this.early.set(chunk.id, [chunk]);
       return;
     }
     if (chunk.id !== this.id) return;
@@ -128,7 +147,8 @@ export class ScreenChannel {
     this.closeReason = info.reason;
     this.off();
     this.outbound = [];
-    this.early = [];
+    this.early.clear();
+    this.overflowed.clear();
     this.onclose?.(info);
   }
 }

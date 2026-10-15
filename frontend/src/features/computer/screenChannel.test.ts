@@ -11,18 +11,42 @@ const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
 beforeEach(() => resetSandbox());
 
 describe("screen channel", () => {
-  it("fails the channel instead of dropping bytes when too many arrive before the id is known", async () => {
-    sandbox.openScreen.mockReturnValue(new Promise<string>(() => {}));
+  it("fails the channel instead of dropping bytes when too many of its chunks arrive before the id is known", async () => {
+    let resolve!: (id: string) => void;
+    sandbox.openScreen.mockReturnValue(new Promise<string>((r) => { resolve = r; }));
     const ch = new ScreenChannel("b1");
     const onerror = vi.fn();
     const onclose = vi.fn();
     ch.onerror = onerror;
     ch.onclose = onclose;
-    void ch.open();
+    const opening = ch.open();
     for (let i = 0; i < 257; i++) emit("sandboxScreen", { id: "s1", data: b64([1]) });
+    expect(onerror).not.toHaveBeenCalled(); // whose bytes they are is unknown until the id arrives
+    resolve("s1");
+    await opening;
     expect(onerror).toHaveBeenCalledTimes(1);
     expect(onclose).toHaveBeenCalledWith(expect.objectContaining({ code: 1006, wasClean: false }));
     expect(ch.readyState).toBe("closed");
+    expect(sandbox.closeScreen).toHaveBeenCalledWith("s1");
+  });
+
+  it("does not fail on another screen's early chunks past the cap", async () => {
+    let resolve!: (id: string) => void;
+    sandbox.openScreen.mockReturnValue(new Promise<string>((r) => { resolve = r; }));
+    const ch = new ScreenChannel("b1");
+    const onerror = vi.fn();
+    const got: number[][] = [];
+    ch.onerror = onerror;
+    ch.onmessage = (e) => got.push(bytesOf(e.data));
+    const opening = ch.open();
+    for (let i = 0; i < 300; i++) emit("sandboxScreen", { id: "other", data: b64([9]) });
+    for (let i = 0; i < 10; i++) emit("sandboxScreen", { id: `x${i}`, data: b64([8]) }); // other screens still in the cap
+    emit("sandboxScreen", { id: "s1", data: b64([82, 70, 66]) });
+    resolve("s1");
+    await opening;
+    expect(onerror).not.toHaveBeenCalled();
+    expect(ch.readyState).toBe("open");
+    expect(got).toEqual([[82, 70, 66]]);
   });
 
   it("has every property noVNC's Websock.attach checks", () => {
