@@ -2,7 +2,7 @@
 .SYNOPSIS
   Builds orole-daemon.exe into build\ (a mygo resource) and then the packaged app + NSIS installer.
 .PARAMETER DaemonOnly
-  Build only build\orole-daemon.exe and build\orole.exe (the CLI), skipping the frontend and installer.
+  Build only build\orole-daemon.exe, build\orole.exe (the CLI) and build\orole-sandbox-setup.exe (the elevated setup helper), skipping the frontend and installer.
 .PARAMETER Version
   Version stamped into the binaries (default: version in mygo.json).
 .PARAMETER Upload
@@ -30,7 +30,11 @@ go build -trimpath -ldflags $ld -o build\orole-daemon.exe ./cmd/daemon
 if ($LASTEXITCODE) { throw "daemon build failed" }
 go build -trimpath -ldflags $ld -o build\orole.exe ./cmd/orole-cli
 if ($LASTEXITCODE) { throw "cli build failed" }
-Write-Host "built build\orole-daemon.exe and build\orole.exe ($Version)"
+# The sandbox setup helper is GUI-subsystem so its UAC-elevated run never flashes a console; it is a mygo
+# resource next to orole-daemon.exe, which finds it there (sandbox.SetupHelperPath).
+go build -trimpath -ldflags "$ld -H windowsgui" -o build\orole-sandbox-setup.exe ./cmd/orole-sandbox-setup
+if ($LASTEXITCODE) { throw "sandbox setup helper build failed" }
+Write-Host "built build\orole-daemon.exe, build\orole.exe and build\orole-sandbox-setup.exe ($Version)"
 if ($DaemonOnly) { return }
 
 # mygo runs buildCommand (frontend build), compiles cmd/desktop, bundles the `resources`
