@@ -53,11 +53,12 @@ bun run --cwd frontend check         # tsc + lint + vitest
 ./scripts/build.ps1                  # daemon + CLI + packaged app + installer under build/
 ```
 
-`start.ps1` uses `.orole-dev` under the repository, works from any working directory, and restores
-your shell's `OROLE_HOME` afterward. Use `.\start.ps1 -DataDir <path>` for another data directory.
+`start.ps1` keeps its data in `profiles\dev` under the repository (git-ignored), whichever directory you
+run it from, and restores your shell's `OROLE_HOME` afterward. Use `.\start.ps1 -DataDir <name>` for another
+profile (`profiles\<name>`), or pass an absolute path.
 It does not stop existing daemons or reset data. If a stale daemon rejects authentication, recover
 that instance before starting; restarting a daemon ends its terminals and agents.
-For a manual launch, set `$env:OROLE_HOME = ".orole-dev"` and run `go tool mygo dev`.
+For a manual launch, set `$env:OROLE_HOME = "$PWD\profiles\dev"` and run `go tool mygo dev`.
 
 The development command builds the bundled daemon **once at startup**. Frontend hot reload does not
 rebuild or restart that separate process. After daemon changes (including harness model discovery),

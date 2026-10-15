@@ -30,7 +30,9 @@ go tool mygo generate                                     # regenerate frontend/
 go tool mygo build                                        # packaged app + NSIS installer in build/
 go run ./cmd/daemon -stderr -v                            # daemon in foreground
 ```
-Dev isolation: set `OROLE_HOME=.orole-dev` to avoid touching real user data. Never delete `%LOCALAPPDATA%\Orole`.
+Dev isolation: launch with `.\start.ps1` (data in git-ignored `profiles\dev`; `-DataDir <name>` for `profiles\<name>`),
+or set `OROLE_HOME` to an absolute path yourself. Terminals and agents of an installed Orole inherit *its* `OROLE_HOME`,
+so a bare `go tool mygo dev` there attaches to the real daemon. Never delete `%LOCALAPPDATA%\Orole`.
 
 ## Conventions
 - Go: stdlib first, `internal/` only, table/behaviour tests, `-race` clean. Typed IPC handlers via `handle[P,R]`.

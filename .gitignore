@@ -10,6 +10,8 @@ build/
 frontend/test-results/
 frontend/playwright-report/
 .orole-dev/
+# isolated dev data directories (start.ps1 -DataDir <name>)
+/profiles/
 
 .shots/
 .orole-dev-alt/

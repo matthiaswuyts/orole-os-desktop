@@ -4,18 +4,26 @@
 (database, logs). Develop against an isolated directory instead:
 
 ```powershell
-$env:OROLE_HOME = "$PWD\.orole-dev"     # git-ignored
+.\start.ps1                              # data in profiles\dev (git-ignored)
+.\start.ps1 -DataDir alt                 # a second profile in profiles\alt
+```
+
+A relative `-DataDir` always lands under the repository's `profiles\` folder, whichever directory the shell started
+in; an absolute path is used as is. The manual equivalent:
+
+```powershell
+$env:OROLE_HOME = "$PWD\profiles\dev"
 go tool mygo dev
 ```
 
-Everything (database, token, logs) then lives in `.orole-dev`, and the daemon's pipe name differs from the real
+Everything (database, token, logs) then lives in that profile, and the daemon's pipe name differs from the real
 instance's (it embeds a hash of the data dir), so a dev daemon and your installed daemon can run side by side.
 
 Reset:
 
 ```powershell
 build\orole.exe daemon stop           # or go run ./cmd/orole-cli daemon stop, with the same OROLE_HOME
-Remove-Item -Recurse -Force .orole-dev
+Remove-Item -Recurse -Force profiles\dev
 ```
 
 `make clean-dev` does the same removal. Stop the daemon first: it holds the SQLite files open and removing them

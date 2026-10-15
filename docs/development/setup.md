@@ -14,7 +14,7 @@
 ```powershell
 git clone https://github.com/rayorole/orole-os-desktop ; cd orole-os-desktop
 bun install --cwd frontend
-$env:OROLE_HOME = "$PWD\.orole-dev"      # isolate dev data; see resetting-dev-data.md
+$env:OROLE_HOME = "$PWD\profiles\dev"   # isolate dev data (.\start.ps1 does this); see resetting-dev-data.md
 go tool mygo dev                         # builds build\orole-daemon.exe, starts Vite on :5173, opens the app
 ```
 

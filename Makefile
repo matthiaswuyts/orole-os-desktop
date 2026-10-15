@@ -23,5 +23,5 @@ daemon-bin: ## only build/orole-daemon.exe and build/orole.exe
 bench:      ## benchmarks recorded in docs/performance.md
 	$(GO) test -run '^$$' -bench . -benchmem ./tests/performance
 installer: build
-clean-dev:  ## deletes ONLY the isolated dev data dir .orole-dev (never %LOCALAPPDATA%\Orole)
-	rm -rf .orole-dev
+clean-dev:  ## deletes ONLY the default isolated dev profile profiles/dev (never %LOCALAPPDATA%\Orole)
+	rm -rf profiles/dev
