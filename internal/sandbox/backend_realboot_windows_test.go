@@ -19,8 +19,9 @@ import (
 
 // TestRealBootConnectsTheGuestAgent boots a real QEMU through hostBackend (job object, overlay, run folder
 // DACL, token file, QMP) with the spike's Alpine netboot kernel and an initramfs that runs orole-guest, then
-// talks HTTP/2 to the agent over the AF_UNIX channel. The real guest image arrives in Task 8; until then
-// orole-guest reads its token from the kernel command line, so this test puts it there. Run by hand:
+// talks HTTP/2 to the agent over the AF_UNIX channel. Alpine's netboot initramfs lacks the qemu_fw_cfg module,
+// so orole-guest falls back to the kernel command line for its token and this test puts it there; the init
+// script also adds the bot user that orole-guest runs commands as. Run by hand:
 //
 //	$env:OROLE_SPIKE_QEMU   = "$env:TEMP\orole-spike\qemu"    # qemu-system-x86_64.exe, qemu-img.exe, share\
 //	$env:OROLE_SPIKE_ALPINE = "$env:TEMP\orole-spike\alpine"  # vmlinuz-virt, initramfs-virt
@@ -96,9 +97,10 @@ func TestRealBootConnectsTheGuestAgent(t *testing.T) {
 		t.Fatalf("guest agent: %v\n--- console ---\n%s", err, log)
 	}
 	t.Logf("REALBOOT agent ready after %s", time.Since(start).Round(time.Millisecond))
-	res, err := g.Exec(ctx, wire.ExecRequest{Command: "uname -sr"})
-	if err != nil || !strings.HasPrefix(res.Stdout, "Linux ") {
-		t.Fatalf("exec = %+v, %v", res, err)
+	res, err := g.Exec(ctx, wire.ExecRequest{Command: "uname -sr; id -un"})
+	if err != nil || !strings.HasPrefix(res.Stdout, "Linux ") || !strings.HasSuffix(res.Stdout, "\nbot\n") {
+		log, _ := os.ReadFile(spec.LogPath)
+		t.Fatalf("exec = %+v, %v (want uname, then the bot user)\n--- console ---\n%s", res, err, log)
 	}
 	t.Logf("REALBOOT exec uname: %s", strings.TrimSpace(res.Stdout))
 	if !pathExists(spec.Overlay) {
@@ -170,6 +172,10 @@ for i in 1 2 3 4 5 6 7 8 9 10; do
   sleep 1
 done
 mkdir -p /home/bot /tmp
+echo 'bot:x:1000:1000::/home/bot:/bin/sh' >> /etc/passwd
+echo 'bot:x:1000:' >> /etc/group
+chown 1000:1000 /home/bot
+chmod 755 /  # the initramfs root is 0700; bot needs to reach /bin
 /orole-guest
 poweroff -f
 `

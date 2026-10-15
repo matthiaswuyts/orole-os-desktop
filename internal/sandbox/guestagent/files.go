@@ -66,15 +66,42 @@ func (a *Agent) handleWriteFile(w http.ResponseWriter, r *http.Request) {
 		mode = 0o644
 	}
 	p := a.resolve(req.Path)
-	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+	if err := a.mkdirAll(filepath.Dir(p)); err != nil {
 		fileError(w, err)
 		return
 	}
+	_, statErr := os.Lstat(p)
 	if err := os.WriteFile(p, req.Content, mode); err != nil {
 		fileError(w, err)
 		return
 	}
+	if errors.Is(statErr, fs.ErrNotExist) { // only what we created: never take over an existing (system) file
+		if err := chownTo(p, a.cfg.RunAs); err != nil {
+			fileError(w, err)
+			return
+		}
+	}
 	writeJSON(w, http.StatusOK, wire.WriteFileResult{Bytes: len(req.Content)})
+}
+
+// mkdirAll is os.MkdirAll that gives the directories it creates to cfg.RunAs.
+func (a *Agent) mkdirAll(dir string) error {
+	var missing []string
+	for d := dir; ; d = filepath.Dir(d) {
+		if _, err := os.Lstat(d); !errors.Is(err, fs.ErrNotExist) || filepath.Dir(d) == d {
+			break
+		}
+		missing = append(missing, d)
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	for i := len(missing) - 1; i >= 0; i-- {
+		if err := chownTo(missing[i], a.cfg.RunAs); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func fileError(w http.ResponseWriter, err error) {
