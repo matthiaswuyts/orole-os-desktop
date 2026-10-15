@@ -5,7 +5,7 @@
   "copyright": "Copyright (c) 2026 Orole",
   "main": "./cmd/desktop",
   "devUrl": "http://localhost:5173",
-  "devCommand": "go build -o build/orole-daemon.exe ./cmd/daemon && go build -ldflags=-H=windowsgui -o build/orole-sandbox-setup.exe ./cmd/orole-sandbox-setup && bun run --cwd frontend dev",
+  "devCommand": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-dev-daemon.ps1 && bun run --cwd frontend dev",
   "buildCommand": "bun run --cwd frontend build",
   "frontendDist": "frontend/dist",
   "bindings": "frontend/src/mygo.ts",

@@ -51,8 +51,18 @@ func EnableWHP(ctx context.Context, helper string, p Paths) (SetupResult, error)
 	if helper == "" {
 		return SetupResult{}, ErrSetupHelperMissing
 	}
-	if _, err := os.Stat(helper); err != nil {
+	f, err := openHelperLocked(helper)
+	if errors.Is(err, windows.ERROR_FILE_NOT_FOUND) || errors.Is(err, windows.ERROR_PATH_NOT_FOUND) {
 		return SetupResult{}, ErrSetupHelperMissing
+	}
+	if err != nil {
+		return SetupResult{}, fmt.Errorf("sandbox: setup helper not verified: %w", err)
+	}
+	// The handle stays open, denying writes, renames and deletes, until the elevated process has started from
+	// the file that was just verified.
+	defer f.Close()
+	if err := checkSetupHelper(f, SetupHelperSHA256, allowUnverifiedSetupHelper()); err != nil {
+		return SetupResult{}, err
 	}
 	code, err := runElevatedFn(ctx, helper, setupcode.EnableWHPArg)
 	if err != nil {
@@ -65,6 +75,21 @@ func EnableWHP(ctx context.Context, helper string, p Paths) (SetupResult, error)
 		}
 	}
 	return res, err
+}
+
+// openHelperLocked opens the helper for reading and shares it for reading only: nobody can change, rename or
+// delete it while the handle is open, but Windows can still load it to run.
+func openHelperLocked(path string) (*os.File, error) {
+	p, err := windows.UTF16PtrFromString(path)
+	if err != nil {
+		return nil, err
+	}
+	h, err := windows.CreateFile(p, windows.GENERIC_READ, windows.FILE_SHARE_READ, nil, windows.OPEN_EXISTING,
+		windows.FILE_ATTRIBUTE_NORMAL, 0)
+	if err != nil {
+		return nil, err
+	}
+	return os.NewFile(uintptr(h), path), nil
 }
 
 func runElevated(ctx context.Context, exe, params string) (uint32, error) {

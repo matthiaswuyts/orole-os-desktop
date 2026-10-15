@@ -34,6 +34,7 @@ import (
 	"github.com/rayorole/orole-os-desktop/internal/plugins"
 	"github.com/rayorole/orole-os-desktop/internal/policy"
 	"github.com/rayorole/orole-os-desktop/internal/projects"
+	"github.com/rayorole/orole-os-desktop/internal/sandbox"
 	"github.com/rayorole/orole-os-desktop/internal/skills"
 	"github.com/rayorole/orole-os-desktop/internal/systemmetrics"
 	"github.com/rayorole/orole-os-desktop/internal/terminals"
@@ -67,8 +68,14 @@ type Daemon struct {
 	// ChatMemory is the chat memory subsystem attached to Chat (svc_chat_memory.go).
 	ChatMemory *memory.Store
 	// Jarvis places and takes the owner's phone calls for bots (svc_jarvis.go).
-	Jarvis  *jarvis.Service
-	Metrics *systemmetrics.Sampler
+	Jarvis *jarvis.Service
+	// Sandbox runs one local VM per bot (svc_sandbox.go); sandboxStop ends its background setup and downloads,
+	// sandboxWG waits for the setup goroutine, sandboxStore is its table (read when a bot is archived).
+	Sandbox      *sandbox.Manager
+	sandboxStop  context.CancelFunc
+	sandboxWG    sync.WaitGroup
+	sandboxStore *sandbox.Store
+	Metrics      *systemmetrics.Sampler
 	// Skills is the central skill registry and Gateway the MCP gateway hub behind the
 	// `orole-daemon mcp-gateway` processes (svc_skills.go). gatewayExe is this executable.
 	Skills     *skills.Store
@@ -186,6 +193,7 @@ func (d *Daemon) cleanup(ln interface{ Close() error }) {
 	if d.Chat != nil {
 		d.Chat.Close()
 	}
+	d.shutdownSandbox() // after Chat.Close: no bot turn uses a computer any more; before DB.Close: the Store writes on stop
 	if d.Plugins != nil {
 		d.Plugins.Close()
 	}

@@ -80,6 +80,22 @@ memory; the guest answers 401 otherwise.
 The host never trusts the guest: answers over 8 MiB are refused, exec output is cut to 1 MiB and file content to
 4 MiB again on the host, and everything a bot receives from the guest is untrusted data (phase 3 wraps it).
 
+### Daemon wiring
+
+`internal/daemon/svc_sandbox.go` builds the `Runtime`, the host backend and the `Manager` from `<data>\sandbox`
+(`Daemon.Sandbox`), stops every VM on daemon exit (after chat, before the database closes) and deletes a bot's
+computer (VM, overlay, socket, row) when the bot is archived (`chat.bots.archive`; a bot without one is a no-op).
+
+| IPC method | Does |
+|---|---|
+| `sandbox.availability` | `Availability`: Windows probes Windows Hypervisor Platform without admin; other platforms say `unsupported-os`. Without pinned runtime assets it is never ready (`runtime-missing`). |
+| `sandbox.status {botId}` | the bot's `Status` (`off` when it has no computer) |
+| `sandbox.setup.enable` | starts `orole-sandbox-setup.exe` elevated (one UAC prompt), audited as `sandbox.setup`. Answers with the result, or `running: true` after 25 s while the prompt is still open. |
+| `sandbox.runtime.install` | starts the pinned QEMU and image download in the background and returns its `RuntimeState`; called again while it runs, it returns progress. Fails with "no pinned computer runtime" in a build without pins. |
+
+Events: `sandbox.status`, `sandbox.availability`, `sandbox.runtime`, `sandbox.setup`. Setup and download run with
+the daemon's lifetime, not the call's, and only for the user: a context acting for a bot or an automation is refused.
+
 ### Storage
 
 `<data>\sandbox\runtime\<version>\` (QEMU), `images\<version>\` (base image), `bots\<bot>.qcow2` (overlay),
@@ -99,6 +115,12 @@ gone the boot fails with `ErrImageGone` instead of booting the overlay against a
   deleted once QMP answers a command that is only allowed after machine initialization (QEMU has read its fw_cfg
   files by then) and on every failed boot, and the token is never logged.
 - QEMU runs in a job object with kill-on-close, so VMs never outlive the daemon.
+- The setup helper is always `orole-sandbox-setup.exe` next to `orole-daemon.exe`, never a path from IPC or
+  settings. That folder is writable by the user, so before the elevated start the daemon opens the helper denying
+  writes, renames and deletes, checks its SHA-256 against `sandbox.SetupHelperSHA256` (embedded at build time by
+  `scripts/build.ps1` and `scripts/build-dev-daemon.ps1`, the mygo `devCommand`), and keeps that handle until the
+  elevated process has started. A daemon built without the hash (`go run`, tests) refuses with "setup helper not
+  verified" unless `OROLE_SANDBOX_SETUP_UNVERIFIED=1` is set; a mismatch is always refused.
 - The VM is the security boundary. The token authenticates the daemon's connection to the guest. In the guest,
   `orole-guest` runs as root and is the only process that can read the token (fw_cfg sysfs files are 0400 root)
   or open the channel (`/dev/virtio-ports/org.orole.guest.0` is 0600 root by a udev rule); commands and terminals

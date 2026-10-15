@@ -34,6 +34,9 @@ type Pins struct {
 	Image        []Asset
 }
 
+// Complete reports whether p names a full runtime; a build made before the releases were pinned has none.
+func (p Pins) Complete() bool { return p.complete() }
+
 func (p Pins) complete() bool {
 	return p.QEMUVersion != "" && p.QEMUTag != "" && p.QEMU.SHA256 != "" && p.ImageVersion != "" && p.ImageTag != "" && len(p.Image) > 0
 }
