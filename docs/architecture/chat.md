@@ -110,10 +110,13 @@ Bots with Jarvis mode on can speak on the phone (`docs/architecture/jarvis.md`).
   the bot shows busy and can be stopped. Work that answer starts reports into the same thread. The callee's own
   thread (the task handed to it) is that bot's work and stays in its chat. Before a written answer is queued,
   `SetFollowUpHook(func(FollowUp) bool)` is told about every report and task report, from a call or not
-  (`FollowUp{BotID, CallID, Kind "report"|"task", From, Status, Text}` with `Text` clipped to 2,000 runes), before the
-  store deadline starts; it must return quickly and do slow work (dialling) asynchronously. It returns true when it
-  handed a call follow-up to that live call to be spoken, and then the report is only stored in the call thread, with
-  no written answer. A follow-up from chat is always answered in chat.
+  (`FollowUp{BotID, CallID, Kind "report"|"task", From, Status, Text, MessageID}` with `Text` clipped to 2,000 runes
+  and `MessageID` the id the report will be stored under), before the store deadline starts; it must return quickly and
+  do slow work (dialling) asynchronously. It returns true when it handed a call follow-up to that live call to be
+  spoken, and then the report is only stored in the call thread, with no written answer. If the call ends without
+  telling it, `AnswerFollowUp(ctx, FollowUp)` queues the written answer after all, in the call thread, with the usual
+  report or task instructions; a follow-up that is not stored yet (the call ended between the hook and the store) is
+  answered as soon as it is. A follow-up from chat is always answered in chat.
 - `Compose(ctx, botID, instruction)` asks the model for one short line (the call opener): nothing stored, no tools.
 - `PartCall` is a message part for the phone call card (`ID` call id, `Name` direction `outbound|inbound`, `Status`,
   `Title` reason, `DurationMs`, `Summary` estimated cost). `PostCallCard` inserts a message holding it and

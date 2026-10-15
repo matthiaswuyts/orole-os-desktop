@@ -6,7 +6,7 @@ behaviour: `docs/architecture/jarvis.md`.
 You need: a Twilio account with a voice-capable number, an ElevenLabs account and API key (Agents, Voices and
 Text-to-Speech), a Cloudflare account with Workers, and your own mobile number. ElevenLabs' inbound and post-call
 webhooks are workspace-wide, so use a workspace without other agents you rely on. Use a dev data dir
-(`OROLE_HOME=.orole-dev`) if you do not want to touch your real data.
+(`.\start.ps1`, data in `profiles\dev`) if you do not want to touch your real data.
 
 ## 0. Live smoke test of the unverified ElevenLabs fields
 
@@ -37,7 +37,8 @@ first; if any item fails, fix `internal/jarvis/elevenlabs.go` (and `relay/` if t
       `internal/jarvis/elevenlabs.go` (`soft_timeout_config` and `speculative_turn` are the least certain).
 - [ ] **skip_turn through the relay.** Stay silent on a call for about 10 s: the agent stays quiet and the call goes on
       (`bunx wrangler@4 tail` shows no repeated `/llm` requests). If it does not register, the tool-call chunk in
-      `sseTool` (`relay/src/hub.ts`) is the place to look.
+      `sseTool` (`relay/src/hub.ts`) is the place to look. Note in your test log whether ElevenLabs asks again right after
+      a `skip_turn` (a `kind=no_user` request in `logs/daemon.log`): those are skipped and never counted as silences.
 - [ ] **Buffer chunk.** A slow answer (step 13) does not end the call: ElevenLabs accepts the `"... "` chunk as a
       reason to keep waiting.
 
@@ -49,11 +50,16 @@ first; if any item fails, fix `internal/jarvis/elevenlabs.go` (and `relay/` if t
       new app. An old relay ignores `skip_turn`, so every silence ends in an empty answer and ElevenLabs drops the call,
       and it speaks its own lines in English. The first daemon start also updates the existing ElevenLabs agent once
       (agent revision 2); no "Couldn't update the phone agent" notice should appear.
+- [ ] With the relay not yet redeployed, Settings > Phone shows "The call relay is out of date: redeploy it (see
+      relay/README.md). Until then a silence can drop a call." and `logs/daemon.log` has `jarvis: the relay is out of
+      date; redeploy it`. After `bunx wrangler@4 deploy` the daemon reconnects and the warning is gone. While the agent
+      is still on an older revision the status shows "The phone agent still has an older configuration: press Connect
+      to update it."
 - [ ] Settings > Phone: enter the Twilio SID and token and the ElevenLabs key, enter the relay URL and the Jarvis
       number, press Connect. The checklist goes green (Twilio, number, ElevenLabs, relay connected).
 - [ ] Connect shows the **webhook secret once**; copy it and run `wrangler secret put WEBHOOK_SECRET`, then redeploy.
       (If you close the panel first, you cannot see it again.)
-- [ ] `GET <relay>/health` answers `{"daemon":true}` while the app runs.
+- [ ] `GET <relay>/health` answers `{"daemon":true,"version":2}` while the app runs.
 
 ## 2. Verify your number
 
@@ -137,7 +143,8 @@ first; if any item fails, fix `internal/jarvis/elevenlabs.go` (and `relay/` if t
 
 Per-turn timings are not in the call record; they are the `jarvis: turn` lines in `logs/daemon.log`
 (`first_audio_ms`, `total_ms`, `opener`). The `jarvis: request` lines beside them give each request's `kind`
-(`opener`, `new`, `bargein`, `retry`, `silence`, `hesitation`, `news`, `pending`) and message count, never any text.
+(`opener`, `new`, `bargein`, `retry`, `silence`, `silence_adopted`, `no_user`, `hesitation`, `news`, `verify`) and
+message count, never any text.
 
 - [ ] Opener: first audio at most 300 ms after pickup (`opener:true`).
 - [ ] Replies: start at most 1.2 s after you stop speaking.
@@ -151,15 +158,25 @@ Speak Dutch (the default call language) or English. Watch `logs/daemon.log` for 
       the fragment; it answers the whole request once (`kind=hesitation`, then the next request).
 - [ ] Say "Ik wil weten, uhm" and stop. About 2.5 s later the bot answers what it heard; it does not wait for a
       silence prompt.
+- [ ] Say "Zet een herinnering om, uhm", wait about 3 s, then say "drie uur" before the bot has said anything of its own
+      (an acknowledgement may already have played). The bot answers the whole request once (`kind=hesitation`, then
+      `kind=bargein`), not "drie uur" alone.
 - [ ] **Slow answer.** Ask something that takes a while (a research question, "wat is er allemaal gebeurd?"). Within
       about 2 s you hear a short acknowledgement ("Momentje, ik ben ermee bezig", "Even kijken"); the call is not dropped
       and no "dropped" notice follows.
 - [ ] **Silence.** Say nothing. The bot stays quiet (no "I didn't hear anything", no repeated requests in
       `wrangler tail`). After about 30 s it asks "Ben je er nog?"; keep quiet and after about 90 s it says it is
-      hanging up and the call ends. Speaking at any point starts the count over.
+      hanging up and the call ends. Speaking at any point starts the count over. Only `kind=silence` requests count;
+      `kind=no_user` requests do not.
+- [ ] **Dead call.** If ElevenLabs stops sending requests altogether (no `jarvis: request` lines while you stay quiet),
+      the daemon hangs up 5 minutes after the last one (`jarvis: no requests, hanging up`) and the card ends as
+      completed, instead of after 30 minutes.
 - [ ] **Closing.** Ask "wat draait er?". The bot answers and asks whether there is anything else; it does not hang up
       by itself. Say "nee, bedankt": a short goodbye and the call ends (`end_call` was accepted). "Wat draait er?" never
       ends the call, even if the bot says goodbye.
+- [ ] Say "nee, wacht": the call does not end, even if the bot tries to hang up. Say "nee, bedankt" and, while the
+      goodbye is still being spoken, "oh wacht, nog één ding": the call goes on and the bot answers
+      (`jarvis: hang-up called off`).
 
 ## 14. Delegation and follow-ups
 
@@ -179,3 +196,9 @@ Needs a second bot that Jarvis may hand work to, and a bot with code tasks on.
       Phone calls page lists "When <other bot> reports back". Hang up. When the other bot reports, your phone rings
       and the bot tells you the report; a once-rule is gone afterwards. For a coding task the rule is "When task ...
       finishes" (`task_finished`) instead.
+- [ ] Do it again, but stay on the line until the bot tells you the report on the call. The once-rule is gone right
+      after (the Phone calls page no longer lists it) and no call-back follows later.
+- [ ] Do it again and say "nee, dat was het" just as the other bot finishes (its report arrives during or right after
+      the goodbye). Nothing is lost: your phone rings for the call-back, the call pane shows the report and the bot's
+      written answer, and a "<other bot> reported back" notification arrives. No "News you missed on the call" notice
+      repeats it.
