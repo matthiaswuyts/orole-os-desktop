@@ -99,8 +99,9 @@ daemon start sweeps away computers whose bot is archived or gone, finishing dele
 
 Events: `sandbox.status`, `sandbox.availability`, `sandbox.runtime`, `sandbox.setup`. Setup and download run with
 the daemon's lifetime, not the call's, and only for the user: a context acting for a bot or an automation is refused.
-A download has no overall time limit (the base image is ~1.5 GB) but fails when nothing arrives for 2 minutes; each
-install first removes `.staging-*` folders a killed daemon left in `runtime\` and `images\`.
+A download has no overall time limit (QEMU and the image total ~1.6 GB; the setup screen states the size computed
+from the pins) but fails when nothing arrives for 2 minutes; each install first removes `.staging-*` folders a
+killed daemon left in `runtime\` and `images\`.
 
 ### Storage
 
@@ -262,7 +263,7 @@ are published.
   publishes them after review, and until then the pinned URLs return 404 and the install fails.
   `scripts/sandbox-pins.ps1` regenerates `pins.go` from the releases (drafts included) and cross-checks each hash
   against GitHub's asset digest.
-- **Guest image** (`guest/`, NixOS): see "Guest image" below. It is built in CI or locally through WSL
+- **Guest image** (`guest/`, NixOS): see "Guest image" above. It is built in CI or locally through WSL
   (`docs/development/guest-image.md`).
 - **IPC.** `sandbox.availability`, `sandbox.status`, `sandbox.setup.enable`, `sandbox.runtime.install` and the
   events listed under "Daemon wiring". Archiving a bot stops its VM and deletes its overlay and row.
