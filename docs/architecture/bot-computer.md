@@ -143,6 +143,11 @@ gone the boot fails with `ErrImageGone` instead of booting the overlay against a
   host's loopback) except DHCP renewals from port 68, which only root can bind.
 - The guest has open internet and can reach the home network (printers, NAS, router pages, other PCs); only the host's
   own loopback is blocked, and only for `bot` (guest root could bypass it). Phase 4 states this in the UI.
+- Since image 0.1.3, nftables also rejects TCP connects from uid 1000 (`bot`: its commands, and Chromium's own pages)
+  to 127.0.0.0/8 and ::1 ports 9222 (Chromium DevTools) and 5900 (wayvnc). Only `orole-guest` (root) connects to them,
+  so the bot cannot drive the browser or read the screen around the tools' approvals and the takeover lock. Chromium,
+  cage and wayvnc still run as `bot`, so this closes the ports, not same-user access to those processes, their files
+  or the Wayland socket.
 
 ### Guest image
 
@@ -156,7 +161,7 @@ Facts later phases rely on: user `bot` (uid 1000, primary group `users` gid 100,
 locked password); root's password is locked too and there is no sshd, so the image has no login method at all
 (`users.allowNoPasswordLogin = true`; the debug image's serial-console autologin is the only way in); Chromium in cage
 (wlroots headless backend, pixman) with CDP on `127.0.0.1:9222` and its profile in `/home/bot/.config/orole-chromium`;
-wayvnc on `127.0.0.1:5900`; `orole-guest` as a root systemd unit after module loading, restarted forever;
+wayvnc on `127.0.0.1:5900` (from 0.1.3 only root can connect to either); `orole-guest` as a root systemd unit after module loading, restarted forever;
 `qemu_fw_cfg` loaded in the initrd; Python 3 + uv, Node.js, git, curl, jq, ripgrep; nix-ld and envfs so downloaded
 Linux binaries and `#!/bin/bash` scripts run; fontconfig with DejaVu and Noto for Chromium. `orole-guest` reads its token from fw_cfg
 (`/sys/firmware/qemu_fw_cfg/by_name/opt/orole/token/raw`) and falls back to `orole.token=` on the kernel command line.
@@ -164,13 +169,15 @@ Linux binaries and `#!/bin/bash` scripts run; fontconfig with DejaVu and Noto fo
 #### Guest image checks
 
 Run on 2026-10-15 on the developer PC (Windows 11 Pro 21H2, build 22000, Hyper-V running, 32 GB RAM, unelevated)
-with `TestRealGuestImageThroughTheManager` (`internal/sandbox/e2e_windows_test.go`): the pinned `guest-v0.1.2` and
+with `TestRealGuestImageThroughTheManager` (`internal/sandbox/e2e_windows_test.go`): the pinned `guest-v0.1.3` and
 `qemu-v20260811` assets (draft releases at the time, read with `gh`) installed through the real `Runtime` (size and
 SHA-256 against `DefaultPins`, unzip) from a local stand-in for the release server, then booted through the real
 `Manager` and host backend (`-accel whpx,kernel-irqchip=off`, 2048 MB, 2 vCPU). Every command below ran as `bot`
 through `orole-guest`. Two full runs on `guest-v0.1.0`, one on `guest-v0.1.1` and one on `guest-v0.1.2` (the first
 image with the browser and screen relay: `orole-guest` with chromedp v0.14.2), same results; times from the
-`guest-v0.1.2` run.
+`guest-v0.1.2` run. A run on `guest-v0.1.3` (draft, Actions run 38740342706: the CDP/VNC firewall for `bot`, the
+password-field refusal and the attach deadline) passed every row again with similar times (boot 9.6 s, CDP up 4.1 s
+after ready) and the rows marked 0.1.3 below.
 
 | Check | Result |
 |---|---|
@@ -181,7 +188,9 @@ image with the browser and screen relay: `orole-guest` with chromedp v0.14.2), s
 | Guest memory (`free -m`) | 477 MB used of 1969 MB, idle with Chromium open |
 | `id -un` | `bot` |
 | Services (`systemctl is-active cage-tty1 wayvnc orole-guest`) | active, active, active |
-| Chromium CDP (`curl -s 127.0.0.1:9222/json/version`) | up 3.2 s after guest ready, `Chrome/155.0.8059.79` |
+| Chromium CDP (`curl -s 127.0.0.1:9222/json/version`; from 0.1.3 `ss -ltn`, since bot can no longer connect) | up 3.2 s after guest ready, `Chrome/155.0.8059.79` |
+| 0.1.3: bot connects to `127.0.0.1:9222`, `[::1]:9222`, `127.0.0.2:9222` (curl, bash `/dev/tcp`) | refused (`curl` exit 7, `Connection refused`), no DevTools JSON |
+| 0.1.3: bot connects to `127.0.0.1:5900`, `[::1]:5900` (bash `/dev/tcp`; the image has no `nc`) | refused; `Guest.Browser` and `Guest.OpenScreen` (root `orole-guest`) still work in the same run |
 | wayvnc (`ss -ltn`) | listening on `127.0.0.1:5900` only, 46 ms after guest ready |
 | Fonts (`fc-list`) | 921 faces (DejaVu, Noto) |
 | fw_cfg token / channel device | `400 root` / `600 root`; `cat` of the token as bot fails |
@@ -194,6 +203,7 @@ image with the browser and screen relay: `orole-guest` with chromedp v0.14.2), s
 | Browser `click` on a missing target | 6 ms, `502: nothing visible on the page matches "#orole-missing"` |
 | Browser `click text=More information` (same-tab link on a page served from the guest's loopback) | 64 ms, the result already reports the new page |
 | Browser `click` on a `target=_blank` link | 137 ms; the result and the next `read` drive the new front tab |
+| 0.1.3: `type` into a text field / a password field (`#pw` and `text=Password`) | 62 ms, typed / refused in 2-7 ms: "that is a password field, and you never type passwords: call ask_user_to_take_over…" |
 | Screen relay (`Guest.OpenScreen`, wayvnc) | banner `RFB 003.008` 1 ms after opening; RFB 3.8 handshake with security None, framebuffer 1280x720 |
 | Long streams: `/screen` and `/pty` open and idle for 65 s | both still work (a FramebufferUpdate after the idle, a shell command echoes); the guest's `http2.Server` sets no timeouts and the host transport only pings (15 s read idle, 10 s ping timeout) |
 | File write through `/files/write` | owner `bot`; read back after a clean restart |
@@ -248,10 +258,15 @@ profile), so an unprompted open followed by a read is a way to move data out. It
 that names the host (lowercased, punycode, no port or user info): the user is asked once per new site and can choose
 "always allow" for that host only. `browser_read` and `browser_screenshot` stay reads.
 
-- **`browser_open` refuses** `localhost` and `*.localhost`, and literal loopback, private, link-local, CGNAT
+- **What the per-site approval covers.** Only the address the bot passes to `browser_open`. Links it clicks,
+  redirects, pages opened in new tabs and `computer_run` (curl, a script) can reach any other host without a new
+  prompt. Bots whose tool access is "read and change" or "everything" are never asked at all (the policy auto-approves
+  writes for them).
+- **`browser_open` refuses** (typed addresses only; a link or redirect to such an address is not checked) `localhost` and `*.localhost`, and literal loopback, private, link-local, CGNAT
   (100.64.0.0/10), "this network" and unspecified IPs, including the VM's gateway 10.0.2.2, IPv6 forms that carry such
   an IPv4 address (NAT64, 6to4, IPv4-compatible) and every spelling a browser would read as one (`127.1`, `0x7f.1`,
-  `2130706433`, fullwidth or ideographic-dot Unicode forms; hosts are mapped with UTS-46 first). **Not caught:** a
+  `2130706433`, fullwidth or ideographic-dot Unicode forms, IPv6 zones such as `%25eth0` and any number of trailing
+  dots; hosts are mapped with UTS-46 first). **Not caught:** a
   public hostname whose DNS answer is a private address. The computer can reach the user's home network (the guest
   firewall only blocks the host's own loopback), so the per-host approval is the guard there.
 - **Approvals show exactly what runs.** The prompt carries the whole command (at most 1800 bytes: the approval detail
@@ -260,6 +275,11 @@ that names the host (lowercased, punycode, no port or user info): the user is as
   targets and text containing control or invisible characters (carriage return, escape, zero-width, bidi marks,
   invalid UTF-8) are refused instead of being shown differently from what would run; newlines and tabs are allowed in
   commands and typed text.
+- **Write, then run.** A `computer_run` approval shows the command (`python3 job.py`), not the content of a script
+  the bot wrote before; the `computer_write_file` approval for that script showed only its first 300 bytes. Approving
+  a run of a file the bot wrote means trusting the whole file.
+- **Passwords.** `browser_type` refuses when the resolved field is an `input[type=password]` (checked in the guest)
+  and tells the bot to ask the user to take over.
 - **Results are untrusted.** Command output, file contents, page text, screenshots and guest error text are
   `Untrusted` (fenced by the engine). The model sees at most 64 KiB per command or file and 90 KiB of page text, with
   a note on how to get the rest; binary files are summarised. URLs must be absolute http(s); targets are a CSS
@@ -270,7 +290,9 @@ that names the host (lowercased, punycode, no port or user info): the user is as
 - **Limits.** Computer bots default to 30 steps and 60 tool calls per turn (`computerMaxSteps`, `computerMaxToolCalls`
   in `internal/chat/engine.go`) unless the bot sets its own. `computer_read_file`, `browser_read` and
   `browser_screenshot` are exempt from the repeated-identical-call guard, because the file or page changes between
-  calls.
+  calls. For the other `computer_*` and `browser_*` tools the guard counts only identical calls in a row (the third
+  in a row stops the turn), so a step repeated between others (click Next, read, click Next) is allowed; other tools
+  still stop at the third identical call anywhere in the turn.
 - **Deadlines.** Every guest call has one: a command's timeout (default 120 s, max 600 s) plus 30 s, files 60 s,
   browser 90 s. Starting the VM is bounded separately at 100 s (boot, busy wait, slack). The guest bounds a page load
   at 60 s and other browser steps at 20 s.
@@ -307,20 +329,26 @@ Phone-call turns cannot ask for a takeover. Untrusted content cannot start one: 
   bot is told the computer stopped) and drops the lock. The lock is also released, so the bot's browser works again,
   when the hold timeout passes or the bot's turn is cancelled, including when the user started the takeover by hand
   with no request pending.
-- **While taken over.** Browser tools are refused before any approval prompt, and again after one. A guest call
-  already in flight finishes first. Command and file tools are not blocked.
+- **While taken over.** `computer_run`, `computer_write_file` and the browser tools are refused before any approval
+  prompt, again after one, and by the daemon adapter after the VM starts. `computer_read_file` is allowed. A guest
+  call already in flight finishes first (a command started before the takeover keeps running, and so does anything it
+  left running in the background). The bot's user cannot connect to Chromium's DevTools port or wayvnc at all (guest
+  nftables, image 0.1.3), so a command cannot drive the browser or watch the screen the user is using.
 - **Signing in.** What the user signs in to stays in the browser profile on the bot's computer, and the bot can use
-  those sessions afterwards. Each new host still needs approval unless the user chose "always allow" for it. There is
-  no UI to wipe the browser profile yet; the only way is to delete the computer.
+  those sessions afterwards. The profile's cookie files are owned by `bot`, so the bot's own commands can read them
+  too (and use them outside the browser). Each new host the bot types still needs approval unless the user chose
+  "always allow" for it. There is no UI to wipe the browser profile yet; the only way is to delete the computer.
 
 ### Guest browser and screen
 
 `cmd/orole-guest` serves `POST /browser` with chromedp attached to the visible Chromium tab over CDP on
 `127.0.0.1:9222` inside the guest (open waits for the load event; read returns title, URL and the visible text capped
 at 90 KiB; screenshot is a viewport PNG, at most 5 MiB), and `POST /screen` as a full-duplex relay to the guest's VNC
-server on `127.0.0.1:5900`. Neither port is reachable from the host except through the authenticated channel. Both
-routes need guest image 0.1.2; a computer still on an older image answers 501 and the bot is told to ask the user to
-reset it. The viewer that uses `/screen` is phase 4.
+server on `127.0.0.1:5900`. Neither port is reachable from the host except through the authenticated channel, nor
+(from image 0.1.3) by the bot's own user inside the guest. Both routes need guest image 0.1.2; a computer still on an
+older image answers 501 and the bot is told to ask the user to reset it. The viewer that uses `/screen` is phase 4.
+Attaching chromedp to a tab has its own 20 s deadline: an attach that hangs is given up (and filed later if it ever
+finishes) instead of blocking every following action. Image 0.1.3 adds the password-field refusal and that deadline.
 
 ## Windows backend (phase 2)
 
