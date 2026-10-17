@@ -8,6 +8,8 @@ notes. See `docs/development/updates.md`.
 
 ## Unreleased
 
+## 0.4.1-dev - 2026-10-17
+
 ### Changed
 - A bot's Computer pane now shows one view at a time: Screen, Terminal or Activity, with the last one remembered. Activity lists what the bot ran (commands with their output, file writes, browser actions) as it happens. A Full screen button gives the whole chat area to the pane (Esc leaves), so you can browse the web on the computer at a comfortable size. The Computer button in the title bar no longer opens a pane when the computer is off; it says why instead, and the pane's footer note about network reach was removed. Terminals draw on the GPU when the browser allows it, which keeps fast output smooth.
 - Panes beside the conversation (code task, call, computer, document) open and close without the sliding animation, like the bot settings panel.
