@@ -47,6 +47,9 @@ export interface ChatState {
   /** Opens the bot's Computer pane: its setup or state, live screen and terminal (id = the bot). */
   openComputerPane: (botId: string) => void;
   closePane: () => void;
+  /** The Computer pane fills the whole chat area (the conversation is hidden) instead of sharing it. */
+  computerExpanded: boolean;
+  setComputerExpanded: (expanded: boolean) => void;
 }
 
 export type ChatPane = { kind: "task"; id: string } | { kind: "call"; id: string } | { kind: "computer"; id: string } | { kind: "document"; messageId: string; partIndex: number };
@@ -129,7 +132,7 @@ function dropPreviews() {
 
 /** The daemon owns bots and conversations. This is a disposable, event-synchronized snapshot for the rail. */
 export const useChat = create<ChatState>((set, get) => ({
-  bots: [], selectedBotId: readSelected(), running: {}, builder: { open: false, botId: null }, settingsOpen: false, pane: null,
+  bots: [], selectedBotId: readSelected(), running: {}, builder: { open: false, botId: null }, settingsOpen: false, pane: null, computerExpanded: false,
   available: inDesktop, ready: false, loading: false, error: null,
   async load() {
     if (!get().available) return;
@@ -224,12 +227,13 @@ export const useChat = create<ChatState>((set, get) => ({
   },
   openBuilder: (botId) => set({ builder: { open: true, botId: botId === "new" ? null : botId } }),
   closeBuilder: () => set({ builder: { open: false, botId: null } }),
-  setSettingsOpen: (settingsOpen) => set((state) => ({ settingsOpen, pane: settingsOpen ? null : state.pane })),
-  openTaskPane: (id) => set({ pane: { kind: "task", id }, settingsOpen: false }),
-  openCallPane: (id) => set({ pane: { kind: "call", id }, settingsOpen: false }),
-  openDocument: (messageId, partIndex) => set({ pane: { kind: "document", messageId, partIndex }, settingsOpen: false }),
+  setSettingsOpen: (settingsOpen) => set((state) => ({ settingsOpen, pane: settingsOpen ? null : state.pane, computerExpanded: settingsOpen ? false : state.computerExpanded })),
+  openTaskPane: (id) => set({ pane: { kind: "task", id }, settingsOpen: false, computerExpanded: false }),
+  openCallPane: (id) => set({ pane: { kind: "call", id }, settingsOpen: false, computerExpanded: false }),
+  openDocument: (messageId, partIndex) => set({ pane: { kind: "document", messageId, partIndex }, settingsOpen: false, computerExpanded: false }),
   openComputerPane: (botId) => set({ pane: { kind: "computer", id: botId }, settingsOpen: false }),
-  closePane: () => set({ pane: null }),
+  closePane: () => set({ pane: null, computerExpanded: false }),
+  setComputerExpanded: (computerExpanded) => set((state) => ({ computerExpanded: computerExpanded && state.pane?.kind === "computer" })),
 }));
 
 /** Fields a conversation depends on; `running` and the rail preview are derived and change while a reply streams. */

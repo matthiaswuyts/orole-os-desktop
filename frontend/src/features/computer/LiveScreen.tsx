@@ -56,7 +56,7 @@ export function LiveScreen({ botId, interactive }: { botId: string; interactive:
 
   return (
     <div role="region" aria-label="Live screen" data-slot="live-screen"
-      className="relative flex min-h-48 flex-[3] overflow-hidden rounded-lg border bg-muted/40">
+      className="relative flex min-h-48 flex-1 overflow-hidden rounded-lg border bg-muted/40">
       <div ref={host} className="size-full" />
       {state !== "connected" && (
         <div role="status" className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-sm text-muted-foreground">

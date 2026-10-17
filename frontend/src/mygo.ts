@@ -37,6 +37,24 @@ export interface Account {
 }
 
 /**
+ * ActivityEntry is one thing a bot did on its computer, for the Computer pane's activity tab. Title and Output are
+ * untrusted text the caller has already cleaned and capped.
+ */
+export interface ActivityEntry {
+  id: string;
+  botId: string;
+  kind: string;
+  title: string;
+  status: string;
+  exitCode: number;
+  output?: string;
+  truncated?: boolean;
+  /** RFC 3339 */
+  startedAt: string;
+  durationMs: number;
+}
+
+/**
  * AddParams creates a server. BearerToken and ClientSecret go to the credential
  * store and are never persisted anywhere else.
  */
@@ -4777,6 +4795,10 @@ export const Machines = {
  * download run in the daemon and report progress as events (sandbox:setup, sandbox:runtime, sandbox:availability).
  */
 export const Sandbox = {
+  /** Activity lists what the bot did on its computer recently (commands, file writes, browser actions), oldest first. */
+  activity(botID: string): Promise<ActivityEntry[]> {
+    return call("Sandbox.Activity", botID);
+  },
   /** Availability says whether bot computers can run on this PC, and why not. */
   availability(): Promise<Availability> {
     return call("Sandbox.Availability");
@@ -4948,6 +4970,11 @@ export const events = {
   sandboxRuntime: event<RuntimeState>("sandbox:runtime"),
   /** SandboxSetup reports the Windows Hypervisor Platform setup: running, then its result. */
   sandboxSetup: event<SetupState>("sandbox:setup"),
+  /**
+   * SandboxActivity fires when a bot starts or finishes something on its computer (a command, a file write or a
+   * browser action); the same id is sent again when it finishes.
+   */
+  sandboxActivity: event<ActivityEntry>("sandbox:activity"),
   /** SandboxHandoff fires when a bot starts or stops waiting for the user to take over its computer. */
   sandboxHandoff: event<HandoffState>("sandbox:handoff"),
 } as const;

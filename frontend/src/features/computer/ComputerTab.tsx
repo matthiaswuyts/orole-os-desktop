@@ -1,12 +1,15 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { ChevronLeftIcon } from "lucide-react";
+import { ChevronLeftIcon, Maximize2Icon, Minimize2Icon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "@/components/ui/tooltip";
+import { cn } from "@/lib/utils";
 import { TerminalPane } from "@/features/terminals/TerminalPane";
 import { Sandbox } from "@/mygo";
 import { useSettings } from "@/stores/settings";
-import { computerView, errorText, runtimeProgress, SECURITY_NOTE, setupCopy, setupError, type ComputerView } from "./computerState";
+import { computerView, errorText, runtimeProgress, setupCopy, setupError, type ComputerView } from "./computerState";
+import { ActivityFeed } from "./ActivityFeed";
 import { LiveScreen } from "./LiveScreen";
 import { useComputer, useViewerLease } from "./useComputer";
 
@@ -15,19 +18,45 @@ const NOTE_MAX = 500;
 
 type Computer = ReturnType<typeof useComputer>;
 
+const TABS = [{ id: "screen", label: "Screen" }, { id: "terminal", label: "Terminal" }, { id: "activity", label: "Activity" }] as const;
+type TabId = (typeof TABS)[number]["id"];
+const TAB_KEY = "orole.computer.tab";
+const readTab = (): TabId => {
+  try {
+    const value = localStorage.getItem(TAB_KEY);
+    return TABS.some((t) => t.id === value) ? (value as TabId) : "screen";
+  } catch { return "screen"; }
+};
+const writeTab = (tab: TabId) => {
+  try { localStorage.setItem(TAB_KEY, tab); } catch { /* the tab then lasts for the session only */ }
+};
+
 /**
  * A bot's computer beside its conversation: the setup screen until this PC can run one, otherwise its state, and
- * while it runs the live screen (view-only until Take over), Take over / Done, and a terminal in the computer.
- * Nothing else by design: no start, stop or reset, and the screen and terminal open only while it runs; the computer
- * starts when the bot uses it. The daemon decides what a takeover allows; this only asks.
+ * while it runs one of three tabs at a time (the live screen, view-only until Take over; a terminal in the computer;
+ * what the bot has been doing), Take over / Done, and a full-screen toggle that gives the whole chat area to the tab.
+ * Nothing else by design: no start, stop or reset, and the tabs open only while it runs; the computer starts when
+ * the bot uses it. The daemon decides what a takeover allows; this only asks.
  */
-export function ComputerTab({ botId, onClose }: { botId: string; onClose: () => void }) {
+export function ComputerTab({ botId, onClose, expanded = false, onExpandedChange }: { botId: string; onClose: () => void; expanded?: boolean; onExpandedChange?: (expanded: boolean) => void }) {
   const computer = useComputer(botId);
   const { availability, status, handoff, error, refresh } = computer;
   useViewerLease(botId);
   const view = computerView(availability, status, handoff);
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [tab, setTabState] = useState<TabId>(readTab);
+  const setTab = (next: TabId) => { setTabState(next); writeTab(next); };
+  const waiting = view.kind === "running" && !!view.waitingForUser;
+  // A bot that asks for the user needs the screen, whichever tab was open.
+  useEffect(() => { if (waiting) setTabState("screen"); }, [waiting]);
+  // Esc leaves full screen, like any full-screen view.
+  useEffect(() => {
+    if (!expanded || !onExpandedChange) return;
+    const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") onExpandedChange(false); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [expanded, onExpandedChange]);
   // Closing the pane never releases a takeover: Done would tell a waiting bot the user finished. The daemon ends an
   // abandoned takeover itself (viewer lease expiry, or the bot's own hold timeout when it asked).
 
@@ -52,7 +81,28 @@ export function ComputerTab({ botId, onClose }: { botId: string; onClose: () => 
       <h2 id="side-pane-title" tabIndex={-1} className="truncate text-sm font-medium outline-none">Computer</h2>
       {view.kind === "running" && !view.takenOver && !view.waitingForUser
         && <Button type="button" size="xs" variant="outline" className="ml-auto" disabled={busy} onClick={takeOver}>Take over</Button>}
+      {view.kind === "running" && onExpandedChange && <Tooltip>
+        <TooltipTrigger render={<Button type="button" variant="ghost" size="icon-xs" className={cn(!(!view.takenOver && !view.waitingForUser) && "ml-auto")}
+          aria-label={expanded ? "Exit full screen" : "Full screen"} aria-pressed={expanded} onClick={() => onExpandedChange(!expanded)} />}>
+          {expanded ? <Minimize2Icon aria-hidden /> : <Maximize2Icon aria-hidden />}
+        </TooltipTrigger>
+        <TooltipPopup>{expanded ? "Exit full screen (Esc)" : "Full screen"}</TooltipPopup>
+      </Tooltip>}
     </header>
+    {view.kind === "running" && <div role="tablist" aria-label="Computer views" className="flex shrink-0 gap-1 border-b px-2 py-1">
+      {TABS.map((t) => <button key={t.id} type="button" role="tab" id={`computer-tab-${t.id}`} aria-selected={tab === t.id} aria-controls="computer-tabpanel" tabIndex={tab === t.id ? 0 : -1}
+        onClick={() => setTab(t.id)}
+        onKeyDown={(event) => {
+          const step = event.key === "ArrowRight" ? 1 : event.key === "ArrowLeft" ? -1 : 0;
+          if (!step) return;
+          event.preventDefault();
+          const next = TABS[(TABS.findIndex((x) => x.id === t.id) + step + TABS.length) % TABS.length];
+          setTab(next.id);
+          document.getElementById(`computer-tab-${next.id}`)?.focus();
+        }}
+        className={cn("rounded-md px-2.5 py-1 text-xs outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none",
+          tab === t.id ? "bg-secondary font-medium text-secondary-foreground" : "text-muted-foreground hover:text-foreground")}>{t.label}</button>)}
+    </div>}
     <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-auto p-2">
       {actionError && <p role="alert" className="selectable px-1 text-xs text-destructive-foreground">{actionError}</p>}
       {view.kind !== "loading" && view.kind !== "setup" && error && <p role="alert" className="selectable px-1 text-xs text-destructive-foreground">{error}</p>}
@@ -72,12 +122,14 @@ export function ComputerTab({ botId, onClose }: { botId: string; onClose: () => 
                 <Button type="button" size="xs" disabled={busy} onClick={takeOver}>Take over</Button>
               </div>}
               {view.takenOver && <Takeover pending={handoff?.pending === true} reason={view.handoffReason} busy={busy} onDone={done} />}
-              <LiveScreen botId={botId} interactive={view.takenOver} />
-              <ComputerTerminal botId={botId} />
+              <div role="tabpanel" id="computer-tabpanel" aria-labelledby={`computer-tab-${tab}`} className="flex min-h-0 flex-1 flex-col">
+                {tab === "screen" && <LiveScreen botId={botId} interactive={view.takenOver} />}
+                {tab === "terminal" && <ComputerTerminal botId={botId} />}
+                {tab === "activity" && <ActivityFeed botId={botId} />}
+              </div>
             </>
             : <StateNote view={view} />}
     </div>
-    <p data-slot="computer-security-note" className="shrink-0 border-t px-3 py-1.5 text-xs text-muted-foreground">{SECURITY_NOTE}</p>
   </section>;
 }
 
@@ -171,7 +223,7 @@ function ComputerTerminal({ botId }: { botId: string }) {
     return () => { live = false; };
   }, [botId, attempt]);
   // Highlighted while it has the keyboard, like the Terminals view; clicking the screen moves focus away.
-  return <div data-slot="computer-terminal" className="flex min-h-40 flex-[2] flex-col"
+  return <div data-slot="computer-terminal" className="flex min-h-0 flex-1 flex-col"
     onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setActive(false); }}>
     {id
       ? <TerminalPane id={id} active={active} onFocus={() => setActive(true)} fontSize={fontSize} />

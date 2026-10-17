@@ -4,6 +4,7 @@ import { FitAddon } from "@xterm/addon-fit";
 import { SearchAddon } from "@xterm/addon-search";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
+import { WebglAddon } from "@xterm/addon-webgl";
 import { Search, X } from "lucide-react";
 import { Terminals, events } from "@/mygo";
 import { cn } from "@/lib/utils";
@@ -55,6 +56,13 @@ export function TerminalPane({ id, active, onFocus, fontSize }: { id: string; ac
     term.unicode.activeVersion = "11";
     termRef.current = term; search.current = srch;
     term.open(host.current!);
+    // GPU rendering keeps fast output (builds, logs, an agent's commands) smooth. Without WebGL2, or after the browser
+    // drops the context, xterm's own renderer takes over.
+    try {
+      const gl = new WebglAddon();
+      gl.onContextLoss(() => gl.dispose());
+      term.loadAddon(gl);
+    } catch { /* no WebGL2 here */ }
     fitRef.current = fit;
     fit.fit();
     // Observe the applied CSS rather than React effect order; update live sessions in place.

@@ -5,9 +5,9 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "@/components/ui/tooltip";
 import { ServerLogo } from "@/features/integrations/ServerLogo";
 import { useUI } from "@/stores/ui";
-import { SwitchRow } from "../panel/rows";
 import { splitModel, type Action, type FormState, type Problems } from "./botForm";
 import { Section } from "./controls";
 import { useLoad, type Loaded } from "./useLoad";
@@ -23,11 +23,17 @@ function serverNotice(server: ServerState): string | undefined {
 function BuiltinTool({ info, form, dispatch }: { info: ChatToolInfo; form: FormState; dispatch: Dispatch<Action> }) {
   const heading = useId();
   const enabled = form.tools.includes(info.id);
+  const unavailable = !info.available && !enabled;
   return (
-    <li className="flex min-w-0 flex-col gap-2 py-2">
+    <li className="flex min-w-0 flex-col py-2">
       <div className="flex items-center justify-between gap-3">
         <span className="flex min-w-0 items-center gap-1.5">
-          <span id={heading} className="truncate text-sm">{info.name}</span>
+          {unavailable
+            ? <Tooltip>
+              <TooltipTrigger render={<span id={heading} tabIndex={0} className="truncate text-muted-foreground text-sm" />}>{info.name}</TooltipTrigger>
+              <TooltipPopup>{info.reason || "The selected model cannot run this tool."}</TooltipPopup>
+            </Tooltip>
+            : <span id={heading} className="truncate text-sm">{info.name}</span>}
           {info.egress && <Globe className="size-3 shrink-0 text-muted-foreground" aria-label={`Sends data off this computer: ${info.egress}`} />}
         </span>
         <Switch
@@ -35,7 +41,7 @@ function BuiltinTool({ info, form, dispatch }: { info: ChatToolInfo; form: FormS
           onCheckedChange={(on) => dispatch({ type: "tool", id: info.id, enabled: on })}
         />
       </div>
-      {!info.available && <p role="status" className="text-muted-foreground text-xs">{info.reason || "The selected model cannot run this tool."}</p>}
+      {!info.available && enabled && <p role="status" className="text-muted-foreground text-xs">{info.reason || "The selected model cannot run this tool."}</p>}
     </li>
   );
 }
@@ -171,10 +177,10 @@ export function ToolsPage({ form, dispatch }: { form: FormState; dispatch: Dispa
   const unknown = tools.data ? form.tools.filter((id) => !offered.has(id)) : [];
   return (
     <div className="flex flex-col gap-3">
-      <div className="overflow-hidden rounded-xl border bg-card/60">
-        <SwitchRow icon={SquareTerminalIcon} label="Runs code tasks" hint="Starts coding agents in your projects, follows their progress and tells you when they finish or need you. Your settings decide whether a start waits for your approval, and which agent, model and permission mode it uses." checked={form.codeTasks} onChange={(codeTasks) => dispatch({ type: "patch", patch: { codeTasks } })} />
-        <SwitchRow icon={MonitorIcon} label="Has its own computer" hint="A private Linux computer on this PC with a terminal and a browser you can watch and take over. It starts when the bot first uses it and can reach the internet and your home network." checked={form.computer} onChange={(computer) => dispatch({ type: "patch", patch: { computer } })} />
-      </div>
+      <ul aria-label="Bot access" className="flex flex-col divide-y">
+        <ToggleRow lead={<SquareTerminalIcon aria-hidden className="size-4 shrink-0 text-muted-foreground" />} name="Runs code tasks" checked={form.codeTasks} onChange={(codeTasks) => dispatch({ type: "patch", patch: { codeTasks } })} />
+        <ToggleRow lead={<MonitorIcon aria-hidden className="size-4 shrink-0 text-muted-foreground" />} name="Has its own computer" checked={form.computer} onChange={(computer) => dispatch({ type: "patch", patch: { computer } })} />
+      </ul>
       {tools.error && (
         <Alert variant="error"><AlertDescription className="flex items-center justify-between gap-2"><span className="selectable break-words">{tools.error}</span><Button size="xs" variant="outline" onClick={tools.reload}>Retry</Button></AlertDescription></Alert>
       )}

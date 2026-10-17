@@ -15,7 +15,11 @@ import { emit, resetSandbox, sandbox } from "./testing";
 const running = (takenOver = false) => ({ botId: "b1", state: "running", takenOver });
 const view = () => render(<ComputerTab botId="b1" onClose={() => {}} />);
 
+const tab = (name: string) => screen.findByRole("tab", { name });
+const entry = (over: Record<string, unknown>) => ({ id: "1", botId: "b1", kind: "command", title: "ls", status: "done", exitCode: 0, startedAt: "2026-10-17T10:00:00Z", durationMs: 120, ...over });
+
 beforeEach(() => {
+  localStorage.clear();
   resetSandbox();
   sandbox.availability.mockResolvedValue({ ready: true });
   sandbox.status.mockResolvedValue({ botId: "b1", state: "off", takenOver: false });
@@ -80,14 +84,6 @@ describe("computer tab setup", () => {
     expect(await screen.findByRole("heading", { name: "Virtualization is not available" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Enable|Download|Check again/ })).toBeNull();
   });
-
-  it("states plainly what the computer can reach", async () => {
-    sandbox.availability.mockResolvedValue({ ready: false, reason: "runtime-missing" });
-    view();
-    await screen.findByRole("heading", { name: "Download the bot computer" });
-    expect(screen.getByText(/can reach the internet, your home network and anything on this PC/)).toBeInTheDocument();
-    expect(screen.getByText(/the bot can use them/)).toBeInTheDocument();
-  });
 });
 
 describe("computer tab states", () => {
@@ -101,11 +97,13 @@ describe("computer tab states", () => {
     expect(screen.getByText("Starting computer…")).toBeInTheDocument();
     act(() => emit("sandboxStatus", running()));
     expect(screen.getByTestId("live-screen")).toHaveAttribute("data-interactive", "false");
+    expect(screen.queryByTestId("terminal")).toBeNull();
+    fireEvent.click(await tab("Terminal"));
     expect(await screen.findByTestId("terminal")).toHaveAttribute("data-id", "t1");
+    expect(screen.queryByTestId("live-screen")).toBeNull();
     expect(sandbox.openTerminal).toHaveBeenCalledWith("b1", 100, 24);
     expect(screen.getByRole("button", { name: "Take over" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Done" })).toBeNull();
-    expect(screen.getByText(/can reach the internet, your home network/)).toBeInTheDocument();
   });
 
   it("shows why the computer failed", async () => {
@@ -118,9 +116,62 @@ describe("computer tab states", () => {
     sandbox.status.mockResolvedValue(running());
     sandbox.openTerminal.mockRejectedValueOnce(new Error("internal: no shell"));
     view();
+    fireEvent.click(await tab("Terminal"));
     expect(await screen.findByRole("alert")).toHaveTextContent("no shell");
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
     expect(await screen.findByTestId("terminal")).toHaveAttribute("data-id", "t1");
+  });
+
+  it("shows one view at a time and reopens on the one used last", async () => {
+    sandbox.status.mockResolvedValue(running());
+    const first = view();
+    expect(await tab("Screen")).toHaveAttribute("aria-selected", "true");
+    fireEvent.click(await tab("Activity"));
+    expect(await screen.findByText(/Nothing yet/)).toBeInTheDocument();
+    expect(screen.queryByTestId("live-screen")).toBeNull();
+    first.unmount();
+    view();
+    expect(await tab("Activity")).toHaveAttribute("aria-selected", "true");
+  });
+
+  it("lists what the bot ran, live, with its output", async () => {
+    sandbox.status.mockResolvedValue(running());
+    sandbox.activity.mockResolvedValue([entry({ id: "1", title: "ls -la", output: "total 0\n" })]);
+    view();
+    fireEvent.click(await tab("Activity"));
+    expect(await screen.findByText("ls -la")).toBeInTheDocument();
+    expect(screen.getByText(/total 0/)).toBeInTheDocument();
+    act(() => emit("sandboxActivity", entry({ id: "2", title: "make build", status: "running" })));
+    expect(await screen.findByText("make build")).toBeInTheDocument();
+    expect(screen.getByText("Running")).toBeInTheDocument();
+    act(() => emit("sandboxActivity", entry({ id: "2", title: "make build", status: "failed", exitCode: 2, output: "boom" })));
+    expect(await screen.findByText("Exit 2")).toBeInTheDocument();
+    expect(screen.getByText("boom")).toBeInTheDocument();
+    expect(screen.getAllByText("make build")).toHaveLength(1);
+    act(() => emit("sandboxActivity", entry({ id: "3", botId: "other", title: "someone else" })));
+    expect(screen.queryByText("someone else")).toBeNull();
+  });
+
+  it("jumps to the screen when the bot asks the user to take over", async () => {
+    sandbox.status.mockResolvedValue(running());
+    view();
+    fireEvent.click(await tab("Activity"));
+    await screen.findByText(/Nothing yet/);
+    act(() => emit("sandboxHandoff", { botId: "b1", pending: true, reason: "Sign in" }));
+    expect(await screen.findByTestId("live-screen")).toBeInTheDocument();
+    expect(screen.getByText("Sign in")).toBeInTheDocument();
+  });
+
+  it("toggles full screen and leaves it with Escape", async () => {
+    sandbox.status.mockResolvedValue(running());
+    const onExpandedChange = vi.fn();
+    const { rerender } = render(<ComputerTab botId="b1" onClose={() => {}} expanded={false} onExpandedChange={onExpandedChange} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Full screen" }));
+    expect(onExpandedChange).toHaveBeenLastCalledWith(true);
+    rerender(<ComputerTab botId="b1" onClose={() => {}} expanded onExpandedChange={onExpandedChange} />);
+    expect(screen.getByRole("button", { name: "Exit full screen" })).toHaveAttribute("aria-pressed", "true");
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(onExpandedChange).toHaveBeenLastCalledWith(false);
   });
 
   it("marks the bot as watched while the tab is open", async () => {

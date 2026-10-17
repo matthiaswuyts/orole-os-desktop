@@ -496,6 +496,33 @@ func (m *Manager) consume(ctx context.Context, env *turnEnv, step int, req llm.R
 	}
 	var text strings.Builder
 	hosted := map[string]bool{}
+	// With tools on offer, text that may be a tool call written as plain text is held back (see textcalls.go).
+	holding, held := len(req.Tools) > 0, ""
+	emit := func(t string) {
+		env.sink.appendText(PartText, t)
+		if env.onText != nil {
+			env.onText(t)
+		}
+	}
+	settle := func() {
+		if !holding {
+			return
+		}
+		holding = false
+		if held == "" {
+			return
+		}
+		if len(res.calls) == 0 {
+			if calls, ok := parseTextCalls(held, req.Tools); ok {
+				for i := range calls {
+					calls[i].ID = fmt.Sprintf("text%d_%d", step, i+1)
+				}
+				res.calls, text = calls, strings.Builder{}
+				return
+			}
+		}
+		emit(held)
+	}
 	for {
 		select {
 		case <-ctx.Done():
@@ -504,6 +531,7 @@ func (m *Manager) consume(ctx context.Context, env *turnEnv, step int, req llm.R
 			return res
 		case d, ok := <-ch:
 			if !ok {
+				settle()
 				res.text = text.String()
 				if ctx.Err() != nil {
 					res.canceled = true
@@ -515,10 +543,15 @@ func (m *Manager) consume(ctx context.Context, env *turnEnv, step int, req llm.R
 			switch d.Kind {
 			case llm.DeltaText:
 				text.WriteString(d.Text)
-				env.sink.appendText(PartText, d.Text)
-				if env.onText != nil {
-					env.onText(d.Text)
+				if holding {
+					held += d.Text
+					if !looksLikeTextCall(held) {
+						holding = false
+						emit(held)
+					}
+					break
 				}
+				emit(d.Text)
 			case llm.DeltaReasoning:
 				env.sink.appendText(PartReasoning, d.Text)
 			case llm.DeltaToolCall:
@@ -547,6 +580,7 @@ func (m *Manager) consume(ctx context.Context, env *turnEnv, step int, req llm.R
 				res.stop = d.Stop
 			case llm.DeltaError:
 				go drain(ch)
+				settle()
 				res.text = text.String()
 				e := d.Err
 				if e == nil {

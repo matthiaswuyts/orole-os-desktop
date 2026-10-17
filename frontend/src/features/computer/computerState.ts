@@ -71,9 +71,6 @@ export function setupCopy(reason: string, detail = ""): { title: string; body: s
   }
 }
 
-/** Shown in the Computer pane's footer: what a bot computer can reach and what it keeps. */
-export const SECURITY_NOTE = "The computer can reach the internet, your home network and anything on this PC that accepts network connections. Sites you sign into stay signed in, and the bot can use them.";
-
 const STEP_LABELS: Record<string, string> = { qemu: "Virtual machine software", image: "Linux system image" };
 
 /**

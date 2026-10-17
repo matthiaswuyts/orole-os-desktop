@@ -1,4 +1,3 @@
-import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { lazy, Suspense, useEffect, useRef, useState, type KeyboardEvent, type PointerEvent, type RefObject } from "react";
 import { useChat, type ChatPane } from "@/stores/chat";
 import { CallPane } from "@/features/jarvis/CallPane";
@@ -17,7 +16,6 @@ const MIN_PANE_REM = 20;
 const MIN_CHAT_REM = 20;
 /** How far one arrow key press moves the divider. */
 const KEY_STEP = 32;
-const OPEN_MS = 220;
 const WIDTH_KEY = "orole.chat.paneWidth";
 const paneKey = (pane: ChatPane) => pane.kind === "document" ? `document:${pane.messageId}:${pane.partIndex}` : `${pane.kind}:${pane.id}`;
 
@@ -56,14 +54,13 @@ function useContainerWidth(container: RefObject<HTMLElement | null>): number {
 /**
  * What sits beside the conversation: a code task, a phone call's transcript, a bot's computer or a document. Like the settings panel it always takes its own column
  * and the conversation narrows to make room; it never lies over the thread. The divider on its left edge resizes it
- * (drag or arrow keys, double-click to reset) and the width is remembered. One host that stays mounted, so opening
- * widens it with an exit on close, and switching between panes crossfades the content instead of remounting the shell.
- * The heavy task body waits for the open animation (`ready`); focus moves to the pane's heading once it has settled and
- * returns to the opener on close.
+ * (drag or arrow keys, double-click to reset) and the width is remembered. Like the settings panel it appears and
+ * disappears without animation. The heavy task body mounts one tick after the shell (`ready`) so the pane paints first;
+ * focus then moves to the pane's heading and returns to the opener on close.
  */
 export function SidePane({ botId, container }: { botId: string; container: RefObject<HTMLDivElement | null> }) {
   const pane = useChat((s) => s.pane);
-  const reduced = useReducedMotion();
+  const expanded = useChat((s) => s.computerExpanded) && pane?.kind === "computer";
   const containerWidth = useContainerWidth(container);
   const rem = typeof document === "undefined" ? 16 : parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
   const [preferred, setPreferred] = useState(readWidth);
@@ -83,12 +80,11 @@ export function SidePane({ botId, container }: { botId: string; container: RefOb
     opener.current?.focus();
     opener.current = null;
   }, [open]);
-  // The animation's own completion is the signal; the timer covers an environment that never animates.
   useEffect(() => {
     if (!open || ready) return;
-    const timer = window.setTimeout(() => setReady(true), reduced ? 0 : OPEN_MS + 40);
+    const timer = window.setTimeout(() => setReady(true), 0);
     return () => window.clearTimeout(timer);
-  }, [open, ready, reduced]);
+  }, [open, ready]);
   useEffect(() => { if (ready) root.current?.querySelector<HTMLElement>("h2[tabindex]")?.focus({ preventScroll: true }); }, [ready]);
   const close = () => useChat.getState().closePane();
 
@@ -115,34 +111,26 @@ export function SidePane({ botId, container }: { botId: string; container: RefOb
   };
   const reset = () => { setPreferred(null); writeWidth(null); };
 
-  const transition = reduced || drag ? { duration: 0 } : { duration: OPEN_MS / 1000, ease: "easeOut" as const };
-  return <AnimatePresence initial={false}>
-    {pane && <motion.div key="side-pane" ref={root} data-slot="side-pane"
-      className="relative z-10 shrink-0 overflow-hidden border-l bg-background"
-      initial={{ width: 0 }}
-      animate={{ width }}
-      exit={{ width: 0 }}
-      transition={transition}
-      onAnimationComplete={() => { if (useChat.getState().pane) setReady(true); }}>
-      <div role="separator" aria-orientation="vertical" aria-label="Resize side pane" tabIndex={0}
+  if (!pane) return null;
+  // Full screen: the Computer pane covers the whole chat area; there is no divider to drag.
+  return <div ref={root} data-slot="side-pane" data-expanded={expanded || undefined}
+    className={expanded ? "absolute inset-0 z-20 overflow-hidden bg-background" : "relative z-10 shrink-0 overflow-hidden border-l bg-background"} style={expanded ? undefined : { width }}>
+      {!expanded && <div role="separator" aria-orientation="vertical" aria-label="Resize side pane" tabIndex={0}
         aria-valuenow={width} aria-valuemin={Math.round(min)} aria-valuemax={Math.round(max)}
         data-slot="side-pane-resizer" data-dragging={drag ? "" : undefined}
         className="absolute inset-y-0 left-0 z-20 w-1.5 cursor-col-resize touch-none outline-none transition-colors hover:bg-ring/40 focus-visible:bg-ring/60 data-dragging:bg-ring/60 motion-reduce:transition-none"
         onPointerDown={startDrag} onPointerMove={follow} onPointerUp={endDrag} onPointerCancel={endDrag} onLostPointerCapture={endDrag}
-        onKeyDown={onKey} onDoubleClick={reset} />
-      <div className="h-full" style={{ width }}>
-        <AnimatePresence mode="wait" initial={false}>
-          <motion.div key={paneKey(pane)} className="h-full" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={reduced ? { duration: 0 } : { duration: 0.12 }}>
+        onKeyDown={onKey} onDoubleClick={reset} />}
+      <div className="h-full" style={expanded ? undefined : { width }}>
+        <div key={paneKey(pane)} className="h-full">
             {pane.kind === "task"
               ? <Suspense fallback={null}><TaskPane taskId={pane.id} ready={ready} onClose={close} /></Suspense>
               : pane.kind === "call"
                 ? <CallPane callId={pane.id} botId={botId} onClose={close} />
                 : pane.kind === "computer"
-                  ? <Suspense fallback={null}><ComputerTab botId={pane.id} onClose={close} /></Suspense>
+                  ? <Suspense fallback={null}><ComputerTab botId={pane.id} onClose={close} expanded={expanded} onExpandedChange={(next) => useChat.getState().setComputerExpanded(next)} /></Suspense>
                   : <DocumentPane botId={botId} messageId={pane.messageId} partIndex={pane.partIndex} onClose={close} />}
-          </motion.div>
-        </AnimatePresence>
+        </div>
       </div>
-    </motion.div>}
-  </AnimatePresence>;
+  </div>;
 }

@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 	"unicode"
@@ -60,6 +61,19 @@ func (m managerHost) Ensure(ctx context.Context, botID string) (computerGuest, e
 func (d *Daemon) handoffs() *sandbox.Handoffs {
 	d.handoffsOnce.Do(func() { d.handoffsSet = sandbox.NewHandoffs(d.handoffChanged) })
 	return d.handoffsSet
+}
+
+// activity returns what bots did on their computers, created on first use; every change is published as
+// sandbox.activity.
+func (d *Daemon) activity() *sandbox.Activity {
+	d.activityOnce.Do(func() {
+		d.activitySet = sandbox.NewActivity(func(e sandbox.ActivityEntry) {
+			if d.IPC != nil {
+				d.IPC.Publish("sandbox.activity", e)
+			}
+		})
+	})
+	return d.activitySet
 }
 
 // handoffChanged publishes a takeover request (sandbox.handoff) and keeps its "Needs you" notification in step: one
@@ -205,6 +219,12 @@ func (d *Daemon) registerSandboxTakeover(host computerHost) {
 	handle(d, "sandbox.handoff", func(ctx context.Context, p sandboxRef) (sandbox.HandoffState, error) {
 		return d.handoffState(ctx, p.BotID)
 	})
+	handle(d, "sandbox.activity", func(ctx context.Context, p sandboxRef) ([]sandbox.ActivityEntry, error) {
+		if p.BotID == "" {
+			return nil, &ipc.Error{Code: ipc.CodeBadRequest, Message: "botId is required"}
+		}
+		return d.activity().List(p.BotID), nil
+	})
 }
 
 // computerRuntime is the sandbox manager as the bot computer tools see it (tools.ComputerRuntime). host nil reads
@@ -267,6 +287,35 @@ func (r computerRuntime) TakenOver(botID string) bool {
 	return err == nil && h.TakenOver(botID)
 }
 
+// Caps for what the activity tab keeps of one call: the title (a command or a path) and its output.
+const (
+	activityTitleMax  = 2000
+	activityOutputMax = 16 << 10
+)
+
+// track records one guest call in the bot's activity and returns the function that finishes it. It is a no-op
+// without a daemon (tests), and the texts are cleaned here: a command and its output are untrusted.
+func (r computerRuntime) track(botID, kind, title string) func(output string, exitCode int, truncated bool, err error) {
+	if r.d == nil {
+		return func(string, int, bool, error) {}
+	}
+	act := r.d.activity()
+	id := act.Begin(botID, kind, untrusted.Text(title, activityTitleMax))
+	return func(output string, exitCode int, truncated bool, err error) {
+		status := sandbox.ActivityDone
+		if err != nil || (kind == sandbox.ActivityCommand && exitCode != 0) {
+			status = sandbox.ActivityFailed
+		}
+		if err != nil {
+			output = err.Error()
+		}
+		if len(output) > activityOutputMax {
+			truncated = true
+		}
+		act.End(botID, id, status, untrusted.Text(output, activityOutputMax), exitCode, truncated)
+	}
+}
+
 func (r computerRuntime) Exec(ctx context.Context, botID string, req wire.ExecRequest) (wire.ExecResult, error) {
 	h, g, err := r.guest(ctx, botID)
 	if err != nil {
@@ -277,7 +326,10 @@ func (r computerRuntime) Exec(ctx context.Context, botID string, req wire.ExecRe
 	}
 	cctx, cancel := guestCall(ctx)
 	defer cancel()
-	return g.Exec(cctx, req)
+	done := r.track(botID, sandbox.ActivityCommand, req.Command)
+	res, err := g.Exec(cctx, req)
+	done(res.Stdout+res.Stderr, res.ExitCode, res.Truncated, err)
+	return res, err
 }
 
 func (r computerRuntime) ReadFile(ctx context.Context, botID, path string) (wire.ReadFileResult, error) {
@@ -300,7 +352,10 @@ func (r computerRuntime) WriteFile(ctx context.Context, botID, path string, cont
 	}
 	cctx, cancel := guestCall(ctx)
 	defer cancel()
-	return g.WriteFile(cctx, path, content)
+	done := r.track(botID, sandbox.ActivityFile, "Write "+path)
+	res, err := g.WriteFile(cctx, path, content)
+	done(fmt.Sprintf("%d bytes written", res.Bytes), 0, false, err)
+	return res, err
 }
 
 func (r computerRuntime) Browser(ctx context.Context, botID string, req wire.BrowserRequest) (wire.BrowserResult, error) {
@@ -313,7 +368,25 @@ func (r computerRuntime) Browser(ctx context.Context, botID string, req wire.Bro
 	}
 	cctx, cancel := guestCall(ctx)
 	defer cancel()
-	return g.Browser(cctx, req)
+	done := r.track(botID, sandbox.ActivityBrowser, browserTitle(req))
+	res, err := g.Browser(cctx, req)
+	out := res.Text
+	if out == "" && len(res.PNG) > 0 {
+		out = "Took a screenshot"
+	}
+	done(out, 0, false, err)
+	return res, err
+}
+
+// browserTitle is the activity line of a browser call: the action and what it acts on.
+func browserTitle(req wire.BrowserRequest) string {
+	switch {
+	case req.URL != "":
+		return req.Action + " " + req.URL
+	case req.Target != "":
+		return req.Action + " " + req.Target
+	}
+	return req.Action
 }
 
 // AskTakeover makes sure the computer runs (the user needs a screen to take over), then waits for the user. Whether

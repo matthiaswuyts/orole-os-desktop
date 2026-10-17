@@ -18,14 +18,14 @@ function event(name: string) {
 }
 
 /** Delivers a bridge event to every current subscriber. */
-export function emit(name: "sandboxStatus" | "sandboxScreen" | "sandboxAvailability" | "sandboxRuntime" | "sandboxSetup" | "sandboxHandoff" | "terminalOutput" | "terminalChanged" | "daemonState", payload: unknown) {
+export function emit(name: "sandboxStatus" | "sandboxScreen" | "sandboxAvailability" | "sandboxRuntime" | "sandboxSetup" | "sandboxHandoff" | "sandboxActivity" | "terminalOutput" | "terminalChanged" | "daemonState", payload: unknown) {
   for (const listener of [...(listeners.get(name) ?? [])]) listener(payload);
 }
 
 export const listenerCount = (name: string) => listeners.get(name)?.size ?? 0;
 
 export const sandbox = {
-  availability: vi.fn(), status: vi.fn(), enable: vi.fn(), install: vi.fn(), setViewer: vi.fn(), takeOver: vi.fn(),
+  availability: vi.fn(), status: vi.fn(), activity: vi.fn(), enable: vi.fn(), install: vi.fn(), setViewer: vi.fn(), takeOver: vi.fn(),
   release: vi.fn(), handoff: vi.fn(), openScreen: vi.fn(), screenInput: vi.fn(), closeScreen: vi.fn(), openTerminal: vi.fn(),
 };
 export const terminalsBridge = { attach: vi.fn(), write: vi.fn(), resize: vi.fn(), close: vi.fn() };
@@ -38,6 +38,7 @@ export function resetSandbox() {
   sandbox.enable.mockResolvedValue({ running: false, rebootRequired: false });
   sandbox.install.mockResolvedValue({ ready: false, installing: false, done: 0, total: 0 });
   sandbox.handoff.mockResolvedValue({ botId: "", pending: false });
+  sandbox.activity.mockResolvedValue([]);
 }
 
 export const mygoMock = {
@@ -46,7 +47,7 @@ export const mygoMock = {
   events: {
     sandboxStatus: event("sandboxStatus"), sandboxScreen: event("sandboxScreen"),
     sandboxAvailability: event("sandboxAvailability"), sandboxRuntime: event("sandboxRuntime"),
-    sandboxSetup: event("sandboxSetup"), sandboxHandoff: event("sandboxHandoff"),
+    sandboxSetup: event("sandboxSetup"), sandboxHandoff: event("sandboxHandoff"), sandboxActivity: event("sandboxActivity"),
     terminalOutput: event("terminalOutput"), terminalChanged: event("terminalChanged"), daemonState: event("daemonState"),
   },
 };

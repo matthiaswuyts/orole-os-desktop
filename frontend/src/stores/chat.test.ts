@@ -295,3 +295,20 @@ describe("streaming previews", () => {
     expect(result.current?.name).toBe("Renamed");
   });
 });
+
+describe("computer pane full screen", () => {
+  it("expands only the Computer pane and resets when another pane opens or the pane closes", () => {
+    useChat.getState().openTaskPane("t1");
+    useChat.getState().setComputerExpanded(true);
+    expect(useChat.getState().computerExpanded).toBe(false);
+    useChat.getState().openComputerPane("b1");
+    useChat.getState().setComputerExpanded(true);
+    expect(useChat.getState().computerExpanded).toBe(true);
+    useChat.getState().openTaskPane("t1");
+    expect(useChat.getState().computerExpanded).toBe(false);
+    useChat.getState().openComputerPane("b1");
+    useChat.getState().setComputerExpanded(true);
+    useChat.getState().closePane();
+    expect(useChat.getState().computerExpanded).toBe(false);
+  });
+});

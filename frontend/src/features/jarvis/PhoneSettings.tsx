@@ -1,8 +1,10 @@
 import { useEffect, useId, useState, type ReactNode } from "react";
-import { CheckCircle2Icon, CircleIcon, CopyIcon, XIcon } from "lucide-react";
+import { CopyIcon, XIcon } from "lucide-react";
+import { motion, useReducedMotion } from "motion/react";
 import { Jarvis, type PhoneSettings as PhoneConfig, type StatusView, type TTSModel } from "@/mygo";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Stepper } from "@/components/ui/stepper";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "@/components/ui/tooltip";
 import { errText } from "@/features/agents/format";
 import { Failure, Loading } from "@/features/mcp/shared";
@@ -68,33 +70,6 @@ function SecretBlock({ name, value, copyLabel }: { name: string; value: string; 
         <CopyIcon aria-hidden />
       </IconAction>
     </div>
-  );
-}
-
-function SetupChecklist({ status }: { status: StatusView }) {
-  const rows: [string, boolean][] = [
-    ["Twilio account", status.hasTwilio],
-    ["ElevenLabs key", status.hasElevenLabs],
-    ["Relay secrets", status.hasRelaySecrets],
-    ["Relay connected", status.relayConnected],
-    ["Number connected", !!status.settings.agentId],
-    ["Webhook secret (optional)", status.hasWebhookSecret],
-    ["Your number verified", !!status.settings.ownerVerified],
-  ];
-  return (
-    <SettingsSection title="Setup" description="Work down this list once. Every step except the optional one must be done before Orole can call you. Without the webhook secret, calls still end on time: Orole asks Twilio for their status.">
-      <ul className="divide-y">
-        {rows.map(([label, done]) => (
-          <li key={label} className="flex items-center gap-2 px-3 py-2">
-            {done
-              ? <CheckCircle2Icon aria-label="Done" className="size-4 text-success-foreground" />
-              : <CircleIcon aria-label="Not done" className="size-4 text-muted-foreground" />}
-            <span>{label}</span>
-          </li>
-        ))}
-      </ul>
-      <ErrorLine message={status.lastError} />
-    </SettingsSection>
   );
 }
 
@@ -336,12 +311,33 @@ function CallsSection({ status }: { status: StatusView }) {
   );
 }
 
-/** Settings > Phone: everything needed before Orole can place and take phone calls. */
+const STEP_IDS = ["twilio", "elevenlabs", "relay", "phone", "calls"] as const;
+type StepId = (typeof STEP_IDS)[number];
+
+/** Which setup steps are finished. The last, Calls, is only limits and a voice: it has defaults, so it is never "done". */
+function stepDone(status: StatusView): Record<StepId, boolean> {
+  return {
+    twilio: status.hasTwilio,
+    elevenlabs: status.hasElevenLabs,
+    relay: status.hasRelaySecrets && status.relayConnected && !!status.settings.agentId,
+    phone: !!status.settings.ownerVerified,
+    calls: false,
+  };
+}
+
+const STEP_LABELS: Record<StepId, string> = { twilio: "Twilio", elevenlabs: "ElevenLabs", relay: "Relay", phone: "Your phone", calls: "Calls" };
+
+/** Settings > Phone: everything needed before Orole can place and take phone calls, one step at a time. */
 export function PhoneSettings() {
   const status = useJarvis((s) => s.status);
   const error = useJarvis((s) => s.error);
   // Shown once after Connect; deliberately kept out of the store.
   const [webhookSecret, setWebhookSecret] = useState("");
+  // The wizard opens on the first unfinished step and then stays put until the user moves: finishing a step must
+  // not jump away from what it just showed (the relay secrets and the webhook secret are shown once).
+  const [current, setCurrent] = useState<number | null>(null);
+  const [direction, setDirection] = useState(1);
+  const reduced = useReducedMotion();
   useEffect(() => {
     const stop = useJarvis.getState().startSync();
     void useJarvis.getState().load();
@@ -350,15 +346,40 @@ export function PhoneSettings() {
 
   if (!inDesktop) return <p role="status" className="rounded-lg border bg-card p-3 text-muted-foreground">Phone settings are available in the Orole OS desktop app.</p>;
   if (!status) return error ? <Failure error={error} retry={() => void useJarvis.getState().load()} /> : <Loading>Loading phone settings…</Loading>;
+
+  const done = stepDone(status);
+  const steps = STEP_IDS.map((id) => ({ id, label: STEP_LABELS[id], done: done[id] }));
+  const firstOpen = steps.findIndex((step) => !step.done);
+  if (current === null) setCurrent(firstOpen === -1 ? STEP_IDS.length - 1 : firstOpen);
+  const index = current ?? 0;
+  const id = STEP_IDS[index];
+  function go(next: number) {
+    setDirection(next >= index ? 1 : -1);
+    setCurrent(next);
+  }
+  const last = index === STEP_IDS.length - 1;
+
   return (
     <div className="flex min-w-0 flex-col">
       {error && <div className="mb-3"><Failure error={error} retry={() => void useJarvis.getState().load()} /></div>}
-      <SetupChecklist status={status} />
-      <TwilioSection status={status} />
-      <ElevenLabsSection status={status} />
-      <RelaySection status={status} webhookSecret={webhookSecret} onWebhookSecret={setWebhookSecret} />
-      <OwnerSection status={status} />
-      <CallsSection status={status} />
+      <Stepper steps={steps} current={index} onSelect={go} className="mb-4" />
+      <ErrorLine message={status.lastError} />
+      <motion.div
+        key={id}
+        initial={reduced ? false : { opacity: 0, x: direction * 24 }}
+        animate={{ opacity: 1, x: 0 }}
+        transition={{ duration: reduced ? 0 : 0.2, ease: "easeOut" }}
+      >
+        {id === "twilio" && <TwilioSection status={status} />}
+        {id === "elevenlabs" && <ElevenLabsSection status={status} />}
+        {id === "relay" && <RelaySection status={status} webhookSecret={webhookSecret} onWebhookSecret={setWebhookSecret} />}
+        {id === "phone" && <OwnerSection status={status} />}
+        {id === "calls" && <CallsSection status={status} />}
+      </motion.div>
+      <div className="mb-5 flex items-center justify-between gap-2">
+        <Button size="sm" variant="ghost" disabled={index === 0} onClick={() => go(index - 1)}>Back</Button>
+        {!last && <Button size="sm" variant={done[id] ? "default" : "outline"} onClick={() => go(index + 1)}>{done[id] ? "Next" : "Skip for now"}</Button>}
+      </div>
       <p className="max-w-prose text-xs text-muted-foreground">
         Calls need Orole running on this PC and the relay online. Phone conversations pass through ElevenLabs and your relay.
         The ElevenLabs post-call and inbound webhooks are workspace-wide settings in your ElevenLabs account.

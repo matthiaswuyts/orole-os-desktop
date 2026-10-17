@@ -33,18 +33,35 @@ beforeEach(() => {
 });
 afterEach(cleanup);
 
-it("shows the setup checklist with nothing configured", async () => {
+const step = (name: string) => screen.findByRole("button", { name });
+
+it("opens on the first unfinished step with nothing configured", async () => {
   api.status.mockResolvedValue(empty);
   render(<PhoneSettings />);
-  expect(await screen.findByText("Twilio account")).toBeInTheDocument();
-  expect(screen.getByText("Relay connected")).toBeInTheDocument();
-  expect(screen.getByText("Webhook secret (optional)")).toBeInTheDocument();
+  expect(await screen.findByLabelText("Account SID")).toBeInTheDocument();
+  expect(await step("Twilio")).toHaveAttribute("aria-current", "step");
+  for (const name of ["ElevenLabs", "Relay", "Your phone", "Calls"]) expect(await step(name)).not.toHaveAttribute("aria-current");
+  expect(screen.queryByLabelText("Relay URL")).not.toBeInTheDocument();
+});
+
+it("opens after the finished steps and lets the user move between steps", async () => {
+  api.status.mockResolvedValue({ ...empty, hasTwilio: true });
+  render(<PhoneSettings />);
+  expect(await screen.findByLabelText("API key")).toBeInTheDocument();
+  expect(await step("Twilio")).toHaveAccessibleDescription("Done");
+  fireEvent.click(await step("Twilio"));
+  expect(await screen.findByLabelText("Account SID")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Next" }));
+  expect(await screen.findByLabelText("API key")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Back" }));
+  expect(await screen.findByLabelText("Account SID")).toBeInTheDocument();
 });
 
 it("does not ask ElevenLabs for voices until a key is stored", async () => {
   api.status.mockResolvedValue(empty);
   render(<PhoneSettings />);
-  expect(await screen.findByText("Twilio account")).toBeInTheDocument();
+  fireEvent.click(await step("Calls"));
+  expect(await screen.findByLabelText("Quiet hours start")).toBeInTheDocument();
   expect(api.voices).not.toHaveBeenCalled();
   expect(api.models).not.toHaveBeenCalled();
   act(() => { api.changed.forEach((cb) => cb({ ...empty, hasElevenLabs: true })); });
@@ -68,6 +85,7 @@ it("shows generated relay secrets with copy buttons", async () => {
   api.status.mockResolvedValue(empty);
   api.generateRelaySecrets.mockResolvedValue({ relayToken: "rt", llmSecret: "ls" });
   render(<PhoneSettings />);
+  fireEvent.click(await step("Relay"));
   fireEvent.click(await screen.findByRole("button", { name: "Generate relay secrets" }));
   expect(await screen.findByText("rt")).toBeInTheDocument();
   expect(screen.getByText("ls")).toBeInTheDocument();
@@ -79,6 +97,7 @@ it("shows the webhook secret once after connecting", async () => {
   api.status.mockResolvedValue(ready);
   api.configure.mockResolvedValue({ status: { ...ready, hasWebhookSecret: true }, webhookSecret: "whsec_abc" });
   render(<PhoneSettings />);
+  fireEvent.click(await step("Relay"));
   fireEvent.change(await screen.findByLabelText("Relay URL"), { target: { value: "https://r.workers.dev" } });
   fireEvent.change(screen.getByLabelText("Jarvis number"), { target: { value: "+3220000000" } });
   fireEvent.click(screen.getByRole("button", { name: "Connect" }));
@@ -95,6 +114,7 @@ it("does not show a webhook secret when none was created", async () => {
   api.status.mockResolvedValue(configured);
   api.configure.mockResolvedValue({ status: configured });
   render(<PhoneSettings />);
+  fireEvent.click(await step("Relay"));
   fireEvent.click(await screen.findByRole("button", { name: "Connect" }));
   await waitFor(() => expect(api.configure).toHaveBeenCalled());
   expect(screen.queryByText(/secret put WEBHOOK_SECRET/)).not.toBeInTheDocument();
@@ -116,7 +136,8 @@ it("verifies the owner number with a code", async () => {
 it("updates live from the jarvis changed event", async () => {
   api.status.mockResolvedValue(empty);
   render(<PhoneSettings />);
-  await screen.findByText("Twilio account");
+  fireEvent.click(await step("Calls"));
+  await screen.findByLabelText("Quiet hours start");
   act(() => api.changed.forEach((cb) => cb({ ...empty, relayConnected: true, callsToday: 3 })));
   expect(await screen.findByText(/Calls today: 3/)).toBeInTheDocument();
 });
@@ -131,6 +152,7 @@ it("saves the call language, Dutch unless chosen otherwise", async () => {
   api.status.mockResolvedValue(ready);
   api.configure.mockResolvedValue({ status: ready });
   render(<PhoneSettings />);
+  fireEvent.click(await step("Calls"));
   const language = await screen.findByRole("combobox", { name: "Call language" });
   expect(language).toHaveTextContent("Nederlands");
   fireEvent.click(screen.getByRole("button", { name: "Save" }));

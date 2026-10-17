@@ -8,6 +8,16 @@ notes. See `docs/development/updates.md`.
 
 ## Unreleased
 
+### Changed
+- A bot's Computer pane now shows one view at a time: Screen, Terminal or Activity, with the last one remembered. Activity lists what the bot ran (commands with their output, file writes, browser actions) as it happens. A Full screen button gives the whole chat area to the pane (Esc leaves), so you can browse the web on the computer at a comfortable size. The Computer button in the title bar no longer opens a pane when the computer is off; it says why instead, and the pane's footer note about network reach was removed. Terminals draw on the GPU when the browser allows it, which keeps fast output smooth.
+- Panes beside the conversation (code task, call, computer, document) open and close without the sliding animation, like the bot settings panel.
+- A bot's Tools page is shorter: its switches are one plain list without descriptions.
+- Settings › Phone is a step-by-step setup (Twilio, ElevenLabs, Relay, Your phone, Calls) with an animated stepper.
+
+### Fixed
+- A long unbroken text such as a link no longer runs out of your message bubble into the sidebar.
+- Some models wrote a tool call as plain JSON text instead of running it. Bots now run such calls instead of showing the JSON.
+
 ## 0.4.0-dev - 2026-10-15
 
 ### Changed

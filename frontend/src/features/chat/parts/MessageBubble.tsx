@@ -31,7 +31,7 @@ export interface ChatMessageViewProps {
 /** The bubble a user message is drawn in; queued ones (the daemon holds them until the run ends) are dimmed. */
 export function UserBubble({ children, queued }: { children: React.ReactNode; queued?: boolean }) {
   return <div data-slot="chat-user" data-queued={queued || undefined} className={cn("flex max-w-[85%] min-w-0 flex-col items-end gap-0.5 self-end", queued && "opacity-60")}>
-    <div className="min-w-0 rounded-2xl rounded-br-md bg-secondary px-3 py-1.5 text-sm leading-relaxed text-secondary-foreground">{children}</div>
+    <div className="min-w-0 rounded-2xl rounded-br-md bg-secondary [overflow-wrap:anywhere] px-3 py-1.5 text-sm leading-relaxed text-secondary-foreground">{children}</div>
     {queued && <span className="px-1 text-[0.625rem] font-medium text-muted-foreground">Queued</span>}
   </div>;
 }

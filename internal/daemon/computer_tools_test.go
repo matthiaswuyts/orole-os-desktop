@@ -647,3 +647,35 @@ func TestComputerRuntimeRefusesRunAndWriteWhileTakenOver(t *testing.T) {
 		t.Fatalf("read: %v", err)
 	}
 }
+
+// The Computer pane's activity tab lists what a bot ran, with the command cleaned of control characters.
+func TestComputerRuntimeRecordsActivity(t *testing.T) {
+	host := newFakeHost()
+	d := &Daemon{}
+	rt := computerRuntime{d: d, host: host}
+	if _, err := rt.Exec(context.Background(), "b1", wire.ExecRequest{Command: "echo hi\x1b[31m"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rt.WriteFile(context.Background(), "b1", "/home/a/x.txt", []byte("x")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rt.Browser(context.Background(), "b1", wire.BrowserRequest{Action: "open", URL: "https://example.com"}); err != nil {
+		t.Fatal(err)
+	}
+	got := d.activity().List("b1")
+	if len(got) != 3 {
+		t.Fatalf("entries = %+v", got)
+	}
+	if got[0].Kind != sandbox.ActivityCommand || got[0].Status != sandbox.ActivityDone || strings.ContainsRune(got[0].Title, 0x1b) {
+		t.Errorf("command entry = %+v", got[0])
+	}
+	if got[1].Kind != sandbox.ActivityFile || got[1].Title != "Write /home/a/x.txt" {
+		t.Errorf("file entry = %+v", got[1])
+	}
+	if got[2].Kind != sandbox.ActivityBrowser || got[2].Title != "open https://example.com" {
+		t.Errorf("browser entry = %+v", got[2])
+	}
+	if others := d.activity().List("b2"); len(others) != 0 {
+		t.Errorf("another bot saw %+v", others)
+	}
+}

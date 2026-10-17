@@ -31,8 +31,12 @@ running commands do not.**
     unsupported Windows (needs Windows 10 version 2004, build 19041, or later, with Windows Hypervisor Platform; Hyper-V
     users usually have it already). It states the network and login risks below;
   - the computer's state when it is not running: off, starting, shutting down, or why it failed;
-  - while it runs: the **live screen** (view-only until Take over), **Take over** / **Done** (with an optional note to
-    the bot) and a **terminal** inside the computer. When the bot asked for help, its reason is shown with Take over.
+  - while it runs: three tabs, one at a time (the last one used is remembered): the **live screen** (view-only until
+    Take over), a **terminal** inside the computer, and **Activity**, the bot's recent commands, file writes and browser
+    actions with their output (running ones open by themselves, failed ones show their exit code). **Take over** /
+    **Done** (with an optional note to the bot) stay in the header; when the bot asked for help its reason is shown
+    with Take over and the pane switches to the screen. A **Full screen** button (Esc leaves) makes the pane cover the
+    whole chat area instead of sharing it.
 - There is deliberately no start, stop, reset or wipe button, and no resource display.
 - From image 0.1.4 the computer is named after the bot: its Linux account, home folder and host name follow the bot's
   name ("Élodie Test" is `elodie-test` in `/home/elodie-test` on `elodie-test-computer`; see "Bot identity"). A rename
@@ -395,6 +399,11 @@ that names the host (lowercased, punycode, no port or user info): the user is as
   `RunContext.Emit`; it says "Starting the computer…" while the VM boots. Errors map to plain messages: not set up,
   failed to start, stopped unexpectedly, all computers busy, low memory, the user is controlling the computer, an
   image too old for this feature. The Computer tab's live echo of commands comes from the manager's exec hook, not an event.
+  The Activity tab is separate: `computerRuntime` records every `computer_run`, `computer_write_file` and browser call
+  in `sandbox.Activity` (`internal/sandbox/activity.go`, last 100 per bot, memory only, titles and output cleaned with
+  `untrusted.Text` and output capped at 16 KiB). Each entry is published as `sandbox.activity` when it starts and again
+  when it finishes (same `id`), and listed by IPC `sandbox.activity{botId}`. It is history for the open pane, not an
+  audit record.
 - **What the user sees.** See "What the user sees" at the top: the Tools switch, the card in chat, the "Needs you"
   notification and the Computer tab with Take over and Done.
 

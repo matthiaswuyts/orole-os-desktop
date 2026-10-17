@@ -24,6 +24,9 @@ var (
 	SandboxRuntime = mygo.NewEvent[sandbox.RuntimeState]("sandbox:runtime")
 	// SandboxSetup reports the Windows Hypervisor Platform setup: running, then its result.
 	SandboxSetup = mygo.NewEvent[sandbox.SetupState]("sandbox:setup")
+	// SandboxActivity fires when a bot starts or finishes something on its computer (a command, a file write or a
+	// browser action); the same id is sent again when it finishes.
+	SandboxActivity = mygo.NewEvent[sandbox.ActivityEntry]("sandbox:activity")
 	// SandboxHandoff fires when a bot starts or stops waiting for the user to take over its computer.
 	SandboxHandoff = mygo.NewEvent[sandbox.HandoffState]("sandbox:handoff")
 )
@@ -50,6 +53,8 @@ func forwardSandbox(event string, data json.RawMessage) bool {
 		broadcastJSON(SandboxSetup, data)
 	case "sandbox.handoff":
 		broadcastJSON(SandboxHandoff, data)
+	case "sandbox.activity":
+		broadcastJSON(SandboxActivity, data)
 	case "sandbox.screen.data":
 		var c sandbox.ScreenChunk
 		if json.Unmarshal(data, &c) == nil {
@@ -143,6 +148,12 @@ func (s Sandbox) TakeOver(ctx context.Context, botID string) error {
 // the user to take over.
 func (s Sandbox) Release(ctx context.Context, botID string, note string) error {
 	return s.L.call(ctx, "sandbox.release", map[string]string{"botId": botID, "note": note}, nil)
+}
+
+// Activity lists what the bot did on its computer recently (commands, file writes, browser actions), oldest first.
+func (s Sandbox) Activity(ctx context.Context, botID string) ([]sandbox.ActivityEntry, error) {
+	var out []sandbox.ActivityEntry
+	return out, s.L.call(ctx, "sandbox.activity", map[string]string{"botId": botID}, &out)
 }
 
 // Handoff says whether the bot is waiting for the user to take over its computer, and why.

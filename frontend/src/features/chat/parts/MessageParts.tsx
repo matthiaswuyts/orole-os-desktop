@@ -30,8 +30,8 @@ export function UserParts({ parts, targets }: { parts: readonly MsgPart[]; /** b
   const { quote, rest } = splitQuote(text);
   return <>
     {files.length > 0 && <div className="mb-1 flex flex-wrap gap-1.5">{files.map((p, i) => <AttachmentPill key={p.attachmentId || i} name={p.name || p.title} mime={p.mime} size={p.size} />)}</div>}
-    {quote && <blockquote data-slot="chat-quote" className="selectable mb-1.5 border-s-2 border-primary/60 ps-2.5 text-muted-foreground text-xs whitespace-pre-wrap break-words">{quote}</blockquote>}
-    {rest && <p className="selectable whitespace-pre-wrap break-words">{targets?.length ? <MentionText text={rest} targets={targets} /> : rest}</p>}
+    {quote && <blockquote data-slot="chat-quote" className="selectable mb-1.5 border-s-2 border-primary/60 ps-2.5 text-muted-foreground text-xs whitespace-pre-wrap [overflow-wrap:anywhere]">{quote}</blockquote>}
+    {rest && <p className="selectable whitespace-pre-wrap [overflow-wrap:anywhere]">{targets?.length ? <MentionText text={rest} targets={targets} /> : rest}</p>}
   </>;
 }
 

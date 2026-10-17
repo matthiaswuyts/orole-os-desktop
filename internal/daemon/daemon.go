@@ -90,6 +90,9 @@ type Daemon struct {
 	// of a wait, so a wait sees whether the user holds the computer at the moment it registers.
 	handoffsOnce sync.Once
 	handoffsSet  *sandbox.Handoffs
+	// activityOnce/activitySet keep what bots did on their computers for the Computer pane (use d.activity()).
+	activityOnce sync.Once
+	activitySet  *sandbox.Activity
 	takeoverMu   sync.Mutex
 
 	Metrics *systemmetrics.Sampler
