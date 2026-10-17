@@ -47,4 +47,9 @@ if ($DaemonOnly) { return }
 # signs the updates and uploads everything to the draft release.
 if ($Upload) { go tool mygo build -upload } else { go tool mygo build }
 if ($LASTEXITCODE) { throw "mygo build failed" }
+# MyGo's installer cannot replace a running app: wrap it in one that closes Orole OS first. With -Upload the
+# wrapped file replaces the installer MyGo just uploaded (CI passes the tag in GITHUB_REF_NAME).
+$tag = ""
+if ($Upload) { $tag = if ($env:GITHUB_REF_NAME) { $env:GITHUB_REF_NAME } else { "desktop-v$Version" } }
+& "$PSScriptRoot\wrap-installer.ps1" -Tag $tag
 Get-ChildItem build\windows-amd64 -ErrorAction SilentlyContinue | Format-Table Name, Length -AutoSize

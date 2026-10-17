@@ -8,6 +8,9 @@ notes. See `docs/development/updates.md`.
 
 ## Unreleased
 
+### Fixed
+- The installer can now update Orole OS while it is open. It closes the app and its daemon first (a bot's computer stops with it, its files stay) instead of failing with "Error opening file for writing".
+
 ## 0.4.1-dev - 2026-10-17
 
 ### Changed

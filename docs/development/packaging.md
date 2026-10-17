@@ -37,6 +37,15 @@ Per-user install to `%LOCALAPPDATA%\Programs\Orole OS`, no admin; Start menu sho
 Settings; registers the `orole://` URL scheme. `/S` installs silently (no shortcuts); `/D=<dir>` (last argument,
 unquoted) chooses the directory.
 
+**Running app.** MyGo's installer cannot replace `Orole OS.exe` while it runs ("Error opening file for writing"),
+so `scripts/build.ps1` wraps it after `mygo build`: `scripts/wrap-installer.ps1` builds a silent NSIS stub
+(`scripts/installer-wrapper.nsi`) that embeds the MyGo installer, runs `scripts/close-orole.ps1` and then the
+embedded installer with the same arguments. The script closes the windows of processes that run from the folder
+being replaced (`/D=` or the default folder), waits 8 s, then ends what is left, the daemon among it (a bot's
+computer stops with it; its disk stays). Other builds, such as a development daemon, are not touched. The stub is
+32-bit, so the script finds processes through CIM: a 32-bit PowerShell cannot read the path of a 64-bit process.
+With `-Upload` the wrapped installer replaces the one `mygo build -upload` put on the draft release.
+
 `scripts/smoke-installer.ps1` installs silently to a temp dir with an isolated `OROLE_HOME`, launches the app,
 waits for the daemon, checks its path and answers over the pipe via `build\orole.exe`, prints diagnostics,
 closes the app, stops the daemon and uninstalls (`Uninstall.exe /S _?=<dir>`).
