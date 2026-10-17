@@ -9,6 +9,8 @@ notes. See `docs/development/updates.md`.
 ## Unreleased
 
 ### Changed
+- The Automations page has one title again: the extra "Automations" heading and description under the title bar are gone, replaced by a slim bar with a count of your flows, Refresh and New flow. With no flows yet, the page offers a New flow button and the templates as cards to start from. Flows are one list with an icon for what starts each flow, the last result and next run on the right, and Run now, Delete and the on/off switch at the end of the row.
+- The Issues page is calmer. Search, Mine/Unassigned, state, labels, project and refresh share one row; the label filter is a Labels menu instead of a row of chips. List rows show the title, `repo#number`, when it was updated, comments and the assignee (labels and author are in the issue itself). The keyboard hint bar under the list is gone; the shortcuts still work. The open issue shows its title first, then its state and number, with Start an agent as the main action and Open on GitHub as an icon next to the title.
 - Token counts no longer include cache reads, the conversation context a coding agent re-sends with every request. Those were over 90% of the total and made a task look about ten times bigger than the work it did (a Claude task showed 1.2M tokens for about 101K of new input and output). A task's meter in chat, the run header in a task, and Home's Tokens, By agent, Latest sessions and All time widgets now count input + cache writes + output. Hover a count to see input, cache writes, cache reads, output and cost. Spend is unchanged.
 
 ### Fixed
